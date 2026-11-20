@@ -132,6 +132,8 @@ struct Shell {
     /// (true: app folders, rescan; false: status, re-read sysfs).
     watches: Vec<(bool, Watch)>,
     pictures: HashMap<PathBuf, (Option<SystemTime>, Rc<Picture>)>,
+    /// Home's title: the user's name in capitals.
+    title: String,
     /// Screen to go back to when the backlight comes on.
     woke_to: Screen,
     /// Write every row next frame: the mapping may not match the glass.
@@ -234,6 +236,7 @@ impl Shell {
             signals,
             watches,
             pictures: HashMap::new(),
+            title: user_title(),
             woke_to: Screen::Home,
             full_flush: true,
             dirs,
@@ -909,7 +912,7 @@ impl Shell {
         let t = self.t;
         let now = rt::now_ms();
         let clock = self.clock;
-        let status = status_of(&clock, self.battery, self.net);
+        let status = status_of(&self.title, &clock, self.battery, self.net);
         match self.screen {
             Screen::Locked => {
                 let text = std::str::from_utf8(&clock).unwrap_or("--:--");
@@ -1084,9 +1087,31 @@ fn dark_ms_of(c: &Config) -> Option<u64> {
     (secs > 0).then_some(secs as u64 * 1000)
 }
 
-fn status_of(clock: &[u8; 5], battery: Option<Reading>, net: Net) -> Status<'_> {
+/// The home title: the user's name, in capitals.
+fn user_title() -> String {
+    // SAFETY: getpwuid returns a pointer into static storage or null; it is
+    // read at once, before any other call could reuse that storage.
+    let name = unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        (!pw.is_null()).then(|| {
+            std::ffi::CStr::from_ptr((*pw).pw_name)
+                .to_string_lossy()
+                .into_owned()
+        })
+    };
+    name.or_else(|| std::env::var("USER").ok())
+        .unwrap_or_else(|| "GH0ST".into())
+        .to_uppercase()
+}
+
+fn status_of<'a>(
+    title: &'a str,
+    clock: &'a [u8; 5],
+    battery: Option<Reading>,
+    net: Net,
+) -> Status<'a> {
     Status {
-        title: "Gh0stdeck",
+        title,
         clock: std::str::from_utf8(clock).unwrap_or("--:--"),
         battery: battery.map(|r| Battery {
             percent: r.percent,
