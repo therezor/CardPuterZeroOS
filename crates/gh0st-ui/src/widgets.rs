@@ -291,6 +291,11 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
 /// The selection behind a tile or app row: a raised fill and an accent edge.
 pub fn selection(c: &mut Canvas, t: &Theme, r: Rect) {
     c.round_rect(r, t.m.radius_large, t.c.surface);
+}
+
+/// The selection's outline. Drawn after the content, so an icon the frame
+/// passes over never hides it.
+pub fn selection_ring(c: &mut Canvas, t: &Theme, r: Rect) {
     c.stroke_round_rect(r, t.m.radius_large, t.c.accent);
 }
 
@@ -310,6 +315,9 @@ pub fn tile(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: bool) 
         selection(c, t, r);
     }
     tile_content(c, t, r, item, selected);
+    if selected {
+        selection_ring(c, t, r);
+    }
 }
 
 /// A tile without its selection frame, for when the frame is animating.
@@ -347,6 +355,9 @@ pub fn app_row(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: boo
         selection(c, t, r);
     }
     app_row_content(c, t, r, item, selected);
+    if selected {
+        selection_ring(c, t, r);
+    }
 }
 
 /// A list row without its selection frame.

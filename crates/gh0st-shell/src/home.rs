@@ -92,7 +92,7 @@ pub struct Entry {
     pub pinned: bool,
 }
 
-const GLIDE_MS: u64 = 120;
+const GLIDE_MS: u64 = 80;
 const SLIDE_MS: u64 = 180;
 /// Frame spacing while something moves. The SPI panel shows fewer, but a
 /// frame that is not ready in time is simply skipped by the kernel.
@@ -496,8 +496,9 @@ impl Home {
 
     /// Draws one grid page starting at `top`, shifted `dx` pixels.
     fn grid_page(&self, c: &mut Canvas, t: &Theme, top: usize, dx: i32, frame: Option<Rect>) {
+        let frame = frame.map(|f| Rect::new(f.x + dx, f.y, f.w, f.h));
         if let Some(f) = frame {
-            widgets::selection(c, t, Rect::new(f.x + dx, f.y, f.w, f.h));
+            widgets::selection(c, t, f);
         }
         let per = self.per_screen();
         for index in top..(top + per).min(self.shown.len()) {
@@ -505,6 +506,9 @@ impl Home {
             let r = Rect::new(r.x + dx, r.y, r.w, r.h);
             let item = self.item(t, index, false);
             widgets::tile_content(c, t, r, &item, index == self.selected);
+        }
+        if let Some(f) = frame {
+            widgets::selection_ring(c, t, f);
         }
     }
 
@@ -571,6 +575,7 @@ impl Home {
             let item = self.item(t, index as usize, true);
             widgets::app_row_content(c, t, r, &item, index as usize == self.selected);
         }
+        widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         let track = self.geo.list;
         widgets::scrollbar(c, t, track, self.top, self.geo.list_rows, self.shown.len());
