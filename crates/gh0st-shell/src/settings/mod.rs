@@ -2,6 +2,7 @@
 //! system (`pages::State`) each time it changes, and drawn with the shared
 //! rows, so this file holds only the model and its drawing.
 
+pub mod net;
 pub mod pages;
 
 use gh0st_ui::Canvas;

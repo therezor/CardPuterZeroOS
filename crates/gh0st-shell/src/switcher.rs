@@ -262,16 +262,7 @@ impl Switcher {
         widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         self.dots(c, t);
-        let mut hints = vec![
-            Hint {
-                key: "Z C",
-                label: "move",
-            },
-            Hint {
-                key: "Enter",
-                label: "open",
-            },
-        ];
+        let mut hints = Vec::new();
         if self.selected > 0 {
             hints.push(Hint {
                 key: "Del",

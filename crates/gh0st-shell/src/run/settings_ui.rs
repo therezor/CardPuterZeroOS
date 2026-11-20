@@ -3,6 +3,7 @@
 //! and saves, so stock apps' keys survive, and applies at once.
 
 use super::*;
+use crate::settings::net;
 use crate::settings::pages::{self, AppRow, DARK_TIMES, State as PageState};
 use crate::settings::{self, Act, Body, Command, Cursor, Dialog, Page, PageId, Setting, Value};
 use gh0st_core::desktop;
@@ -17,6 +18,25 @@ pub(super) struct SettingsUi {
 /// What a dialog's answer is for.
 pub(super) enum Ask {
     Confirm(Command),
+    WifiPassword(String),
+    HiddenName,
+    HiddenPassword(String),
+}
+
+/// An nmcli run Settings is waiting on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum NetJob {
+    Radio,
+    List,
+    Profiles,
+    Devices,
+    SetRadio,
+    Join {
+        ssid: String,
+        known: bool,
+        gave_password: bool,
+    },
+    Forget(String),
 }
 
 impl SettingsUi {
@@ -42,6 +62,7 @@ impl Shell {
         });
         self.screen = Screen::Settings;
         self.dirty = true;
+        self.query_net(false);
     }
 
     fn close_settings(&mut self) {
@@ -146,6 +167,9 @@ impl Shell {
             return;
         }
         if k.state == State::Release {
+            return;
+        }
+        if self.page_key(&k) {
             return;
         }
         match k.nav(true) {
@@ -390,12 +414,38 @@ impl Shell {
     }
 
     fn answer(&mut self, dialog: Dialog, ask: Ask) {
-        let _ = dialog;
+        let mut text = match dialog {
+            Dialog::Text { text, .. } => text,
+            Dialog::Confirm { .. } => String::new(),
+        };
         match ask {
             Ask::Confirm(Command::Restart) => self.power(true),
             Ask::Confirm(Command::PowerOff) => self.power(false),
             Ask::Confirm(_) => {}
+            Ask::WifiPassword(ssid) => {
+                let argv = ["nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid];
+                self.connect(&ssid, &argv, false, Some(&mut text));
+            }
+            Ask::HiddenName if !text.is_empty() => self.ask(
+                Dialog::Text {
+                    title: format!("Join \u{201c}{text}\u{201d}"),
+                    placeholder: "Password, empty if open",
+                    text: String::new(),
+                    masked: true,
+                },
+                Ask::HiddenPassword(text.clone()),
+            ),
+            Ask::HiddenName => {}
+            Ask::HiddenPassword(ssid) => {
+                let argv = [
+                    "nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid, "hidden",
+                    "yes",
+                ];
+                let pw = (!text.is_empty()).then_some(&mut text);
+                self.connect(&ssid, &argv, false, pw);
+            }
         }
+        wipe(&mut text);
     }
 
     /// Closes every app, then restarts or powers off.
@@ -405,15 +455,229 @@ impl Shell {
         self.toast(if restart { "Restarting\u{2026}" } else { "Powering off\u{2026}" });
     }
 
+    /// Keys only some pages take. True if the key was used.
+    fn page_key(&mut self, k: &Key) -> bool {
+        if k.state != State::Press {
+            return false;
+        }
+        let Some(ui) = self.settings.as_ref() else {
+            return false;
+        };
+        let id = ui.top().0.clone();
+        match id {
+            PageId::Wifi if k.ch == Some('r') => {
+                self.query_net(true);
+                self.toast("Scanning\u{2026}");
+                true
+            }
+            PageId::Wifi if k.is(code::BACKSPACE) => {
+                if let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() {
+                    let known = self.settings.as_ref().is_some_and(|ui| ui.state.profiles.contains(&ssid));
+                    if known {
+                        self.start_job(
+                            JobKind::Net(NetJob::Forget(ssid.clone())),
+                            &["nmcli", "connection", "delete", "id", &ssid],
+                        );
+                    } else {
+                        self.toast(format!("{ssid} is not saved"));
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Asks nmcli for the radio, the networks, the saved profiles and the
+    /// devices. `rescan` makes the radio look again, which takes seconds.
+    fn query_net(&mut self, rescan: bool) {
+        let net = |j| JobKind::Net(j);
+        self.start_job(net(NetJob::Radio), &["nmcli", "-t", "-f", "WIFI", "radio"]);
+        self.start_job(
+            net(NetJob::Profiles),
+            &["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+        );
+        let scan = if rescan { "yes" } else { "no" };
+        self.start_job(
+            net(NetJob::List),
+            &[
+                "nmcli", "-t", "-f", "IN-USE,SIGNAL,SECURITY,SSID", "device", "wifi", "list",
+                "--rescan", scan,
+            ],
+        );
+        self.start_job(
+            net(NetJob::Devices),
+            &[
+                "nmcli",
+                "-t",
+                "-f",
+                "GENERAL.DEVICE,GENERAL.TYPE,GENERAL.STATE,GENERAL.CONNECTION,GENERAL.HWADDR,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS",
+                "device",
+                "show",
+            ],
+        );
+    }
+
+    pub(super) fn net_job_done(&mut self, kind: NetJob, j: Job) {
+        let out = j.output();
+        let mut requery = false;
+        match &kind {
+            NetJob::Join {
+                ssid,
+                known,
+                gave_password,
+            } => {
+                if j.ok() {
+                    self.toast(format!("Connected to {ssid}"));
+                } else {
+                    // A failed first join leaves a profile behind, wrong
+                    // password and all; the next try would not ask again.
+                    if !known {
+                        child::fire(&["nmcli", "connection", "delete", "id", ssid]);
+                    }
+                    self.toast(net::failure(&out, *gave_password));
+                }
+                requery = true;
+            }
+            NetJob::Forget(ssid) => {
+                self.toast(if j.ok() {
+                    format!("Forgot {ssid}")
+                } else {
+                    net::failure(&out, false)
+                });
+                requery = true;
+            }
+            NetJob::SetRadio => {
+                if !j.ok() {
+                    self.toast(net::failure(&out, false));
+                }
+                requery = true;
+            }
+            _ => {}
+        }
+        let Some(ui) = self.settings.as_mut() else {
+            return;
+        };
+        let st = &mut ui.state;
+        match kind {
+            NetJob::Radio => {
+                if let Some(on) = net::parse_radio(&out) {
+                    st.wifi_on = on;
+                }
+            }
+            NetJob::Profiles if j.ok() => {
+                st.profiles = net::parse_profiles(&out);
+                for n in &mut st.networks {
+                    n.known = st.profiles.contains(&n.ssid);
+                }
+            }
+            NetJob::List if j.ok() => st.networks = net::parse_list(&out, &st.profiles),
+            NetJob::Devices if j.ok() => st.ifaces = net::parse_devices(&out),
+            NetJob::Join { .. } => st.wifi_busy = None,
+            _ => {}
+        }
+        if requery {
+            self.query_net(false);
+        }
+        self.refresh_settings();
+    }
+
     /// Wi-Fi, Bluetooth and system settings, which go through helpers.
     fn apply_system(&mut self, s: &Setting, d: i32) {
-        let _ = (s, d);
-        self.toast("Not available yet");
+        let _ = d;
+        match s {
+            Setting::WifiRadio => {
+                let on = self.settings.as_ref().is_some_and(|ui| ui.state.wifi_on);
+                if let Some(ui) = self.settings.as_mut() {
+                    ui.state.wifi_on = !on;
+                }
+                self.start_job(
+                    JobKind::Net(NetJob::SetRadio),
+                    &["nmcli", "radio", "wifi", if on { "off" } else { "on" }],
+                );
+            }
+            _ => self.toast("Not available yet"),
+        }
     }
 
     fn run_system(&mut self, c: Command) {
-        let _ = c;
-        self.toast("Not available yet");
+        match c {
+            Command::Join(ssid) => self.join(ssid),
+            Command::JoinHidden => self.ask(
+                Dialog::Text {
+                    title: "Hidden network".into(),
+                    placeholder: "Network name",
+                    text: String::new(),
+                    masked: false,
+                },
+                Ask::HiddenName,
+            ),
+            _ => self.toast("Not available yet"),
+        }
+    }
+
+    /// Enter on a network: a saved one comes up, an open one joins, a
+    /// secured one asks for its password first.
+    fn join(&mut self, ssid: String) {
+        let Some(n) = self
+            .settings
+            .as_ref()
+            .and_then(|ui| ui.state.networks.iter().find(|n| n.ssid == ssid))
+            .cloned()
+        else {
+            return;
+        };
+        if n.active {
+            self.toast(format!("Connected to {ssid}"));
+        } else if n.known {
+            self.connect(&ssid, &["nmcli", "--wait", "30", "connection", "up", "id", &ssid], true, None);
+        } else if n.enterprise {
+            self.toast("Needs a user name: join it from the terminal");
+        } else if n.secure {
+            self.ask(
+                Dialog::Text {
+                    title: format!("Join \u{201c}{ssid}\u{201d}"),
+                    placeholder: "Password",
+                    text: String::new(),
+                    masked: true,
+                },
+                Ask::WifiPassword(ssid),
+            );
+        } else {
+            self.connect(
+                &ssid,
+                &["nmcli", "--wait", "45", "device", "wifi", "connect", &ssid],
+                false,
+                None,
+            );
+        }
+    }
+
+    /// Runs a join. The password, if any, goes on stdin (`--ask`), never in
+    /// argv, where any user could read it in /proc.
+    fn connect(&mut self, ssid: &str, argv: &[&str], known: bool, password: Option<&mut String>) {
+        let gave_password = password.is_some();
+        let mut line = password.map(|p| {
+            let l = format!("{p}\n");
+            wipe(p);
+            l
+        });
+        self.start_job_with(
+            JobKind::Net(NetJob::Join {
+                ssid: ssid.to_string(),
+                known,
+                gave_password,
+            }),
+            argv,
+            line.as_deref().map(str::as_bytes),
+        );
+        if let Some(l) = line.as_mut() {
+            wipe(l);
+        }
+        if let Some(ui) = self.settings.as_mut() {
+            ui.state.wifi_busy = Some(ssid.to_string());
+        }
+        self.refresh_settings();
     }
 }
 
@@ -428,6 +692,13 @@ pub(super) fn draw(c: &mut Canvas, t: &Theme, status: &Status, ui: Option<&Setti
     let (_, cur) = ui.top();
     let dialog = ui.dialog.as_ref().map(|(d, _)| d);
     settings::draw(c, t, &status, &ui.page, *cur, dialog);
+}
+
+/// Overwrites a secret before its memory is freed.
+fn wipe(s: &mut String) {
+    // SAFETY: zero bytes are valid UTF-8.
+    unsafe { s.as_bytes_mut().fill(0) };
+    s.clear();
 }
 
 fn cycle(i: usize, d: i32, n: usize) -> usize {

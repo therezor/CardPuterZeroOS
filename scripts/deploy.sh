@@ -24,7 +24,8 @@ restart_launcher() {
 
 if [ "${1:-}" = rollback ]; then
     remote 'sudo rm -f /etc/systemd/user/APPLaunch.service.d/gh0st.conf \
-        /etc/systemd/system/fb_load.service.d/gh0st.conf && sudo systemctl daemon-reload'
+        /etc/systemd/system/fb_load.service.d/gh0st.conf \
+        /etc/polkit-1/rules.d/50-gh0st.rules && sudo systemctl daemon-reload'
     restart_launcher
     echo "stock launcher restored on $host"
     exit 0
@@ -36,6 +37,7 @@ bin="$root/target/$target/release/gh0st"
 scp -q "$bin" "$root/packaging/applications/store.desktop" \
     "$root/packaging/systemd/APPLaunch.service.d/gh0st.conf" "$host:/tmp/"
 scp -q "$root/packaging/systemd/fb_load.service.d/gh0st.conf" "$host:/tmp/fb_load-gh0st.conf"
+scp -q "$root/packaging/polkit/50-gh0st.rules" "$host:/tmp/50-gh0st.rules"
 remote 'set -e
     sudo install -m 755 /tmp/gh0st /usr/bin/gh0st
     sudo ln -sf gh0st /usr/bin/gh0st-shell
@@ -43,7 +45,8 @@ remote 'set -e
     sudo install -m 644 /tmp/store.desktop /usr/share/gh0st/applications/store.desktop
     sudo install -m 644 /tmp/gh0st.conf /etc/systemd/user/APPLaunch.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/fb_load-gh0st.conf /etc/systemd/system/fb_load.service.d/gh0st.conf
+    sudo install -D -m 644 /tmp/50-gh0st.rules /etc/polkit-1/rules.d/50-gh0st.rules
     sudo systemctl daemon-reload
-    rm -f /tmp/gh0st /tmp/store.desktop /tmp/gh0st.conf /tmp/fb_load-gh0st.conf'
+    rm -f /tmp/gh0st /tmp/store.desktop /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules'
 restart_launcher
 echo "gh0st $(git -C "$root" rev-parse --short HEAD) running on $host"

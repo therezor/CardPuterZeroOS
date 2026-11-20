@@ -104,9 +104,10 @@ enum Pending {
 }
 
 /// A helper whose answer the shell is waiting for.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum JobKind {
     Volume,
+    Net(settings_ui::NetJob),
 }
 
 /// Where keys come from: the keyboard, or a script in `--sim`.
@@ -374,7 +375,12 @@ impl Shell {
     }
 
     fn start_job(&mut self, kind: JobKind, argv: &[&str]) {
-        match job::spawn(argv, None) {
+        self.start_job_with(kind, argv, None);
+    }
+
+    /// As `start_job`, with `input` written to the helper's stdin.
+    fn start_job_with(&mut self, kind: JobKind, argv: &[&str], input: Option<&[u8]>) {
+        match job::spawn(argv, input) {
             Ok(j) => self.jobs.push((kind, j)),
             Err(e) if self.debug => eprintln!("gh0st shell: {}: {e}", argv[0]),
             Err(_) => {}
@@ -389,6 +395,7 @@ impl Shell {
                     self.muted = Some(muted);
                 }
             }
+            JobKind::Net(n) => self.net_job_done(n, j),
         }
     }
 

@@ -163,6 +163,7 @@ fn sample_state() -> State {
         secure,
         known,
         active,
+        enterprise: false,
     };
     let app = |file: &str, name: &str, shown| AppRow {
         file: file.into(),
@@ -188,6 +189,7 @@ fn sample_state() -> State {
         ],
         wifi_on: true,
         wifi_busy: None,
+        profiles: vec!["HomeNet".into()],
         networks: vec![
             net("HomeNet", 3, true, true, true),
             net("Office-5G", 4, true, false, false),

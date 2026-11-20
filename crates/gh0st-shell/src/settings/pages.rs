@@ -46,6 +46,8 @@ pub struct Network {
     /// A saved profile exists, so Enter joins without asking.
     pub known: bool,
     pub active: bool,
+    /// 802.1X: wants a user name too, so it is joined from a terminal.
+    pub enterprise: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -89,6 +91,8 @@ pub struct State {
     pub wifi_on: bool,
     pub wifi_busy: Option<String>,
     pub networks: Vec<Network>,
+    /// Saved Wi-Fi profiles, by name.
+    pub profiles: Vec<String>,
     pub ifaces: Vec<Iface>,
     pub bt_on: bool,
     pub bt_scanning: bool,
@@ -213,7 +217,11 @@ pub fn build(id: &PageId, s: &State) -> Page {
             ),
             vec![],
         ),
-        PageId::Wifi => ("Wi-Fi", Body::List(wifi(s)), vec![("R", "rescan")]),
+        PageId::Wifi => (
+            "Wi-Fi",
+            Body::List(wifi(s)),
+            vec![("R", "scan"), ("Del", "forget")],
+        ),
         PageId::Network => ("Network", Body::Info(network(s)), vec![]),
         PageId::Bluetooth => ("Bluetooth", Body::List(bluetooth(s)), vec![("S", "scan")]),
         PageId::System => ("System", Body::List(system(s)), vec![]),
@@ -494,6 +502,7 @@ mod tests {
                 secure: true,
                 known: true,
                 active: true,
+                enterprise: false,
             }],
             zone: "Europe/London".into(),
             zones: ["Africa/Cairo", "Europe/Kyiv", "Europe/London"]
