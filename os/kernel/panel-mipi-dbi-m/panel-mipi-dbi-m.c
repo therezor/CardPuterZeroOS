@@ -5,13 +5,23 @@
  * Copyright 2022 Noralf Trønnes
  *
  * gh0st changes (CardputerZero, ST7789V 320x170 on SPI):
- * - TE sync: each transfer starts on the panel's tearing-effect edge
- *   (te-gpios, GPIO5 on the CardputerZero).
+ * - TE sync: the TE IRQ timestamps both edges while frames flow, so the
+ *   driver knows the refresh phase and period. A send starts where it cannot
+ *   cross the scan: before the scan reaches its first line (lead), or late
+ *   enough that the scan passes its last line first (trail). The IRQ turns
+ *   itself off after te_idle_edges edges without a send.
  * - Native order: the panel is mounted rotated (MADCTL MV), so it refreshes
  *   across the rows we send. Transfers are transposed and sent along the
  *   panel's own scan lines, so a write never crosses the refresh.
  * - Refresh rate: FRCTRL2 slows the panel to 50 Hz, so a full 17 ms transfer
  *   at the 50 MHz SPI clock stays ahead of the 20 ms refresh.
+ * - fbdev delay: the fbdev helper waits HZ / 20 (50 ms) after a write before
+ *   it sends. One jiffy (4 ms at HZ=250) cuts that lag for every fbdev app.
+ * - Present ioctl: GH0ST_FBIO_PRESENT returns once everything written to the
+ *   fbdev mapping is on the wire, so a client can pace frames to the panel.
+ * - Fast copy: rows are memcpy'd out of the write-combined GEM buffer, then
+ *   swapped and transposed in one pass. Per-pixel loads from WC memory cost
+ *   6.7 ms a frame.
  * Each is a module parameter, for tuning on the device.
  */
 
@@ -19,6 +29,8 @@
 #include <linux/delay.h>
 #include <linux/firmware.h>
 #include <linux/gpio/consumer.h>
+#include <linux/irq.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/property.h>
@@ -29,8 +41,10 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_fb_helper.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_fbdev_dma.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_dma_helper.h>
@@ -50,7 +64,7 @@
 
 static bool te = true;
 module_param(te, bool, 0644);
-MODULE_PARM_DESC(te, "Start each transfer on the TE edge, when te-gpios is set (default true)");
+MODULE_PARM_DESC(te, "Time each send against the panel scan, when te-gpios is set (default true)");
 
 static bool native_order = true;
 module_param(native_order, bool, 0444);
@@ -62,11 +76,30 @@ MODULE_PARM_DESC(madctl_native, "MADCTL used with native_order (default 0x90)");
 
 static uint frctrl = 0x15;
 module_param(frctrl, uint, 0444);
-MODULE_PARM_DESC(frctrl, "ST7789 FRCTRL2 value, 0x15 = 50 Hz, 0x0f = 60 Hz, 0 = keep (default 0x15)");
+MODULE_PARM_DESC(frctrl, "ST7789 FRCTRL2 value, 0x15 = 50.6 Hz measured, 0x0f = 60 Hz, 0 = keep (default 0x15)");
 
 static uint te_timeout_ms = 50;
 module_param(te_timeout_ms, uint, 0644);
 MODULE_PARM_DESC(te_timeout_ms, "Longest wait for a TE edge before sending anyway (default 50)");
+
+static uint te_margin_us = 300;
+module_param(te_margin_us, uint, 0644);
+MODULE_PARM_DESC(te_margin_us, "Safety margin around the scan when picking a send time (default 300)");
+
+static uint te_idle_edges = 20;
+module_param(te_idle_edges, uint, 0644);
+MODULE_PARM_DESC(te_idle_edges, "TE edges without a send before the TE IRQ turns off (default 20)");
+
+static bool te_vblank_high = true;
+module_param(te_vblank_high, bool, 0644);
+MODULE_PARM_DESC(te_vblank_high, "TE is high during vertical blanking (default true)");
+
+/* Returns once the fbdev mapping's writes are on the wire. Stock fbdev: -ENOTTY. */
+#define GH0ST_FBIO_PRESENT	_IO('F', 0xC0)
+
+static uint fbdev_delay = 1;
+module_param(fbdev_delay, uint, 0444);
+MODULE_PARM_DESC(fbdev_delay, "Jiffies fbdev waits after a write before sending, 0 = upstream HZ/20 (default 1)");
 
 
 struct panel_mipi_dbi_format {
@@ -86,9 +119,24 @@ struct panel_mipi_dbi_device {
 
     struct gpio_desc *te;
     int te_irq;
+    /* Completed on each vblank-start edge. */
     struct completion te_completion;
+    /* TE state, written by the ISR. */
+    spinlock_t te_lock;
+    bool te_on;			/* IRQ enabled */
+    unsigned int te_idle;		/* edges since the last send */
+    ktime_t te_vbl;			/* last vblank-start edge, 0 = unknown */
+    s64 te_period_ns;		/* filtered vblank-to-vblank time, 0 = unknown */
+    s64 te_vblank_ns;		/* filtered blanking time */
+    /* Measured wire time, ns per KiB. */
+    u64 wire_ns_per_kib;
+    /* Counters for te_stats. */
+    u64 n_lead, n_trail, n_slept, n_fresh, n_blind;
+    s64 last_phase_ns;
     /* Transposed copy of the damaged area, for native_order. */
     u16 *tbuf;
+    /* One row of the framebuffer, for the fast copy. */
+    u16 *line;
     struct mutex display_lock;		/* Serialize reset and display transfers */
 };
 
@@ -367,8 +415,28 @@ static ssize_t panel_mipi_dbi_reset_store(struct device *dev,
 
 static DEVICE_ATTR(reset, 0200, NULL, panel_mipi_dbi_reset_store);
 
+static ssize_t te_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    struct drm_device *drm = spi_get_drvdata(to_spi_device(dev));
+    struct panel_mipi_dbi_device *panel;
+
+    if (!drm)
+        return -ENODEV;
+    panel = to_panel_mipi_dbi_device(drm_to_mipi_dbi_dev(drm));
+    return sysfs_emit(buf,
+              "te_on %d\nperiod_ns %lld\nvblank_ns %lld\nwire_ns_per_kib %llu\n"
+              "lead %llu\ntrail %llu\nslept %llu\nfresh %llu\nblind %llu\n"
+              "last_phase_ns %lld\n",
+              panel->te_on, panel->te_period_ns, panel->te_vblank_ns,
+              panel->wire_ns_per_kib, panel->n_lead, panel->n_trail,
+              panel->n_slept, panel->n_fresh, panel->n_blind, panel->last_phase_ns);
+}
+
+static DEVICE_ATTR_RO(te_stats);
+
 static struct attribute *panel_mipi_dbi_attrs[] = {
     &dev_attr_reset.attr,
+    &dev_attr_te_stats.attr,
     NULL,
 };
 
@@ -376,33 +444,189 @@ static const struct attribute_group panel_mipi_dbi_attr_group = {
     .attrs = panel_mipi_dbi_attrs,
 };
 
-/* TE interrupt handler: wake waiters when a TE signal arrives */
+/*
+ * TE edge, in hard IRQ context. Tracks the refresh period and the blanking
+ * width, wakes a waiter on vblank start, and turns the IRQ off when no send
+ * has happened for te_idle_edges edges, so an idle panel costs no wakeups.
+ */
 static irqreturn_t panel_mipi_dbi_te_isr(int irq, void *data)
 {
     struct panel_mipi_dbi_device *panel = data;
+    ktime_t now = ktime_get();
+    bool high = gpiod_get_value(panel->te);
+    bool vbl_start = high == te_vblank_high;
+    s64 d;
 
-    complete(&panel->te_completion);
+    spin_lock(&panel->te_lock);
+    if (vbl_start) {
+        if (panel->te_vbl) {
+            d = ktime_to_ns(ktime_sub(now, panel->te_vbl));
+            if (!panel->te_period_ns) {
+                if (d > 8 * NSEC_PER_MSEC && d < 50 * NSEC_PER_MSEC)
+                    panel->te_period_ns = d;
+            } else if (abs(d - panel->te_period_ns) < panel->te_period_ns / 8) {
+                panel->te_period_ns += (d - panel->te_period_ns) / 8;
+            }
+        }
+        panel->te_vbl = now;
+        complete(&panel->te_completion);
+    } else if (panel->te_vbl && panel->te_period_ns) {
+        d = ktime_to_ns(ktime_sub(now, panel->te_vbl));
+        if (d > 0 && d < panel->te_period_ns / 2)
+            panel->te_vblank_ns = panel->te_vblank_ns ?
+                panel->te_vblank_ns + (d - panel->te_vblank_ns) / 8 : d;
+    }
+    if (panel->te_on && ++panel->te_idle > te_idle_edges) {
+        panel->te_on = false;
+        panel->te_vbl = 0;
+        disable_irq_nosync(irq);
+    }
+    spin_unlock(&panel->te_lock);
 
     return IRQ_HANDLED;
 }
 
-/* Wait for the panel TE sync signal before flushing */
-static void panel_mipi_dbi_wait_for_te(struct panel_mipi_dbi_device *panel)
+static void panel_mipi_dbi_wait_vbl(struct panel_mipi_dbi_device *panel)
 {
+    if (!wait_for_completion_timeout(&panel->te_completion,
+                     msecs_to_jiffies(te_timeout_ms)))
+        dev_warn_once(panel->dbidev.drm.dev, "Timeout waiting for TE signal\n");
+}
+
+/*
+ * Waits until a send of `bytes` to scan lines l1..l2 cannot cross the scan.
+ * Phase p runs from vblank start. The scan reaches line l at b + l * t_l,
+ * with b the blanking time and t_l the line time. A send is safe if it starts
+ * before the scan reaches l1 (and the write per line is faster than the
+ * scan), or if the scan passes l2 before the write gets there.
+ */
+static void panel_mipi_dbi_wait_for_scan(struct panel_mipi_dbi_device *panel,
+                     unsigned int l1, unsigned int l2, size_t bytes,
+                     unsigned int lines)
+{
+    s64 margin = (s64)te_margin_us * NSEC_PER_USEC;
+    unsigned long flags;
+    bool fresh = false;
+    int tries;
+
     if (!panel->te || !te)
         return;
 
-    reinit_completion(&panel->te_completion);
+    spin_lock_irqsave(&panel->te_lock, flags);
+    panel->te_idle = 0;
+    if (!panel->te_on) {
+        panel->te_on = true;
+        panel->te_vbl = 0;
+        reinit_completion(&panel->te_completion);
+        fresh = true;
+    }
+    spin_unlock_irqrestore(&panel->te_lock, flags);
 
-    /* Enable the IRQ only while waiting; keep it disabled otherwise to save power */
-    enable_irq(panel->te_irq);
+    if (fresh) {
+        enable_irq(panel->te_irq);
+        panel_mipi_dbi_wait_vbl(panel);
+        panel->n_fresh++;
+    }
 
-    if (!wait_for_completion_timeout(&panel->te_completion,
-                     msecs_to_jiffies(te_timeout_ms)))
-        dev_warn_once(panel->dbidev.drm.dev,
-                  "Timeout waiting for TE signal\n");
+    for (tries = 0; tries < 4; tries++) {
+        s64 period, b, tl, tw, p, lead_end, trail_start;
+        ktime_t vbl;
 
-    disable_irq(panel->te_irq);
+        spin_lock_irqsave(&panel->te_lock, flags);
+        vbl = panel->te_vbl;
+        period = panel->te_period_ns;
+        b = panel->te_vblank_ns;
+        spin_unlock_irqrestore(&panel->te_lock, flags);
+
+        p = vbl ? ktime_to_ns(ktime_sub(ktime_get(), vbl)) : -1;
+        if (!vbl || !period || !b || p > 2 * period) {
+            /* Phase unknown: start on a fresh vblank, which leads the scan. */
+            reinit_completion(&panel->te_completion);
+            panel_mipi_dbi_wait_vbl(panel);
+            panel->n_blind++;
+            return;
+        }
+        p %= period;
+        panel->last_phase_ns = p;
+
+        tl = div_s64(period - b, lines);
+        tw = div_u64((u64)bytes * panel->wire_ns_per_kib, 1024);
+        lead_end = b + l1 * tl - margin;
+        trail_start = b + (l2 + 1) * tl - tw + margin;
+
+        /* Leading only works if the write per line beats the scan. */
+        if (p <= lead_end && div_s64(tw, l2 - l1 + 1) < tl) {
+            panel->n_lead++;
+            return;
+        }
+        if (p >= trail_start && trail_start < period) {
+            panel->n_trail++;
+            return;
+        }
+        panel->n_slept++;
+        if (trail_start < period) {
+            s64 us = div_s64(trail_start - p, NSEC_PER_USEC);
+
+            usleep_range(us, us + 50);
+        } else {
+            /* The write is too slow to trail; lead from the next vblank. */
+            reinit_completion(&panel->te_completion);
+            panel_mipi_dbi_wait_vbl(panel);
+        }
+    }
+}
+
+/* Called after each send, so the IRQ stays on while frames flow. */
+static void panel_mipi_dbi_sent(struct panel_mipi_dbi_device *panel, size_t bytes, s64 ns)
+{
+    unsigned long flags;
+
+    if (bytes >= 4096 && ns > 0) {
+        u64 per_kib = div_u64((u64)ns * 1024, bytes);
+
+        panel->wire_ns_per_kib = panel->wire_ns_per_kib ?
+            panel->wire_ns_per_kib - panel->wire_ns_per_kib / 8 + per_kib / 8 : per_kib;
+    }
+    if (!panel->te)
+        return;
+    spin_lock_irqsave(&panel->te_lock, flags);
+    panel->te_idle = 0;
+    spin_unlock_irqrestore(&panel->te_lock, flags);
+}
+
+/*
+ * Swaps and transposes an RGB565 rect straight into tbuf. Each row is copied
+ * out of the GEM buffer with memcpy first: it is write-combined, and per-pixel
+ * loads from it are slow. False if the fast path does not apply.
+ */
+static bool panel_mipi_dbi_fast_copy(struct panel_mipi_dbi_device *panel,
+                     struct iosys_map *src, struct drm_framebuffer *fb,
+                     struct drm_rect *rect)
+{
+    unsigned int w = rect->x2 - rect->x1;
+    unsigned int h = rect->y2 - rect->y1;
+    bool swap = panel->dbidev.dbi.swap_bytes;
+    unsigned int pitch = fb->pitches[0];
+    const u8 *row;
+    unsigned int x, y;
+
+    if (!panel->line || fb->format->format != DRM_FORMAT_RGB565 || src->is_iomem ||
+        drm_gem_is_imported(drm_gem_fb_get_obj(fb, 0)))
+        return false;
+
+    row = (const u8 *)src->vaddr + rect->y1 * pitch + rect->x1 * 2;
+    for (y = 0; y < h; y++, row += pitch) {
+        u16 *dst = panel->tbuf + y;
+
+        memcpy(panel->line, row, w * 2);
+        if (swap)
+            for (x = 0; x < w; x++)
+                dst[x * h] = swab16(panel->line[x]);
+        else
+            for (x = 0; x < w; x++)
+                dst[x * h] = panel->line[x];
+    }
+    return true;
 }
 
 /*
@@ -426,37 +650,49 @@ static void panel_mipi_dbi_fb_dirty(struct iosys_map *src, struct drm_framebuffe
     unsigned int xs, xe, ys, ye, x, y;
     u16 *tx = dbidev->tx_buf;
     void *out = tx;
-    int ret;
-
-    ret = mipi_dbi_buf_copy(tx, src, fb, rect, dbi->swap_bytes, fmtcnv_state);
-    if (ret)
-        goto err;
+    size_t bytes;
+    ktime_t t0;
+    int ret = 0;
 
     if (panel_mipi_dbi_native(panel)) {
-        for (x = 0; x < w; x++)
-            for (y = 0; y < h; y++)
-                panel->tbuf[x * h + y] = tx[y * w + x];
+        if (!panel_mipi_dbi_fast_copy(panel, src, fb, rect)) {
+            ret = mipi_dbi_buf_copy(tx, src, fb, rect, dbi->swap_bytes, fmtcnv_state);
+            if (ret)
+                goto err;
+            for (x = 0; x < w; x++)
+                for (y = 0; y < h; y++)
+                    panel->tbuf[x * h + y] = tx[y * w + x];
+        }
         out = panel->tbuf;
         xs = rect->y1 + dbidev->top_offset;
         xe = rect->y2 - 1 + dbidev->top_offset;
         ys = rect->x1 + dbidev->left_offset;
         ye = rect->x2 - 1 + dbidev->left_offset;
     } else {
+        ret = mipi_dbi_buf_copy(tx, src, fb, rect, dbi->swap_bytes, fmtcnv_state);
+        if (ret)
+            goto err;
         xs = rect->x1 + dbidev->left_offset;
         xe = rect->x2 - 1 + dbidev->left_offset;
         ys = rect->y1 + dbidev->top_offset;
         ye = rect->y2 - 1 + dbidev->top_offset;
     }
+    bytes = drm_format_info_min_pitch(drm_format_info(dbidev->pixel_format), 0, w) * h;
 
-    /* Start right after the panel begins a refresh, so the write leads. */
-    panel_mipi_dbi_wait_for_te(panel);
-
+    /* The address window goes first, so only RAMWR waits on the scan. */
     mipi_dbi_command(dbi, MIPI_DCS_SET_COLUMN_ADDRESS, (xs >> 8) & 0xff, xs & 0xff,
              (xe >> 8) & 0xff, xe & 0xff);
     mipi_dbi_command(dbi, MIPI_DCS_SET_PAGE_ADDRESS, (ys >> 8) & 0xff, ys & 0xff,
              (ye >> 8) & 0xff, ye & 0xff);
-    ret = mipi_dbi_command_buf(dbi, MIPI_DCS_WRITE_MEMORY_START, out,
-                   drm_format_info_min_pitch(drm_format_info(dbidev->pixel_format), 0, w) * h);
+
+    if (panel_mipi_dbi_native(panel))
+        panel_mipi_dbi_wait_for_scan(panel, ys, ye, bytes, fb->width);
+    else
+        panel_mipi_dbi_wait_for_scan(panel, 0, 0, 0, 1);
+
+    t0 = ktime_get();
+    ret = mipi_dbi_command_buf(dbi, MIPI_DCS_WRITE_MEMORY_START, out, bytes);
+    panel_mipi_dbi_sent(panel, bytes, ktime_to_ns(ktime_sub(ktime_get(), t0)));
 err:
     if (ret)
         drm_err_once(fb->dev, "Failed to update display %d\n", ret);
@@ -552,11 +788,64 @@ static const struct drm_simple_display_pipe_funcs panel_mipi_dbi_pipe_funcs = {
 
 DEFINE_DRM_GEM_DMA_FOPS(panel_mipi_dbi_fops);
 
+#ifdef CONFIG_DRM_FBDEV_EMULATION
+static struct fb_ops panel_mipi_dbi_fb_ops;
+static int (*panel_mipi_dbi_helper_ioctl)(struct fb_info *info, unsigned int cmd,
+                      unsigned long arg);
+
+/*
+ * GH0ST_FBIO_PRESENT runs the pending deferred I/O now and waits for the
+ * damage work, so it returns once the frame is on the wire. It must not call
+ * drm_fb_helper_ioctl: that holds fb_helper->lock, which the damage blit takes.
+ */
+static int panel_mipi_dbi_fb_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
+{
+    struct drm_fb_helper *helper = info->par;
+
+    if (cmd == GH0ST_FBIO_PRESENT) {
+        if (info->fbdefio)
+            flush_delayed_work(&info->deferred_work);
+        flush_work(&helper->damage_work);
+        return 0;
+    }
+    return panel_mipi_dbi_helper_ioctl ? panel_mipi_dbi_helper_ioctl(info, cmd, arg) : -ENOTTY;
+}
+
+/*
+ * Wraps the DMA fbdev probe. It shortens the deferred-I/O delay (the helper
+ * reads fbdefio.delay each time it schedules a send) and adds the present
+ * ioctl. fbops is set before the fb_info is registered, so swapping it is safe.
+ */
+static int panel_mipi_dbi_fbdev_probe(struct drm_fb_helper *fb_helper,
+                      struct drm_fb_helper_surface_size *sizes)
+{
+    struct fb_info *info;
+    int ret = drm_fbdev_dma_driver_fbdev_probe(fb_helper, sizes);
+
+    if (ret)
+        return ret;
+    info = fb_helper->info;
+    if (fbdev_delay && info->fbdefio)
+        fb_helper->fbdefio.delay = fbdev_delay;
+    if (info->fbops != &panel_mipi_dbi_fb_ops) {
+        panel_mipi_dbi_fb_ops = *info->fbops;
+        panel_mipi_dbi_helper_ioctl = info->fbops->fb_ioctl;
+        panel_mipi_dbi_fb_ops.fb_ioctl = panel_mipi_dbi_fb_ioctl;
+        panel_mipi_dbi_fb_ops.owner = THIS_MODULE;
+        info->fbops = &panel_mipi_dbi_fb_ops;
+    }
+    return 0;
+}
+#define PANEL_MIPI_DBI_FBDEV_OPS .fbdev_probe = panel_mipi_dbi_fbdev_probe
+#else
+#define PANEL_MIPI_DBI_FBDEV_OPS DRM_FBDEV_DMA_DRIVER_OPS
+#endif
+
 static const struct drm_driver panel_mipi_dbi_driver = {
     .driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
     .fops			= &panel_mipi_dbi_fops,
     DRM_GEM_DMA_DRIVER_OPS_VMAP,
-    DRM_FBDEV_DMA_DRIVER_OPS,
+    PANEL_MIPI_DBI_FBDEV_OPS,
     .debugfs_init		= mipi_dbi_debugfs_init,
     .name			= "panel-mipi-dbi",
     .desc			= "MIPI DBI compatible display panel",
@@ -668,6 +957,7 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
 
     if (panel->te) {
         init_completion(&panel->te_completion);
+        spin_lock_init(&panel->te_lock);
 
         panel->te_irq = gpiod_to_irq(panel->te);
         if (panel->te_irq < 0)
@@ -675,11 +965,12 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
                          "Failed to get TE irq\n");
 
         /*
-         * Use IRQF_NO_AUTOEN so the IRQ stays disabled after it is requested,
-         * and enable it only when wait_for_te() needs it.
+         * Off until a send needs it (IRQF_NO_AUTOEN). Unlazy, so an edge that
+         * comes while it is off is dropped, not replayed on enable_irq.
          */
+        irq_set_status_flags(panel->te_irq, IRQ_DISABLE_UNLAZY);
         ret = devm_request_irq(dev, panel->te_irq, panel_mipi_dbi_te_isr,
-                       IRQF_TRIGGER_RISING | IRQF_NO_AUTOEN,
+                       IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING | IRQF_NO_AUTOEN,
                        dev_name(dev), panel);
         if (ret)
             return dev_err_probe(dev, ret, "Failed to request TE irq\n");
@@ -697,6 +988,11 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
     panel->tbuf = devm_kmalloc(dev, buf_size, GFP_KERNEL);
     if (!panel->tbuf)
         return -ENOMEM;
+    panel->line = devm_kmalloc(dev, mode.hdisplay * sizeof(u16), GFP_KERNEL);
+    if (!panel->line)
+        return -ENOMEM;
+    /* 50 MHz SPI until a send measures it. */
+    panel->wire_ns_per_kib = 160 * 1024;
     ret = mipi_dbi_dev_init_with_formats(dbidev, &panel_mipi_dbi_pipe_funcs,
                          formats, ARRAY_SIZE(formats),
                          &mode, 0, buf_size);
