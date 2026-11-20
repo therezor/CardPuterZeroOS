@@ -1,4 +1,4 @@
-//! Keys from a script on stdin, for `cpz shell --sim DIR` on a host. One step
+//! Keys from a script on stdin, for `zer0 shell --sim DIR` on a host. One step
 //! per line:
 //!
 //! ```text
@@ -11,9 +11,9 @@
 //! # comment
 //! ```
 
-use cpz_core::keys::{self, code};
 use std::collections::VecDeque;
 use std::os::fd::RawFd;
+use zer0_core::keys::{self, code};
 
 const TAP_GAP_MS: u64 = 30;
 
@@ -28,7 +28,7 @@ pub struct Script {
 
 impl Script {
     pub fn stdin() -> Script {
-        let _ = cpz_core::rt::set_nonblock_cloexec(0);
+        let _ = zer0_core::rt::set_nonblock_cloexec(0);
         Script {
             fd: 0,
             buf: Vec::new(),

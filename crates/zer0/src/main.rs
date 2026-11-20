@@ -9,19 +9,19 @@ fn main() {
     let name = Path::new(&argv0)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("cpz");
+        .unwrap_or("zer0");
     let program = match name {
-        "cpz" => args.next().unwrap_or_default(),
+        "zer0" => args.next().unwrap_or_default(),
         other => other.to_string(),
     };
     match program.as_str() {
-        "--version" | "version" => println!("cpz {}", env!("CARGO_PKG_VERSION")),
-        "shell" | "cpz-shell" => {
+        "--version" | "version" => println!("zer0 {}", env!("CARGO_PKG_VERSION")),
+        "shell" | "zer0-shell" => {
             let rest: Vec<String> = args.collect();
-            std::process::exit(cpz_shell::run::main(&rest))
+            std::process::exit(zer0_shell::run::main(&rest))
         }
         _ => {
-            eprintln!("usage: cpz <shell|version>");
+            eprintln!("usage: zer0 <shell|version>");
             std::process::exit(2);
         }
     }

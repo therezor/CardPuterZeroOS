@@ -1,14 +1,14 @@
 //! The home screen: every app as a grid of tiles or a list of rows, the
-//! user's pick (`cpz.home_layout`). Nav mode moves and opens. Search mode,
+//! user's pick (`zer0.home_layout`). Nav mode moves and opens. Search mode,
 //! entered with S, filters as you type.
 
 use crate::search::score;
-use cpz_ui::Canvas;
-use cpz_ui::geom::Rect;
-use cpz_ui::image::Image;
-use cpz_ui::theme::Theme;
-use cpz_ui::widgets::{self, AppRow, Hint, Status, Visual};
 use std::rc::Rc;
+use zer0_ui::Canvas;
+use zer0_ui::geom::Rect;
+use zer0_ui::image::Image;
+use zer0_ui::theme::Theme;
+use zer0_ui::widgets::{self, AppRow, Hint, Status, Visual};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layout {

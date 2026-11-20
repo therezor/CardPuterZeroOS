@@ -1,18 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/cpz", "crates/cpz-core", "crates/cpz-ui", "crates/cpz-shell"]
+members = ["crates/zer0", "crates/zer0-core", "crates/zer0-ui", "crates/zer0-shell"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-description = "Lean Rust shell for the M5Stack CardputerZero"
+description = "Zer0, a lean shell for the M5Stack CardputerZero"
 
 [workspace.dependencies]
-cpz-core = { path = "crates/cpz-core" }
-cpz-ui = { path = "crates/cpz-ui" }
-cpz-shell = { path = "crates/cpz-shell" }
+zer0-core = { path = "crates/zer0-core" }
+zer0-ui = { path = "crates/zer0-ui" }
+zer0-shell = { path = "crates/zer0-shell" }
 libc = "0.2"
 
 # A 512 MB board: small text, no unwinding tables, stripped.

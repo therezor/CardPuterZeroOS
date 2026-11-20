@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn a_cable_with_link_beats_wifi() {
-        let root = std::env::temp_dir().join(format!("cpz-net-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("zer0-net-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let iface = |name: &str, state: &str, wireless: bool| {
             let d = root.join(name);

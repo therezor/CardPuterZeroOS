@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn sysfs_reading_prefers_the_bq27_gauge() {
-        let root = std::env::temp_dir().join(format!("cpz-bat-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("zer0-bat-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         for (name, kind, cap, status) in [
             ("ac", "Mains", "", ""),

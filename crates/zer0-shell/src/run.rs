@@ -4,37 +4,37 @@
 
 use crate::home::{Entry, Home, Icon, Layout, Mode, Picture};
 use crate::sim::Script;
-use cpz_core::apps::{self, App, Dirs, IconRef};
-use cpz_core::backlight::Backlight;
-use cpz_core::battery::{self, LowBattery, Reading, Warning};
-use cpz_core::child::{self, Devices};
-use cpz_core::config::{self, Config};
-use cpz_core::esc::EscHold;
-use cpz_core::evdev;
-use cpz_core::keys::{self, Key, Keyboard, State, code};
-use cpz_core::rt;
-use cpz_core::status::{self, Net, Watch};
-use cpz_ui::display::{Display, Frames};
-use cpz_ui::fb::{self, Framebuffer};
-use cpz_ui::theme::{self, Theme};
-use cpz_ui::widgets::{self, Battery, Status};
-use cpz_ui::{Canvas, Rect, snapshot};
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
+use zer0_core::apps::{self, App, Dirs, IconRef};
+use zer0_core::backlight::Backlight;
+use zer0_core::battery::{self, LowBattery, Reading, Warning};
+use zer0_core::child::{self, Devices};
+use zer0_core::config::{self, Config};
+use zer0_core::esc::EscHold;
+use zer0_core::evdev;
+use zer0_core::keys::{self, Key, Keyboard, State, code};
+use zer0_core::rt;
+use zer0_core::status::{self, Net, Watch};
+use zer0_ui::display::{Display, Frames};
+use zer0_ui::fb::{self, Framebuffer};
+use zer0_ui::theme::{self, Theme};
+use zer0_ui::widgets::{self, Battery, Status};
+use zer0_ui::{Canvas, Rect, snapshot};
 
 const DEFAULT_DARK_SECS: i64 = 30;
 const TOAST_MS: u64 = 1500;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
-const STATE_DIR: &str = ".local/state/cpz";
+const STATE_DIR: &str = ".local/state/zer0";
 /// How often to look for a leftover group member once the app's leader has
 /// exited: such a process may not be our child, so its exit sends no SIGCHLD.
 const GROUP_RECHECK_MS: u64 = 200;
 
-/// `cpz shell`, or `cpz shell --sim DIR` on a host: keys from a script on
+/// `zer0 shell`, or `zer0 shell --sim DIR` on a host: keys from a script on
 /// stdin (see `sim.rs`), frames saved as PNGs in DIR.
 pub fn main(args: &[String]) -> i32 {
     let t0 = rt::now_ms();
@@ -42,14 +42,14 @@ pub fn main(args: &[String]) -> i32 {
         [flag, dir] if flag == "--sim" => Some(PathBuf::from(dir)),
         [] => None,
         _ => {
-            eprintln!("usage: cpz shell [--sim DIR]");
+            eprintln!("usage: zer0 shell [--sim DIR]");
             return 2;
         }
     };
     match Shell::start(t0, sim) {
         Ok(mut s) => s.run(),
         Err(e) => {
-            eprintln!("cpz shell: {e}");
+            eprintln!("zer0 shell: {e}");
             1
         }
     }
@@ -246,7 +246,7 @@ impl Shell {
             enter_armed: false,
             swallow_release: None,
             rescan_at: None,
-            debug: std::env::var("CPZ_LOG").is_ok_and(|v| v == "debug"),
+            debug: std::env::var("ZER0_LOG").is_ok_and(|v| v == "debug"),
             t0,
             first_frame: true,
             config,
@@ -324,7 +324,7 @@ impl Shell {
             .bytes()
             .fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize));
         let icon = match &a.icon {
-            IconRef::Symbol(name) => match cpz_ui::icon::ICON_NAMES
+            IconRef::Symbol(name) => match zer0_ui::icon::ICON_NAMES
                 .iter()
                 .find(|n| **n == name.as_str())
             {
@@ -385,13 +385,17 @@ impl Shell {
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             fds.extend(self.watches.iter().map(|(_, w)| rt::pollfd(w.fd())));
             if let Err(e) = rt::wait(&mut fds, deadline) {
-                eprintln!("cpz shell: poll: {e}");
+                eprintln!("zer0 shell: poll: {e}");
                 return 1;
             }
             let now = rt::now_ms();
             if self.debug {
                 let ready: Vec<usize> = (0..fds.len()).filter(|&i| rt::readable(&fds[i])).collect();
-                eprintln!("wake at {} fds {ready:?} deadline {:?}", now - self.t0, deadline.map(|d| d as i64 - (now as i64)));
+                eprintln!(
+                    "wake at {} fds {ready:?} deadline {:?}",
+                    now - self.t0,
+                    deadline.map(|d| d as i64 - (now as i64))
+                );
             }
             if rt::readable(&fds[1]) {
                 for sig in self.signals.drain() {
@@ -738,7 +742,7 @@ impl Shell {
         };
         if self.debug {
             eprintln!(
-                "cpz shell: started {} (pgid {}) at {}",
+                "zer0 shell: started {} (pgid {}) at {}",
                 app.entry.name,
                 running.pgid,
                 rt::now_ms() - self.t0
@@ -761,7 +765,7 @@ impl Shell {
             ]);
             let mut fds = [rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             if let Err(e) = rt::wait(&mut fds, deadline) {
-                eprintln!("cpz shell: poll while {} runs: {e}", app.entry.name);
+                eprintln!("zer0 shell: poll while {} runs: {e}", app.entry.name);
                 break;
             }
             let now = rt::now_ms();
@@ -850,7 +854,7 @@ impl Shell {
         }
         if self.debug {
             eprintln!(
-                "cpz shell: {} closed at {}",
+                "zer0 shell: {} closed at {}",
                 app.entry.name,
                 rt::now_ms() - self.t0
             );
@@ -892,10 +896,10 @@ impl Shell {
         };
         self.dirty = false;
         if self.debug {
-            eprintln!("cpz shell: flushed {rows} rows");
+            eprintln!("zer0 shell: flushed {rows} rows");
             if self.first_frame {
                 eprintln!(
-                    "cpz shell: first frame {} ms after start",
+                    "zer0 shell: first frame {} ms after start",
                     rt::now_ms() - self.t0
                 );
             }
@@ -930,10 +934,10 @@ impl Shell {
         let c = &mut self.canvas;
         let r = Rect::new(40, 30, 240, 110);
         let inner = widgets::dialog(c, &t, r, title, color);
-        cpz_ui::icon::draw(
+        zer0_ui::icon::draw(
             c,
             "plug-zap",
-            cpz_ui::icon::IconSize::Large,
+            zer0_ui::icon::IconSize::Large,
             inner.x + 2,
             inner.y + 6,
             color,
@@ -974,7 +978,7 @@ fn is_screenshot(k: &Key) -> bool {
 }
 
 fn palette_of(c: &Config) -> theme::Palette {
-    c.get_str("cpz.palette")
+    c.get_str("zer0.palette")
         .and_then(|n| {
             theme::PALETTES
                 .iter()
@@ -985,13 +989,13 @@ fn palette_of(c: &Config) -> theme::Palette {
 }
 
 fn layout_of(c: &Config) -> Layout {
-    c.get_str("cpz.home_layout")
+    c.get_str("zer0.home_layout")
         .and_then(Layout::from_config)
         .unwrap_or_default()
 }
 
 fn terminal_of(c: &Config) -> String {
-    c.get_str("cpz.terminal")
+    c.get_str("zer0.terminal")
         .unwrap_or(child::DEFAULT_TERMINAL)
         .to_string()
 }
@@ -1004,7 +1008,7 @@ fn dark_ms_of(c: &Config) -> Option<u64> {
 
 fn status_of(clock: &[u8; 5], battery: Option<Reading>, net: Net) -> Status<'_> {
     Status {
-        title: "Zero",
+        title: "Zer0",
         clock: std::str::from_utf8(clock).unwrap_or("--:--"),
         battery: battery.map(|r| Battery {
             percent: r.percent,
@@ -1021,7 +1025,7 @@ fn status_of(clock: &[u8; 5], battery: Option<Reading>, net: Net) -> Status<'_> 
 fn desktop_first_token_runs(cmd: &str) -> bool {
     cmd.split_whitespace()
         .next()
-        .is_some_and(|p| cpz_core::desktop::is_executable(Path::new(p)))
+        .is_some_and(|p| zer0_core::desktop::is_executable(Path::new(p)))
 }
 
 fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
@@ -1031,7 +1035,7 @@ fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let path = dir.join(format!("cpz-{secs}.png"));
+    let path = dir.join(format!("zer0-{secs}.png"));
     snapshot::write_png(c, &path, 1)?;
     Ok(path)
 }

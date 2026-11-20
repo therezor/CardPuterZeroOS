@@ -1,4 +1,4 @@
-//! Shared pieces every cpz app draws: the status bar, the hint bar, tiles,
+//! Shared pieces every zer0 app draws: the status bar, the hint bar, tiles,
 //! rows, fields and dialogs. Each one draws into a rect it is given and takes
 //! every size and colour from the theme.
 

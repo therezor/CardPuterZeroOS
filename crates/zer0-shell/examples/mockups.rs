@@ -2,21 +2,21 @@
 //! `Home` view; the other screens are laid out here with the real widgets
 //! until their apps exist. Data is made up. Run from the workspace root:
 //!
-//!     CPZ_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
-//!     CPZ_CJK_FONT=$CPZ_STOCK/share/font/NotoSansCJK-Regular.ttc \
-//!     cargo run -p cpz-shell --example mockups
+//!     ZER0_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
+//!     ZER0_CJK_FONT=$ZER0_STOCK/share/font/NotoSansCJK-Regular.ttc \
+//!     cargo run -p zer0-shell --example mockups
 //!
 //! Both env vars are optional.
 
-use cpz_shell::home::{Entry, Home, Icon, Layout};
-use cpz_ui::Canvas;
-use cpz_ui::color::{Color, hex};
-use cpz_ui::geom::Rect;
-use cpz_ui::icon::{self, IconSize};
-use cpz_ui::snapshot::write_png;
-use cpz_ui::theme::{self, Theme};
-use cpz_ui::widgets::{self, Battery, Hint, Net, Row, Status, Trailing};
 use std::path::{Path, PathBuf};
+use zer0_shell::home::{Entry, Home, Icon, Layout};
+use zer0_ui::Canvas;
+use zer0_ui::color::{Color, hex};
+use zer0_ui::geom::Rect;
+use zer0_ui::icon::{self, IconSize};
+use zer0_ui::snapshot::write_png;
+use zer0_ui::theme::{self, Theme};
+use zer0_ui::widgets::{self, Battery, Hint, Net, Row, Status, Trailing};
 
 fn entries(t: &Theme, stock: Option<&Path>) -> Vec<Entry> {
     let png = |file: &str, tint: usize| match stock
@@ -100,7 +100,7 @@ fn status(c: &mut Canvas, t: &Theme, title: &str) {
 
 fn home_status() -> Status<'static> {
     Status {
-        title: "Zero",
+        title: "Zer0",
         clock: "14:32",
         battery: Some(Battery {
             percent: 87,
@@ -450,7 +450,7 @@ fn terminal(t: &Theme) -> Canvas {
 
 fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
     let mut c = home(t, stock, Layout::Grid, None);
-    status_at(&mut c, t, "Zero", 3);
+    status_at(&mut c, t, "Zer0", 3);
     let r = Rect::new(40, 30, 240, 110);
     let inner = widgets::dialog(&mut c, t, r, "Battery critically low", t.c.critical);
     icon::draw(
@@ -476,7 +476,7 @@ fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
 }
 
 fn main() {
-    let stock = std::env::var_os("CPZ_STOCK").map(PathBuf::from);
+    let stock = std::env::var_os("ZER0_STOCK").map(PathBuf::from);
     let stock = stock.as_deref();
     let out = PathBuf::from("mockups");
     let _ = std::fs::remove_dir_all(&out);

@@ -67,39 +67,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
-name = "cpz"
-version = "0.1.0"
-dependencies = [
- "cpz-shell",
-]
-
-[[package]]
-name = "cpz-core"
-version = "0.1.0"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "cpz-shell"
-version = "0.1.0"
-dependencies = [
- "cpz-core",
- "cpz-ui",
- "libc",
-]
-
-[[package]]
-name = "cpz-ui"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "libc",
- "png",
- "resvg",
-]
-
-[[package]]
 name = "crc32fast"
 version = "1.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -369,6 +336,39 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "zer0"
+version = "0.1.0"
+dependencies = [
+ "zer0-shell",
+]
+
+[[package]]
+name = "zer0-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "zer0-shell"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "zer0-core",
+ "zer0-ui",
+]
+
+[[package]]
+name = "zer0-ui"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "libc",
+ "png",
+ "resvg",
+]
 
 [[package]]
 name = "zlib-rs"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Builds cpz and installs it on a CardputerZero over SSH, next to the stock
+# Builds zer0 and installs it on a CardputerZero over SSH, next to the stock
 # applaunch package. Usage:
-#   CPZ_HOST=pi@cardputer.local scripts/deploy.sh            # install and restart
-#   CPZ_HOST=pi@cardputer.local scripts/deploy.sh rollback   # back to stock
+#   ZER0_HOST=pi@cardputer.local scripts/deploy.sh            # install and restart
+#   ZER0_HOST=pi@cardputer.local scripts/deploy.sh rollback   # back to stock
 set -euo pipefail
 
-host=${CPZ_HOST:?set CPZ_HOST, for example pi@cardputer.local}
+host=${ZER0_HOST:?set ZER0_HOST, for example pi@cardputer.local}
 root=$(cd "$(dirname "$0")/.." && pwd)
 target=aarch64-unknown-linux-musl
 user_unit='systemctl --user'
@@ -22,23 +22,23 @@ restart_launcher() {
 }
 
 if [ "${1:-}" = rollback ]; then
-    remote 'sudo rm -f /etc/systemd/user/APPLaunch.service.d/cpz.conf'
+    remote 'sudo rm -f /etc/systemd/user/APPLaunch.service.d/zer0.conf'
     restart_launcher
     echo "stock launcher restored on $host"
     exit 0
 fi
 
-cargo build --release --target "$target" -p cpz --manifest-path "$root/Cargo.toml"
-bin="$root/target/$target/release/cpz"
+cargo build --release --target "$target" -p zer0 --manifest-path "$root/Cargo.toml"
+bin="$root/target/$target/release/zer0"
 
 scp -q "$bin" "$root/packaging/applications/store.desktop" \
-    "$root/packaging/systemd/APPLaunch.service.d/cpz.conf" "$host:/tmp/"
+    "$root/packaging/systemd/APPLaunch.service.d/zer0.conf" "$host:/tmp/"
 remote 'set -e
-    sudo install -m 755 /tmp/cpz /usr/bin/cpz
-    sudo ln -sf cpz /usr/bin/cpz-shell
-    sudo install -d /usr/share/cpz/applications /etc/systemd/user/APPLaunch.service.d
-    sudo install -m 644 /tmp/store.desktop /usr/share/cpz/applications/store.desktop
-    sudo install -m 644 /tmp/cpz.conf /etc/systemd/user/APPLaunch.service.d/cpz.conf
-    rm -f /tmp/cpz /tmp/store.desktop /tmp/cpz.conf'
+    sudo install -m 755 /tmp/zer0 /usr/bin/zer0
+    sudo ln -sf zer0 /usr/bin/zer0-shell
+    sudo install -d /usr/share/zer0/applications /etc/systemd/user/APPLaunch.service.d
+    sudo install -m 644 /tmp/store.desktop /usr/share/zer0/applications/store.desktop
+    sudo install -m 644 /tmp/zer0.conf /etc/systemd/user/APPLaunch.service.d/zer0.conf
+    rm -f /tmp/zer0 /tmp/store.desktop /tmp/zer0.conf'
 restart_launcher
-echo "cpz $(git -C "$root" rev-parse --short HEAD) running on $host"
+echo "zer0 $(git -C "$root" rev-parse --short HEAD) running on $host"

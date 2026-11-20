@@ -1,5 +1,5 @@
 //! Where frames go: the panel, or numbered PNGs when the shell runs on a
-//! host for development (`cpz shell --sim DIR`).
+//! host for development (`zer0 shell --sim DIR`).
 
 use crate::canvas::Canvas;
 use crate::fb::Framebuffer;
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn a_strip_lands_in_the_full_frame() {
-        let dir = std::env::temp_dir().join(format!("cpz-frames-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zer0-frames-{}", std::process::id()));
         let mut f = Frames::new(dir.clone(), 320, 170).unwrap();
         let mut full = Canvas::new(320, 170);
         full.fill(full.bounds(), 0x1234);

@@ -1,8 +1,8 @@
 # CPZeroOS
 
-A lean OS for the M5Stack CardputerZero. This workspace is its Rust shell:
-the launcher and Settings. They replace the stock C++/LVGL APPLaunch
-and keep its app contract. The terminal is a separate project, installed as an
+A lean OS for the M5Stack CardputerZero. This workspace is **Zer0**, its Rust
+shell: the launcher and Settings, one binary called `zer0`. They replace the
+stock C++/LVGL APPLaunch and keep its app contract. The terminal is a separate project, installed as an
 app. The distro side is in `docs/distro-plan.md`.
 
 ## Writing style
@@ -27,12 +27,12 @@ battery in `/sys/class/power_supply`. Details and sources in
 
 ## Layout
 
-- `crates/cpz-ui`: RGB565 canvas, fonts and icons baked by `build.rs`, widgets,
+- `crates/zer0-ui`: RGB565 canvas, fonts and icons baked by `build.rs`, widgets,
   theme.
-- `crates/cpz-shell`: the home screen (grid or list, nav and search modes).
+- `crates/zer0-shell`: the home screen (grid or list, nav and search modes).
   `examples/mockups.rs` renders every screen to PNG.
-- `crates/cpz-core`: syscalls, event loop, input, config, apps, children.
-- `crates/cpz`: one multi-call binary. The name it runs under picks the program.
+- `crates/zer0-core`: syscalls, event loop, input, config, apps, children.
+- `crates/zer0`: one multi-call binary. The name it runs under picks the program.
 - `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC).
 - `docs/apps.md`: what the shell gives an app. The terminal is built to it.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
@@ -55,7 +55,7 @@ battery in `/sys/class/power_supply`. Details and sources in
   `LV_LINUX_*` and `APPLAUNCH_LINUX_*` env, no `EVIOCGRAB`, ESC held 3 s sends
   SIGTERM to the group, SIGKILL 3 s later.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
-  apps too. Keep unknown keys. Our keys use a `cpz.` prefix.
+  apps too. Keep unknown keys. Our keys use a `zer0.` prefix.
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`. Build only:
   `resvg`.
 
@@ -67,32 +67,32 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release --target aarch64-unknown-linux-musl   # static, rust-lld
 ```
 
-Mockups. Both env vars are optional: without `CPZ_STOCK` app tiles fall back
-to letter badges, and without `CPZ_CJK_FONT` CJK text draws as empty boxes.
+Mockups. Both env vars are optional: without `ZER0_STOCK` app tiles fall back
+to letter badges, and without `ZER0_CJK_FONT` CJK text draws as empty boxes.
 
 ```sh
-CPZ_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
-CPZ_CJK_FONT=$CPZ_STOCK/share/font/NotoSansCJK-Regular.ttc \
-cargo run -p cpz-shell --example mockups   # writes mockups/*.png
+ZER0_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
+ZER0_CJK_FONT=$ZER0_STOCK/share/font/NotoSansCJK-Regular.ttc \
+cargo run -p zer0-shell --example mockups   # writes mockups/*.png
 ```
 
 ## Device loop
 
 ```sh
-CPZ_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
-CPZ_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
-CPZ_HOST=pi@<device> scripts/measure.sh cpz       # PSS, wakeups, CPU idle
+ZER0_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
+ZER0_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
+ZER0_HOST=pi@<device> scripts/measure.sh zer0       # PSS, wakeups, CPU idle
 ```
 
-`CPZ_LOG=debug` logs the first frame time and the rows each flush writes.
+`ZER0_LOG=debug` logs the first frame time and the rows each flush writes.
 
 ## Host runs
 
-`cpz shell --sim DIR` runs the real loop on any host: keys come from a script
-on stdin (format in `crates/cpz-shell/src/sim.rs`), frames land in DIR as
+`zer0 shell --sim DIR` runs the real loop on any host: keys come from a script
+on stdin (format in `crates/zer0-shell/src/sim.rs`), frames land in DIR as
 PNGs. Point it at test apps and a scratch home so nothing real changes:
 
 ```sh
-HOME=/tmp/cpz-home CPZ_APPS_OURS=... CPZ_APPS_STOCK=... CPZ_ICON_ROOT=... \
-CPZ_LOG=debug cargo run -p cpz -- shell --sim /tmp/frames < session.txt
+HOME=/tmp/zer0-home ZER0_APPS_OURS=... ZER0_APPS_STOCK=... ZER0_ICON_ROOT=... \
+ZER0_LOG=debug cargo run -p zer0 -- shell --sim /tmp/frames < session.txt
 ```

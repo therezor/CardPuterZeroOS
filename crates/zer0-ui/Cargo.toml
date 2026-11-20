@@ -1,5 +1,5 @@
 [package]
-name = "cpz-ui"
+name = "zer0-ui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

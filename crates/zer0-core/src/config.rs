@@ -2,7 +2,7 @@
 //! read it too (the camera app reads `camera.resolution.*`, every stock app
 //! restores `brightness` and `volume` from it at start), so the format is
 //! theirs: nested objects seen as flat dotted keys. Keys we do not know are
-//! kept as they were. Our own keys start with `cpz.`.
+//! kept as they were. Our own keys start with `zer0.`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -378,17 +378,17 @@ mod tests {
 
     #[test]
     fn our_keys_go_in_beside_stock_ones() {
-        let dir = std::env::temp_dir().join(format!("cpz-config-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zer0-config-{}", std::process::id()));
         let path = dir.join("config.json");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, STOCK).unwrap();
         let mut c = Config::load(&path);
         assert_eq!(c.get_int("brightness"), Some(80));
-        c.set_str("cpz.home_layout", "list");
+        c.set_str("zer0.home_layout", "list");
         c.set_int("brightness", 60);
         c.save().unwrap();
         let c = Config::load(&path);
-        assert_eq!(c.get_str("cpz.home_layout"), Some("list"));
+        assert_eq!(c.get_str("zer0.home_layout"), Some("list"));
         assert_eq!(c.get_int("brightness"), Some(60));
         assert_eq!(c.get_int("camera.resolution.height"), Some(720));
         std::fs::remove_dir_all(&dir).unwrap();

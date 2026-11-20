@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Measures a launcher on the device: memory (PSS), wakeups and CPU while idle.
-# Run the same way for stock and for cpz, so the numbers compare. Usage:
-#   CPZ_HOST=pi@cardputer.local scripts/measure.sh M5CardputerZero-APPLaunch
-#   CPZ_HOST=pi@cardputer.local scripts/measure.sh cpz
+# Run the same way for stock and for zer0, so the numbers compare. Usage:
+#   ZER0_HOST=pi@cardputer.local scripts/measure.sh M5CardputerZero-APPLaunch
+#   ZER0_HOST=pi@cardputer.local scripts/measure.sh zer0
 set -euo pipefail
 
-host=${CPZ_HOST:?set CPZ_HOST}
-name=${1:?process name, for example cpz or M5CardputerZero-APPLaunch}
+host=${ZER0_HOST:?set ZER0_HOST}
+name=${1:?process name, for example zer0 or M5CardputerZero-APPLaunch}
 secs=${2:-60}
 
 ssh "$host" bash -s -- "$name" "$secs" <<'REMOTE'

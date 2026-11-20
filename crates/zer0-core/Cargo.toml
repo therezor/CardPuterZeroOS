@@ -1,11 +1,9 @@
 [package]
-name = "cpz-shell"
+name = "zer0-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-cpz-core.workspace = true
-cpz-ui.workspace = true
 libc.workspace = true
