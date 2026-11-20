@@ -3,6 +3,7 @@
 //! One thread, one `poll`. While idle the only timer is the clock's minute.
 
 use crate::home::{Entry, Home, Icon, Layout, Mode};
+use crate::sim::Script;
 use cpz_core::apps::{self, App, Dirs, IconRef};
 use cpz_core::backlight::Backlight;
 use cpz_core::battery::{self, LowBattery, Reading, Warning};
@@ -13,10 +14,12 @@ use cpz_core::evdev;
 use cpz_core::keys::{self, Key, Keyboard, State, code};
 use cpz_core::rt;
 use cpz_core::status::{self, Net, Watch};
+use cpz_ui::display::{Display, Frames};
 use cpz_ui::fb::{self, Framebuffer};
 use cpz_ui::theme::{self, Theme};
 use cpz_ui::widgets::{self, Battery, Status};
 use cpz_ui::{Canvas, Rect, snapshot};
+use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_DARK_SECS: i64 = 30;
@@ -25,9 +28,19 @@ const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
 const STATE_DIR: &str = ".local/state/cpz";
 
-pub fn main() -> i32 {
+/// `cpz shell`, or `cpz shell --sim DIR` on a host: keys from a script on
+/// stdin (see `sim.rs`), frames saved as PNGs in DIR.
+pub fn main(args: &[String]) -> i32 {
     let t0 = rt::now_ms();
-    match Shell::start(t0) {
+    let sim = match args {
+        [flag, dir] if flag == "--sim" => Some(PathBuf::from(dir)),
+        [] => None,
+        _ => {
+            eprintln!("usage: cpz shell [--sim DIR]");
+            return 2;
+        }
+    };
+    match Shell::start(t0, sim) {
         Ok(mut s) => s.run(),
         Err(e) => {
             eprintln!("cpz shell: {e}");
@@ -44,11 +57,57 @@ enum Screen {
     Off,
 }
 
+/// Where keys come from: the keyboard, or a script in `--sim`.
+enum Input {
+    Device(evdev::Device),
+    Script(Script),
+}
+
+impl Input {
+    fn fd(&self) -> RawFd {
+        match self {
+            Input::Device(d) => d.fd(),
+            Input::Script(s) => s.fd(),
+        }
+    }
+
+    fn next_at(&self) -> Option<u64> {
+        match self {
+            Input::Device(_) => None,
+            Input::Script(s) => s.next_at(),
+        }
+    }
+
+    fn keys(&mut self, now: u64, readable: bool, out: &mut Vec<(u16, i32)>) {
+        match self {
+            Input::Device(d) if readable => d.read_keys(out),
+            Input::Device(_) => {}
+            Input::Script(s) => {
+                if readable {
+                    s.read(now);
+                }
+                s.due(now, out);
+            }
+        }
+    }
+
+    fn finished(&self) -> bool {
+        matches!(self, Input::Script(s) if s.finished())
+    }
+
+    fn path(&self) -> String {
+        match self {
+            Input::Device(d) => d.path.to_string_lossy().into_owned(),
+            Input::Script(_) => "/dev/null".into(),
+        }
+    }
+}
+
 struct Shell {
     t: Theme,
     canvas: Canvas,
-    fb: Framebuffer,
-    dev: evdev::Device,
+    display: Box<dyn Display>,
+    input: Input,
     kb: Keyboard,
     signals: rt::Signals,
     watches: Vec<Watch>,
@@ -103,7 +162,7 @@ fn load_pins() -> Vec<String> {
 }
 
 impl Shell {
-    fn start(t0: u64) -> Result<Shell, String> {
+    fn start(t0: u64, sim: Option<PathBuf>) -> Result<Shell, String> {
         child::become_subreaper();
         let signals =
             rt::Signals::install(&[libc::SIGCHLD, libc::SIGTERM, libc::SIGINT, libc::SIGHUP])
@@ -119,11 +178,23 @@ impl Shell {
             .copied()
             .unwrap_or(theme::MINT);
         let t = Theme::new(palette);
-        let fb_path = fb::find();
-        let fb = Framebuffer::open(&fb_path).map_err(|e| format!("{}: {e}", fb_path.display()))?;
-        let kb_path = evdev::find().ok_or("no keyboard found")?;
-        let dev =
-            evdev::Device::open(&kb_path).map_err(|e| format!("{}: {e}", kb_path.display()))?;
+        let (display, input): (Box<dyn Display>, Input) = match &sim {
+            Some(dir) => {
+                let frames = Frames::new(dir.clone(), t.m.width, t.m.height)
+                    .map_err(|e| format!("{}: {e}", dir.display()))?;
+                (Box::new(frames), Input::Script(Script::stdin()))
+            }
+            None => {
+                let fb_path = fb::find();
+                let fb = Framebuffer::open(&fb_path)
+                    .map_err(|e| format!("{}: {e}", fb_path.display()))?;
+                let kb_path = evdev::find().ok_or("no keyboard found")?;
+                let dev = evdev::Device::open(&kb_path)
+                    .map_err(|e| format!("{}: {e}", kb_path.display()))?;
+                (Box::new(fb), Input::Device(dev))
+            }
+        };
+        let on_device = sim.is_none();
         let layout = config
             .get_str("cpz.home_layout")
             .and_then(Layout::from_config)
@@ -134,24 +205,33 @@ impl Shell {
             .to_string();
         let dark_secs = config.get_int("dark_time").unwrap_or(DEFAULT_DARK_SECS);
 
-        let watches = watches(&Dirs::default());
+        let dirs = Dirs::from_env();
+        let watches = if on_device {
+            watches(&dirs)
+        } else {
+            Vec::new()
+        };
 
         let mut s = Shell {
             canvas: Canvas::new(t.m.width, t.m.height),
             home: Home::new(Vec::new(), layout, &t),
             t,
-            fb,
-            dev,
+            display,
+            input,
             kb: Keyboard::load(),
             signals,
             watches,
-            dirs: Dirs::default(),
+            dirs,
             apps: Vec::new(),
             pins: load_pins(),
             terminal,
-            backlight: Backlight::find(Path::new("/sys/class/backlight")),
+            backlight: on_device
+                .then(|| Backlight::find(Path::new("/sys/class/backlight")))
+                .flatten(),
             saved_raw: None,
-            battery_dir: battery::find(Path::new("/sys/class/power_supply")),
+            battery_dir: on_device
+                .then(|| battery::find(Path::new("/sys/class/power_supply")))
+                .flatten(),
             battery: None,
             low: LowBattery::default(),
             net: Net::None,
@@ -245,6 +325,9 @@ impl Shell {
             if self.dirty && self.screen != Screen::Off {
                 self.draw();
             }
+            if self.input.finished() {
+                return 0;
+            }
             let now = rt::now_ms();
             let deadline = rt::earliest([
                 (self.screen != Screen::Off).then_some(self.clock_at),
@@ -256,8 +339,9 @@ impl Shell {
                     .filter(|_| self.screen == Screen::Home)
                     .map(|d| self.last_input + d),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
+                self.input.next_at(),
             ]);
-            let mut fds = vec![rt::pollfd(self.dev.fd()), rt::pollfd(self.signals.fd())];
+            let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             fds.extend(self.watches.iter().map(|w| rt::pollfd(w.fd())));
             if let Err(e) = rt::wait(&mut fds, deadline) {
                 eprintln!("cpz shell: poll: {e}");
@@ -284,13 +368,11 @@ impl Shell {
                 self.rescan_at = Some(now + RESCAN_DEBOUNCE_MS);
                 self.refresh_status();
             }
-            if rt::readable(&fds[0]) {
-                keys_buf.clear();
-                self.dev.read_keys(&mut keys_buf);
-                for &(c, v) in &keys_buf {
-                    if let Some(k) = self.kb.event(c, v, now) {
-                        self.on_key(k, now);
-                    }
+            keys_buf.clear();
+            self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
+            for &(c, v) in &keys_buf {
+                if let Some(k) = self.kb.event(c, v, now) {
+                    self.on_key(k, now);
                 }
             }
             self.on_timers(now);
@@ -588,8 +670,8 @@ impl Shell {
     /// low-battery countdown, and only ESC and the global keys are read.
     fn run_app(&mut self, app: &App) {
         let argv = child::argv(app, &self.terminal);
-        let fb_path = self.fb.path.to_string_lossy().into_owned();
-        let kb_path = self.dev.path.to_string_lossy().into_owned();
+        let fb_path = self.display.device();
+        let kb_path = self.input.path();
         let dev = Devices {
             fb: &fb_path,
             keyboard: &kb_path,
@@ -614,8 +696,12 @@ impl Shell {
         let mut strip = Canvas::new(self.t.m.width, self.t.m.bar_h + 4);
         loop {
             let countdown = self.low.warning() == Warning::Countdown;
-            let deadline = rt::earliest([esc.next_at(), countdown.then(|| rt::now_ms() + 1000)]);
-            let mut fds = [rt::pollfd(self.dev.fd()), rt::pollfd(self.signals.fd())];
+            let deadline = rt::earliest([
+                esc.next_at(),
+                countdown.then(|| rt::now_ms() + 1000),
+                self.input.next_at(),
+            ]);
+            let mut fds = [rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             if rt::wait(&mut fds, deadline).is_err() {
                 break;
             }
@@ -636,9 +722,9 @@ impl Shell {
             if done {
                 break;
             }
-            if rt::readable(&fds[0]) {
-                keys_buf.clear();
-                self.dev.read_keys(&mut keys_buf);
+            keys_buf.clear();
+            self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
+            {
                 for &(c, v) in &keys_buf {
                     if c == code::ESC && v != 2 {
                         esc_down = v == 1;
@@ -666,7 +752,7 @@ impl Shell {
                     "Hold ESC to close the app",
                     self.t.c.warning,
                 );
-                self.fb.flush(&strip, r);
+                self.display.flush(&strip, r);
             }
             if d.terminate {
                 running.terminate();
@@ -682,7 +768,7 @@ impl Shell {
                     self.low.seconds_left(now)
                 );
                 let r = widgets::banner(&mut strip, &self.t, &text, self.t.c.critical);
-                self.fb.flush(&strip, r);
+                self.display.flush(&strip, r);
                 if self.low.take_shutdown(now) {
                     child::fire(&["systemctl", "poweroff", "-i"]);
                 }
@@ -716,7 +802,7 @@ impl Shell {
                 }
             }
         }
-        let rows = self.fb.flush(&self.canvas, self.canvas.bounds());
+        let rows = self.display.flush(&self.canvas, self.canvas.bounds());
         self.dirty = false;
         if self.debug {
             eprintln!("cpz shell: flushed {rows} rows");

@@ -13,6 +13,7 @@ pub struct Mask4<'a> {
     pub off: usize,
 }
 
+#[derive(Clone)]
 pub struct Canvas {
     w: i32,
     h: i32,
@@ -49,6 +50,13 @@ impl Canvas {
     pub fn row(&self, y: i32) -> &[Color] {
         let s = (y * self.w) as usize;
         &self.px[s..s + self.w as usize]
+    }
+
+    /// Copies the first `w` pixels of row `y` from `src`.
+    pub fn copy_row_from(&mut self, src: &Canvas, y: i32, w: i32) {
+        let n = w.min(self.w).min(src.w) as usize;
+        let d = (y * self.w) as usize;
+        self.px[d..d + n].copy_from_slice(&src.row(y)[..n]);
     }
 
     pub fn clip(&self) -> Rect {

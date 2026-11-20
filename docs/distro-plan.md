@@ -229,7 +229,7 @@ The bigger leaks are in the base OS and its defaults:
 | ADB gadget | Serial derived from `machine-id` hash | Already off by default; keep off |
 | `systemd-coredump`, `popularity-contest`, `reportbug` | Crash/usage reporting | Not installed (minbase); `kernel.core_pattern=|/bin/false` |
 | Kernel log | Readable by any user | Set `kernel.dmesg_restrict=1` and `kernel.kptr_restrict=2` explicitly (Debian kernels default to restrict; the rpt config is unverified) |
-| M5 Imager (host tool) | RPi Imager telemetry stripped in the fork. OS customisation uses `init_format: "systemd"` (a `firstrun.sh` on the FAT partition calling `raspberrypi-sys-mods` helpers), **not cloud-init** | We publish `.img.xz` + `bmap`; flash with `bmaptool`/`dd`/any imager. Imager customisation support is open question 3 |
+| M5 Imager (host tool) | RPi Imager telemetry stripped in the fork. OS customisation uses `init_format: "systemd"` (a `firstrun.sh` on the FAT partition calling `raspberrypi-sys-mods` helpers), **not cloud-init** | **Decided: no Imager customisation; all setup happens in the launcher.** Don't ship `raspberrypi-sys-mods`. Our os-list entry uses `init_format: "none"`. We publish `.img.xz` + `bmap`; flash with `bmaptool`/`dd`/any imager, and flashing docs say to skip OS customisation |
 
 **Logging design (default off, toggle in the launcher):**
 
@@ -288,7 +288,9 @@ The bigger leaks are in the base OS and its defaults:
   check its GPLv3 / royalty-free / commercial license fits) or `embedded-graphics` with our own
   widgets for the smallest footprint. Avoid `egui`/`iced`: they redraw continuously or need a GPU.
 - Owns the privacy settings: logs (§7), updates (manual), Wi-Fi MAC policy, SSH/ADB/BT toggles,
-  first-boot setup (user, password, timezone, regdomain).
+  first-boot setup **on the device** (keyboard tutorial, user + password, Wi-Fi, timezone, regdomain,
+  SSH/ADB opt-in). The only setup path: there is no Imager customisation or cloud-init. Until setup
+  completes, SSH and ADB stay off, and the only network connection is the Wi-Fi the user joins in setup.
 
 ## 9. Baseline to measure on a device (before changing anything)
 
@@ -330,9 +332,6 @@ Repeat the same set on each build to track the effect of every change.
 
 1. Must stock M5 apps and the AppStore keep working? This decides Debian vs Buildroot.
 2. Do we have a device to baseline on?
-3. Support M5/RPi Imager OS customisation (user, Wi-Fi, SSH)? Yes means keeping
-   `raspberrypi-sys-mods` for `firstrun.sh`. No means the image sets `init_format: none` and all
-   setup happens on-device in the launcher.
 
 ## Sources
 

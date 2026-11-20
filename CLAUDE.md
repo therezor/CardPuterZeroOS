@@ -83,3 +83,14 @@ CPZ_HOST=pi@<device> scripts/measure.sh cpz       # PSS, wakeups, CPU idle
 ```
 
 `CPZ_LOG=debug` logs the first frame time and the rows each flush writes.
+
+## Host runs
+
+`cpz shell --sim DIR` runs the real loop on any host: keys come from a script
+on stdin (format in `crates/cpz-shell/src/sim.rs`), frames land in DIR as
+PNGs. Point it at test apps and a scratch home so nothing real changes:
+
+```sh
+HOME=/tmp/cpz-home CPZ_APPS_OURS=... CPZ_APPS_STOCK=... CPZ_ICON_ROOT=... \
+CPZ_LOG=debug cargo run -p cpz -- shell --sim /tmp/frames < session.txt
+```

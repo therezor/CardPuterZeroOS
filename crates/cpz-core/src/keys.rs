@@ -180,6 +180,55 @@ fn us(code: u16, shift: bool) -> Option<char> {
     }
 }
 
+const US_ROWS: &[(u16, &str)] = &[
+    (2, "1234567890"),
+    (16, "qwertyuiop"),
+    (30, "asdfghjkl"),
+    (44, "zxcvbnm"),
+];
+
+/// The code that types `c` without Shift. For key scripts and tests.
+pub fn code_for_char(c: char) -> Option<u16> {
+    if c == ' ' {
+        return Some(code::SPACE);
+    }
+    US_ROWS
+        .iter()
+        .find_map(|&(start, row)| row.find(c).map(|i| start + i as u16))
+}
+
+/// A key by name, as a key script writes it: `enter`, `esc`, `fn`, `a`...
+pub fn code_for_name(name: &str) -> Option<u16> {
+    Some(match name {
+        "enter" => code::ENTER,
+        "esc" => code::ESC,
+        "tab" => code::TAB,
+        "backspace" => code::BACKSPACE,
+        "space" => code::SPACE,
+        "up" => code::UP,
+        "down" => code::DOWN,
+        "left" => code::LEFT,
+        "right" => code::RIGHT,
+        "fn" => code::FN,
+        "shift" => code::LEFTSHIFT,
+        "ctrl" => code::LEFTCTRL,
+        "alt" => code::LEFTALT,
+        "volup" => code::VOLUMEUP,
+        "voldown" => code::VOLUMEDOWN,
+        "mute" => code::MUTE,
+        "brightup" => code::BRIGHTNESSUP,
+        "brightdown" => code::BRIGHTNESSDOWN,
+        "print" => code::PRINT,
+        _ => {
+            let mut cs = name.chars();
+            match (cs.next(), cs.next()) {
+                (Some(c), None) => return code_for_char(c),
+                _ => return None,
+            }
+        }
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
     Up,
@@ -450,6 +499,17 @@ mod tests {
         assert_eq!(k.repeat_at(), None);
         k.event(code::ESC, 1, 2000);
         assert_eq!(k.repeat_at(), None);
+    }
+
+    #[test]
+    fn names_map_back_to_codes() {
+        let mut k = kb();
+        for c in "az09 ".chars() {
+            let code = code_for_char(c).unwrap();
+            assert_eq!(press(&mut k, code).ch, Some(c));
+        }
+        assert_eq!(code_for_name("enter"), Some(code::ENTER));
+        assert_eq!(code_for_name("nope"), None);
     }
 
     #[test]

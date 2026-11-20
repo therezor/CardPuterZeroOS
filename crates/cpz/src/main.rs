@@ -16,7 +16,10 @@ fn main() {
     };
     match program.as_str() {
         "--version" | "version" => println!("cpz {}", env!("CARGO_PKG_VERSION")),
-        "shell" | "cpz-shell" => std::process::exit(cpz_shell::run::main()),
+        "shell" | "cpz-shell" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(cpz_shell::run::main(&rest))
+        }
         _ => {
             eprintln!("usage: cpz <shell|version>");
             std::process::exit(2);

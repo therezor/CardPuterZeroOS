@@ -28,6 +28,20 @@ impl Default for Dirs {
     }
 }
 
+impl Dirs {
+    /// The defaults, each overridable for tests and host runs:
+    /// `CPZ_APPS_OURS`, `CPZ_APPS_STOCK`, `CPZ_ICON_ROOT`.
+    pub fn from_env() -> Dirs {
+        let d = Dirs::default();
+        let get = |k: &str, v: PathBuf| std::env::var_os(k).map(PathBuf::from).unwrap_or(v);
+        Dirs {
+            ours: get("CPZ_APPS_OURS", d.ours),
+            stock: get("CPZ_APPS_STOCK", d.stock),
+            icon_root: get("CPZ_ICON_ROOT", d.icon_root),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IconRef {
     /// A PNG on disk.
