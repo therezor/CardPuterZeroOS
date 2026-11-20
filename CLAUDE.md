@@ -1,4 +1,4 @@
-# CPZeroOS
+# CardPuterZeroOS
 
 A lean OS for the M5Stack CardputerZero. This workspace is **Gh0stdeck**, its Rust
 shell: the launcher and Settings, one binary called `gh0st`. They replace the

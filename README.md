@@ -1,4 +1,4 @@
-# CPZeroOS
+# CardPuterZeroOS
 
 A lean OS for the M5Stack CardputerZero. Its shell is Gh0stdeck, a Rust
 replacement for the stock C++/LVGL launcher (APPLaunch). Stock apps and the
