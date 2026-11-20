@@ -31,9 +31,11 @@ project, is built against this page.
   | `LV_LINUX_KEYBOARD_DEVICE`, `APPLAUNCH_LINUX_KEYBOARD_DEVICE` | the keyboard's evdev node |
   | `APPLAUNCH_LINUX_KEYBOARD_MAP` | the symbol-layer map file |
   | `GH0ST_SYSPLAUSE` | `1` when a terminal should wait for a key after its command exits |
+  | `CAMERA_APP_KEYBOARD_GRAB` | `false`: the stock camera grabs the keyboard otherwise |
 
 - The keyboard is never grabbed while the app is in front: the app reads it
-  directly.
+  directly. An app must not grab it either, or Fn+K, ESC held and the
+  volume keys stop working.
 - While an app is in front the shell draws only over it: a banner across the
   top while ESC is held or the battery is about to run out, and a toast for
   brightness, volume, mute and screenshot keys. When one goes, the shell puts

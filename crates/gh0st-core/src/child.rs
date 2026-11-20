@@ -56,7 +56,10 @@ pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<i32> {
         .env("LV_LINUX_KEYBOARD_DEVICE", dev.keyboard)
         .env("APPLAUNCH_LINUX_KEYBOARD_DEVICE", dev.keyboard)
         .env("APPLAUNCH_LINUX_KEYBOARD_MAP", dev.keymap)
-        .env("GH0ST_SYSPLAUSE", if pause { "1" } else { "0" });
+        .env("GH0ST_SYSPLAUSE", if pause { "1" } else { "0" })
+        // The stock camera grabs the keyboard unless told not to, and a grab
+        // cuts the shell off from Fn+K, ESC held and the volume keys.
+        .env("CAMERA_APP_KEYBOARD_GRAB", "false");
     if Path::new(APP_CWD).is_dir() {
         cmd.current_dir(APP_CWD);
     }
