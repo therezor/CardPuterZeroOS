@@ -1,9 +1,10 @@
 [package]
-name = "zer0-core"
+name = "gh0st"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description.workspace = true
 
 [dependencies]
-libc.workspace = true
+gh0st-shell.workspace = true

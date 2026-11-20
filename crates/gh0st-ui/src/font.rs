@@ -237,7 +237,7 @@ mod fallback {
     /// Maps the font file rather than reading it: a CJK face is 19 MB, and only
     /// the pages for the glyphs in use are ever read.
     fn load() -> Option<FontRef<'static>> {
-        let env = std::env::var("ZER0_CJK_FONT").ok();
+        let env = std::env::var("GH0ST_CJK_FONT").ok();
         let path = env
             .iter()
             .map(String::as_str)

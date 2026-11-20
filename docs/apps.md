@@ -6,13 +6,13 @@ project, is built against this page.
 ## Finding apps
 
 - `.desktop` files in `/usr/share/APPLaunch/applications` (stock and Store
-  installs) and `/usr/share/zer0/applications` (ours).
+  installs) and `/usr/share/gh0st/applications` (ours).
 - Keys read: `Name`, `Exec`, `Icon`, `Comment`, `TryExec`, `Terminal`,
   `Sysplause`, `Hidden`, `NoDisplay`, `Type` (must be `Application`).
 - `Exec` follows the stock rule: no `| & ; < > $ \` or backtick, and it starts
   with an absolute path to an executable or one of `bash python3 vim vi nano sh`.
 - `Icon` is a PNG path, absolute or relative to `/usr/share/APPLaunch`, or
-  `zer0:<name>` for a symbol built into zer0. A missing icon shows the first
+  `gh0st:<name>` for a symbol built into gh0st. A missing icon shows the first
   letter of the name (stock drops such an entry).
 - `TryExec` names a program that must exist, or the entry is hidden.
 - An app with `Terminal=true` shows only when a terminal is installed.
@@ -30,7 +30,7 @@ project, is built against this page.
   | `LV_LINUX_FBDEV_DEVICE`, `APPLAUNCH_LINUX_FBDEV_DEVICE` | the panel, usually `/dev/fb_lcd` |
   | `LV_LINUX_KEYBOARD_DEVICE`, `APPLAUNCH_LINUX_KEYBOARD_DEVICE` | the keyboard's evdev node |
   | `APPLAUNCH_LINUX_KEYBOARD_MAP` | the symbol-layer map file |
-  | `ZER0_SYSPLAUSE` | `1` when a terminal should wait for a key after its command exits |
+  | `GH0ST_SYSPLAUSE` | `1` when a terminal should wait for a key after its command exits |
 
 - The keyboard is never grabbed: the app reads it directly.
 - While an app runs the shell draws nothing, except a banner across the top
@@ -47,9 +47,9 @@ project, is built against this page.
 
 ## Terminal
 
-- Command from `zer0.terminal` in config.json, default `/usr/bin/zer0-term -e`.
+- Command from `gh0st.terminal` in config.json, default `/usr/bin/gh0st-term -e`.
 - A `Terminal=true` entry runs as `<terminal> /bin/sh -c "<Exec>"`.
-- `ZER0_SYSPLAUSE=1` means: after the command exits, wait for a key, then exit.
+- `GH0ST_SYSPLAUSE=1` means: after the command exits, wait for a key, then exit.
 
 ## Config
 

@@ -1,14 +1,14 @@
 //! The home screen: every app as a grid of tiles or a list of rows, the
-//! user's pick (`zer0.home_layout`). Nav mode moves and opens. Search mode,
+//! user's pick (`gh0st.home_layout`). Nav mode moves and opens. Search mode,
 //! entered with S, filters as you type.
 
 use crate::search::score;
+use gh0st_ui::Canvas;
+use gh0st_ui::geom::Rect;
+use gh0st_ui::image::Image;
+use gh0st_ui::theme::Theme;
+use gh0st_ui::widgets::{self, AppRow, Hint, Status, Visual};
 use std::rc::Rc;
-use zer0_ui::Canvas;
-use zer0_ui::geom::Rect;
-use zer0_ui::image::Image;
-use zer0_ui::theme::Theme;
-use zer0_ui::widgets::{self, AppRow, Hint, Status, Visual};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layout {

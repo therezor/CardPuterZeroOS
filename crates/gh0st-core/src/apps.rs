@@ -21,7 +21,7 @@ pub struct Dirs {
 impl Default for Dirs {
     fn default() -> Dirs {
         Dirs {
-            ours: PathBuf::from("/usr/share/zer0/applications"),
+            ours: PathBuf::from("/usr/share/gh0st/applications"),
             stock: PathBuf::from("/usr/share/APPLaunch/applications"),
             icon_root: PathBuf::from("/usr/share/APPLaunch"),
         }
@@ -30,14 +30,14 @@ impl Default for Dirs {
 
 impl Dirs {
     /// The defaults, each overridable for tests and host runs:
-    /// `ZER0_APPS_OURS`, `ZER0_APPS_STOCK`, `ZER0_ICON_ROOT`.
+    /// `GH0ST_APPS_OURS`, `GH0ST_APPS_STOCK`, `GH0ST_ICON_ROOT`.
     pub fn from_env() -> Dirs {
         let d = Dirs::default();
         let get = |k: &str, v: PathBuf| std::env::var_os(k).map(PathBuf::from).unwrap_or(v);
         Dirs {
-            ours: get("ZER0_APPS_OURS", d.ours),
-            stock: get("ZER0_APPS_STOCK", d.stock),
-            icon_root: get("ZER0_ICON_ROOT", d.icon_root),
+            ours: get("GH0ST_APPS_OURS", d.ours),
+            stock: get("GH0ST_APPS_STOCK", d.stock),
+            icon_root: get("GH0ST_ICON_ROOT", d.icon_root),
         }
     }
 }
@@ -46,7 +46,7 @@ impl Dirs {
 pub enum IconRef {
     /// A PNG on disk.
     Path(PathBuf),
-    /// A symbol baked into zer0-ui: `Icon=zer0:settings`.
+    /// A symbol baked into gh0st-ui: `Icon=gh0st:settings`.
     Symbol(String),
     /// Nothing usable. The shell draws the first letter.
     None,
@@ -211,7 +211,7 @@ pub fn scan_with(
 }
 
 fn resolve_icon(icon: &str, root: &Path) -> IconRef {
-    if let Some(sym) = icon.strip_prefix("zer0:") {
+    if let Some(sym) = icon.strip_prefix("gh0st:") {
         return IconRef::Symbol(sym.to_string());
     }
     if icon.is_empty() {
@@ -248,7 +248,8 @@ mod tests {
 
     impl Tree {
         fn new(tag: &str) -> Tree {
-            let root = std::env::temp_dir().join(format!("zer0-apps-{tag}-{}", std::process::id()));
+            let root =
+                std::env::temp_dir().join(format!("gh0st-apps-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             for d in ["ours", "stock", "share/images"] {
                 std::fs::create_dir_all(root.join(d)).unwrap();
@@ -289,8 +290,8 @@ mod tests {
             "ours",
             "settings.desktop",
             "Settings",
-            "/usr/bin/zer0 settings",
-            "Icon=zer0:settings\n",
+            "/usr/bin/gh0st settings",
+            "Icon=gh0st:settings\n",
         );
         t.add("stock", "files.desktop", "Files", "/bin/files", "");
         let c = Config::default();

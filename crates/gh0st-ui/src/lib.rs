@@ -1,4 +1,4 @@
-//! Pixels for every zer0 program: an RGB565 canvas, baked fonts and icons,
+//! Pixels for every gh0st program: an RGB565 canvas, baked fonts and icons,
 //! the shared widgets, and the ways a frame leaves the process.
 
 pub mod canvas;

@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub const APP_CWD: &str = "/usr/share/APPLaunch";
-pub const DEFAULT_TERMINAL: &str = "/usr/bin/zer0-term -e";
+pub const DEFAULT_TERMINAL: &str = "/usr/bin/gh0st-term -e";
 
 /// Devices a child should use, passed in the env stock apps read.
 pub struct Devices<'a> {
@@ -46,7 +46,7 @@ pub struct Running {
 }
 
 /// `pause` asks a terminal app to wait for a key after its command exits
-/// (stock `Sysplause`). It reaches the terminal as `ZER0_SYSPLAUSE=1`.
+/// (stock `Sysplause`). It reaches the terminal as `GH0ST_SYSPLAUSE=1`.
 pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<Running> {
     let (prog, args) = argv
         .split_first()
@@ -60,7 +60,7 @@ pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<Running>
         .env("LV_LINUX_KEYBOARD_DEVICE", dev.keyboard)
         .env("APPLAUNCH_LINUX_KEYBOARD_DEVICE", dev.keyboard)
         .env("APPLAUNCH_LINUX_KEYBOARD_MAP", dev.keymap)
-        .env("ZER0_SYSPLAUSE", if pause { "1" } else { "0" });
+        .env("GH0ST_SYSPLAUSE", if pause { "1" } else { "0" });
     if Path::new(APP_CWD).is_dir() {
         cmd.current_dir(APP_CWD);
     }
@@ -169,10 +169,10 @@ mod tests {
     fn ours_run_direct_and_third_party_through_sh() {
         assert_eq!(
             argv(
-                &app("/usr/bin/zer0 settings", true, false),
+                &app("/usr/bin/gh0st settings", true, false),
                 DEFAULT_TERMINAL
             ),
-            ["/usr/bin/zer0", "settings"]
+            ["/usr/bin/gh0st", "settings"]
         );
         assert_eq!(
             argv(&app("python3 ~/g.py", false, false), DEFAULT_TERMINAL),
@@ -184,7 +184,7 @@ mod tests {
     fn terminal_entries_run_inside_the_terminal() {
         assert_eq!(
             argv(&app("vim", false, true), DEFAULT_TERMINAL),
-            ["/usr/bin/zer0-term", "-e", "/bin/sh", "-c", "vim"]
+            ["/usr/bin/gh0st-term", "-e", "/bin/sh", "-c", "vim"]
         );
     }
 

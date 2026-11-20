@@ -228,8 +228,8 @@ mod tests {
     #[test]
     fn exec_splits_into_argv_without_field_codes() {
         assert_eq!(
-            split_exec("/usr/bin/zer0 settings"),
-            ["/usr/bin/zer0", "settings"]
+            split_exec("/usr/bin/gh0st settings"),
+            ["/usr/bin/gh0st", "settings"]
         );
         assert_eq!(split_exec("app \"two words\" %U"), ["app", "two words"]);
         assert_eq!(

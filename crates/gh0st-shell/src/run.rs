@@ -4,37 +4,37 @@
 
 use crate::home::{Entry, Home, Icon, Layout, Mode, Picture};
 use crate::sim::Script;
+use gh0st_core::apps::{self, App, Dirs, IconRef};
+use gh0st_core::backlight::Backlight;
+use gh0st_core::battery::{self, LowBattery, Reading, Warning};
+use gh0st_core::child::{self, Devices};
+use gh0st_core::config::{self, Config};
+use gh0st_core::esc::EscHold;
+use gh0st_core::evdev;
+use gh0st_core::keys::{self, Key, Keyboard, State, code};
+use gh0st_core::rt;
+use gh0st_core::status::{self, Net, Watch};
+use gh0st_ui::display::{Display, Frames};
+use gh0st_ui::fb::{self, Framebuffer};
+use gh0st_ui::theme::{self, Theme};
+use gh0st_ui::widgets::{self, Battery, Status};
+use gh0st_ui::{Canvas, Rect, snapshot};
 use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
-use zer0_core::apps::{self, App, Dirs, IconRef};
-use zer0_core::backlight::Backlight;
-use zer0_core::battery::{self, LowBattery, Reading, Warning};
-use zer0_core::child::{self, Devices};
-use zer0_core::config::{self, Config};
-use zer0_core::esc::EscHold;
-use zer0_core::evdev;
-use zer0_core::keys::{self, Key, Keyboard, State, code};
-use zer0_core::rt;
-use zer0_core::status::{self, Net, Watch};
-use zer0_ui::display::{Display, Frames};
-use zer0_ui::fb::{self, Framebuffer};
-use zer0_ui::theme::{self, Theme};
-use zer0_ui::widgets::{self, Battery, Status};
-use zer0_ui::{Canvas, Rect, snapshot};
 
 const DEFAULT_DARK_SECS: i64 = 30;
 const TOAST_MS: u64 = 1500;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
-const STATE_DIR: &str = ".local/state/zer0";
+const STATE_DIR: &str = ".local/state/gh0st";
 /// How often to look for a leftover group member once the app's leader has
 /// exited: such a process may not be our child, so its exit sends no SIGCHLD.
 const GROUP_RECHECK_MS: u64 = 200;
 
-/// `zer0 shell`, or `zer0 shell --sim DIR` on a host: keys from a script on
+/// `gh0st shell`, or `gh0st shell --sim DIR` on a host: keys from a script on
 /// stdin (see `sim.rs`), frames saved as PNGs in DIR.
 pub fn main(args: &[String]) -> i32 {
     let t0 = rt::now_ms();
@@ -42,14 +42,14 @@ pub fn main(args: &[String]) -> i32 {
         [flag, dir] if flag == "--sim" => Some(PathBuf::from(dir)),
         [] => None,
         _ => {
-            eprintln!("usage: zer0 shell [--sim DIR]");
+            eprintln!("usage: gh0st shell [--sim DIR]");
             return 2;
         }
     };
     match Shell::start(t0, sim) {
         Ok(mut s) => s.run(),
         Err(e) => {
-            eprintln!("zer0 shell: {e}");
+            eprintln!("gh0st shell: {e}");
             1
         }
     }
@@ -246,7 +246,7 @@ impl Shell {
             enter_armed: false,
             swallow_release: None,
             rescan_at: None,
-            debug: std::env::var("ZER0_LOG").is_ok_and(|v| v == "debug"),
+            debug: std::env::var("GH0ST_LOG").is_ok_and(|v| v == "debug"),
             t0,
             first_frame: true,
             config,
@@ -324,7 +324,7 @@ impl Shell {
             .bytes()
             .fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize));
         let icon = match &a.icon {
-            IconRef::Symbol(name) => match zer0_ui::icon::ICON_NAMES
+            IconRef::Symbol(name) => match gh0st_ui::icon::ICON_NAMES
                 .iter()
                 .find(|n| **n == name.as_str())
             {
@@ -385,7 +385,7 @@ impl Shell {
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             fds.extend(self.watches.iter().map(|(_, w)| rt::pollfd(w.fd())));
             if let Err(e) = rt::wait(&mut fds, deadline) {
-                eprintln!("zer0 shell: poll: {e}");
+                eprintln!("gh0st shell: poll: {e}");
                 return 1;
             }
             let now = rt::now_ms();
@@ -742,7 +742,7 @@ impl Shell {
         };
         if self.debug {
             eprintln!(
-                "zer0 shell: started {} (pgid {}) at {}",
+                "gh0st shell: started {} (pgid {}) at {}",
                 app.entry.name,
                 running.pgid,
                 rt::now_ms() - self.t0
@@ -765,7 +765,7 @@ impl Shell {
             ]);
             let mut fds = [rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             if let Err(e) = rt::wait(&mut fds, deadline) {
-                eprintln!("zer0 shell: poll while {} runs: {e}", app.entry.name);
+                eprintln!("gh0st shell: poll while {} runs: {e}", app.entry.name);
                 break;
             }
             let now = rt::now_ms();
@@ -854,7 +854,7 @@ impl Shell {
         }
         if self.debug {
             eprintln!(
-                "zer0 shell: {} closed at {}",
+                "gh0st shell: {} closed at {}",
                 app.entry.name,
                 rt::now_ms() - self.t0
             );
@@ -896,10 +896,10 @@ impl Shell {
         };
         self.dirty = false;
         if self.debug {
-            eprintln!("zer0 shell: flushed {rows} rows");
+            eprintln!("gh0st shell: flushed {rows} rows");
             if self.first_frame {
                 eprintln!(
-                    "zer0 shell: first frame {} ms after start",
+                    "gh0st shell: first frame {} ms after start",
                     rt::now_ms() - self.t0
                 );
             }
@@ -934,10 +934,10 @@ impl Shell {
         let c = &mut self.canvas;
         let r = Rect::new(40, 30, 240, 110);
         let inner = widgets::dialog(c, &t, r, title, color);
-        zer0_ui::icon::draw(
+        gh0st_ui::icon::draw(
             c,
             "plug-zap",
-            zer0_ui::icon::IconSize::Large,
+            gh0st_ui::icon::IconSize::Large,
             inner.x + 2,
             inner.y + 6,
             color,
@@ -978,7 +978,7 @@ fn is_screenshot(k: &Key) -> bool {
 }
 
 fn palette_of(c: &Config) -> theme::Palette {
-    c.get_str("zer0.palette")
+    c.get_str("gh0st.palette")
         .and_then(|n| {
             theme::PALETTES
                 .iter()
@@ -989,13 +989,13 @@ fn palette_of(c: &Config) -> theme::Palette {
 }
 
 fn layout_of(c: &Config) -> Layout {
-    c.get_str("zer0.home_layout")
+    c.get_str("gh0st.home_layout")
         .and_then(Layout::from_config)
         .unwrap_or_default()
 }
 
 fn terminal_of(c: &Config) -> String {
-    c.get_str("zer0.terminal")
+    c.get_str("gh0st.terminal")
         .unwrap_or(child::DEFAULT_TERMINAL)
         .to_string()
 }
@@ -1008,7 +1008,7 @@ fn dark_ms_of(c: &Config) -> Option<u64> {
 
 fn status_of(clock: &[u8; 5], battery: Option<Reading>, net: Net) -> Status<'_> {
     Status {
-        title: "Zer0",
+        title: "Gh0stdeck",
         clock: std::str::from_utf8(clock).unwrap_or("--:--"),
         battery: battery.map(|r| Battery {
             percent: r.percent,
@@ -1025,7 +1025,7 @@ fn status_of(clock: &[u8; 5], battery: Option<Reading>, net: Net) -> Status<'_> 
 fn desktop_first_token_runs(cmd: &str) -> bool {
     cmd.split_whitespace()
         .next()
-        .is_some_and(|p| zer0_core::desktop::is_executable(Path::new(p)))
+        .is_some_and(|p| gh0st_core::desktop::is_executable(Path::new(p)))
 }
 
 fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
@@ -1035,7 +1035,7 @@ fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let path = dir.join(format!("zer0-{secs}.png"));
+    let path = dir.join(format!("gh0st-{secs}.png"));
     snapshot::write_png(c, &path, 1)?;
     Ok(path)
 }

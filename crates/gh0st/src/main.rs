@@ -9,19 +9,19 @@ fn main() {
     let name = Path::new(&argv0)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("zer0");
+        .unwrap_or("gh0st");
     let program = match name {
-        "zer0" => args.next().unwrap_or_default(),
+        "gh0st" => args.next().unwrap_or_default(),
         other => other.to_string(),
     };
     match program.as_str() {
-        "--version" | "version" => println!("zer0 {}", env!("CARGO_PKG_VERSION")),
-        "shell" | "zer0-shell" => {
+        "--version" | "version" => println!("gh0st {}", env!("CARGO_PKG_VERSION")),
+        "shell" | "gh0st-shell" => {
             let rest: Vec<String> = args.collect();
-            std::process::exit(zer0_shell::run::main(&rest))
+            std::process::exit(gh0st_shell::run::main(&rest))
         }
         _ => {
-            eprintln!("usage: zer0 <shell|version>");
+            eprintln!("usage: gh0st <shell|version>");
             std::process::exit(2);
         }
     }

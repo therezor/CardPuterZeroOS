@@ -1,18 +1,18 @@
 [workspace]
 resolver = "3"
-members = ["crates/zer0", "crates/zer0-core", "crates/zer0-ui", "crates/zer0-shell"]
+members = ["crates/gh0st", "crates/gh0st-core", "crates/gh0st-ui", "crates/gh0st-shell"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-description = "Zer0, a lean shell for the M5Stack CardputerZero"
+description = "Gh0stdeck, a lean shell for the M5Stack CardputerZero"
 
 [workspace.dependencies]
-zer0-core = { path = "crates/zer0-core" }
-zer0-ui = { path = "crates/zer0-ui" }
-zer0-shell = { path = "crates/zer0-shell" }
+gh0st-core = { path = "crates/gh0st-core" }
+gh0st-ui = { path = "crates/gh0st-ui" }
+gh0st-shell = { path = "crates/gh0st-shell" }
 libc = "0.2"
 
 # A 512 MB board: small text, no unwinding tables, stripped.

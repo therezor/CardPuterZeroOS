@@ -2,21 +2,21 @@
 //! `Home` view; the other screens are laid out here with the real widgets
 //! until their apps exist. Data is made up. Run from the workspace root:
 //!
-//!     ZER0_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
-//!     ZER0_CJK_FONT=$ZER0_STOCK/share/font/NotoSansCJK-Regular.ttc \
-//!     cargo run -p zer0-shell --example mockups
+//!     GH0ST_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
+//!     GH0ST_CJK_FONT=$GH0ST_STOCK/share/font/NotoSansCJK-Regular.ttc \
+//!     cargo run -p gh0st-shell --example mockups
 //!
 //! Both env vars are optional.
 
+use gh0st_shell::home::{Entry, Home, Icon, Layout};
+use gh0st_ui::Canvas;
+use gh0st_ui::color::{Color, hex};
+use gh0st_ui::geom::Rect;
+use gh0st_ui::icon::{self, IconSize};
+use gh0st_ui::snapshot::write_png;
+use gh0st_ui::theme::{self, Theme};
+use gh0st_ui::widgets::{self, Battery, Hint, Net, Row, Status, Trailing};
 use std::path::{Path, PathBuf};
-use zer0_shell::home::{Entry, Home, Icon, Layout};
-use zer0_ui::Canvas;
-use zer0_ui::color::{Color, hex};
-use zer0_ui::geom::Rect;
-use zer0_ui::icon::{self, IconSize};
-use zer0_ui::snapshot::write_png;
-use zer0_ui::theme::{self, Theme};
-use zer0_ui::widgets::{self, Battery, Hint, Net, Row, Status, Trailing};
 
 fn entries(t: &Theme, stock: Option<&Path>) -> Vec<Entry> {
     let png = |file: &str, tint: usize| match stock
@@ -100,7 +100,7 @@ fn status(c: &mut Canvas, t: &Theme, title: &str) {
 
 fn home_status() -> Status<'static> {
     Status {
-        title: "Zer0",
+        title: "Gh0stdeck",
         clock: "14:32",
         battery: Some(Battery {
             percent: 87,
@@ -450,7 +450,7 @@ fn terminal(t: &Theme) -> Canvas {
 
 fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
     let mut c = home(t, stock, Layout::Grid, None);
-    status_at(&mut c, t, "Zer0", 3);
+    status_at(&mut c, t, "Gh0stdeck", 3);
     let r = Rect::new(40, 30, 240, 110);
     let inner = widgets::dialog(&mut c, t, r, "Battery critically low", t.c.critical);
     icon::draw(
@@ -476,7 +476,7 @@ fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
 }
 
 fn main() {
-    let stock = std::env::var_os("ZER0_STOCK").map(PathBuf::from);
+    let stock = std::env::var_os("GH0ST_STOCK").map(PathBuf::from);
     let stock = stock.as_deref();
     let out = PathBuf::from("mockups");
     let _ = std::fs::remove_dir_all(&out);

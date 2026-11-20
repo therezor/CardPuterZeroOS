@@ -1,9 +1,10 @@
 # CPZeroOS
 
-A lean OS for the M5Stack CardputerZero. This workspace is **Zer0**, its Rust
-shell: the launcher and Settings, one binary called `zer0`. They replace the
-stock C++/LVGL APPLaunch and keep its app contract. The terminal is a separate project, installed as an
-app. The distro side is in `docs/distro-plan.md`.
+A lean OS for the M5Stack CardputerZero. This workspace is **Gh0stdeck**, its Rust
+shell: the launcher and Settings, one binary called `gh0st`. They replace the
+stock C++/LVGL APPLaunch and keep its app contract. The terminal is a
+separate project, installed as an app. The distro side is in
+`docs/distro-plan.md`.
 
 ## Writing style
 
@@ -27,12 +28,12 @@ battery in `/sys/class/power_supply`. Details and sources in
 
 ## Layout
 
-- `crates/zer0-ui`: RGB565 canvas, fonts and icons baked by `build.rs`, widgets,
+- `crates/gh0st-ui`: RGB565 canvas, fonts and icons baked by `build.rs`, widgets,
   theme.
-- `crates/zer0-shell`: the home screen (grid or list, nav and search modes).
+- `crates/gh0st-shell`: the home screen (grid or list, nav and search modes).
   `examples/mockups.rs` renders every screen to PNG.
-- `crates/zer0-core`: syscalls, event loop, input, config, apps, children.
-- `crates/zer0`: one multi-call binary. The name it runs under picks the program.
+- `crates/gh0st-core`: syscalls, event loop, input, config, apps, children.
+- `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
 - `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC).
 - `docs/apps.md`: what the shell gives an app. The terminal is built to it.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
@@ -55,7 +56,7 @@ battery in `/sys/class/power_supply`. Details and sources in
   `LV_LINUX_*` and `APPLAUNCH_LINUX_*` env, no `EVIOCGRAB`, ESC held 3 s sends
   SIGTERM to the group, SIGKILL 3 s later.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
-  apps too. Keep unknown keys. Our keys use a `zer0.` prefix.
+  apps too. Keep unknown keys. Our keys use a `gh0st.` prefix.
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`. Build only:
   `resvg`.
 
@@ -67,32 +68,32 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release --target aarch64-unknown-linux-musl   # static, rust-lld
 ```
 
-Mockups. Both env vars are optional: without `ZER0_STOCK` app tiles fall back
-to letter badges, and without `ZER0_CJK_FONT` CJK text draws as empty boxes.
+Mockups. Both env vars are optional: without `GH0ST_STOCK` app tiles fall back
+to letter badges, and without `GH0ST_CJK_FONT` CJK text draws as empty boxes.
 
 ```sh
-ZER0_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
-ZER0_CJK_FONT=$ZER0_STOCK/share/font/NotoSansCJK-Regular.ttc \
-cargo run -p zer0-shell --example mockups   # writes mockups/*.png
+GH0ST_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
+GH0ST_CJK_FONT=$GH0ST_STOCK/share/font/NotoSansCJK-Regular.ttc \
+cargo run -p gh0st-shell --example mockups   # writes mockups/*.png
 ```
 
 ## Device loop
 
 ```sh
-ZER0_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
-ZER0_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
-ZER0_HOST=pi@<device> scripts/measure.sh zer0       # PSS, wakeups, CPU idle
+GH0ST_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
+GH0ST_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
+GH0ST_HOST=pi@<device> scripts/measure.sh gh0st       # PSS, wakeups, CPU idle
 ```
 
-`ZER0_LOG=debug` logs the first frame time and the rows each flush writes.
+`GH0ST_LOG=debug` logs the first frame time and the rows each flush writes.
 
 ## Host runs
 
-`zer0 shell --sim DIR` runs the real loop on any host: keys come from a script
-on stdin (format in `crates/zer0-shell/src/sim.rs`), frames land in DIR as
+`gh0st shell --sim DIR` runs the real loop on any host: keys come from a script
+on stdin (format in `crates/gh0st-shell/src/sim.rs`), frames land in DIR as
 PNGs. Point it at test apps and a scratch home so nothing real changes:
 
 ```sh
-HOME=/tmp/zer0-home ZER0_APPS_OURS=... ZER0_APPS_STOCK=... ZER0_ICON_ROOT=... \
-ZER0_LOG=debug cargo run -p zer0 -- shell --sim /tmp/frames < session.txt
+HOME=/tmp/gh0st-home GH0ST_APPS_OURS=... GH0ST_APPS_STOCK=... GH0ST_ICON_ROOT=... \
+GH0ST_LOG=debug cargo run -p gh0st -- shell --sim /tmp/frames < session.txt
 ```
