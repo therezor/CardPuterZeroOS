@@ -9,6 +9,10 @@ use std::path::PathBuf;
 pub trait Display {
     /// Writes the rows `area` covers. Returns how many changed.
     fn flush(&mut self, c: &Canvas, area: Rect) -> usize;
+    /// Writes every row without comparing. After an app or the boot splash
+    /// has drawn, the mapping may not hold what is on the glass (a DRM client
+    /// bypasses it), so a compare could skip rows that need writing.
+    fn flush_all(&mut self, c: &Canvas);
     /// Reads the current picture back, for a screenshot over an app.
     fn read_into(&mut self, c: &mut Canvas);
     /// The device path a child app should draw to.
@@ -18,6 +22,10 @@ pub trait Display {
 impl Display for Framebuffer {
     fn flush(&mut self, c: &Canvas, area: Rect) -> usize {
         Framebuffer::flush(self, c, area)
+    }
+
+    fn flush_all(&mut self, c: &Canvas) {
+        Framebuffer::flush_all(self, c)
     }
 
     fn read_into(&mut self, c: &mut Canvas) {
@@ -68,6 +76,12 @@ impl Display for Frames {
             }
         }
         changed
+    }
+
+    fn flush_all(&mut self, c: &Canvas) {
+        self.last = Canvas::new(self.last.width(), self.last.height());
+        self.last.fill(self.last.bounds(), !c.get(0, 0));
+        self.flush(c, c.bounds());
     }
 
     fn read_into(&mut self, c: &mut Canvas) {

@@ -166,7 +166,10 @@ fn us(code: u16, shift: bool) -> Option<char> {
         (44, "zxcvbnm", "ZXCVBNM"),
     ];
     for &(start, plain, shifted) in ROWS {
-        let i = code.checked_sub(start)? as usize;
+        let Some(i) = code.checked_sub(start) else {
+            continue;
+        };
+        let i = i as usize;
         if i < plain.len() {
             let s = if shift { shifted } else { plain };
             return s.chars().nth(i);
@@ -510,6 +513,14 @@ mod tests {
         }
         assert_eq!(code_for_name("enter"), Some(code::ENTER));
         assert_eq!(code_for_name("nope"), None);
+    }
+
+    #[test]
+    fn minus_and_equal_type_on_both_layers() {
+        let mut k = kb();
+        assert_eq!(press(&mut k, 12).ch, Some('-'));
+        k.event(code::LEFTSHIFT, 1, 0);
+        assert_eq!(press(&mut k, 13).ch, Some('+'));
     }
 
     #[test]

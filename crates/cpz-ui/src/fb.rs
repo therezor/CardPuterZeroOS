@@ -184,6 +184,30 @@ impl Framebuffer {
         written
     }
 
+    /// Writes every row of `c`, changed or not.
+    pub fn flush_all(&mut self, c: &Canvas) {
+        let (bpp, var) = (self.bpp, self.var);
+        for y in 0..self.height.min(c.height()) {
+            let src = c.row(y);
+            let dst = self.row_mut(y);
+            if bpp == 16 {
+                // SAFETY: as in `flush`.
+                let dst16 = unsafe {
+                    std::slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u16, src.len())
+                };
+                dst16.copy_from_slice(src);
+            } else {
+                // SAFETY: as in `flush`.
+                let dst32 = unsafe {
+                    std::slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u32, src.len())
+                };
+                for (d, &p) in dst32.iter_mut().zip(src) {
+                    *d = to_32(p, &var);
+                }
+            }
+        }
+    }
+
     /// Reads the panel back into `c`, for a screenshot of a running app.
     pub fn read_into(&mut self, c: &mut Canvas) {
         let h = self.height.min(c.height());

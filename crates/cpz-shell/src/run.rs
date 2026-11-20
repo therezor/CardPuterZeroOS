@@ -2,7 +2,7 @@
 //! and steps aside while one does: no drawing, no timers, only ESC watched.
 //! One thread, one `poll`. While idle the only timer is the clock's minute.
 
-use crate::home::{Entry, Home, Icon, Layout, Mode};
+use crate::home::{Entry, Home, Icon, Layout, Mode, Picture};
 use crate::sim::Script;
 use cpz_core::apps::{self, App, Dirs, IconRef};
 use cpz_core::backlight::Backlight;
@@ -19,14 +19,20 @@ use cpz_ui::fb::{self, Framebuffer};
 use cpz_ui::theme::{self, Theme};
 use cpz_ui::widgets::{self, Battery, Status};
 use cpz_ui::{Canvas, Rect, snapshot};
+use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::SystemTime;
 
 const DEFAULT_DARK_SECS: i64 = 30;
 const TOAST_MS: u64 = 1500;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
 const STATE_DIR: &str = ".local/state/cpz";
+/// How often to look for a leftover group member once the app's leader has
+/// exited: such a process may not be our child, so its exit sends no SIGCHLD.
+const GROUP_RECHECK_MS: u64 = 200;
 
 /// `cpz shell`, or `cpz shell --sim DIR` on a host: keys from a script on
 /// stdin (see `sim.rs`), frames saved as PNGs in DIR.
@@ -110,7 +116,13 @@ struct Shell {
     input: Input,
     kb: Keyboard,
     signals: rt::Signals,
-    watches: Vec<Watch>,
+    /// (true: app folders, rescan; false: status, re-read sysfs).
+    watches: Vec<(bool, Watch)>,
+    pictures: HashMap<PathBuf, (Option<SystemTime>, Rc<Picture>)>,
+    /// Screen to go back to when the backlight comes on.
+    woke_to: Screen,
+    /// Write every row next frame: the mapping may not match the glass.
+    full_flush: bool,
     config: Config,
     dirs: Dirs,
     apps: Vec<App>,
@@ -168,16 +180,7 @@ impl Shell {
             rt::Signals::install(&[libc::SIGCHLD, libc::SIGTERM, libc::SIGINT, libc::SIGHUP])
                 .map_err(|e| format!("signals: {e}"))?;
         let config = Config::load(&config::default_path());
-        let palette = config
-            .get_str("cpz.palette")
-            .and_then(|n| {
-                theme::PALETTES
-                    .iter()
-                    .find(|p| p.name.eq_ignore_ascii_case(n))
-            })
-            .copied()
-            .unwrap_or(theme::MINT);
-        let t = Theme::new(palette);
+        let t = Theme::new(palette_of(&config));
         let (display, input): (Box<dyn Display>, Input) = match &sim {
             Some(dir) => {
                 let frames = Frames::new(dir.clone(), t.m.width, t.m.height)
@@ -195,15 +198,9 @@ impl Shell {
             }
         };
         let on_device = sim.is_none();
-        let layout = config
-            .get_str("cpz.home_layout")
-            .and_then(Layout::from_config)
-            .unwrap_or_default();
-        let terminal = config
-            .get_str("cpz.terminal")
-            .unwrap_or(child::DEFAULT_TERMINAL)
-            .to_string();
-        let dark_secs = config.get_int("dark_time").unwrap_or(DEFAULT_DARK_SECS);
+        let layout = layout_of(&config);
+        let terminal = terminal_of(&config);
+        let dark_ms = dark_ms_of(&config);
 
         let dirs = Dirs::from_env();
         let watches = if on_device {
@@ -221,6 +218,9 @@ impl Shell {
             kb: Keyboard::load(),
             signals,
             watches,
+            pictures: HashMap::new(),
+            woke_to: Screen::Home,
+            full_flush: true,
             dirs,
             apps: Vec::new(),
             pins: load_pins(),
@@ -240,7 +240,7 @@ impl Shell {
             screen: Screen::Home,
             dirty: true,
             toast: None,
-            dark_ms: (dark_secs > 0).then_some(dark_secs as u64 * 1000),
+            dark_ms,
             last_input: rt::now_ms(),
             tab_down: None,
             enter_armed: false,
@@ -271,16 +271,53 @@ impl Shell {
         }
     }
 
+    /// Re-reads config.json. Settings and stock apps write it while the shell
+    /// waits, so it is read again after every app and before every write.
+    fn reload_config(&mut self) {
+        self.config = Config::load(&config::default_path());
+        self.t = Theme::new(palette_of(&self.config));
+        self.home.set_layout(layout_of(&self.config));
+        self.terminal = terminal_of(&self.config);
+        self.dark_ms = dark_ms_of(&self.config);
+        self.dirty = true;
+    }
+
     fn rescan(&mut self) {
         let terminal_ok = desktop_first_token_runs(&self.terminal);
         self.apps = apps::scan(&self.dirs, &self.config, &self.pins);
         self.apps.retain(|a| !a.entry.terminal || terminal_ok);
-        let entries = self.apps.iter().map(|a| self.entry_for(a)).collect();
+        let apps = std::mem::take(&mut self.apps);
+        let entries = apps.iter().map(|a| self.entry_for(a)).collect();
+        self.apps = apps;
+        let live: Vec<&PathBuf> = self
+            .apps
+            .iter()
+            .filter_map(|a| match &a.icon {
+                IconRef::Path(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        self.pictures.retain(|p, _| live.contains(&p));
         self.home.replace_entries(entries);
         self.dirty = true;
     }
 
-    fn entry_for(&self, a: &App) -> Entry {
+    /// A decoded icon, reused until its file changes.
+    fn picture(&mut self, path: &Path) -> Option<Rc<Picture>> {
+        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        if let Some((m, p)) = self.pictures.get(path) {
+            if *m == mtime {
+                return Some(p.clone());
+            }
+        }
+        let Ok(Icon::Picture(p)) = Icon::picture(path, &self.t) else {
+            return None;
+        };
+        self.pictures.insert(path.to_path_buf(), (mtime, p.clone()));
+        Some(p)
+    }
+
+    fn entry_for(&mut self, a: &App) -> Entry {
         let tint = a
             .file
             .bytes()
@@ -293,7 +330,10 @@ impl Shell {
                 Some(n) => Icon::Symbol { name: n, tint },
                 None => Icon::Letter { tint },
             },
-            IconRef::Path(p) => Icon::picture(p, &self.t).unwrap_or(Icon::Letter { tint }),
+            IconRef::Path(p) => match self.picture(p) {
+                Some(pic) => Icon::Picture(pic),
+                None => Icon::Letter { tint },
+            },
             IconRef::None => Icon::Letter { tint },
         };
         Entry {
@@ -336,13 +376,13 @@ impl Shell {
                 self.tab_down.map(|t| t + LOCK_HOLD_MS),
                 self.rescan_at,
                 self.dark_ms
-                    .filter(|_| self.screen == Screen::Home)
+                    .filter(|_| self.screen != Screen::Off)
                     .map(|d| self.last_input + d),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
             ]);
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
-            fds.extend(self.watches.iter().map(|w| rt::pollfd(w.fd())));
+            fds.extend(self.watches.iter().map(|(_, w)| rt::pollfd(w.fd())));
             if let Err(e) = rt::wait(&mut fds, deadline) {
                 eprintln!("cpz shell: poll: {e}");
                 return 1;
@@ -357,15 +397,21 @@ impl Shell {
                     }
                 }
             }
-            let mut changed = false;
-            for (i, w) in self.watches.iter().enumerate() {
+            let (mut apps_changed, mut status_changed) = (false, false);
+            for (i, (apps, w)) in self.watches.iter().enumerate() {
                 if rt::readable(&fds[2 + i]) && w.drain() {
-                    changed = true;
+                    if *apps {
+                        apps_changed = true;
+                    } else {
+                        status_changed = true;
+                    }
                 }
             }
-            if changed {
+            if apps_changed {
                 // Apps change in bursts while the Store installs; settle first.
                 self.rescan_at = Some(now + RESCAN_DEBOUNCE_MS);
+            }
+            if status_changed {
                 self.refresh_status();
             }
             keys_buf.clear();
@@ -399,7 +445,7 @@ impl Shell {
             self.rescan_at = None;
             self.rescan();
         }
-        if self.screen == Screen::Home && self.dark_ms.is_some_and(|d| now >= self.last_input + d) {
+        if self.screen != Screen::Off && self.dark_ms.is_some_and(|d| now >= self.last_input + d) {
             self.screen_off();
         }
         if self.low.warning() == Warning::Countdown {
@@ -415,6 +461,7 @@ impl Shell {
             self.saved_raw = bl.get().filter(|&r| r > 0);
             let _ = bl.set(0);
         }
+        self.woke_to = self.screen;
         self.screen = Screen::Off;
     }
 
@@ -422,7 +469,7 @@ impl Shell {
         if let (Some(bl), Some(raw)) = (&self.backlight, self.saved_raw.take()) {
             let _ = bl.set(raw);
         }
-        self.screen = Screen::Home;
+        self.screen = self.woke_to;
         self.refresh_status();
     }
 
@@ -494,9 +541,7 @@ impl Shell {
                     | code::PRINT
             );
         }
-        let screenshot =
-            k.is(code::SYSRQ) || k.is(code::PRINT) || (k.ctrl && k.alt && k.code == 31);
-        if screenshot && k.state == State::Press {
+        if is_screenshot(k) && k.state == State::Press {
             let msg = match save_screenshot(&self.canvas) {
                 Ok(p) => format!(
                     "Saved {}",
@@ -515,6 +560,7 @@ impl Shell {
                     let raw = bl.step(bl.get().unwrap_or(bl.max), k.code == code::BRIGHTNESSUP);
                     let _ = bl.set(raw);
                     let pct = bl.percent(raw);
+                    self.config = Config::load(&config::default_path());
                     self.config.set_int("brightness", raw as i64);
                     let _ = self.config.save();
                     self.toast(format!("Brightness {pct}%"));
@@ -677,7 +723,8 @@ impl Shell {
             keyboard: &kb_path,
             keymap: keys::SYM_MAP_PATH,
         };
-        let mut running = match child::spawn(&argv, &dev) {
+        let pause = app.entry.terminal && app.entry.sysplause;
+        let mut running = match child::spawn(&argv, &dev, pause) {
             Ok(r) => r,
             Err(e) => {
                 self.toast(format!("Could not open {}: {e}", app.entry.name));
@@ -686,23 +733,30 @@ impl Shell {
         };
         if self.debug {
             eprintln!(
-                "cpz shell: started {} (pgid {})",
-                app.entry.name, running.pgid
+                "cpz shell: started {} (pgid {}) at {}",
+                app.entry.name,
+                running.pgid,
+                rt::now_ms() - self.t0
             );
         }
         let mut esc = EscHold::default();
         let mut esc_down = false;
         let mut keys_buf = Vec::new();
         let mut strip = Canvas::new(self.t.m.width, self.t.m.bar_h + 4);
+        // The app's own pixels under the ESC hint, put back if ESC is let go.
+        let mut under_hint: Option<(Canvas, Rect)> = None;
         loop {
             let countdown = self.low.warning() == Warning::Countdown;
+            let now = rt::now_ms();
             let deadline = rt::earliest([
                 esc.next_at(),
-                countdown.then(|| rt::now_ms() + 1000),
+                countdown.then_some(now + 1000),
                 self.input.next_at(),
+                running.leader_exited().then_some(now + GROUP_RECHECK_MS),
             ]);
             let mut fds = [rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
-            if rt::wait(&mut fds, deadline).is_err() {
+            if let Err(e) = rt::wait(&mut fds, deadline) {
+                eprintln!("cpz shell: poll while {} runs: {e}", app.entry.name);
                 break;
             }
             let now = rt::now_ms();
@@ -719,6 +773,9 @@ impl Shell {
                     }
                 }
             }
+            if running.leader_exited() {
+                done |= running.reap();
+            }
             if done {
                 break;
             }
@@ -730,7 +787,11 @@ impl Shell {
                         esc_down = v == 1;
                     }
                     if let Some(k) = self.kb.event(c, v, now) {
-                        if matches!(
+                        if is_screenshot(&k) && k.state == State::Press {
+                            let mut shot = Canvas::new(self.t.m.width, self.t.m.height);
+                            self.display.read_into(&mut shot);
+                            let _ = save_screenshot(&shot);
+                        } else if matches!(
                             k.code,
                             code::BRIGHTNESSUP
                                 | code::BRIGHTNESSDOWN
@@ -745,7 +806,15 @@ impl Shell {
                 }
             }
             let d = esc.update(now, esc_down);
+            if d.hide_hint {
+                if let Some((saved, r)) = under_hint.take() {
+                    self.display.flush(&saved, r);
+                }
+            }
             if d.show_hint {
+                let mut saved = Canvas::new(self.t.m.width, self.t.m.height);
+                self.display.read_into(&mut saved);
+                under_hint = Some((saved, strip.bounds()));
                 let r = widgets::banner(
                     &mut strip,
                     &self.t,
@@ -775,13 +844,20 @@ impl Shell {
             }
         }
         if self.debug {
-            eprintln!("cpz shell: {} closed", app.entry.name);
+            eprintln!(
+                "cpz shell: {} closed at {}",
+                app.entry.name,
+                rt::now_ms() - self.t0
+            );
         }
         self.kb.reset();
         self.enter_armed = false;
         self.last_input = rt::now_ms();
+        self.full_flush = true;
+        // Settings or a stock app may have changed config.json, and the app
+        // may have installed or removed apps (the Store does).
+        self.reload_config();
         self.refresh_status();
-        // The app may have installed or removed apps (the Store does).
         self.rescan();
     }
 
@@ -802,7 +878,13 @@ impl Shell {
                 }
             }
         }
-        let rows = self.display.flush(&self.canvas, self.canvas.bounds());
+        let rows = if self.full_flush {
+            self.full_flush = false;
+            self.display.flush_all(&self.canvas);
+            self.canvas.height() as usize
+        } else {
+            self.display.flush(&self.canvas, self.canvas.bounds())
+        };
         self.dirty = false;
         if self.debug {
             eprintln!("cpz shell: flushed {rows} rows");
@@ -864,22 +946,55 @@ impl Shell {
     }
 }
 
-/// Wakes for app installs, battery and charger changes, and link changes.
+/// Wakes for app installs (true: rescan), and for battery, charger and link
+/// changes (false: re-read status only).
 #[cfg(target_os = "linux")]
-fn watches(d: &Dirs) -> Vec<Watch> {
-    [
-        Watch::dirs(&[d.ours.as_path(), d.stock.as_path()]),
-        Watch::uevents(),
-        Watch::links(),
-    ]
-    .into_iter()
-    .filter_map(Result::ok)
-    .collect()
+fn watches(d: &Dirs) -> Vec<(bool, Watch)> {
+    let apps = Watch::dirs(&[d.ours.as_path(), d.stock.as_path()]).map(|w| (true, w));
+    let power = Watch::uevents().map(|w| (false, w));
+    let links = Watch::links().map(|w| (false, w));
+    [apps, power, links]
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn watches(_: &Dirs) -> Vec<Watch> {
+fn watches(_: &Dirs) -> Vec<(bool, Watch)> {
     Vec::new()
+}
+
+fn is_screenshot(k: &Key) -> bool {
+    k.is(code::SYSRQ) || k.is(code::PRINT) || (k.ctrl && k.alt && k.code == 31)
+}
+
+fn palette_of(c: &Config) -> theme::Palette {
+    c.get_str("cpz.palette")
+        .and_then(|n| {
+            theme::PALETTES
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(n))
+        })
+        .copied()
+        .unwrap_or(theme::MINT)
+}
+
+fn layout_of(c: &Config) -> Layout {
+    c.get_str("cpz.home_layout")
+        .and_then(Layout::from_config)
+        .unwrap_or_default()
+}
+
+fn terminal_of(c: &Config) -> String {
+    c.get_str("cpz.terminal")
+        .unwrap_or(child::DEFAULT_TERMINAL)
+        .to_string()
+}
+
+/// `dark_time` in seconds, as stock stores it. 0 means never.
+fn dark_ms_of(c: &Config) -> Option<u64> {
+    let secs = c.get_int("dark_time").unwrap_or(DEFAULT_DARK_SECS);
+    (secs > 0).then_some(secs as u64 * 1000)
 }
 
 fn status_of(clock: &[u8; 5], battery: Option<Reading>, net: Net) -> Status<'_> {

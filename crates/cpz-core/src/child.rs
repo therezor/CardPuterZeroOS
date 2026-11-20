@@ -45,7 +45,9 @@ pub struct Running {
     leader_done: bool,
 }
 
-pub fn spawn(argv: &[String], dev: &Devices) -> io::Result<Running> {
+/// `pause` asks a terminal app to wait for a key after its command exits
+/// (stock `Sysplause`). It reaches the terminal as `CPZ_SYSPLAUSE=1`.
+pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<Running> {
     let (prog, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::other("empty command"))?;
@@ -57,7 +59,8 @@ pub fn spawn(argv: &[String], dev: &Devices) -> io::Result<Running> {
         .env("APPLAUNCH_LINUX_FBDEV_DEVICE", dev.fb)
         .env("LV_LINUX_KEYBOARD_DEVICE", dev.keyboard)
         .env("APPLAUNCH_LINUX_KEYBOARD_DEVICE", dev.keyboard)
-        .env("APPLAUNCH_LINUX_KEYBOARD_MAP", dev.keymap);
+        .env("APPLAUNCH_LINUX_KEYBOARD_MAP", dev.keymap)
+        .env("CPZ_SYSPLAUSE", if pause { "1" } else { "0" });
     if Path::new(APP_CWD).is_dir() {
         cmd.current_dir(APP_CWD);
     }
@@ -98,6 +101,13 @@ impl Running {
             }
         }
         self.leader_done && !self.group_alive()
+    }
+
+    /// The leader is gone but the group may not be: the caller rechecks on a
+    /// short timer, since a leftover member that is not our child sends no
+    /// SIGCHLD when it exits.
+    pub fn leader_exited(&self) -> bool {
+        self.leader_done
     }
 
     fn group_alive(&self) -> bool {
@@ -187,7 +197,7 @@ mod tests {
         let argv: Vec<String> = ["/bin/sh", "-c", "sleep 0.3 & exit 0"]
             .map(String::from)
             .to_vec();
-        let mut r = spawn(&argv, &dev).unwrap();
+        let mut r = spawn(&argv, &dev, false).unwrap();
         let start = crate::rt::now_ms();
         while !r.reap() {
             assert!(crate::rt::now_ms() - start < 5000, "group never finished");

@@ -8,6 +8,7 @@ use cpz_ui::geom::Rect;
 use cpz_ui::image::Image;
 use cpz_ui::theme::Theme;
 use cpz_ui::widgets::{self, AppRow, Hint, Status, Visual};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Layout {
@@ -56,10 +57,16 @@ pub enum Mode {
 pub enum Icon {
     /// A baked symbol on a badge in theme tint `tint`.
     Symbol { name: &'static str, tint: usize },
-    /// The app's own PNG, scaled once for each badge size.
-    Picture { large: Image, small: Image },
+    /// The app's own PNG, scaled once for each badge size. Shared, so a
+    /// rescan reuses it instead of decoding again.
+    Picture(Rc<Picture>),
     /// No usable icon: the first letter of the name.
     Letter { tint: usize },
+}
+
+pub struct Picture {
+    pub large: Image,
+    pub small: Image,
 }
 
 impl Icon {
@@ -67,7 +74,7 @@ impl Icon {
     pub fn picture(path: &std::path::Path, t: &Theme) -> Result<Icon, String> {
         let large = Image::load_png(path, (t.m.badge - 6) as u32)?;
         let small = Image::load_png(path, (t.m.badge_small - 4) as u32)?;
-        Ok(Icon::Picture { large, small })
+        Ok(Icon::Picture(Rc::new(Picture { large, small })))
     }
 }
 
@@ -354,10 +361,7 @@ fn visual<'a>(t: &Theme, e: &'a Entry, small: bool) -> Visual<'a> {
             icon: name,
             tint: tint(*i),
         },
-        Icon::Picture {
-            large,
-            small: little,
-        } => Visual::Image(if small { little } else { large }),
+        Icon::Picture(p) => Visual::Image(if small { &p.small } else { &p.large }),
         Icon::Letter { tint: i } => Visual::Letter {
             ch: e.name.chars().next().unwrap_or('?'),
             tint: tint(*i),

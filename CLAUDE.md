@@ -34,6 +34,7 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/cpz-core`: syscalls, event loop, input, config, apps, children.
 - `crates/cpz`: one multi-call binary. The name it runs under picks the program.
 - `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC).
+- `docs/apps.md`: what the shell gives an app. The terminal is built to it.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
   our `.desktop` entries.
 - `scripts/deploy.sh`, `scripts/measure.sh`: install on a device, measure it.
@@ -43,8 +44,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - **Performance first.** 512 MB, an SPI panel, a battery. No timer runs while
   idle unless it shows something (the clock ticks once a minute). Nothing polls
   in the background: use inotify, netlink, uevents, signalfd.
-- **No per-frame allocation.** Redraw dirty rects only. Flush only rows that
-  changed.
+- **Draw cheap, flush less.** A frame redraws the 320x170 back buffer (about
+  a millisecond); the flush then writes only the rows that changed, which is
+  where SPI time goes. After an app or the boot splash, write every row.
 - **No threads at idle.** One `poll` loop. Slow helpers are child processes
   whose pipes join the loop.
 - **Geometry and colour live in `theme.rs`.** Widgets never hardcode either.
