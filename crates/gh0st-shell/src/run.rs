@@ -189,9 +189,14 @@ fn load_pins() -> Vec<String> {
 impl Shell {
     fn start(t0: u64, sim: Option<PathBuf>) -> Result<Shell, String> {
         child::become_subreaper();
-        let signals =
-            rt::Signals::install(&[libc::SIGCHLD, libc::SIGTERM, libc::SIGINT, libc::SIGHUP])
-                .map_err(|e| format!("signals: {e}"))?;
+        let signals = rt::Signals::install(&[
+            libc::SIGCHLD,
+            libc::SIGTERM,
+            libc::SIGINT,
+            libc::SIGHUP,
+            libc::SIGUSR1,
+        ])
+        .map_err(|e| format!("signals: {e}"))?;
         let config = Config::load(&config::default_path());
         let t = Theme::new(palette_of(&config));
         let (display, input): (Box<dyn Display>, Input) = match &sim {
@@ -419,6 +424,11 @@ impl Shell {
                     match sig {
                         libc::SIGCHLD => child::reap_helpers(),
                         libc::SIGHUP => self.rescan(),
+                        // `pkill -USR1 gh0st`: a screenshot without a key,
+                        // for checking the panel over SSH.
+                        libc::SIGUSR1 => {
+                            let _ = save_screenshot(&self.canvas);
+                        }
                         _ => return 0,
                     }
                 }

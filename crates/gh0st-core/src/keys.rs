@@ -33,6 +33,10 @@ pub mod code {
     pub const BRIGHTNESSDOWN: u16 = 224;
     pub const BRIGHTNESSUP: u16 = 225;
     pub const FN: u16 = 464;
+    /// What the CardputerZero's Fn and Sym keys send (KEY_DVD, KEY_CD). The
+    /// kernel driver applies their layers itself, so Fn+F arrives as Up.
+    pub const FN_M5: u16 = 389;
+    pub const SYM_M5: u16 = 383;
     pub const F: u16 = 33;
     pub const X: u16 = 45;
     pub const Z: u16 = 44;
@@ -347,7 +351,7 @@ impl Keyboard {
             code::LEFTCTRL | code::RIGHTCTRL => count(&mut self.ctrl),
             code::LEFTALT | code::RIGHTALT => count(&mut self.alt),
             code::CAPSLOCK if down => self.caps = !self.caps,
-            code::FN => self.fn_down = down.then_some(now_ms),
+            code::FN | code::FN_M5 => self.fn_down = down.then_some(now_ms),
             _ => {}
         }
         let key = self.make(code, if down { State::Press } else { State::Release });

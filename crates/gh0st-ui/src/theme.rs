@@ -143,13 +143,13 @@ pub const PAPER: Palette = Palette {
 
 pub const PALETTES: &[Palette] = &[MINT, NORD, PAPER];
 
-/// 320x170: a 16 px bar on top, a 16 px hint bar below, 138 px between. The
-/// grid inside that is 4x2 tiles of 74x62 with 4 px gaps and a 6/5 px margin.
+/// 320x170: an 18 px bar on top, an 18 px hint bar below, 134 px between. The
+/// grid inside that is 4x2 tiles of 74x60 with 4 px gaps and a 6/5 px margin.
 pub const CARDPUTER: Metrics = Metrics {
     width: 320,
     height: 170,
-    bar_h: 16,
-    hint_h: 16,
+    bar_h: 18,
+    hint_h: 18,
     pad: 8,
     margin: 6,
     margin_v: 5,
@@ -161,17 +161,17 @@ pub const CARDPUTER: Metrics = Metrics {
     rows: 2,
     badge: 36,
     badge_small: 24,
-    app_row_h: 32,
-    row_h: 22,
+    app_row_h: 33,
+    row_h: 26,
 };
 
 pub const FONTS: Fonts = Fonts {
-    small: &font::SANS_11,
-    small_bold: &font::SANS_11_BOLD,
-    body: &font::SANS_13,
-    body_bold: &font::SANS_13_BOLD,
-    title: &font::SANS_16_BOLD,
-    big: &font::SANS_22_BOLD,
+    small: &font::SANS_13,
+    small_bold: &font::SANS_13_BOLD,
+    body: &font::SANS_15,
+    body_bold: &font::SANS_15_BOLD,
+    title: &font::SANS_17_BOLD,
+    big: &font::SANS_24_BOLD,
     mono: &font::MONO_10,
     mono_bold: &font::MONO_10_BOLD,
 };

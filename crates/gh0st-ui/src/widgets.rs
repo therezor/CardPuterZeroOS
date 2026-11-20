@@ -366,9 +366,9 @@ pub fn app_row_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selec
     if item.note.is_empty() {
         text_in(c, name, Rect::new(x, r.y, right - x, r.h), item.label, col);
     } else {
-        name.draw_elided(c, x, r.y + 14, item.label, right - x, col);
+        name.draw_elided(c, x, r.y + 15, item.label, right - x, col);
         t.f.small
-            .draw_elided(c, x, r.y + 27, item.note, right - x, t.c.muted);
+            .draw_elided(c, x, r.y + 29, item.note, right - x, t.c.muted);
     }
 }
 

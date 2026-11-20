@@ -48,13 +48,15 @@ struct Face {
     snap_x_height: bool,
 }
 
+/// Inter steps in whole-pixel x-heights: 13 px gives a 7 px x-height, 15 gives
+/// 8, 17 gives 9. Sizes between snap to the same face.
 const FACES: &[Face] = &[
-    face("SANS_11", "Inter.ttf", 11.0, 400.0, TEXT, true),
-    face("SANS_11_BOLD", "Inter.ttf", 11.0, 600.0, TEXT, true),
     face("SANS_13", "Inter.ttf", 13.0, 400.0, TEXT, true),
     face("SANS_13_BOLD", "Inter.ttf", 13.0, 600.0, TEXT, true),
-    face("SANS_16_BOLD", "Inter.ttf", 16.0, 600.0, TEXT, true),
-    face("SANS_22_BOLD", "Inter.ttf", 22.0, 600.0, TEXT, true),
+    face("SANS_15", "Inter.ttf", 15.0, 400.0, TEXT, true),
+    face("SANS_15_BOLD", "Inter.ttf", 15.0, 600.0, TEXT, true),
+    face("SANS_17_BOLD", "Inter.ttf", 17.0, 600.0, TEXT, true),
+    face("SANS_24_BOLD", "Inter.ttf", 24.0, 600.0, TEXT, true),
     face("MONO_10", "JetBrainsMono.ttf", 10.0, 400.0, MONO, false),
     face(
         "MONO_10_BOLD",
