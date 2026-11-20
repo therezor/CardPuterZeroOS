@@ -1,5 +1,9 @@
 # Static musl binary, linked by the rust-lld that ships with rustup.
 # No cross gcc, zig or Docker needed on the build host.
+#
+# Tuned for the Cortex-A53, minus aes and sha2: the CM0's A53 lacks the
+# crypto extension (its /proc/cpuinfo lists fp asimd crc32 only), and code
+# using it dies with SIGILL.
 [target.aarch64-unknown-linux-musl]
 linker = "rust-lld"
-rustflags = ["-C", "target-cpu=cortex-a53"]
+rustflags = ["-C", "target-cpu=cortex-a53", "-C", "target-feature=-aes,-sha2"]

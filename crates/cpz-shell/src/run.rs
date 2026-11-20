@@ -260,10 +260,11 @@ impl Shell {
     /// What stock APPLaunch did at boot, and every stock app does at start:
     /// saved brightness and volume back on.
     fn boot_restore(&mut self) {
-        if let (Some(bl), Some(raw)) = (&self.backlight, self.config.get_int("brightness")) {
-            if raw > 0 {
-                let _ = bl.set(raw as u32);
-            }
+        // As stock: the saved level, or full when none is saved. The panel
+        // may be dark from the previous launcher's idle timeout.
+        if let Some(bl) = &self.backlight {
+            let saved = self.config.get_int("brightness").filter(|&r| r > 0);
+            let _ = bl.set(saved.map(|r| r as u32).unwrap_or(bl.max));
         }
         if let Some(v) = self.config.get_int("volume") {
             let v = format!("{}%", v.clamp(0, 100));
@@ -388,6 +389,10 @@ impl Shell {
                 return 1;
             }
             let now = rt::now_ms();
+            if self.debug {
+                let ready: Vec<usize> = (0..fds.len()).filter(|&i| rt::readable(&fds[i])).collect();
+                eprintln!("wake at {} fds {ready:?} deadline {:?}", now - self.t0, deadline.map(|d| d as i64 - (now as i64)));
+            }
             if rt::readable(&fds[1]) {
                 for sig in self.signals.drain() {
                     match sig {

@@ -12,10 +12,11 @@ secs=${2:-60}
 ssh "$host" bash -s -- "$name" "$secs" <<'REMOTE'
 set -euo pipefail
 name=$1 secs=$2
-pid=$(pgrep -o -x "$name" || pgrep -o -f "$name")
+pid=$(pgrep -o -f "/$name( |$)" || pgrep -o -f "$name")
 ticks=$(getconf CLK_TCK)
 cpu() { awk '{print $14 + $15}' "/proc/$pid/stat"; }
-switches() { awk '/ctxt_switches/ {s += $2} END {print s}' "/proc/$pid/status"; }
+# Every thread's switches: /proc/PID/status counts the main thread only.
+switches() { cat /proc/"$pid"/task/*/status | awk '/ctxt_switches/ {s += $2} END {print s}'; }
 threads() { awk '/^Threads/ {print $2}' "/proc/$pid/status"; }
 echo "process   $name (pid $pid, $(threads) threads)"
 grep -E '^(Rss|Pss|Private_Dirty)' "/proc/$pid/smaps_rollup" | sed 's/^/memory    /'

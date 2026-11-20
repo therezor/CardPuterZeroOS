@@ -1,7 +1,41 @@
 # Hardware facts
 
-Captured from a device, not guessed. Nothing below is measured yet: each item
-is a check for M1, with what the code assumes today.
+Captured from the device (CM0, `RZR-ZERO`, 2026-11-20) unless marked.
+
+## Measured
+
+- Debian 13 trixie, kernel `6.18.39+rpt-rpi-v8`, 352 MB RAM visible to Linux.
+- CPU features: `fp asimd evtstrm crc32 cpuid`. No `aes` or `sha2`: building
+  with `target-cpu=cortex-a53` alone gives SIGILL, hence
+  `-C target-feature=-aes,-sha2` in `.cargo/config.toml`.
+- Panel: `/dev/fb_lcd` -> `fb0`, `panel-mipi-dbid`, 16 bpp, 320x170, stride
+  640, group `video`. DRM card1 is `cardputer-zero-internal` (SPI).
+- Keyboard: `tca8418c` at `/dev/input/by-path/platform-3f804000.i2c-event`.
+  The sym map file exists.
+- Backlight: `/sys/class/backlight/backlight`, max 100, group `video` writable.
+  Stock leaves it at 0 after its idle timeout, so the shell must turn it on.
+- Battery: `bq27220-0`, `type=Battery`. It sends a `change` uevent when the
+  capacity moves, so no battery timer is needed.
+- LEDs: `ext_5v_out`, `grove_5v_out`, `ext_usb_gpio_fun`, `grove_fun`.
+- `wpctl`, `pw-play`, `aplay`, `bluetoothctl`, `nmcli`, `timedatectl`,
+  `gpioset` are installed. `fb_load.service` has exited by the time the
+  launcher runs. LightDM and labwc run too (HDMI desktop).
+
+## Idle, 60 s on home (`scripts/measure.sh`)
+
+| | Stock APPLaunch 0.6.105 | Shell (first device run) |
+|---|---|---|
+| PSS | 9,642 kB | 1,304 kB (944 kB of it the fb mapping) |
+| Threads | 14 | 1 |
+| Context switches | 35,026 | 24 |
+| CPU | 5,430 ms | 10 ms |
+| First frame | not measured | 79 ms after start, icons decoded eagerly |
+
+Both screens went dark during the minute.
+
+## Still to check
+
+
 
 | Check | Assumed now | Where it matters |
 |---|---|---|
