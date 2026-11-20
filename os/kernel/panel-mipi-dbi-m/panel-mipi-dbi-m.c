@@ -56,9 +56,9 @@ static bool native_order = true;
 module_param(native_order, bool, 0444);
 MODULE_PARM_DESC(native_order, "Send pixels along the panel's scan lines (default true)");
 
-static uint madctl_native = 0x40;
+static uint madctl_native = 0x80;
 module_param(madctl_native, uint, 0444);
-MODULE_PARM_DESC(madctl_native, "MADCTL used with native_order (default 0x40)");
+MODULE_PARM_DESC(madctl_native, "MADCTL used with native_order (default 0x80)");
 
 static uint frctrl = 0x15;
 module_param(frctrl, uint, 0444);
@@ -407,9 +407,10 @@ static void panel_mipi_dbi_wait_for_te(struct panel_mipi_dbi_device *panel)
 
 /*
  * Sends one damaged rectangle. Native order transposes it so pixels go out
- * along the panel's scan lines: with MADCTL 0x40 a landscape pixel (x, y)
- * is panel column y + top_offset on scan line x, the same place MADCTL 0xA0
- * put it, but the address counter now walks the scan line.
+ * along the panel's scan lines: column y + top_offset of scan line x. With
+ * MADCTL 0x80 that lands where MADCTL 0xA0 put landscape pixel (x, y), but
+ * the address counter now walks the scan line. 0x40 shows the picture
+ * upside down (measured on the device).
  */
 static void panel_mipi_dbi_fb_dirty(struct iosys_map *src, struct drm_framebuffer *fb,
                     struct drm_rect *rect,
