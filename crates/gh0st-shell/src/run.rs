@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 const DEFAULT_DARK_SECS: i64 = 30;
 const TOAST_MS: u64 = 1500;
@@ -163,6 +163,11 @@ struct Shell {
     rescan_at: Option<u64>,
     debug: bool,
     t0: u64,
+    /// When the loop last woke, for the debug log.
+    wake_at: Instant,
+    /// The last frame waited for the panel, so the next one draws at once
+    /// instead of on the FRAME_MS timer.
+    paced: bool,
     first_frame: bool,
 }
 
@@ -266,6 +271,8 @@ impl Shell {
             rescan_at: None,
             debug: std::env::var("GH0ST_LOG").is_ok_and(|v| v == "debug"),
             t0,
+            wake_at: Instant::now(),
+            paced: false,
             first_frame: true,
             config,
         };
@@ -404,7 +411,10 @@ impl Shell {
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
                 (self.screen == Screen::Home)
-                    .then(|| self.home.next_frame(now))
+                    .then(|| match self.paced {
+                        true => Some(now),
+                        false => self.home.next_frame(now),
+                    })
                     .flatten(),
             ]);
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
@@ -413,6 +423,7 @@ impl Shell {
                 eprintln!("gh0st shell: poll: {e}");
                 return 1;
             }
+            self.wake_at = Instant::now();
             let now = rt::now_ms();
             if self.debug {
                 let ready: Vec<usize> = (0..fds.len()).filter(|&i| rt::readable(&fds[i])).collect();
@@ -909,6 +920,7 @@ impl Shell {
     }
 
     fn draw(&mut self) {
+        let start = Instant::now();
         let t = self.t;
         let now = rt::now_ms();
         let clock = self.clock;
@@ -926,6 +938,7 @@ impl Shell {
                 }
             }
         }
+        let drawn = Instant::now();
         let rows = if self.full_flush {
             self.full_flush = false;
             self.display.flush_all(&self.canvas);
@@ -933,10 +946,24 @@ impl Shell {
         } else {
             self.display.flush(&self.canvas, self.canvas.bounds())
         };
+        let flushed = Instant::now();
         self.dirty = false;
         self.home.settle(now);
+        // While something moves, wait for this frame to reach the panel and
+        // draw the next one right away: frames then lock to its refresh.
+        self.paced = rows > 0
+            && self.screen == Screen::Home
+            && self.home.next_frame(now).is_some()
+            && self.display.present();
         if self.debug {
-            eprintln!("gh0st shell: flushed {rows} rows");
+            let ms = |a: Instant, b: Instant| (b - a).as_secs_f64() * 1000.0;
+            eprintln!(
+                "gh0st shell: flushed {rows} rows: wake to draw {:.2} ms, draw {:.2} ms, flush {:.2} ms, present {:.2} ms",
+                ms(self.wake_at, start),
+                ms(start, drawn),
+                ms(drawn, flushed),
+                ms(flushed, Instant::now())
+            );
             if self.first_frame {
                 eprintln!(
                     "gh0st shell: first frame {} ms after start",

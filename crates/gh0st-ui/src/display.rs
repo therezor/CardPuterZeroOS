@@ -22,6 +22,11 @@ pub trait Display {
     fn suspend(&mut self) {}
     /// Takes the panel back after the app exits.
     fn resume(&mut self) {}
+    /// Blocks until the last flush is on the panel. False if the display
+    /// can't tell, so the caller keeps its own frame timer.
+    fn present(&mut self) -> bool {
+        false
+    }
 }
 
 impl Display for Framebuffer {
@@ -39,6 +44,10 @@ impl Display for Framebuffer {
 
     fn device(&self) -> String {
         self.path.to_string_lossy().into_owned()
+    }
+
+    fn present(&mut self) -> bool {
+        Framebuffer::present(self)
     }
 }
 

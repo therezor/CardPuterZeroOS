@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 
 const FBIOGET_VSCREENINFO: libc::c_ulong = 0x4600;
 const FBIOGET_FSCREENINFO: libc::c_ulong = 0x4602;
+/// `_IO('F', 0xC0)` in gh0st's panel driver: returns once the written pages
+/// are on the wire. Stock fbdev answers ENOTTY.
+const GH0ST_FBIO_PRESENT: libc::c_ulong = 0x46C0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -80,7 +83,7 @@ pub fn find() -> PathBuf {
 }
 
 pub struct Framebuffer {
-    _file: std::fs::File,
+    file: std::fs::File,
     map: *mut u8,
     len: usize,
     pub width: i32,
@@ -88,6 +91,8 @@ pub struct Framebuffer {
     stride: usize,
     bpp: u32,
     var: VarInfo,
+    /// The driver supports `GH0ST_FBIO_PRESENT`.
+    can_present: bool,
     pub path: PathBuf,
 }
 
@@ -132,8 +137,10 @@ impl Framebuffer {
         if map == libc::MAP_FAILED {
             return Err(io::Error::last_os_error());
         }
+        // SAFETY: an ioctl without arguments; nothing is pending yet.
+        let can_present = unsafe { libc::ioctl(fd, GH0ST_FBIO_PRESENT as _) } == 0;
         Ok(Framebuffer {
-            _file: file,
+            file,
             map: map as *mut u8,
             len,
             width: var.xres as i32,
@@ -141,6 +148,7 @@ impl Framebuffer {
             stride,
             bpp: var.bits_per_pixel,
             var,
+            can_present,
             path: path.to_path_buf(),
         })
     }
@@ -181,6 +189,9 @@ impl Framebuffer {
             };
             written += changed as usize;
         }
+        if written > 0 {
+            self.sync();
+        }
         written
     }
 
@@ -206,6 +217,22 @@ impl Framebuffer {
                 }
             }
         }
+        self.sync();
+    }
+
+    /// Sends the written pages now. Deferred I/O would wait 50 ms (`HZ / 20`)
+    /// before sending; fsync runs that work at once (`fb_deferred_io_fsync`).
+    fn sync(&self) {
+        // SAFETY: fsync on an fd this struct owns.
+        unsafe { libc::fsync(self.file.as_raw_fd()) };
+    }
+
+    /// Blocks until everything written is on the wire. False if the driver
+    /// can't tell.
+    pub fn present(&self) -> bool {
+        // SAFETY: an ioctl without arguments on an fd this struct owns.
+        self.can_present
+            && unsafe { libc::ioctl(self.file.as_raw_fd(), GH0ST_FBIO_PRESENT as _) } == 0
     }
 
     /// Reads the panel back into `c`, for a screenshot of a running app.
