@@ -1,16 +1,22 @@
-//! The shell process. It owns the panel and the keyboard while no app runs,
-//! and steps aside while one does: no drawing, no timers, only ESC watched.
-//! One thread, one `poll`. While idle the only timer is the clock's minute.
+//! The shell process. It owns the panel and the keyboard while no app is in
+//! front, and steps aside while one is: it draws nothing then but the ESC
+//! hint, toasts and the battery countdown, laid over the app. Apps sent to
+//! the background are paused. One thread, one `poll`. While idle the only
+//! timer is the clock's minute.
 
-use crate::home::{Entry, Home, Icon, Layout, Mode, Picture};
+use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
+use crate::overlay::Overlay;
 use crate::sim::Script;
+use crate::switcher::Switcher;
+use crate::tasks::{self, Task, Tasks};
 use gh0st_core::apps::{self, App, Dirs, IconRef};
 use gh0st_core::backlight::Backlight;
 use gh0st_core::battery::{self, LowBattery, Reading, Warning};
-use gh0st_core::child::{self, Devices};
+use gh0st_core::child::{self, Devices, Stopped};
 use gh0st_core::config::{self, Config};
 use gh0st_core::esc::EscHold;
 use gh0st_core::evdev;
+use gh0st_core::job::{self, Job};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::rt;
 use gh0st_core::status::{self, Net, Watch};
@@ -18,7 +24,7 @@ use gh0st_ui::display::{Display, Frames};
 use gh0st_ui::drm;
 use gh0st_ui::fb::{self, Framebuffer};
 use gh0st_ui::theme::{self, Theme};
-use gh0st_ui::widgets::{self, Battery, Status};
+use gh0st_ui::widgets::{self, Battery, Status, Visual};
 use gh0st_ui::{Canvas, Rect, snapshot};
 use std::collections::HashMap;
 use std::os::fd::RawFd;
@@ -31,9 +37,9 @@ const TOAST_MS: u64 = 1500;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
 const STATE_DIR: &str = ".local/state/gh0st";
-/// How often to look for a leftover group member once the app's leader has
-/// exited: such a process may not be our child, so its exit sends no SIGCHLD.
-const GROUP_RECHECK_MS: u64 = 200;
+/// How long a paused app may take to stop before its frame is read anyway.
+const STOP_WAIT_MS: u64 = 100;
+const VOLUME_STEP: i32 = 10;
 
 /// `gh0st shell`, or `gh0st shell --sim DIR` on a host: keys from a script on
 /// stdin (see `sim.rs`), frames saved as PNGs in DIR.
@@ -71,9 +77,31 @@ pub fn main(args: &[String]) -> i32 {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
     Home,
+    Switcher,
     Locked,
     /// Backlight off after `dark_time`. The next key only wakes it.
     Off,
+}
+
+/// Where Esc on the switcher goes back to.
+#[derive(Clone, PartialEq, Eq)]
+enum Back {
+    Home,
+    App(String),
+}
+
+/// A handover that waits until every key is up, so an app never sees half
+/// a key press: pausing the app in front, or bringing one back.
+#[derive(Clone, PartialEq, Eq)]
+enum Pending {
+    Pause,
+    Resume(String),
+}
+
+/// A helper whose answer the shell is waiting for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobKind {
+    Volume,
 }
 
 /// Where keys come from: the keyboard, or a script in `--sim`.
@@ -120,6 +148,18 @@ impl Input {
             Input::Script(_) => "/dev/null".into(),
         }
     }
+
+    fn grab(&mut self, on: bool) {
+        if let Input::Device(d) = self {
+            d.grab(on);
+        }
+    }
+
+    fn flush_readers(&self) {
+        if let Input::Device(d) = self {
+            d.flush_readers();
+        }
+    }
 }
 
 struct Shell {
@@ -140,6 +180,23 @@ struct Shell {
     dirs: Dirs,
     apps: Vec<App>,
     home: Home,
+    switcher: Switcher,
+    tasks: Tasks,
+    back: Back,
+    pending: Option<Pending>,
+    /// Raw key codes down right now, apps' keys included.
+    held: Vec<u16>,
+    esc: EscHold,
+    esc_down: bool,
+    /// Over an app: the ESC hint or the battery countdown.
+    banner: Option<Overlay>,
+    /// Over an app: a toast.
+    popup: Option<Overlay>,
+    /// A panel-sized canvas kept for reuse.
+    spare: Option<Canvas>,
+    jobs: Vec<(JobKind, Job)>,
+    volume: Option<u8>,
+    muted: Option<bool>,
     pins: Vec<String>,
     terminal: String,
     backlight: Option<Backlight>,
@@ -157,6 +214,8 @@ struct Shell {
     last_input: u64,
     tab_down: Option<u64>,
     enter_armed: bool,
+    esc_armed: bool,
+    home_armed: bool,
     swallow_release: Option<u16>,
     rescan_at: Option<u64>,
     debug: bool,
@@ -232,6 +291,19 @@ impl Shell {
         let mut s = Shell {
             canvas: Canvas::new(t.m.width, t.m.height),
             home: Home::new(Vec::new(), layout, &t),
+            switcher: Switcher::new(&t),
+            tasks: Tasks::default(),
+            back: Back::Home,
+            pending: None,
+            held: Vec::new(),
+            esc: EscHold::default(),
+            esc_down: false,
+            banner: None,
+            popup: None,
+            spare: None,
+            jobs: Vec::new(),
+            volume: config.get_int("volume").map(|v| v.clamp(0, 100) as u8),
+            muted: None,
             t,
             display,
             input,
@@ -264,6 +336,8 @@ impl Shell {
             last_input: rt::now_ms(),
             tab_down: None,
             enter_armed: false,
+            esc_armed: false,
+            home_armed: false,
             swallow_release: None,
             rescan_at: None,
             debug: std::env::var("GH0ST_LOG").is_ok_and(|v| v == "debug"),
@@ -273,12 +347,42 @@ impl Shell {
             first_frame: true,
             config,
         };
-        let animations = s.config.get_bool("gh0st.animations").unwrap_or(true);
-        s.home.set_animations(animations);
+        s.set_animations();
         s.boot_restore();
+        if on_device {
+            s.start_job(
+                JobKind::Volume,
+                &["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+            );
+        }
         s.rescan();
         s.refresh_status();
         Ok(s)
+    }
+
+    fn set_animations(&mut self) {
+        let on = self.config.get_bool("gh0st.animations").unwrap_or(true);
+        self.home.set_animations(on);
+        self.switcher.set_animations(on);
+    }
+
+    fn start_job(&mut self, kind: JobKind, argv: &[&str]) {
+        match job::spawn(argv, None) {
+            Ok(j) => self.jobs.push((kind, j)),
+            Err(e) if self.debug => eprintln!("gh0st shell: {}: {e}", argv[0]),
+            Err(_) => {}
+        }
+    }
+
+    fn job_done(&mut self, kind: JobKind, j: Job) {
+        match kind {
+            JobKind::Volume => {
+                if let Some((v, muted)) = parse_volume(&j.output()) {
+                    self.volume.get_or_insert(v.min(100));
+                    self.muted = Some(muted);
+                }
+            }
+        }
     }
 
     /// What stock APPLaunch did at boot, and every stock app does at start:
@@ -304,8 +408,7 @@ impl Shell {
         self.home.set_layout(layout_of(&self.config));
         self.terminal = terminal_of(&self.config);
         self.dark_ms = dark_ms_of(&self.config);
-        self.home
-            .set_animations(self.config.get_bool("gh0st.animations").unwrap_or(true));
+        self.set_animations();
         self.dirty = true;
     }
 
@@ -386,36 +489,47 @@ impl Shell {
         self.dirty = true;
     }
 
+    fn app_front(&self) -> bool {
+        self.tasks.front().is_some()
+    }
+
     fn run(&mut self) -> i32 {
         let mut keys_buf = Vec::new();
         loop {
-            if self.dirty && self.screen != Screen::Off {
+            let app = self.app_front();
+            if !app && self.dirty && self.screen != Screen::Off {
                 self.draw();
             }
-            if self.input.finished(rt::now_ms()) {
+            let now = rt::now_ms();
+            if self.input.finished(now) {
+                self.tasks.close_all(now);
                 return 0;
             }
-            let now = rt::now_ms();
+            let shell = !app && self.screen != Screen::Off;
             let deadline = rt::earliest([
-                (self.screen != Screen::Off).then_some(self.clock_at),
+                shell.then_some(self.clock_at),
                 self.kb.repeat_at(),
                 self.toast.as_ref().map(|t| t.1),
-                self.tab_down.map(|t| t + LOCK_HOLD_MS),
+                (!app).then_some(self.tab_down.map(|t| t + LOCK_HOLD_MS)).flatten(),
                 self.rescan_at,
                 self.dark_ms
-                    .filter(|_| self.screen != Screen::Off)
+                    .filter(|_| shell)
                     .map(|d| self.last_input + d),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
-                (self.screen == Screen::Home)
+                shell
                     .then(|| match self.paced {
                         true => Some(now),
-                        false => self.home.next_frame(now),
+                        false => self.next_frame(now),
                     })
                     .flatten(),
+                app.then(|| self.esc.next_at()).flatten(),
+                self.tasks.next_at(now),
             ]);
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             fds.extend(self.watches.iter().map(|(_, w)| rt::pollfd(w.fd())));
+            let jobs_at = fds.len();
+            fds.extend(self.jobs.iter().map(|(_, j)| rt::pollfd(j.fd())));
             if let Err(e) = rt::wait(&mut fds, deadline) {
                 eprintln!("gh0st shell: poll: {e}");
                 return 1;
@@ -433,14 +547,17 @@ impl Shell {
             if rt::readable(&fds[1]) {
                 for sig in self.signals.drain() {
                     match sig {
-                        libc::SIGCHLD => child::reap_helpers(),
+                        libc::SIGCHLD => self.reap(),
                         libc::SIGHUP => self.rescan(),
                         // `pkill -USR1 gh0st`: a screenshot without a key,
                         // for checking the panel over SSH.
                         libc::SIGUSR1 => {
-                            let _ = save_screenshot(&self.canvas);
+                            let _ = self.screenshot();
                         }
-                        _ => return 0,
+                        _ => {
+                            self.tasks.close_all(now);
+                            return 0;
+                        }
                     }
                 }
             }
@@ -461,40 +578,132 @@ impl Shell {
             if status_changed {
                 self.refresh_status();
             }
+            for (i, (_, j)) in self.jobs.iter_mut().enumerate() {
+                if rt::readable(&fds[jobs_at + i]) {
+                    j.read();
+                }
+            }
+            self.finish_jobs();
             keys_buf.clear();
             self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
             for &(c, v) in &keys_buf {
+                match v {
+                    1 if !self.held.contains(&c) => self.held.push(c),
+                    0 => self.held.retain(|&h| h != c),
+                    _ => {}
+                }
+                if c == code::ESC && v != 2 {
+                    self.esc_down = v == 1;
+                }
                 if let Some(k) = self.kb.event(c, v, now) {
                     self.on_key(k, now);
                 }
             }
             self.on_timers(now);
+            self.sweep(now);
+            if self.held.is_empty() {
+                match self.pending.take() {
+                    Some(Pending::Pause) => self.pause_front(now),
+                    Some(Pending::Resume(id)) => self.resume(&id, now),
+                    None => {}
+                }
+            }
+        }
+    }
+
+    /// Routes every exited child: an app's leader, or a job.
+    fn reap(&mut self) {
+        for (pid, status) in child::reap() {
+            self.tasks.exited(pid);
+            if let Some((_, j)) = self.jobs.iter_mut().find(|(_, j)| j.pid == pid) {
+                j.exited(status);
+            }
+        }
+        self.finish_jobs();
+    }
+
+    fn finish_jobs(&mut self) {
+        let (done, running): (Vec<_>, Vec<_>) = std::mem::take(&mut self.jobs)
+            .into_iter()
+            .partition(|(_, j)| j.done());
+        self.jobs = running;
+        for (kind, j) in done {
+            self.job_done(kind, j);
+        }
+    }
+
+    /// Drops apps whose group is gone. If it was the one in front, the
+    /// shell takes the panel back.
+    fn sweep(&mut self, now: u64) {
+        let gone = self.tasks.sweep(now);
+        if gone.is_empty() {
+            return;
+        }
+        for t in &gone {
+            if self.debug {
+                eprintln!("gh0st shell: {} closed at {}", t.name, now - self.t0);
+            }
+            if self.pending == Some(Pending::Resume(t.id.clone())) {
+                self.pending = None;
+            }
+            if self.back == Back::App(t.id.clone()) {
+                self.back = Back::Home;
+            }
+        }
+        if gone.iter().any(|t| t.state == tasks::State::Front) {
+            if self.pending == Some(Pending::Pause) {
+                self.pending = None;
+            }
+            self.banner = None;
+            self.popup = None;
+            self.screen = Screen::Home;
+            self.take_screen();
+        } else {
+            self.switcher.set_apps(self.tasks.cards());
+            self.sync_grab();
+            self.dirty = true;
+        }
+    }
+
+    fn next_frame(&self, now: u64) -> Option<u64> {
+        match self.screen {
+            Screen::Home => self.home.next_frame(now),
+            Screen::Switcher => self.switcher.next_frame(now),
+            _ => None,
         }
     }
 
     fn on_timers(&mut self, now: u64) {
-        // Any wake while something moves draws the next frame.
-        if self.home.next_frame(now).is_some() {
-            self.dirty = true;
-        }
-        if now >= self.clock_at {
-            self.refresh_status();
-        }
+        let app = self.app_front();
         if let Some(k) = self.kb.repeat_due(now) {
             self.on_key(k, now);
         }
         if self.toast.as_ref().is_some_and(|t| now >= t.1) {
             self.toast = None;
             self.dirty = true;
+            if let Some(p) = self.popup.take() {
+                self.spare = Some(p.hide(self.display.as_mut()));
+            }
+        }
+        if self.rescan_at.is_some_and(|t| now >= t) {
+            self.rescan_at = None;
+            self.rescan();
+        }
+        if app {
+            self.app_timers(now);
+            return;
+        }
+        // Any wake while something moves draws the next frame.
+        if self.next_frame(now).is_some() {
+            self.dirty = true;
+        }
+        if now >= self.clock_at {
+            self.refresh_status();
         }
         if self.tab_down.is_some_and(|t| now >= t + LOCK_HOLD_MS) {
             self.tab_down = None;
             self.screen = Screen::Locked;
             self.dirty = true;
-        }
-        if self.rescan_at.is_some_and(|t| now >= t) {
-            self.rescan_at = None;
-            self.rescan();
         }
         if self.screen != Screen::Off && self.dark_ms.is_some_and(|d| now >= self.last_input + d) {
             self.screen_off();
@@ -505,6 +714,66 @@ impl Shell {
                 child::fire(&["systemctl", "poweroff", "-i"]);
             }
         }
+    }
+
+    /// ESC held over an app, and the battery countdown drawn over it.
+    fn app_timers(&mut self, now: u64) {
+        let d = self.esc.update(now, self.esc_down);
+        if d.hide_hint {
+            if let Some(b) = self.banner.take() {
+                self.spare = Some(b.hide(self.display.as_mut()));
+            }
+        }
+        if d.show_hint {
+            self.show_banner("Hold ESC to close the app", self.t.c.warning);
+        }
+        let pgid = self.tasks.front().map_or(0, |t| t.pgid);
+        if d.terminate {
+            child::terminate(pgid);
+        }
+        if d.kill {
+            child::kill(pgid);
+        }
+        if self.low.warning() == Warning::Countdown {
+            self.low
+                .update(self.battery_dir.as_deref().and_then(battery::sample), now);
+            let text = format!(
+                "Battery low: powering off in {} s",
+                self.low.seconds_left(now)
+            );
+            self.show_banner(&text, self.t.c.critical);
+            if self.low.take_shutdown(now) {
+                child::fire(&["systemctl", "poweroff", "-i"]);
+            }
+        }
+    }
+
+    fn canvas_for_overlay(&mut self) -> Canvas {
+        self.spare
+            .take()
+            .unwrap_or_else(|| Canvas::new(self.t.m.width, self.t.m.height))
+    }
+
+    fn show_banner(&mut self, text: &str, color: gh0st_ui::Color) {
+        if let Some(b) = self.banner.take() {
+            self.spare = Some(b.hide(self.display.as_mut()));
+        }
+        let t = self.t;
+        let under = self.canvas_for_overlay();
+        self.banner = Some(Overlay::show(self.display.as_mut(), under, |c| {
+            widgets::banner(c, &t, text, color)
+        }));
+    }
+
+    fn show_popup(&mut self, text: &str) {
+        if let Some(p) = self.popup.take() {
+            self.spare = Some(p.hide(self.display.as_mut()));
+        }
+        let t = self.t;
+        let under = Canvas::new(t.m.width, t.m.height);
+        self.popup = Some(Overlay::show(self.display.as_mut(), under, |c| {
+            widgets::toast(c, &t, text)
+        }));
     }
 
     fn screen_off(&mut self) {
@@ -525,8 +794,26 @@ impl Shell {
     }
 
     fn toast(&mut self, text: impl Into<String>) {
-        self.toast = Some((text.into(), rt::now_ms() + TOAST_MS));
+        let text = text.into();
+        if self.app_front() {
+            self.show_popup(&text);
+        }
+        self.toast = Some((text, rt::now_ms() + TOAST_MS));
         self.dirty = true;
+    }
+
+    /// Saves what the panel shows. Over an app, without the shell's overlays.
+    fn screenshot(&mut self) -> std::io::Result<PathBuf> {
+        if !self.app_front() {
+            return save_screenshot(&self.canvas);
+        }
+        let mut shot = Canvas::new(self.t.m.width, self.t.m.height);
+        self.display.read_into(&mut shot);
+        if let Some(o) = self.banner.as_ref().or(self.popup.as_ref()) {
+            // An overlay is up: its saved pixels are the app's.
+            shot = o.under().clone();
+        }
+        save_screenshot(&shot)
     }
 
     fn on_key(&mut self, k: Key, now: u64) {
@@ -536,6 +823,10 @@ impl Shell {
         }
         if k.state == State::Press {
             self.last_input = now;
+        }
+        if self.app_front() {
+            self.app_key(&k);
+            return;
         }
         if self.screen == Screen::Off {
             if k.state == State::Press {
@@ -571,10 +862,41 @@ impl Shell {
             }
             return;
         }
+        if self.screen == Screen::Switcher {
+            self.switcher_key(k, now);
+            return;
+        }
+        if k.is(code::HOME) {
+            match k.state {
+                State::Press => self.home_armed = true,
+                State::Release if self.home_armed => {
+                    self.home_armed = false;
+                    let at = self.tasks.last_used().map_or(0, |i| i + 1);
+                    self.open_switcher(Back::Home, at);
+                }
+                _ => {}
+            }
+            return;
+        }
         match self.home.mode() {
             Mode::Nav => self.nav_key(k),
             Mode::Search => self.search_key(k),
         }
+    }
+
+    /// Keys while an app is in front. The app reads them too: the shell
+    /// takes only the Home key, ESC held, and the global keys.
+    fn app_key(&mut self, k: &Key) {
+        if is_screenshot(k) && k.state == State::Press {
+            let msg = screenshot_message(self.screenshot());
+            self.toast(msg);
+            return;
+        }
+        if k.is(code::HOME) && k.state == State::Press {
+            self.pending = Some(Pending::Pause);
+            return;
+        }
+        self.global_key(k);
     }
 
     /// Keys that work everywhere, apps included: brightness, volume, mute,
@@ -593,15 +915,7 @@ impl Shell {
             );
         }
         if is_screenshot(k) && k.state == State::Press {
-            let msg = match save_screenshot(&self.canvas) {
-                Ok(p) => format!(
-                    "Saved {}",
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("screenshot")
-                ),
-                Err(e) => format!("Screenshot failed: {e}"),
-            };
+            let msg = screenshot_message(self.screenshot());
             self.toast(msg);
             return true;
         }
@@ -620,32 +934,41 @@ impl Shell {
             }
             code::VOLUMEUP | code::VOLUMEDOWN => {
                 let step = if k.code == code::VOLUMEUP {
-                    "10%+"
+                    VOLUME_STEP
                 } else {
-                    "10%-"
+                    -VOLUME_STEP
                 };
-                child::fire(&[
-                    "wpctl",
-                    "set-volume",
-                    "-l",
-                    "1.0",
-                    "@DEFAULT_AUDIO_SINK@",
-                    step,
-                ]);
-                self.toast(if k.code == code::VOLUMEUP {
-                    "Volume up"
-                } else {
-                    "Volume down"
-                });
+                let v = (self.volume.unwrap_or(50) as i32 + step).clamp(0, 100) as u8;
+                self.set_volume(v);
                 true
             }
             code::MUTE => {
-                child::fire(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]);
-                self.toast("Mute");
+                let muted = !self.muted.unwrap_or(false);
+                let flag = if muted { "1" } else { "0" };
+                child::fire(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", flag]);
+                self.muted = Some(muted);
+                match (muted, self.volume) {
+                    (true, _) => self.toast("Muted"),
+                    (false, Some(v)) => self.toast(format!("Volume {v}%")),
+                    (false, None) => self.toast("Sound on"),
+                }
                 true
             }
             _ => false,
         }
+    }
+
+    /// Sets the output level and keeps it in the stock `volume` key, which
+    /// every stock app restores at start.
+    fn set_volume(&mut self, v: u8) {
+        let arg = format!("{v}%");
+        child::fire(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &arg]);
+        self.volume = Some(v);
+        self.config = Config::load(&config::default_path());
+        self.config.set_int("volume", v as i64);
+        let _ = self.config.save();
+        let suffix = if self.muted == Some(true) { ", muted" } else { "" };
+        self.toast(format!("Volume {v}%{suffix}"));
     }
 
     fn nav_key(&mut self, k: Key) {
@@ -759,13 +1082,16 @@ impl Shell {
         if self.home.mode() == Mode::Search {
             self.home.cancel_search();
         }
-        self.run_app(&app);
+        match self.tasks.get(&id).map(|t| t.state) {
+            Some(tasks::State::Closing { .. }) => self.toast(format!("{} is closing", app.entry.name)),
+            Some(_) => self.pending = Some(Pending::Resume(id)),
+            None => self.launch(&app),
+        }
     }
 
-    /// Hands the panel and keyboard to `app` until its whole process group
-    /// has exited. Nothing is drawn meanwhile except the ESC hold hint and a
-    /// low-battery countdown, and only ESC and the global keys are read.
-    fn run_app(&mut self, app: &App) {
+    /// Starts `app` in front. The shell lets go of the panel and keyboard
+    /// until the app is paused or gone.
+    fn launch(&mut self, app: &App) {
         let argv = child::argv(app, &self.terminal);
         let fb_path = self.display.device();
         let kb_path = self.input.path();
@@ -775,145 +1101,200 @@ impl Shell {
             keymap: keys::SYM_MAP_PATH,
         };
         let pause = app.entry.terminal && app.entry.sysplause;
+        self.input.grab(false);
         self.display.suspend();
-        let mut running = match child::spawn(&argv, &dev, pause) {
-            Ok(r) => r,
+        let pgid = match child::spawn(&argv, &dev, pause) {
+            Ok(p) => p,
             Err(e) => {
                 self.display.resume();
                 self.full_flush = true;
+                self.sync_grab();
                 self.toast(format!("Could not open {}: {e}", app.entry.name));
                 return;
             }
         };
+        let now = rt::now_ms();
         if self.debug {
             eprintln!(
-                "gh0st shell: started {} (pgid {}) at {}",
+                "gh0st shell: started {} (pgid {pgid}) at {}",
                 app.entry.name,
-                running.pgid,
-                rt::now_ms() - self.t0
+                now - self.t0
             );
         }
-        let mut esc = EscHold::default();
-        let mut esc_down = false;
-        let mut keys_buf = Vec::new();
-        let mut strip = Canvas::new(self.t.m.width, self.t.m.bar_h + 4);
-        // The app's own pixels under the ESC hint, put back if ESC is let go.
-        let mut under_hint: Option<(Canvas, Rect)> = None;
-        loop {
-            let countdown = self.low.warning() == Warning::Countdown;
-            let now = rt::now_ms();
-            let deadline = rt::earliest([
-                esc.next_at(),
-                countdown.then_some(now + 1000),
-                self.input.next_at(),
-                running.leader_exited().then_some(now + GROUP_RECHECK_MS),
-            ]);
-            let mut fds = [rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
-            if let Err(e) = rt::wait(&mut fds, deadline) {
-                eprintln!("gh0st shell: poll while {} runs: {e}", app.entry.name);
-                break;
-            }
-            let now = rt::now_ms();
-            let mut done = false;
-            if rt::readable(&fds[1]) {
-                for sig in self.signals.drain() {
-                    match sig {
-                        libc::SIGCHLD => done |= running.reap(),
-                        libc::SIGTERM | libc::SIGINT => {
-                            running.terminate();
-                            std::process::exit(0);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            if running.leader_exited() {
-                done |= running.reap();
-            }
-            if done {
-                break;
-            }
-            keys_buf.clear();
-            self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
-            {
-                for &(c, v) in &keys_buf {
-                    if c == code::ESC && v != 2 {
-                        esc_down = v == 1;
-                    }
-                    if let Some(k) = self.kb.event(c, v, now) {
-                        if is_screenshot(&k) && k.state == State::Press {
-                            let mut shot = Canvas::new(self.t.m.width, self.t.m.height);
-                            self.display.read_into(&mut shot);
-                            let _ = save_screenshot(&shot);
-                        } else if matches!(
-                            k.code,
-                            code::BRIGHTNESSUP
-                                | code::BRIGHTNESSDOWN
-                                | code::VOLUMEUP
-                                | code::VOLUMEDOWN
-                                | code::MUTE
-                        ) {
-                            self.global_key(&k);
-                            self.toast = None;
-                        }
-                    }
-                }
-            }
-            let d = esc.update(now, esc_down);
-            if d.hide_hint {
-                if let Some((saved, r)) = under_hint.take() {
-                    self.display.flush(&saved, r);
-                }
-            }
-            if d.show_hint {
-                let mut saved = Canvas::new(self.t.m.width, self.t.m.height);
-                self.display.read_into(&mut saved);
-                under_hint = Some((saved, strip.bounds()));
-                let r = widgets::banner(
-                    &mut strip,
-                    &self.t,
-                    "Hold ESC to close the app",
-                    self.t.c.warning,
-                );
-                self.display.flush(&strip, r);
-            }
-            if d.terminate {
-                running.terminate();
-            }
-            if d.kill {
-                running.kill();
-            }
-            if countdown {
-                self.low
-                    .update(self.battery_dir.as_deref().and_then(battery::sample), now);
-                let text = format!(
-                    "Battery low: powering off in {} s",
-                    self.low.seconds_left(now)
-                );
-                let r = widgets::banner(&mut strip, &self.t, &text, self.t.c.critical);
-                self.display.flush(&strip, r);
-                if self.low.take_shutdown(now) {
-                    child::fire(&["systemctl", "poweroff", "-i"]);
-                }
-            }
+        let icon = self.entry_for(app).icon;
+        self.tasks.add(Task {
+            id: app.file.clone(),
+            name: app.entry.name.clone(),
+            icon,
+            pgid,
+            state: tasks::State::Front,
+            leader_done: false,
+            pixels: None,
+            used: now,
+        });
+        self.esc = EscHold::default();
+        self.toast = None;
+    }
+
+    /// Fn+K over an app: pause it, keep its frame, open the switcher.
+    fn pause_front(&mut self, now: u64) {
+        if let Some(b) = self.banner.take() {
+            self.spare = Some(b.hide(self.display.as_mut()));
         }
+        if let Some(p) = self.popup.take() {
+            self.spare = Some(p.hide(self.display.as_mut()));
+        }
+        let mut frame = self.canvas_for_overlay();
+        let Some(t) = self.tasks.front_mut() else {
+            return;
+        };
+        child::stop(t.pgid);
+        if !t.leader_done && child::wait_stopped(t.pgid, STOP_WAIT_MS) == Stopped::Exited {
+            t.leader_done = true;
+        }
+        self.display.read_into(&mut frame);
+        let id = t.id.clone();
+        t.pixels = Some(frame);
+        t.state = tasks::State::Paused;
+        t.used = now;
         if self.debug {
-            eprintln!(
-                "gh0st shell: {} closed at {}",
-                app.entry.name,
-                rt::now_ms() - self.t0
-            );
+            eprintln!("gh0st shell: paused {} at {}", t.name, now - self.t0);
         }
+        self.take_screen();
+        self.open_switcher(Back::App(id), 0);
+    }
+
+    /// Brings a paused app back: its last frame on the panel, the keyboard
+    /// released with nothing stale queued, then SIGCONT.
+    fn resume(&mut self, id: &str, now: u64) {
+        let Some(t) = self.tasks.get_mut(id) else {
+            return;
+        };
+        if t.state != tasks::State::Paused {
+            return;
+        }
+        if let Some(px) = t.pixels.take() {
+            self.display.flush_all(&px);
+            self.spare = Some(px);
+        }
+        self.display.suspend();
+        t.state = tasks::State::Front;
+        t.used = now;
+        let pgid = t.pgid;
+        if self.debug {
+            eprintln!("gh0st shell: resumed {} at {}", t.name, now - self.t0);
+        }
+        self.input.grab(false);
+        self.input.flush_readers();
+        child::cont(pgid);
+        self.esc = EscHold::default();
+        self.esc_down = false;
+        self.toast = None;
+    }
+
+    /// Takes the panel back from an app that paused or exited.
+    fn take_screen(&mut self) {
         self.display.resume();
         self.kb.reset();
         self.enter_armed = false;
+        self.esc_armed = false;
+        self.home_armed = false;
+        self.esc = EscHold::default();
         self.last_input = rt::now_ms();
         self.full_flush = true;
-        // Settings or a stock app may have changed config.json, and the app
-        // may have installed or removed apps (the Store does).
+        // Stock apps may have changed config.json, and the app may have
+        // installed or removed apps (the Store does).
         self.reload_config();
         self.refresh_status();
         self.rescan();
+        self.switcher.set_apps(self.tasks.cards());
+        self.sync_grab();
+        self.dirty = true;
+    }
+
+    /// The keyboard is the shell's alone while it is in front and some app
+    /// is paused, so a paused app queues none of the shell's keys.
+    fn sync_grab(&mut self) {
+        let want = !self.app_front() && self.tasks.any_paused();
+        self.input.grab(want);
+    }
+
+    fn open_switcher(&mut self, back: Back, at: usize) {
+        self.back = back;
+        self.switcher.set_apps(self.tasks.cards());
+        self.switcher.select(at);
+        self.screen = Screen::Switcher;
+        self.dirty = true;
+    }
+
+    /// Esc on the switcher, or Fn+K again: back to where it was opened.
+    fn switcher_back(&mut self) {
+        match self.back.clone() {
+            Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.state == tasks::State::Paused) => {
+                self.pending = Some(Pending::Resume(id));
+            }
+            _ => {
+                self.screen = Screen::Home;
+                self.dirty = true;
+            }
+        }
+    }
+
+    fn switcher_key(&mut self, k: Key, now: u64) {
+        let armed = |flag: &mut bool| match k.state {
+            State::Press => {
+                *flag = true;
+                false
+            }
+            State::Release if *flag => {
+                *flag = false;
+                true
+            }
+            _ => false,
+        };
+        if k.is(code::ENTER) {
+            if armed(&mut self.enter_armed) {
+                match self.switcher.selected_app().map(|c| c.id.clone()) {
+                    None => {
+                        self.screen = Screen::Home;
+                        self.dirty = true;
+                    }
+                    Some(id) => {
+                        if self.tasks.get(&id).is_some_and(|t| t.state == tasks::State::Paused) {
+                            self.pending = Some(Pending::Resume(id));
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        if k.is(code::ESC) {
+            if armed(&mut self.esc_armed) {
+                self.switcher_back();
+            }
+            return;
+        }
+        if k.is(code::HOME) {
+            if armed(&mut self.home_armed) {
+                self.switcher_back();
+            }
+            return;
+        }
+        if k.state == State::Release {
+            return;
+        }
+        match k.nav(true) {
+            Some(keys::Nav::Left) => self.switcher.move_by(-1, now),
+            Some(keys::Nav::Right) => self.switcher.move_by(1, now),
+            _ if k.is(code::BACKSPACE) && k.state == State::Press => {
+                if let Some(id) = self.switcher.selected_app().map(|c| c.id.clone()) {
+                    self.tasks.close(&id, now);
+                    self.switcher.set_apps(self.tasks.cards());
+                }
+            }
+            _ => return,
+        }
+        self.dirty = true;
     }
 
     fn draw(&mut self) {
@@ -921,18 +1302,29 @@ impl Shell {
         let t = self.t;
         let now = rt::now_ms();
         let clock = self.clock;
-        let status = status_of(&clock, self.battery, self.net);
+        let dock: Vec<Visual> = self
+            .tasks
+            .iter()
+            .map(|task| home::visual(&t, &task.icon, &task.name, Size::Tiny))
+            .collect();
+        let front = match self.screen {
+            Screen::Switcher => Some(self.switcher.selected()),
+            _ => Some(0),
+        };
+        let status = status_of(&clock, self.battery, self.net, &dock, front);
         match self.screen {
             Screen::Locked => {
                 let text = std::str::from_utf8(&clock).unwrap_or("--:--");
                 widgets::lock_screen(&mut self.canvas, &t, text, &status);
             }
-            _ => {
-                self.home.draw(&mut self.canvas, &t, &status, now);
-                self.draw_low_battery();
-                if let Some((text, _)) = &self.toast {
-                    widgets::toast(&mut self.canvas, &t, text);
-                }
+            Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
+            _ => self.home.draw(&mut self.canvas, &t, &status, now),
+        }
+        drop(dock);
+        if matches!(self.screen, Screen::Home | Screen::Switcher) {
+            self.draw_low_battery();
+            if let Some((text, _)) = &self.toast {
+                widgets::toast(&mut self.canvas, &t, text);
             }
         }
         let drawn = Instant::now();
@@ -946,12 +1338,10 @@ impl Shell {
         let flushed = Instant::now();
         self.dirty = false;
         self.home.settle(now);
+        self.switcher.settle(now);
         // While something moves, wait for this frame to reach the panel and
         // draw the next one right away: frames then lock to its refresh.
-        self.paced = rows > 0
-            && self.screen == Screen::Home
-            && self.home.next_frame(now).is_some()
-            && self.display.present();
+        self.paced = rows > 0 && self.next_frame(now).is_some() && self.display.present();
         if self.debug {
             let ms = |a: Instant, b: Instant| (b - a).as_secs_f64() * 1000.0;
             eprintln!(
@@ -1112,10 +1502,16 @@ fn dark_ms_of(c: &Config) -> Option<u64> {
     (secs > 0).then_some(secs as u64 * 1000)
 }
 
-fn status_of(clock: &[u8; 5], battery: Option<Reading>, net: Net) -> Status<'_> {
+fn status_of<'a>(
+    clock: &'a [u8; 5],
+    battery: Option<Reading>,
+    net: Net,
+    dock: &'a [Visual<'a>],
+    front: Option<usize>,
+) -> Status<'a> {
     Status {
-        dock: &[],
-        front: Some(0),
+        dock,
+        front,
         title: "",
         clock: std::str::from_utf8(clock).unwrap_or("--:--"),
         battery: battery.map(|r| Battery {
@@ -1136,6 +1532,18 @@ fn desktop_first_token_runs(cmd: &str) -> bool {
         .is_some_and(|p| gh0st_core::desktop::is_executable(Path::new(p)))
 }
 
+fn screenshot_message(r: std::io::Result<PathBuf>) -> String {
+    match r {
+        Ok(p) => format!(
+            "Saved {}",
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("screenshot")
+        ),
+        Err(e) => format!("Screenshot failed: {e}"),
+    }
+}
+
 fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
     let dir = home_dir().join("Pictures/Screenshots");
     std::fs::create_dir_all(&dir)?;
@@ -1146,4 +1554,22 @@ fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
     let path = dir.join(format!("gh0st-{secs}.png"));
     snapshot::write_png(c, &path, 1)?;
     Ok(path)
+}
+
+/// "Volume: 0.40 [MUTED]" from `wpctl get-volume`, as (percent, muted).
+fn parse_volume(s: &str) -> Option<(u8, bool)> {
+    let v: f32 = s.split_whitespace().nth(1)?.parse().ok()?;
+    Some(((v * 100.0).round().clamp(0.0, 150.0) as u8, s.contains("[MUTED]")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wpctl_volume_reads_as_percent_and_mute() {
+        assert_eq!(parse_volume("Volume: 0.40\n"), Some((40, false)));
+        assert_eq!(parse_volume("Volume: 0.65 [MUTED]\n"), Some((65, true)));
+        assert_eq!(parse_volume("nope"), None);
+    }
 }

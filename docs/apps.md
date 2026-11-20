@@ -32,10 +32,28 @@ project, is built against this page.
   | `APPLAUNCH_LINUX_KEYBOARD_MAP` | the symbol-layer map file |
   | `GH0ST_SYSPLAUSE` | `1` when a terminal should wait for a key after its command exits |
 
-- The keyboard is never grabbed: the app reads it directly.
-- While an app runs the shell draws nothing, except a banner across the top
-  while ESC is held, and the low-battery countdown.
+- The keyboard is never grabbed while the app is in front: the app reads it
+  directly.
+- While an app is in front the shell draws only over it: a banner across the
+  top while ESC is held or the battery is about to run out, and a toast for
+  brightness, volume, mute and screenshot keys. When one goes, the shell puts
+  back the app's pixels, except any the app drew meanwhile.
 - The shell handles brightness, volume, mute and screenshot keys meanwhile.
+
+## Pausing
+
+- Fn+K (`KEY_HOME`) pauses the app in front and opens the switcher. The app
+  sees Fn and Home pressed and released; the shell waits until every key is
+  up, then sends SIGSTOP to the group.
+- The shell keeps the app's last frame. Before it sends SIGCONT, it puts that
+  frame back on the panel, so an app that redraws only what changed still
+  looks right.
+- While apps are paused and the shell is in front, the shell grabs the
+  keyboard. Before an app resumes, the shell lets go and writes `MSC_SCAN`
+  events to the device until every paused reader's queue overflows, so the
+  app reads `SYN_DROPPED` instead of keys typed elsewhere. Ignore `EV_MSC`.
+- Closing a paused app from the switcher sends SIGTERM and SIGCONT together,
+  then SIGKILL 3 s later. So does a stopping shell.
 
 ## Leaving
 
@@ -43,7 +61,7 @@ project, is built against this page.
   background children keep the app open.
 - Holding ESC: a hint at 0.5 s, SIGTERM to the group at 3 s, SIGKILL 3 s
   later. Apps should exit cleanly on SIGTERM.
-- The shell repaints the whole panel on return.
+- The shell repaints the whole panel on return, and on pause.
 
 ## Terminal
 

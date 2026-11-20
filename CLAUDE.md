@@ -55,8 +55,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - **Geometry and colour live in `theme.rs`.** Widgets never hardcode either.
 - **Keep the stock app contract.** `.desktop` files in
   `/usr/share/APPLaunch/applications`, cwd `/usr/share/APPLaunch`, the
-  `LV_LINUX_*` and `APPLAUNCH_LINUX_*` env, no `EVIOCGRAB`, ESC held 3 s sends
-  SIGTERM to the group, SIGKILL 3 s later.
+  `LV_LINUX_*` and `APPLAUNCH_LINUX_*` env, ESC held 3 s sends SIGTERM to the
+  group, SIGKILL 3 s later. Never `EVIOCGRAB` while an app is in front; the
+  shell grabs only while it is in front with apps paused.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
   apps too. Keep unknown keys. Our keys use a `gh0st.` prefix.
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`. Build only:

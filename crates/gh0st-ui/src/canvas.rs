@@ -82,6 +82,10 @@ impl Canvas {
         self.px[(y * self.w + x) as usize]
     }
 
+    pub fn set(&mut self, x: i32, y: i32, c: Color) {
+        self.px[(y * self.w + x) as usize] = c;
+    }
+
     #[inline]
     pub fn blend_px(&mut self, x: i32, y: i32, c: Color, a: u8) {
         if self.clip.contains(x, y) {

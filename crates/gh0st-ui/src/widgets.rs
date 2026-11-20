@@ -714,13 +714,15 @@ pub fn dialog(c: &mut Canvas, t: &Theme, r: Rect, title: &str, accent: Color) ->
 }
 
 /// A short message above the hint bar, the only answer a hotkey gets.
-pub fn toast(c: &mut Canvas, t: &Theme, text: &str) {
+/// Returns where it went.
+pub fn toast(c: &mut Canvas, t: &Theme, text: &str) -> Rect {
     let w = (t.f.small_bold.measure(text) + 20).min(t.m.width - 2 * t.m.margin);
     let h = 18;
     let r = Rect::new((t.m.width - w) / 2, t.m.height - t.m.hint_h - h - 6, w, h);
     c.round_rect(r, t.m.radius, t.c.surface);
     c.stroke_round_rect(r, t.m.radius, t.c.border);
     text_centre(c, t.f.small_bold, r, text, t.c.fg);
+    r
 }
 
 /// A strip across the top of the panel, drawn over whatever an app shows:

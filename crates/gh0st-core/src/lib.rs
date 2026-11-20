@@ -9,6 +9,7 @@ pub mod config;
 pub mod desktop;
 pub mod esc;
 pub mod evdev;
+pub mod job;
 pub mod keys;
 pub mod rt;
 pub mod status;
