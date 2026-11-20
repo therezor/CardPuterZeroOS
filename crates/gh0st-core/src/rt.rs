@@ -152,18 +152,19 @@ pub fn local_hms() -> (u32, u32, u32) {
     }
 }
 
-/// "14:32", and the monotonic deadline of the next minute change. The clock
-/// is the only timer an idle home screen keeps.
-pub fn clock_text() -> ([u8; 5], u64) {
+/// "14:32", or "2:32" on a 12-hour clock, and the monotonic deadline of the
+/// next minute change. The clock is the only timer an idle home screen keeps.
+pub fn clock_text(h24: bool) -> (String, u64) {
     let (h, m, s) = local_hms();
-    let text = [
-        b'0' + (h / 10) as u8,
-        b'0' + (h % 10) as u8,
-        b':',
-        b'0' + (m / 10) as u8,
-        b'0' + (m % 10) as u8,
-    ];
-    (text, now_ms() + (60 - s.min(59)) as u64 * 1000)
+    (clock_format(h, m, h24), now_ms() + (60 - s.min(59)) as u64 * 1000)
+}
+
+pub fn clock_format(h: u32, m: u32, h24: bool) -> String {
+    if h24 {
+        format!("{h:02}:{m:02}")
+    } else {
+        format!("{}:{m:02}", (h + 11) % 12 + 1)
+    }
 }
 
 #[cfg(test)]
@@ -196,10 +197,12 @@ mod tests {
 
     #[test]
     fn the_clock_reads_hh_mm() {
-        let (t, next) = clock_text();
-        let s = std::str::from_utf8(&t).unwrap();
+        let (s, next) = clock_text(true);
         assert_eq!(s.len(), 5);
         assert_eq!(&s[2..3], ":");
         assert!(next > now_ms() && next <= now_ms() + 60_000);
+        assert_eq!(clock_format(0, 5, false), "12:05");
+        assert_eq!(clock_format(14, 32, false), "2:32");
+        assert_eq!(clock_format(9, 0, true), "09:00");
     }
 }

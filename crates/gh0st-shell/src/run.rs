@@ -41,6 +41,9 @@ const STATE_DIR: &str = ".local/state/gh0st";
 const STOP_WAIT_MS: u64 = 100;
 const VOLUME_STEP: i32 = 10;
 
+mod settings_ui;
+use settings_ui::SettingsUi;
+
 /// `gh0st shell`, or `gh0st shell --sim DIR` on a host: keys from a script on
 /// stdin (see `sim.rs`), frames saved as PNGs in DIR.
 pub fn main(args: &[String]) -> i32 {
@@ -78,6 +81,7 @@ pub fn main(args: &[String]) -> i32 {
 enum Screen {
     Home,
     Switcher,
+    Settings,
     Locked,
     /// Backlight off after `dark_time`. The next key only wakes it.
     Off,
@@ -87,6 +91,7 @@ enum Screen {
 #[derive(Clone, PartialEq, Eq)]
 enum Back {
     Home,
+    Settings,
     App(String),
 }
 
@@ -181,6 +186,7 @@ struct Shell {
     apps: Vec<App>,
     home: Home,
     switcher: Switcher,
+    settings: Option<SettingsUi>,
     tasks: Tasks,
     back: Back,
     pending: Option<Pending>,
@@ -205,7 +211,7 @@ struct Shell {
     battery: Option<Reading>,
     low: LowBattery,
     net: Net,
-    clock: [u8; 5],
+    clock: String,
     clock_at: u64,
     screen: Screen,
     dirty: bool,
@@ -292,6 +298,7 @@ impl Shell {
             canvas: Canvas::new(t.m.width, t.m.height),
             home: Home::new(Vec::new(), layout, &t),
             switcher: Switcher::new(&t),
+            settings: None,
             tasks: Tasks::default(),
             back: Back::Home,
             pending: None,
@@ -327,7 +334,7 @@ impl Shell {
             battery: None,
             low: LowBattery::default(),
             net: Net::None,
-            clock: *b"--:--",
+            clock: "--:--".into(),
             clock_at: 0,
             screen: Screen::Home,
             dirty: true,
@@ -476,7 +483,7 @@ impl Shell {
     }
 
     fn refresh_status(&mut self) {
-        let (clock, at) = rt::clock_text();
+        let (clock, at) = rt::clock_text(settings_ui::clock_24h(&self.config));
         self.clock = clock;
         self.clock_at = at;
         self.battery = self.battery_dir.as_deref().and_then(battery::sample);
@@ -524,6 +531,8 @@ impl Shell {
                     })
                     .flatten(),
                 app.then(|| self.esc.next_at()).flatten(),
+                (app && (self.banner.is_some() || self.popup.is_some()))
+                    .then_some(now + crate::overlay::REFRESH_MS),
                 self.tasks.next_at(now),
             ]);
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
@@ -718,6 +727,9 @@ impl Shell {
 
     /// ESC held over an app, and the battery countdown drawn over it.
     fn app_timers(&mut self, now: u64) {
+        for o in [self.banner.as_mut(), self.popup.as_mut()].into_iter().flatten() {
+            o.refresh(self.display.as_mut());
+        }
         let d = self.esc.update(now, self.esc_down);
         if d.hide_hint {
             if let Some(b) = self.banner.take() {
@@ -866,6 +878,10 @@ impl Shell {
             self.switcher_key(k, now);
             return;
         }
+        if self.screen == Screen::Settings {
+            self.settings_key(k, now);
+            return;
+        }
         if k.is(code::HOME) {
             match k.state {
                 State::Press => self.home_armed = true,
@@ -939,14 +955,14 @@ impl Shell {
                     -VOLUME_STEP
                 };
                 let v = (self.volume.unwrap_or(50) as i32 + step).clamp(0, 100) as u8;
-                self.set_volume(v);
+                self.apply_volume(v);
+                let suffix = if self.muted == Some(true) { ", muted" } else { "" };
+                self.toast(format!("Volume {v}%{suffix}"));
                 true
             }
             code::MUTE => {
                 let muted = !self.muted.unwrap_or(false);
-                let flag = if muted { "1" } else { "0" };
-                child::fire(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", flag]);
-                self.muted = Some(muted);
+                self.apply_mute(muted);
                 match (muted, self.volume) {
                     (true, _) => self.toast("Muted"),
                     (false, Some(v)) => self.toast(format!("Volume {v}%")),
@@ -960,15 +976,19 @@ impl Shell {
 
     /// Sets the output level and keeps it in the stock `volume` key, which
     /// every stock app restores at start.
-    fn set_volume(&mut self, v: u8) {
+    fn apply_volume(&mut self, v: u8) {
         let arg = format!("{v}%");
         child::fire(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &arg]);
         self.volume = Some(v);
         self.config = Config::load(&config::default_path());
         self.config.set_int("volume", v as i64);
         let _ = self.config.save();
-        let suffix = if self.muted == Some(true) { ", muted" } else { "" };
-        self.toast(format!("Volume {v}%{suffix}"));
+    }
+
+    fn apply_mute(&mut self, muted: bool) {
+        let flag = if muted { "1" } else { "0" };
+        child::fire(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", flag]);
+        self.muted = Some(muted);
     }
 
     fn nav_key(&mut self, k: Key) {
@@ -1081,6 +1101,10 @@ impl Shell {
         };
         if self.home.mode() == Mode::Search {
             self.home.cancel_search();
+        }
+        if app.builtin == Some(apps::Builtin::Settings) {
+            self.open_settings();
+            return;
         }
         match self.tasks.get(&id).map(|t| t.state) {
             Some(tasks::State::Closing { .. }) => self.toast(format!("{} is closing", app.entry.name)),
@@ -1208,6 +1232,7 @@ impl Shell {
         self.refresh_status();
         self.rescan();
         self.switcher.set_apps(self.tasks.cards());
+        self.refresh_settings();
         self.sync_grab();
         self.dirty = true;
     }
@@ -1233,6 +1258,10 @@ impl Shell {
             Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.state == tasks::State::Paused) => {
                 self.pending = Some(Pending::Resume(id));
             }
+            Back::Settings if self.settings.is_some() => {
+                self.screen = Screen::Settings;
+                self.dirty = true;
+            }
             _ => {
                 self.screen = Screen::Home;
                 self.dirty = true;
@@ -1256,6 +1285,7 @@ impl Shell {
             if armed(&mut self.enter_armed) {
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
                     None => {
+                        self.settings = None;
                         self.screen = Screen::Home;
                         self.dirty = true;
                     }
@@ -1301,7 +1331,7 @@ impl Shell {
         let start = Instant::now();
         let t = self.t;
         let now = rt::now_ms();
-        let clock = self.clock;
+        let clock = self.clock.clone();
         let dock: Vec<Visual> = self
             .tasks
             .iter()
@@ -1313,15 +1343,15 @@ impl Shell {
         };
         let status = status_of(&clock, self.battery, self.net, &dock, front);
         match self.screen {
-            Screen::Locked => {
-                let text = std::str::from_utf8(&clock).unwrap_or("--:--");
-                widgets::lock_screen(&mut self.canvas, &t, text, &status);
-            }
+            Screen::Locked => widgets::lock_screen(&mut self.canvas, &t, &clock, &status),
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
+            Screen::Settings => {
+                settings_ui::draw(&mut self.canvas, &t, &status, self.settings.as_ref())
+            }
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
         drop(dock);
-        if matches!(self.screen, Screen::Home | Screen::Switcher) {
+        if matches!(self.screen, Screen::Home | Screen::Switcher | Screen::Settings) {
             self.draw_low_battery();
             if let Some((text, _)) = &self.toast {
                 widgets::toast(&mut self.canvas, &t, text);
@@ -1503,7 +1533,7 @@ fn dark_ms_of(c: &Config) -> Option<u64> {
 }
 
 fn status_of<'a>(
-    clock: &'a [u8; 5],
+    clock: &'a str,
     battery: Option<Reading>,
     net: Net,
     dock: &'a [Visual<'a>],
@@ -1513,7 +1543,7 @@ fn status_of<'a>(
         dock,
         front,
         title: "",
-        clock: std::str::from_utf8(clock).unwrap_or("--:--"),
+        clock,
         battery: battery.map(|r| Battery {
             percent: r.percent,
             charging: r.charging,

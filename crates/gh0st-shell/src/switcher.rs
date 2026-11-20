@@ -7,7 +7,6 @@ use crate::home::{self, Icon, Size};
 use crate::motion::{self, lerp, lerp_rect};
 use gh0st_ui::Canvas;
 use gh0st_ui::geom::Rect;
-use gh0st_ui::pixel;
 use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, Card as CardView, Hint, Status, Visual};
 
@@ -244,8 +243,8 @@ impl Switcher {
                             &note
                         }
                     },
-                    visual: Visual::Mark {
-                        bitmap: pixel::SKULL,
+                    visual: Visual::Badge {
+                        icon: widgets::SKULL,
                         tint: t.c.accent,
                     },
                 },

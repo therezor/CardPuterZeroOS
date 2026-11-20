@@ -52,6 +52,16 @@ pub enum IconRef {
     None,
 }
 
+/// A screen of the shell that sits on home like an app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Builtin {
+    Settings,
+}
+
+/// The id of the built-in Settings entry. Not a file name: no `.desktop`
+/// can collide with it.
+pub const SETTINGS_ID: &str = "gh0st:settings";
+
 #[derive(Clone, Debug)]
 pub struct App {
     /// File name of the `.desktop`, unique across both folders.
@@ -60,6 +70,10 @@ pub struct App {
     pub icon: IconRef,
     /// Ours run their argv directly; third-party ones go through `sh -c`.
     pub ours: bool,
+    /// Drawn by the shell itself; never started as a process.
+    pub builtin: Option<Builtin>,
+    /// On home. Settings > Apps lists the hidden ones too.
+    pub shown: bool,
     mtime: u64,
     seq: usize,
 }
@@ -72,6 +86,8 @@ impl App {
             entry,
             icon: IconRef::None,
             ours,
+            builtin: None,
+            shown: true,
             mtime: 0,
             seq: 0,
         }
@@ -134,9 +150,12 @@ fn order_of(label: &str) -> Option<usize> {
     ORDER.iter().position(|&o| o == norm)
 }
 
-/// Reads both folders and returns the apps to show, in order.
+/// Reads both folders and returns the apps to show, in order, with Settings
+/// built in.
 pub fn scan(dirs: &Dirs, config: &Config, pins: &[String]) -> Vec<App> {
-    scan_with(dirs, config, pins, desktop::is_executable)
+    let mut apps = scan_all(dirs, config, pins, desktop::is_executable);
+    apps.retain(|a| a.shown);
+    apps
 }
 
 pub fn scan_with(
@@ -145,7 +164,36 @@ pub fn scan_with(
     pins: &[String],
     executable: impl Fn(&Path) -> bool + Copy,
 ) -> Vec<App> {
-    let mut apps: Vec<App> = Vec::new();
+    let mut apps = scan_all(dirs, config, pins, executable);
+    apps.retain(|a| a.shown);
+    apps
+}
+
+fn settings_app() -> App {
+    App {
+        file: SETTINGS_ID.into(),
+        entry: DesktopEntry {
+            name: "Settings".into(),
+            comment: "Wi-Fi, display, sound".into(),
+            ..Default::default()
+        },
+        icon: IconRef::Symbol("settings".into()),
+        ours: true,
+        builtin: Some(Builtin::Settings),
+        shown: true,
+        mtime: 0,
+        seq: 0,
+    }
+}
+
+/// Every app, hidden ones included (`shown` false), for Settings > Apps.
+pub fn scan_all(
+    dirs: &Dirs,
+    config: &Config,
+    pins: &[String],
+    executable: impl Fn(&Path) -> bool + Copy,
+) -> Vec<App> {
+    let mut apps: Vec<App> = vec![settings_app()];
     let mut seq = 0;
     for (dir, ours) in [(&dirs.ours, true), (&dirs.stock, false)] {
         let Ok(rd) = std::fs::read_dir(dir) else {
@@ -161,7 +209,8 @@ pub fn scan_with(
         files.sort();
         for (file, path) in files {
             seq += 1;
-            if apps.iter().any(|a| a.file == file) {
+            // Settings is built in now; an old entry of ours would show twice.
+            if apps.iter().any(|a| a.file == file) || (ours && file == "settings.desktop") {
                 continue;
             }
             let Some(entry) = std::fs::read_to_string(&path)
@@ -183,9 +232,6 @@ pub fn scan_with(
                 Some(v) => v != 0,
                 None => !HIDDEN_BY_DEFAULT.contains(&file.as_str()),
             };
-            if !shown {
-                continue;
-            }
             let icon = resolve_icon(&entry.icon, &dirs.icon_root);
             let mtime = std::fs::metadata(&path)
                 .and_then(|m| m.modified())
@@ -198,6 +244,8 @@ pub fn scan_with(
                 entry,
                 icon,
                 ours,
+                builtin: None,
+                shown,
                 mtime,
                 seq,
             });
@@ -297,8 +345,8 @@ mod tests {
         let c = Config::default();
         let apps = scan_with(&t.dirs(), &c, &[], |_| true);
         assert_eq!(names(&apps), ["Settings", "Files", "Music", "Zebra"]);
+        assert_eq!(apps[0].builtin, Some(Builtin::Settings), "built in, not the file");
         assert_eq!(apps[0].icon, IconRef::Symbol("settings".into()));
-        assert!(apps[0].ours);
         let apps = scan_with(&t.dirs(), &c, &["zz.desktop".into()], |_| true);
         assert_eq!(names(&apps)[0], "Zebra");
     }
@@ -309,10 +357,12 @@ mod tests {
         t.add("stock", "zclaw.desktop", "ZClaw", "/bin/zclaw", "");
         t.add("stock", "music.desktop", "Music", "/bin/music", "");
         let mut c = Config::default();
-        assert_eq!(names(&scan_with(&t.dirs(), &c, &[], |_| true)), ["Music"]);
+        assert_eq!(names(&scan_with(&t.dirs(), &c, &[], |_| true)), ["Settings", "Music"]);
         c.set_int(&stock_key("zclaw.desktop"), 1);
         c.set_int(&stock_key("music.desktop"), 0);
-        assert_eq!(names(&scan_with(&t.dirs(), &c, &[], |_| true)), ["ZClaw"]);
+        assert_eq!(names(&scan_with(&t.dirs(), &c, &[], |_| true)), ["Settings", "ZClaw"]);
+        let all = scan_all(&t.dirs(), &c, &[], |_| true);
+        assert_eq!(all.iter().filter(|a| !a.shown).count(), 1, "Music, hidden");
     }
 
     #[test]
@@ -330,7 +380,7 @@ mod tests {
         let apps = scan_with(&t.dirs(), &Config::default(), &[], |p| {
             p != Path::new("/opt/store")
         });
-        assert_eq!(names(&apps), ["A"]);
+        assert_eq!(names(&apps), ["Settings", "A"]);
     }
 
     #[test]
@@ -352,8 +402,8 @@ mod tests {
             "Icon=share/images/missing.png\n",
         );
         let apps = scan_with(&t.dirs(), &Config::default(), &[], |_| true);
-        assert_eq!(apps[0].icon, IconRef::Path(t.0.join("share/images/m.png")));
-        assert_eq!(apps[1].icon, IconRef::None, "kept, drawn as a letter");
+        assert_eq!(apps[1].icon, IconRef::Path(t.0.join("share/images/m.png")));
+        assert_eq!(apps[2].icon, IconRef::None, "kept, drawn as a letter");
     }
 
     #[test]

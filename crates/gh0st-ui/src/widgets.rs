@@ -8,7 +8,6 @@ use crate::font::Font;
 use crate::geom::Rect;
 use crate::icon::{self, IconSize};
 use crate::image::Image;
-use crate::pixel;
 use crate::theme::Theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +35,9 @@ pub struct Status<'a> {
     pub battery: Option<Battery>,
     pub net: Net,
 }
+
+/// The shell's mark: a skull, as on pt35, drawn smooth.
+pub const SKULL: &str = "gh0st-skull";
 
 /// Body area between the two bars.
 pub fn body(t: &Theme) -> Rect {
@@ -122,7 +124,8 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     let mut sx = t.m.pad / 2;
     let skull = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
     let ink = slot(c, t, skull, s.front == Some(0));
-    pixel::draw_in(c, pixel::SKULL_SMALL, skull, 1, ink);
+    let (x, y) = skull.centre(t.m.slot_icon, t.m.slot_icon);
+    icon::draw(c, SKULL, IconSize::Tiny, x, y, ink);
     sx += step + t.m.slot_gap;
 
     // Every app gets a slot while they fit; past that the last one counts
@@ -182,10 +185,6 @@ fn slot_visual(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, front: bool, ink:
             let mut buf = [0u8; 4];
             let up = ch.to_uppercase().next().unwrap_or(*ch);
             text_centre(c, t.f.small_bold, r, up.encode_utf8(&mut buf), col);
-        }
-        Visual::Mark { bitmap, tint } => {
-            let col = if front { ink } else { *tint };
-            pixel::draw_in(c, bitmap, r, 1, col);
         }
     }
 }
@@ -323,11 +322,6 @@ pub enum Visual<'a> {
     Image(&'a Image),
     /// No icon at all: the name's first letter on a tinted badge.
     Letter { ch: char, tint: Color },
-    /// A pixel-art mark on a tinted badge: the skull on the Home card.
-    Mark {
-        bitmap: &'static [&'static str],
-        tint: Color,
-    },
 }
 
 pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
@@ -358,12 +352,6 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
             let mut buf = [0u8; 4];
             let up = ch.to_uppercase().next().unwrap_or(*ch);
             text_centre(c, f, r, up.encode_utf8(&mut buf), ink);
-        }
-        Visual::Mark { bitmap, tint } => {
-            let (fill, ink) = tinted(*tint);
-            c.round_rect(r, t.m.radius, fill);
-            let scale = if r.w >= 32 { 2 } else { 1 };
-            pixel::draw_in(c, bitmap, r, scale, ink);
         }
         Visual::Image(img) => {
             let fill = if selected {

@@ -80,6 +80,10 @@ impl Config {
         self.map.insert(key.to_string(), Value::Num(v.to_string()));
     }
 
+    pub fn set_bool(&mut self, key: &str, v: bool) {
+        self.map.insert(key.to_string(), Value::Bool(v));
+    }
+
     pub fn set_str(&mut self, key: &str, v: &str) {
         self.map.insert(key.to_string(), Value::Str(v.to_string()));
     }
