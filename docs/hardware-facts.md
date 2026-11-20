@@ -1,6 +1,6 @@
 # Hardware facts
 
-Captured from the device (CM0, `RZR-ZERO`, 2026-11-20) unless marked.
+Measured on the device unless marked.
 
 ## Measured
 
@@ -49,7 +49,7 @@ Captured from the device (CM0, `RZR-ZERO`, 2026-11-20) unless marked.
 
 Both screens went dark during the minute.
 
-## Flush timing (ftrace + `GH0ST_LOG=debug`, 2026-11-20)
+## Flush timing
 
 Clock chain: `spi-max-frequency` 60 MHz (`0x03938700` in the DT). The VPU clock is fixed at
 400 MHz (`vcgencmd measure_clock core`, `clk_summary`; `enable_uart=1`, `core_freq=400`). The RPi
@@ -101,7 +101,7 @@ range from the lowest to the highest dirty page, at full width.
 - **Tearing margin left alone.** 66.7 MHz (400 / 6) is above the DT's 60 MHz cap and the
   ST7789V's rated write clock. For more margin, slow the refresh with FRCTRL2 instead.
 
-## Frame pacing (driver v2, 2026-11-20)
+## Frame pacing
 
 The first TE wait never waited. The driver disabled the TE IRQ between frames.
 `pinctrl-bcm2835` has no `irq_disable`, so the disable was lazy. The next edge
