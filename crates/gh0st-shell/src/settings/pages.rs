@@ -223,7 +223,11 @@ pub fn build(id: &PageId, s: &State) -> Page {
             vec![("R", "scan"), ("Del", "forget")],
         ),
         PageId::Network => ("Network", Body::Info(network(s)), vec![]),
-        PageId::Bluetooth => ("Bluetooth", Body::List(bluetooth(s)), vec![("S", "scan")]),
+        PageId::Bluetooth => (
+            "Bluetooth",
+            Body::List(bluetooth(s)),
+            vec![("S", "scan"), ("Del", "forget")],
+        ),
         PageId::System => ("System", Body::List(system(s)), vec![]),
         PageId::TimeZone(region) => (
             "Time zone",

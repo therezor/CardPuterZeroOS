@@ -3,7 +3,7 @@
 //! and saves, so stock apps' keys survive, and applies at once.
 
 use super::*;
-use crate::settings::net;
+use crate::settings::{bt, net};
 use crate::settings::pages::{self, AppRow, DARK_TIMES, State as PageState};
 use crate::settings::{self, Act, Body, Command, Cursor, Dialog, Page, PageId, Setting, Value};
 use gh0st_core::desktop;
@@ -37,6 +37,12 @@ pub(super) enum NetJob {
         gave_password: bool,
     },
     Forget(String),
+    BtQuery,
+    BtPower,
+    BtScan,
+    /// What to say when it works.
+    BtDevice(String),
+    BtRemove(String),
 }
 
 impl SettingsUi {
@@ -63,6 +69,7 @@ impl Shell {
         self.screen = Screen::Settings;
         self.dirty = true;
         self.query_net(false);
+        self.query_bt();
     }
 
     fn close_settings(&mut self) {
@@ -484,7 +491,68 @@ impl Shell {
                 }
                 true
             }
+            PageId::Bluetooth if k.ch == Some('s') => {
+                self.run_system(Command::BtScan);
+                true
+            }
+            PageId::Bluetooth if k.is(code::BACKSPACE) => {
+                if let Some((Act::Run(Command::Device(mac)), _)) = self.selected_act() {
+                    let paired = self.bt_device(&mac).is_some_and(|d| d.paired);
+                    if paired {
+                        self.start_job(
+                            JobKind::Net(NetJob::BtRemove(mac.clone())),
+                            &["bluetoothctl", "remove", &mac],
+                        );
+                    }
+                }
+                true
+            }
             _ => false,
+        }
+    }
+
+    fn query_bt(&mut self) {
+        self.start_job(JobKind::Net(NetJob::BtQuery), &["sh", "-c", bt::QUERY]);
+    }
+
+    fn bt_device(&self, mac: &str) -> Option<pages::Device> {
+        self.settings
+            .as_ref()?
+            .state
+            .devices
+            .iter()
+            .find(|d| d.mac == mac)
+            .cloned()
+    }
+
+    /// Enter on a device: connect a paired one, pair, trust and connect a
+    /// new one, disconnect a connected one.
+    fn bt_enter(&mut self, mac: String) {
+        let Some(d) = self.bt_device(&mac) else {
+            return;
+        };
+        if !bt::is_mac(&mac) {
+            return;
+        }
+        let name = if d.name.is_empty() { mac.clone() } else { d.name.clone() };
+        let done = if d.connected {
+            format!("Disconnected {name}")
+        } else if d.paired {
+            format!("Connected to {name}")
+        } else {
+            format!("Paired with {name}")
+        };
+        let job = JobKind::Net(NetJob::BtDevice(done));
+        if d.connected {
+            self.start_job(job, &["bluetoothctl", "disconnect", &mac]);
+            self.toast(format!("Disconnecting {name}"));
+        } else if d.paired {
+            self.start_job(job, &["bluetoothctl", "--timeout", "20", "connect", &mac]);
+            self.toast(format!("Connecting {name}\u{2026}"));
+        } else {
+            let script = "bluetoothctl --timeout 20 pair \"$1\" && bluetoothctl trust \"$1\" && bluetoothctl --timeout 20 connect \"$1\"";
+            self.start_job(job, &["sh", "-c", script, "sh", &mac]);
+            self.toast(format!("Pairing {name}\u{2026}"));
         }
     }
 
@@ -553,6 +621,21 @@ impl Shell {
                 }
                 requery = true;
             }
+            NetJob::BtPower | NetJob::BtRemove(_) => {
+                if !j.ok() {
+                    self.toast(bt::failure(&out));
+                }
+                self.query_bt();
+            }
+            NetJob::BtScan => self.query_bt(),
+            NetJob::BtDevice(done) => {
+                if j.ok() {
+                    self.toast(done.clone());
+                } else {
+                    self.toast(bt::failure(&out));
+                }
+                self.query_bt();
+            }
             _ => {}
         }
         let Some(ui) = self.settings.as_mut() else {
@@ -574,6 +657,12 @@ impl Shell {
             NetJob::List if j.ok() => st.networks = net::parse_list(&out, &st.profiles),
             NetJob::Devices if j.ok() => st.ifaces = net::parse_devices(&out),
             NetJob::Join { .. } => st.wifi_busy = None,
+            NetJob::BtQuery => {
+                let (on, devices) = bt::parse_query(&out);
+                st.bt_on = on;
+                st.devices = devices;
+            }
+            NetJob::BtScan => st.bt_scanning = false,
             _ => {}
         }
         if requery {
@@ -596,6 +685,21 @@ impl Shell {
                     &["nmcli", "radio", "wifi", if on { "off" } else { "on" }],
                 );
             }
+            Setting::Bluetooth => {
+                let on = self.settings.as_ref().is_some_and(|ui| ui.state.bt_on);
+                if !on {
+                    // Stock boots with the radio blocked. The session ACL
+                    // usually allows this; the helper covers the rest.
+                    let _ = gh0st_core::rfkill::set(gh0st_core::rfkill::Radio::Bluetooth, false);
+                }
+                if let Some(ui) = self.settings.as_mut() {
+                    ui.state.bt_on = !on;
+                }
+                self.start_job(
+                    JobKind::Net(NetJob::BtPower),
+                    &["bluetoothctl", "power", if on { "off" } else { "on" }],
+                );
+            }
             _ => self.toast("Not available yet"),
         }
     }
@@ -612,6 +716,20 @@ impl Shell {
                 },
                 Ask::HiddenName,
             ),
+            Command::BtScan => {
+                let busy = self.settings.as_ref().is_some_and(|ui| ui.state.bt_scanning);
+                if !busy {
+                    if let Some(ui) = self.settings.as_mut() {
+                        ui.state.bt_scanning = true;
+                    }
+                    self.start_job(
+                        JobKind::Net(NetJob::BtScan),
+                        &["bluetoothctl", "--timeout", "10", "scan", "on"],
+                    );
+                    self.refresh_settings();
+                }
+            }
+            Command::Device(mac) => self.bt_enter(mac),
             _ => self.toast("Not available yet"),
         }
     }
