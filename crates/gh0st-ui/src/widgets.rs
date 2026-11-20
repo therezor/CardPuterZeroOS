@@ -294,14 +294,32 @@ pub fn selection(c: &mut Canvas, t: &Theme, r: Rect) {
     c.stroke_round_rect(r, t.m.radius_large, t.c.accent);
 }
 
-/// One grid cell: badge on top, name below, both centred.
-pub fn tile(c: &mut Canvas, t: &Theme, r: Rect, label: &str, v: &Visual, selected: bool) {
+/// What a grid tile or list row shows for one app.
+pub struct AppItem<'a> {
+    pub label: &'a str,
+    /// The list layout's second line. Ignored by tiles.
+    pub note: &'a str,
+    pub visual: Visual<'a>,
+    pub pinned: bool,
+}
+
+/// One grid cell: badge on top, name below, both centred, a pin mark in the
+/// corner when pinned.
+pub fn tile(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: bool) {
     if selected {
         selection(c, t, r);
     }
+    tile_content(c, t, r, item, selected);
+}
+
+/// A tile without its selection frame, for when the frame is animating.
+pub fn tile_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: bool) {
     let b = t.m.badge;
     let br = Rect::new(r.x + (r.w - b) / 2, r.y + 6, b, b);
-    badge(c, t, br, v, selected);
+    badge(c, t, br, &item.visual, selected);
+    if item.pinned {
+        pin_mark(c, t, r.right() - 4, r.y + 4, selected);
+    }
     let f = if selected { t.f.small_bold } else { t.f.small };
     let col = if selected { t.c.fg } else { soft(t) };
     let lr = Rect::new(
@@ -310,48 +328,47 @@ pub fn tile(c: &mut Canvas, t: &Theme, r: Rect, label: &str, v: &Visual, selecte
         r.w - 6,
         r.bottom() - br.bottom() - 6,
     );
-    let w = f.measure(label).min(lr.w);
+    let w = f.measure(item.label).min(lr.w);
     let y = lr.y + f.cap() + 1;
-    f.draw_elided(c, lr.x + (lr.w - w) / 2, y, label, lr.w, col);
+    f.draw_elided(c, lr.x + (lr.w - w) / 2, y, item.label, lr.w, col);
 }
 
-/// One home list row: badge, name, and a second line when there is one.
-pub struct AppRow<'a> {
-    pub label: &'a str,
-    pub note: &'a str,
-    pub visual: Visual<'a>,
-    pub pinned: bool,
+/// The pin icon with its right edge at `right`.
+fn pin_mark(c: &mut Canvas, t: &Theme, right: i32, y: i32, selected: bool) {
+    let s = IconSize::Small as i32;
+    let col = if selected { t.c.accent } else { t.c.muted };
+    icon::draw(c, "pin", IconSize::Small, right - s, y, col);
 }
 
-pub fn app_row(c: &mut Canvas, t: &Theme, r: Rect, row: &AppRow, selected: bool) {
+/// One home list row: badge, name, a second line when there is one, and a
+/// pin mark when pinned.
+pub fn app_row(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: bool) {
     if selected {
         selection(c, t, r);
     }
+    app_row_content(c, t, r, item, selected);
+}
+
+/// A list row without its selection frame.
+pub fn app_row_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: bool) {
     let b = t.m.badge_small;
     let br = Rect::new(r.x + 6, r.y + (r.h - b) / 2, b, b);
-    badge(c, t, br, &row.visual, selected);
+    badge(c, t, br, &item.visual, selected);
     let x = br.right() + 10;
     let mut right = r.right() - 10;
-    if row.pinned {
+    if item.pinned {
         let s = IconSize::Small as i32;
-        icon::draw(
-            c,
-            "pin",
-            IconSize::Small,
-            right - s,
-            r.y + (r.h - s) / 2,
-            t.c.muted,
-        );
+        pin_mark(c, t, right, r.y + (r.h - s) / 2, selected);
         right -= s + 6;
     }
     let name = if selected { t.f.body_bold } else { t.f.body };
     let col = if selected { t.c.fg } else { soft(t) };
-    if row.note.is_empty() {
-        text_in(c, name, Rect::new(x, r.y, right - x, r.h), row.label, col);
+    if item.note.is_empty() {
+        text_in(c, name, Rect::new(x, r.y, right - x, r.h), item.label, col);
     } else {
-        name.draw_elided(c, x, r.y + 14, row.label, right - x, col);
+        name.draw_elided(c, x, r.y + 14, item.label, right - x, col);
         t.f.small
-            .draw_elided(c, x, r.y + 27, row.note, right - x, t.c.muted);
+            .draw_elided(c, x, r.y + 27, item.note, right - x, t.c.muted);
     }
 }
 

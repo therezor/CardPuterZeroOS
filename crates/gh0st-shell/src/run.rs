@@ -97,8 +97,8 @@ impl Input {
         }
     }
 
-    fn finished(&self) -> bool {
-        matches!(self, Input::Script(s) if s.finished())
+    fn finished(&self, now: u64) -> bool {
+        matches!(self, Input::Script(s) if s.finished(now))
     }
 
     fn path(&self) -> String {
@@ -251,6 +251,8 @@ impl Shell {
             first_frame: true,
             config,
         };
+        let animations = s.config.get_bool("gh0st.animations").unwrap_or(true);
+        s.home.set_animations(animations);
         s.boot_restore();
         s.rescan();
         s.refresh_status();
@@ -280,6 +282,8 @@ impl Shell {
         self.home.set_layout(layout_of(&self.config));
         self.terminal = terminal_of(&self.config);
         self.dark_ms = dark_ms_of(&self.config);
+        self.home
+            .set_animations(self.config.get_bool("gh0st.animations").unwrap_or(true));
         self.dirty = true;
     }
 
@@ -366,7 +370,7 @@ impl Shell {
             if self.dirty && self.screen != Screen::Off {
                 self.draw();
             }
-            if self.input.finished() {
+            if self.input.finished(rt::now_ms()) {
                 return 0;
             }
             let now = rt::now_ms();
@@ -381,6 +385,9 @@ impl Shell {
                     .map(|d| self.last_input + d),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
+                (self.screen == Screen::Home)
+                    .then(|| self.home.next_frame(now))
+                    .flatten(),
             ]);
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
             fds.extend(self.watches.iter().map(|(_, w)| rt::pollfd(w.fd())));
@@ -435,6 +442,10 @@ impl Shell {
     }
 
     fn on_timers(&mut self, now: u64) {
+        // Any wake while something moves draws the next frame.
+        if self.home.next_frame(now).is_some() {
+            self.dirty = true;
+        }
         if now >= self.clock_at {
             self.refresh_status();
         }
@@ -679,7 +690,7 @@ impl Shell {
             keys::Nav::Left => (-1, 0),
             keys::Nav::Right => (1, 0),
         };
-        self.home.move_by(dx, dy);
+        self.home.move_by(dx, dy, rt::now_ms());
         self.dirty = true;
     }
 
@@ -872,6 +883,7 @@ impl Shell {
 
     fn draw(&mut self) {
         let t = self.t;
+        let now = rt::now_ms();
         let clock = self.clock;
         let status = status_of(&clock, self.battery, self.net);
         match self.screen {
@@ -880,7 +892,7 @@ impl Shell {
                 widgets::lock_screen(&mut self.canvas, &t, text, &status);
             }
             _ => {
-                self.home.draw(&mut self.canvas, &t, &status);
+                self.home.draw(&mut self.canvas, &t, &status, now);
                 self.draw_low_battery();
                 if let Some((text, _)) = &self.toast {
                     widgets::toast(&mut self.canvas, &t, text);
@@ -895,6 +907,7 @@ impl Shell {
             self.display.flush(&self.canvas, self.canvas.bounds())
         };
         self.dirty = false;
+        self.home.settle(now);
         if self.debug {
             eprintln!("gh0st shell: flushed {rows} rows");
             if self.first_frame {

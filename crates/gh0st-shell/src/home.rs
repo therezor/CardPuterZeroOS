@@ -1,13 +1,18 @@
 //! The home screen: every app as a grid of tiles or a list of rows, the
 //! user's pick (`gh0st.home_layout`). Nav mode moves and opens. Search mode,
 //! entered with S, filters as you type.
+//!
+//! Motion is two short things (`gh0st.animations` turns them off): the
+//! selection frame glides to the new item, and a page change slides the grid
+//! or scrolls the list. Each runs a fixed time with an ease-out, and the shell
+//! draws frames only while one runs.
 
 use crate::search::score;
 use gh0st_ui::Canvas;
 use gh0st_ui::geom::Rect;
 use gh0st_ui::image::Image;
 use gh0st_ui::theme::Theme;
-use gh0st_ui::widgets::{self, AppRow, Hint, Status, Visual};
+use gh0st_ui::widgets::{self, AppItem, Hint, Status, Visual};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -87,12 +92,105 @@ pub struct Entry {
     pub pinned: bool,
 }
 
-/// How many items one screen holds in each layout, from the theme.
+const GLIDE_MS: u64 = 120;
+const SLIDE_MS: u64 = 180;
+/// Frame spacing while something moves. The SPI panel shows fewer, but a
+/// frame that is not ready in time is simply skipped by the kernel.
+pub const FRAME_MS: u64 = 20;
+
+/// Where each item sits, worked out once from the theme.
 #[derive(Clone, Copy, Debug)]
-struct Fit {
+struct Geo {
     cols: usize,
     rows: usize,
+    grid: Rect,
+    tile_w: i32,
+    tile_h: i32,
+    gap: i32,
+    list: Rect,
     list_rows: usize,
+    row_h: i32,
+}
+
+impl Geo {
+    fn new(t: &Theme) -> Geo {
+        let area = widgets::content(t);
+        let (cols, rows) = (t.m.cols, t.m.rows);
+        let tile_w = (area.w - (cols - 1) * t.m.gap) / cols;
+        let tile_h = (area.h - (rows - 1) * t.m.gap) / rows;
+        // Spread the rounding left over by the division into the margin.
+        let x0 = area.x + (area.w - (cols * tile_w + (cols - 1) * t.m.gap)) / 2;
+        let (list, list_rows) = widgets::rows_area(t, t.m.app_row_h);
+        Geo {
+            cols: cols as usize,
+            rows: rows as usize,
+            grid: Rect::new(x0, area.y, area.w - 2 * (x0 - area.x), area.h),
+            tile_w,
+            tile_h,
+            gap: t.m.gap,
+            list: Rect::new(list.x, list.y, list.w - 4, list.h),
+            list_rows,
+            row_h: t.m.app_row_h,
+        }
+    }
+
+    fn tile(&self, slot: usize) -> Rect {
+        let (col, row) = ((slot % self.cols) as i32, (slot / self.cols) as i32);
+        Rect::new(
+            self.grid.x + col * (self.tile_w + self.gap),
+            self.grid.y + row * (self.tile_h + self.gap),
+            self.tile_w,
+            self.tile_h,
+        )
+    }
+
+    fn row(&self, slot: i32) -> Rect {
+        Rect::new(
+            self.list.x,
+            self.list.y + slot * self.row_h,
+            self.list.w,
+            self.row_h,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Motion {
+    /// The selection frame moves from `from` to the selected item.
+    Glide { from: Rect },
+    /// The grid changes page. `dir` is +1 for the next page.
+    Page { from_top: usize, dir: i32 },
+    /// The list scrolls. Rows start `from_px` lower than where they end,
+    /// and the frame glides from `from`.
+    Scroll { from_px: i32, from: Rect },
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Anim {
+    start: u64,
+    ms: u64,
+    motion: Motion,
+}
+
+impl Anim {
+    /// Eased progress 0-1, cubic ease-out: fast start, soft landing.
+    fn progress(&self, now: u64) -> f32 {
+        let p = (now.saturating_sub(self.start) as f32 / self.ms as f32).min(1.0);
+        1.0 - (1.0 - p).powi(3)
+    }
+}
+
+fn lerp(a: i32, b: i32, p: f32) -> i32 {
+    a + ((b - a) as f32 * p).round() as i32
+}
+
+fn lerp_rect(a: Rect, b: Rect, p: f32) -> Rect {
+    Rect::new(
+        lerp(a.x, b.x, p),
+        lerp(a.y, b.y, p),
+        lerp(a.w, b.w, p),
+        lerp(a.h, b.h, p),
+    )
 }
 
 pub struct Home {
@@ -106,16 +204,13 @@ pub struct Home {
     selected: usize,
     /// First item of `shown` on screen.
     top: usize,
-    fit: Fit,
+    geo: Geo,
+    animations: bool,
+    anim: Option<Anim>,
 }
 
 impl Home {
     pub fn new(entries: Vec<Entry>, layout: Layout, t: &Theme) -> Home {
-        let fit = Fit {
-            cols: t.m.cols as usize,
-            rows: t.m.rows as usize,
-            list_rows: widgets::rows_area(t, t.m.app_row_h).1,
-        };
         let shown = (0..entries.len()).collect();
         Home {
             layout,
@@ -125,7 +220,16 @@ impl Home {
             shown,
             selected: 0,
             top: 0,
-            fit,
+            geo: Geo::new(t),
+            animations: true,
+            anim: None,
+        }
+    }
+
+    pub fn set_animations(&mut self, on: bool) {
+        self.animations = on;
+        if !on {
+            self.anim = None;
         }
     }
 
@@ -134,6 +238,9 @@ impl Home {
     }
 
     pub fn set_layout(&mut self, layout: Layout) {
+        if layout != self.layout {
+            self.anim = None;
+        }
         self.layout = layout;
         self.keep_visible();
     }
@@ -199,24 +306,35 @@ impl Home {
 
     fn per_screen(&self) -> usize {
         match self.layout {
-            Layout::Grid => self.fit.cols * self.fit.rows,
-            Layout::List => self.fit.list_rows,
+            Layout::Grid => self.geo.cols * self.geo.rows,
+            Layout::List => self.geo.list_rows,
+        }
+    }
+
+    /// The selection frame's place for item `index` with the screen starting
+    /// at `top`.
+    fn frame(&self, index: usize, top: usize) -> Rect {
+        match self.layout {
+            Layout::Grid => self.geo.tile(index.saturating_sub(top)),
+            Layout::List => self.geo.row(index as i32 - top as i32),
         }
     }
 
     /// Arrow movement. In the grid, left and right step and wrap into the next
     /// row and page; up and down move a row. In the list, up and down step and
     /// left and right jump a screen.
-    pub fn move_by(&mut self, dx: i32, dy: i32) {
+    pub fn move_by(&mut self, dx: i32, dy: i32, now: u64) {
         let n = self.shown.len();
         if n == 0 {
             return;
         }
+        let (old, old_top) = (self.selected, self.top);
+        let from = self.current_frame(now);
         let last = n - 1;
         let s = self.selected as i64;
         let target = match self.layout {
             Layout::Grid => {
-                let cols = self.fit.cols as i64;
+                let cols = self.geo.cols as i64;
                 let mut t = s + dx as i64;
                 if dy > 0 {
                     let next_row_start = (s / cols + 1) * cols;
@@ -232,10 +350,47 @@ impl Home {
                 }
                 t
             }
-            Layout::List => s + dy as i64 + dx as i64 * self.fit.list_rows as i64,
+            Layout::List => s + dy as i64 + dx as i64 * self.geo.list_rows as i64,
         };
         self.selected = target.clamp(0, last as i64) as usize;
         self.keep_visible();
+        if !self.animations || self.selected == old {
+            return;
+        }
+        let from = from.unwrap_or_else(|| self.frame(old, old_top));
+        let motion = match self.layout {
+            _ if self.top == old_top => Motion::Glide { from },
+            Layout::Grid => Motion::Page {
+                from_top: old_top,
+                dir: if self.top > old_top { 1 } else { -1 },
+            },
+            Layout::List => Motion::Scroll {
+                from_px: (self.top as i32 - old_top as i32) * self.geo.row_h,
+                from: Rect::new(from.x, from.y, from.w, from.h),
+            },
+        };
+        let ms = match motion {
+            Motion::Page { .. } => SLIDE_MS,
+            _ => GLIDE_MS,
+        };
+        self.anim = Some(Anim {
+            start: now,
+            ms,
+            motion,
+        });
+    }
+
+    /// Where the frame is drawn right now, mid-glide included, so a quick
+    /// second press starts from what the eye sees.
+    fn current_frame(&self, now: u64) -> Option<Rect> {
+        let a = self.anim?;
+        let to = self.frame(self.selected, self.top);
+        match a.motion {
+            Motion::Glide { from } | Motion::Scroll { from, .. } => {
+                Some(lerp_rect(from, to, a.progress(now)))
+            }
+            Motion::Page { .. } => None,
+        }
     }
 
     fn keep_visible(&mut self) {
@@ -270,20 +425,35 @@ impl Home {
         self.shown = ranked.into_iter().map(|(_, i)| i).collect();
         self.selected = 0;
         self.top = 0;
+        self.anim = None;
     }
 
-    pub fn draw(&self, c: &mut Canvas, t: &Theme, status: &Status) {
+    /// When the next animation frame is due, if anything moves.
+    pub fn next_frame(&self, now: u64) -> Option<u64> {
+        let a = self.anim?;
+        Some((now + FRAME_MS).min(a.start + a.ms))
+    }
+
+    /// Drops a finished animation. Called after each drawn frame.
+    pub fn settle(&mut self, now: u64) {
+        if self.anim.is_some_and(|a| now >= a.start + a.ms) {
+            self.anim = None;
+        }
+    }
+
+    pub fn draw(&self, c: &mut Canvas, t: &Theme, status: &Status, now: u64) {
         c.fill(widgets::body(t), t.c.bg);
         widgets::status_bar(c, t, status);
-        let area = widgets::content(t);
         if self.shown.is_empty() {
             let msg = format!("No app matches \u{201c}{}\u{201d}", self.query);
-            widgets::text_centre(c, t.f.body, area, &msg, t.c.muted);
+            widgets::text_centre(c, t.f.body, widgets::content(t), &msg, t.c.muted);
         } else {
+            let old = c.set_clip(widgets::body(t));
             match self.layout {
-                Layout::Grid => self.draw_grid(c, t, area),
-                Layout::List => self.draw_list(c, t),
+                Layout::Grid => self.draw_grid(c, t, now),
+                Layout::List => self.draw_list(c, t, now),
             }
+            c.set_clip(old);
         }
         match self.mode {
             Mode::Search => widgets::search_bar(c, t, &self.query),
@@ -314,43 +484,96 @@ impl Home {
         }
     }
 
-    fn draw_grid(&self, c: &mut Canvas, t: &Theme, area: Rect) {
-        let (cols, rows) = (t.m.cols, t.m.rows);
-        let w = (area.w - (cols - 1) * t.m.gap) / cols;
-        let h = (area.h - (rows - 1) * t.m.gap) / rows;
-        // Spread the rounding left over by the division into the outer margin.
-        let x0 = area.x + (area.w - (cols * w + (cols - 1) * t.m.gap)) / 2;
-        for (slot, &i) in self
-            .shown
-            .iter()
-            .skip(self.top)
-            .take(self.per_screen())
-            .enumerate()
-        {
-            let (col, row) = (slot as i32 % cols, slot as i32 / cols);
-            let r = Rect::new(x0 + col * (w + t.m.gap), area.y + row * (h + t.m.gap), w, h);
-            let e = &self.entries[i];
-            let selected = self.top + slot == self.selected;
-            widgets::tile(c, t, r, &e.name, &visual(t, e, false), selected);
+    fn item<'a>(&'a self, t: &Theme, index: usize, small: bool) -> AppItem<'a> {
+        let e = &self.entries[self.shown[index]];
+        AppItem {
+            label: &e.name,
+            note: &e.note,
+            visual: visual(t, e, small),
+            pinned: e.pinned,
         }
     }
 
-    fn draw_list(&self, c: &mut Canvas, t: &Theme) {
-        let h = t.m.app_row_h;
-        let (area, rows) = widgets::rows_area(t, h);
-        for (slot, &i) in self.shown.iter().skip(self.top).take(rows).enumerate() {
-            let r = Rect::new(area.x, area.y + slot as i32 * h, area.w - 4, h);
-            let e = &self.entries[i];
-            let row = AppRow {
-                label: &e.name,
-                note: &e.note,
-                visual: visual(t, e, true),
-                pinned: e.pinned,
-            };
-            widgets::app_row(c, t, r, &row, self.top + slot == self.selected);
+    /// Draws one grid page starting at `top`, shifted `dx` pixels.
+    fn grid_page(&self, c: &mut Canvas, t: &Theme, top: usize, dx: i32, frame: Option<Rect>) {
+        if let Some(f) = frame {
+            widgets::selection(c, t, Rect::new(f.x + dx, f.y, f.w, f.h));
         }
-        let track = Rect::new(area.x, area.y, area.w - 4, area.h);
-        widgets::scrollbar(c, t, track, self.top, rows, self.shown.len());
+        let per = self.per_screen();
+        for index in top..(top + per).min(self.shown.len()) {
+            let r = self.geo.tile(index - top);
+            let r = Rect::new(r.x + dx, r.y, r.w, r.h);
+            let item = self.item(t, index, false);
+            widgets::tile_content(c, t, r, &item, index == self.selected);
+        }
+    }
+
+    fn draw_grid(&self, c: &mut Canvas, t: &Theme, now: u64) {
+        let to = self.frame(self.selected, self.top);
+        match self.anim {
+            Some(
+                a @ Anim {
+                    motion: Motion::Page { from_top, dir },
+                    ..
+                },
+            ) => {
+                let p = a.progress(now);
+                let dist = self.geo.grid.w + self.geo.gap;
+                let shift = (dist as f32 * p).round() as i32;
+                self.grid_page(c, t, from_top, -dir * shift, None);
+                self.grid_page(c, t, self.top, dir * (dist - shift), Some(to));
+            }
+            Some(
+                a @ Anim {
+                    motion: Motion::Glide { from },
+                    ..
+                },
+            ) => {
+                let f = lerp_rect(from, to, a.progress(now));
+                self.grid_page(c, t, self.top, 0, Some(f));
+            }
+            _ => self.grid_page(c, t, self.top, 0, Some(to)),
+        }
+    }
+
+    fn draw_list(&self, c: &mut Canvas, t: &Theme, now: u64) {
+        let to = self.frame(self.selected, self.top);
+        let (frame, offset) = match self.anim {
+            Some(
+                a @ Anim {
+                    motion: Motion::Glide { from },
+                    ..
+                },
+            ) => (lerp_rect(from, to, a.progress(now)), 0),
+            Some(
+                a @ Anim {
+                    motion: Motion::Scroll { from_px, from },
+                    ..
+                },
+            ) => {
+                let p = a.progress(now);
+                (lerp_rect(from, to, p), lerp(from_px, 0, p))
+            }
+            _ => (to, 0),
+        };
+        let old = c.set_clip(self.geo.list.intersect(&c.clip()));
+        widgets::selection(c, t, frame);
+        // Rows from one above to one below the screen, so a scroll never
+        // shows a gap at either edge.
+        let rows = self.geo.list_rows as i32;
+        for slot in -1..=rows {
+            let index = self.top as i32 + slot;
+            if index < 0 || index as usize >= self.shown.len() {
+                continue;
+            }
+            let r = self.geo.row(slot);
+            let r = Rect::new(r.x, r.y + offset, r.w, r.h);
+            let item = self.item(t, index as usize, true);
+            widgets::app_row_content(c, t, r, &item, index as usize == self.selected);
+        }
+        c.set_clip(old);
+        let track = self.geo.list;
+        widgets::scrollbar(c, t, track, self.top, self.geo.list_rows, self.shown.len());
     }
 }
 
@@ -405,7 +628,7 @@ mod tests {
         let mut h = home(&TEN, Layout::Grid);
         h.select(7);
         assert_eq!(h.top, 0);
-        h.move_by(1, 0);
+        h.move_by(1, 0, 0);
         assert_eq!((h.selected, h.top), (8, 8));
     }
 
@@ -413,11 +636,11 @@ mod tests {
     fn grid_down_into_a_short_row_lands_on_its_last_tile() {
         let mut h = home(&TEN, Layout::Grid);
         h.select(7);
-        h.move_by(0, 1);
+        h.move_by(0, 1, 0);
         assert_eq!(h.selected, 9, "row three has only two tiles");
-        h.move_by(0, 1);
+        h.move_by(0, 1, 0);
         assert_eq!(h.selected, 9, "nothing below");
-        h.move_by(0, -1);
+        h.move_by(0, -1, 0);
         assert_eq!(h.selected, 5);
     }
 
@@ -426,11 +649,11 @@ mod tests {
         let mut h = home(&TEN, Layout::List);
         let rows = h.per_screen();
         assert_eq!(rows, 4);
-        h.move_by(0, 3);
+        h.move_by(0, 3, 0);
         assert_eq!(h.top, 0);
-        h.move_by(0, 1);
+        h.move_by(0, 1, 0);
         assert_eq!((h.selected, h.top), (4, 1));
-        h.move_by(-1, 0);
+        h.move_by(-1, 0, 0);
         assert_eq!((h.selected, h.top), (0, 0));
     }
 
@@ -451,6 +674,35 @@ mod tests {
         h.cancel_search();
         assert_eq!(h.mode(), Mode::Nav);
         assert_eq!(h.shown.len(), TEN.len());
+    }
+
+    #[test]
+    fn a_move_starts_a_glide_and_a_page_turn_starts_a_slide() {
+        let mut h = home(&TEN, Layout::Grid);
+        h.move_by(1, 0, 1000);
+        assert!(matches!(h.anim.unwrap().motion, Motion::Glide { .. }));
+        assert_eq!(h.next_frame(1000), Some(1000 + FRAME_MS));
+        h.settle(1000 + GLIDE_MS);
+        assert!(h.anim.is_none());
+        h.select(7);
+        h.move_by(1, 0, 2000);
+        assert!(matches!(
+            h.anim.unwrap().motion,
+            Motion::Page { dir: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn the_last_frame_lands_exactly_and_nothing_moves_with_animations_off() {
+        let mut h = home(&TEN, Layout::List);
+        h.move_by(0, 1, 0);
+        assert_eq!(h.next_frame(GLIDE_MS - 5), Some(GLIDE_MS));
+        let a = h.anim.unwrap();
+        assert_eq!(a.progress(GLIDE_MS), 1.0);
+        h.set_animations(false);
+        h.move_by(0, 1, 0);
+        assert!(h.anim.is_none());
+        assert_eq!(h.next_frame(0), None);
     }
 
     #[test]

@@ -126,7 +126,7 @@ fn home(t: &Theme, stock: Option<&Path>, layout: Layout, search: Option<&str>) -
         None => h.select(1),
     }
     let mut c = new_canvas(t);
-    h.draw(&mut c, t, &home_status());
+    h.draw(&mut c, t, &home_status(), 0);
     c
 }
 

@@ -43,12 +43,18 @@ impl Script {
         if self.eof { -1 } else { self.fd }
     }
 
-    pub fn finished(&self) -> bool {
-        self.eof && self.queue.is_empty()
+    /// Done once the script has ended, every key is sent and a trailing
+    /// `wait` has run out, so a session can end on a settled frame.
+    pub fn finished(&self, now: u64) -> bool {
+        self.eof && self.queue.is_empty() && now >= self.cursor
     }
 
     pub fn next_at(&self) -> Option<u64> {
-        self.queue.front().map(|e| e.0)
+        match self.queue.front() {
+            Some(e) => Some(e.0),
+            None if self.eof => Some(self.cursor),
+            None => None,
+        }
     }
 
     pub fn read(&mut self, now: u64) {
