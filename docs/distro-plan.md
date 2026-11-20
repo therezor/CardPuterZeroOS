@@ -7,8 +7,8 @@ Status: research, 2026-11-20. Nothing here has been measured on a device yet. Fi
 
 **Base: Debian 13 "trixie" arm64, built additively with `mmdebstrap --variant=minbase`,
 plus the Raspberry Pi `rpt` 6.18 kernel/firmware and M5Stack's CardputerZero drivers,
-with the kernel pinned.** No desktop in the base image (desktop mode comes later as an app). No cloud-init; logging
-and network services are off by default.
+with the kernel pinned.** Camera included, `gpu_mem=64`. No desktop in the base image (desktop
+mode comes later as an app). No cloud-init; logging and network services are off by default.
 
 Why not another distro:
 
@@ -82,14 +82,16 @@ From `CardputerZero/pi-gen` branch `cardputerzero_v1.1` (commit `3b0e6f6`), `sta
 | USB Ethernet chip never runtime-suspends → hub + `dwc2` awake, **~8000 IRQ/s** | ~105 mA |
 | Launcher keeps an audio stream open → ES8389 + I2S DMA never stop | 35–40 mA |
 | Launcher keeps redrawing the LCD over SPI with backlight off | ~30 mA |
-| Wi-Fi on | ~38 mA |
-| PipeWire running | ~36 mA |
+| Wi-Fi on (screen off, cumulative delta) | ~38 mA |
+| PipeWire running (screen off, cumulative delta) | ~36 mA |
 | Backlight | ~30 mA |
 | Navigating the launcher UI | 500–700 mA |
 | Floor (CM0 alone, everything off) | ~173 mA |
-| HDMI desktop session (lightdm/LXDE) when running | 55–90 MB RAM |
 
 BT, CPU cap at 600 MHz, HDMI and the camera made no measurable power difference.
+
+**Measured** RAM: a running HDMI desktop costs ~55 MB with labwc (`cz-desk-mode`) and 75–90 MB with
+LightDM + LXDE (Kali image).
 
 ## 4. Memory plan (ordered by expected win; all to be measured)
 
@@ -100,18 +102,26 @@ BT, CPU cap at 600 MHz, HDMI and the camera made no measurable power difference.
 2. **No desktop in the base image.** No `rpd-*` metapackages, LightDM, labwc or Xorg. Desktop mode
    comes later as an installable launcher app (§6). **Measured:** a running desktop costs ~55 MB RAM
    and ~20 mA (`cz-desk-mode`); LXDE costs 75–90 MB (Kali image).
-3. **Keep `vc4-kms-v3d,cma-64`.** HDMI needs vc4, so the future desktop app depends on it, and under
-   KMS the GPU draws from CMA, not `gpu_mem`. So `gpu_mem` can still be cut (item 1). Idle CMA isn't
-   wasted: movable pages (page cache, anon) borrow it until HDMI or the camera needs it. Revisit the
-   CMA size when the desktop app exists.
-4. **Service diet.** Remove `cloud-init`, `avahi-daemon`, `rpi-connect-lite`, `udisks2`,
-   `ModemManager`, `triggerhappy`, `cups`, `rpcbind`, `apt-daily*`, `man-db.timer`,
-   `e2scrub*`, `fstrim.timer` (keep manual), `userconfig`, the `piwiz` autostart and the lightdm
-   first-boot config.
-   Start `bluetooth`/`hciuart` on demand (`dtoverlay=disable-bt` unless BT is enabled).
-5. **Audio on demand.** Keep PipeWire (stock apps need `libpulse0`) but socket-activate it, and
-   leave WirePlumber's node suspend-on-idle on so the codec powers down. With key sounds off it
-   never starts.
+3. **Keep `vc4-kms-v3d,cma-64`.** Under KMS the GPU and camera pipeline draw from CMA, not
+   `gpu_mem`, so `gpu_mem` can still be cut (item 1). HDMI needs vc4, and the future desktop app
+   depends on it. The camera is in the base image, so CMA must fit full-res capture: IMX219
+   3280×2464 raw is ≈10 MB per buffer, with several buffers in flight. Verify full-res stills and
+   preview with `cma-64` in Phase 1. Idle CMA isn't wasted: movable pages (page cache, anon) borrow
+   it until HDMI or the camera needs it.
+4. **Never installed.** The build is additive (minbase), so these are a checklist against
+   Recommends pulling them in, not a removal step: `cloud-init`, `avahi-daemon`,
+   `rpi-connect-lite`, `udisks2`, `ModemManager`, `triggerhappy`, `cups`, `rpcbind`, LightDM,
+   `piwiz`, `userconfig`. Timers off: `apt-daily*`, `man-db.timer`, `e2scrub*`, `fstrim.timer`
+   (keep the service for manual use).
+   **Bluetooth:** keep `hciuart`/`bluetooth` disabled until the user turns BT on. **Don't use
+   `dtoverlay=disable-bt`:** it remaps `serial0` from the mini-UART (`/dev/ttyS0` on GPIO14/15,
+   used by the GPS/LoRa Cap apps) to the PL011, which breaks them. It's also boot-time only, so a
+   BT toggle would need a reboot.
+5. **Audio on demand.** Keep PipeWire (stock apps need `libpulse0`). Debian already socket-activates
+   it; what keeps it running on stock is `APPLaunch.service`'s `Wants=/After=pipewire-pulse.service`.
+   The Rust launcher's unit must not `Want` PipeWire, and it connects only while it plays a sound.
+   Leave WirePlumber's node suspend-on-idle on so the codec powers down. With key sounds off and no
+   audio app running, PipeWire never starts.
 6. **Wi-Fi stack.** Keep NetworkManager for app compatibility, but use `wifi.backend=iwd`
    instead of `wpa_supplicant`. Measure both; `iwd` + `systemd-networkd` alone is lighter still
    if no app needs NM's D-Bus API.
@@ -119,7 +129,9 @@ BT, CPU cap at 600 MHz, HDMI and the camera made no measurable power difference.
    zram only, `zstd`, ~50% of RAM, `vm.swappiness=100–150`, `vm.page-cluster=0`. No swap file on SD.
 8. **Disk diet (not RAM, but image size and update time).** Drop `build-essential`, kernel headers,
    `gdb`, `luajit`, `rpi-update`, CJK `-extra` fonts and docs/man pages (dpkg `path-exclude`).
-   Small image + first-boot root resize instead of a fixed 14.8 GiB image.
+   Small image + first-boot root resize instead of a fixed 14.8 GiB image. **Risk to test:** M5
+   deliberately removed first-boot resize (their notes were deleted in `3b0e6f6`), while Kali's
+   `cz-firstboot-resize` works on this device.
 9. **Kernel (phase 3).** Build our own `rpt` 6.18 kernel package with the M5 drivers in-tree and a
    trimmed config (no unused SoC/FS/net drivers). Until then, **pin** the kernel (`apt-mark hold`)
    and ship the M5 modules as our own `.deb` built in CI per kernel version, with the driver commit
@@ -128,12 +140,17 @@ BT, CPU cap at 600 MHz, HDMI and the camera made no measurable power difference.
 ## 5. Boot and performance
 
 - **Boot:** no initramfs, no cloud-init, `quiet loglevel=3`, `fbcon=map:99` (keep the console off
-  the LCD), `camera_auto_detect=0`, `display_auto_detect=0`, `disable_splash=1` once our own splash
-  works, `boot_delay=0`. Tune with `systemd-analyze critical-chain`.
+  the LCD), `camera_auto_detect=0` with an explicit `dtoverlay=imx219` (as M5's `config_setup`
+  does), `display_auto_detect=0`, `disable_splash=1` once our own splash works, `boot_delay=0`.
+  Tune with `systemd-analyze critical-chain`.
 - **USB autosuspend:** ship the udev rule setting the SR9900A to `power/control=auto` (from
-  `cz-battery-saver`). This alone is −105 mA and removes the ~8000 IRQ/s storm, which also frees CPU.
+  `cz-battery-saver`). Match it by USB VID:PID, not driver name (cz-battery-saver names `r8152`,
+  so the driver isn't certain). This alone is −105 mA and removes the ~8000 IRQ/s storm, which
+  also frees CPU.
 - **CPU:** governor `schedutil`, keep stock 1.0 GHz (no overclock in a sealed handheld).
-- **Storage:** ext4 `noatime,commit=60`, `/tmp` on tmpfs, no persistent journal by default (§7).
+- **Storage:** ext4 `noatime,commit=60`, no persistent journal by default (§7). `/tmp` on tmpfs
+  **capped at `size=32M`**: the tmpfs default is 50% of RAM, and ffmpeg/camera/apt temp files land
+  there. Big temp files belong in `/var/tmp` (on disk).
 - **Display throughput:** a full 320×170 RGB565 frame is 108,800 bytes ≈ 15–21 ms over SPI
   (≤60 MHz requested; the real clock depends on the core-clock divider). Full redraws therefore cap
   around 45–65 fps, so partial (damage) updates are the main lever. The TE pin is unused in the DT
@@ -208,11 +225,11 @@ The bigger leaks are in the base OS and its defaults:
 | `systemd-timesyncd` | NTP to the Debian pool (reveals IP) | Keep for TLS (RTC is present), make the server configurable; optional chrony + NTS |
 | SSH on, `pi`/`raspberry` | Security, not telemetry | SSH off by default; password set at first boot |
 | `Asia/Shanghai` TZ, `regdom=AE` cmdline | Wrong defaults | UTC default; regdomain chosen at first boot |
-| Bluetooth | Discoverable name | Off by default (`rfkill default_state=0` already blocks radios at boot; keep it) |
+| Bluetooth | Discoverable name | Off by default (`rfkill default_state=0` blocks **all** radios at boot, Wi-Fi included; keep it, and the launcher unblocks on demand, §8) |
 | ADB gadget | Serial derived from `machine-id` hash | Already off by default; keep off |
 | `systemd-coredump`, `popularity-contest`, `reportbug` | Crash/usage reporting | Not installed (minbase); `kernel.core_pattern=|/bin/false` |
-| Kernel log | Readable by any user | `kernel.dmesg_restrict=1`, `kernel.kptr_restrict=2` |
-| M5 Imager (host tool) | RPi Imager telemetry stripped in the fork | We publish `.img.xz` + `bmap`; flash with `bmaptool`/`dd`/any imager |
+| Kernel log | Readable by any user | Set `kernel.dmesg_restrict=1` and `kernel.kptr_restrict=2` explicitly (Debian kernels default to restrict; the rpt config is unverified) |
+| M5 Imager (host tool) | RPi Imager telemetry stripped in the fork. OS customisation uses `init_format: "systemd"` (a `firstrun.sh` on the FAT partition calling `raspberrypi-sys-mods` helpers), **not cloud-init** | We publish `.img.xz` + `bmap`; flash with `bmaptool`/`dd`/any imager. Imager customisation support is open question 3 |
 
 **Logging design (default off, toggle in the launcher):**
 
@@ -246,6 +263,14 @@ The bigger leaks are in the base OS and its defaults:
   and `LaunchWizard` and keeps the DRM device open until one of them runs. With the Rust launcher at
   another path it never exits and likely blocks the launcher's display (to verify). Patch its watch
   list, or let the launcher own the splash.
+- **Radios:** `rfkill default_state=0` blocks Wi-Fi and BT at every boot. The launcher unblocks
+  them when the user enables them; `systemd-rfkill` persists that state across boots.
+- **Hardware controls** via sysfs:
+  - backlight in `/sys/class/backlight` (stock masks `systemd-backlight`, so the launcher restores
+    brightness itself);
+  - M5IOE1 switches in `/sys/class/leds/{ext_5v_out,grove_5v_out,grove_fun,ext_usb_gpio_fun}`,
+    with access granted by M5's `cardputerzero-leds.conf` / `60-cardputerzero-leds.rules`;
+  - low-battery shutdown (cz-battery-saver defaults to 8%).
 
 **Design rules taken from the measurements:**
 
@@ -275,8 +300,11 @@ systemd-analyze; systemd-analyze critical-chain
 swapon --show; cat /proc/interrupts | grep dwc2   # sample twice, 10 s apart
 cat /sys/class/power_supply/*/current_now        # idle, screen on / off
 ss -tupan                                        # listening + outbound sockets
-sudo tcpdump -i wlan0 -n -w idle.pcap            # 10 min idle: list every host contacted
 ```
+
+`smem` and `tcpdump` aren't on the stock image. To avoid changing the system being measured, capture
+the 10-minute idle traffic on the Wi-Fi AP/router (or a laptop hotspot) and list every host the
+device contacts.
 
 Repeat the same set on each build to track the effect of every change.
 
@@ -285,15 +313,26 @@ Repeat the same set on each build to track the effect of every change.
 1. **Phase 0:** baseline the stock image (§9).
 2. **Phase 1:** mmdebstrap trixie minbase image + pinned kernel + M5 modules `.deb` (pinned commit)
    + privacy defaults + USB autosuspend rule, running the **stock** APPLaunch for parity testing.
+   - Targets hardware rev v0.5, like M5's CI (`CONFIG_CARDPUTERO_V0_5`: `cardputerzero-v5-overlay`,
+     `bq27220_v5`, `bmi270_bmm150_overlay`). Verify the same image boots cleanly on the Lite SKU (no
+     camera/IMU, so the imx219/bmi270 probes should fail harmlessly).
+   - Disable the bundled **ZClaw** (startup probes to Cloudflare and Microsoft) in
+     `/usr/share/APPLaunch/preinstalled-desktop-apps.tsv`.
+   - Still ship what stock APPLaunch uses at runtime: NetworkManager, BlueZ, PipeWire-pulse,
+     polkit + `60-applaunch-updater.rules`, and `fb_load`.
 3. **Phase 2:** Rust launcher replaces APPLaunch (same `.desktop` contract), with logging and
    privacy settings. Patch or replace `fb_load`.
 4. **Phase 2b:** desktop mode as an installable launcher app (§6).
-5. **Phase 3:** custom kernel with M5 drivers in-tree and trimmed config; tune CMA size. Optional Buildroot appliance build.
+5. **Phase 3:** custom kernel with M5 drivers in-tree and trimmed config; tune CMA size. Optional
+   Buildroot appliance build.
 
 ## 11. Open questions
 
 1. Must stock M5 apps and the AppStore keep working? This decides Debian vs Buildroot.
 2. Do we have a device to baseline on?
+3. Support M5/RPi Imager OS customisation (user, Wi-Fi, SSH)? Yes means keeping
+   `raspberrypi-sys-mods` for `firstrun.sh`. No means the image sets `init_format: none` and all
+   setup happens on-device in the launcher.
 
 ## Sources
 
@@ -302,7 +341,7 @@ Repeat the same set on each build to track the effect of every change.
 - CNX Software: https://www.cnx-software.com/2026/05/25/cardputerzero-a-raspberry-pi-cm0-pocket-computer-for-makers/
 - Official image build: https://github.com/CardputerZero/pi-gen (branch `cardputerzero_v1.1`)
 - Drivers and overlays: https://github.com/m5stack/m5stack-linux-dtoverlays (`modules/CardputerZero`, `st7789v-1.0`)
-- Stock launcher: https://github.com/CardputerZero/M5CardputerZero-Launcher (deb from https://github.com/CardputerZero/launcher releases)
+- Stock launcher (source and release debs): https://github.com/CardputerZero/launcher
 - Kali image (mmdebstrap precedent): https://github.com/on-my-machine-works/kali-on-cardputerzero
 - Power measurements: https://github.com/InstantComet/cz-battery-saver , https://github.com/vasilpetrov/cardputerzero-batt-opt
 - On-demand HDMI desktop (prior art): https://github.com/InstantComet/cz-desk-mode

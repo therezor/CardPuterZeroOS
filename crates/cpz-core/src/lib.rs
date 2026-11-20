@@ -1,1 +1,9 @@
-//! Everything below the pixels: syscalls, input, config, apps, children.
+//! Everything below the pixels: config, apps, input, policies, the event
+//! loop and child processes. The pure parts build and test on any host.
+
+pub mod apps;
+pub mod battery;
+pub mod config;
+pub mod desktop;
+pub mod esc;
+pub mod keys;
