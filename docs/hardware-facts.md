@@ -18,13 +18,16 @@ Captured from the device (CM0, `RZR-ZERO`, 2026-11-20) unless marked.
 - The only side button is power/boot. It sends no key event.
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
   400 MHz core clock divides to 50 MHz, so a full frame takes about 17.4 ms.
-  The panel refreshes at 60.5 Hz by default (TE period 16.5 ms).
+  The panel refreshes at 60.5 Hz by default (TE period 16.5 ms). With
+  FRCTRL2 0x15 it measures 50.6 Hz (19.76 ms). TE is high for 0.58 ms of each
+  period (blanking).
 - TE is wired to GPIO5 (M5's overlay has the line commented out). With
   TEON sent it pulses once per refresh.
 - The init file sets MADCTL 0xA0 (MV|MY): the panel refreshes across the
   landscape rows. gh0st's driver (`os/kernel/panel-mipi-dbi-m`) sends along
-  the scan lines with MADCTL 0x90, waits for TE, and runs the panel at 50 Hz.
-  0x40 is upside down, 0x80 still tears, 0x90 tears least.
+  the scan lines with MADCTL 0x90 and runs the panel at 50.6 Hz.
+  0x40 is upside down, 0x80 still tears, 0x90 tears least. Those MADCTL tests
+  ran while the TE wait was broken (see Frame pacing), so redo them.
 - Backlight: `/sys/class/backlight/backlight`, max 100, group `video` writable.
   Stock leaves it at 0 after its idle timeout, so the shell must turn it on.
 - Battery: `bq27220-0`, `type=Battery`. It sends a `change` uevent when the
@@ -46,6 +49,105 @@ Captured from the device (CM0, `RZR-ZERO`, 2026-11-20) unless marked.
 
 Both screens went dark during the minute.
 
+## Flush timing (ftrace + `GH0ST_LOG=debug`, 2026-11-20)
+
+Clock chain: `spi-max-frequency` 60 MHz (`0x03938700` in the DT). The VPU clock is fixed at
+400 MHz (`vcgencmd measure_clock core`, `clk_summary`; `enable_uart=1`, `core_freq=400`). The RPi
+docs say `enable_uart=1` implies `core_freq=250`, but this device measures 400. `spi-bcm2835`
+rounds the divider up to even: 400/8 = 50 MHz. Driver params: `frctrl=0x15` (50 Hz),
+`madctl_native=0x90`, `te=Y`, `te_timeout_ms=50`.
+
+The fb.rs path: `flush` copies changed spans into the fbdev mapping. Each first write to a
+page faults (`fb_deferred_io_mkwrite`, about 2 µs). The kernel sends nothing until the deferred-I/O
+work runs **50 ms later** (`fbdefio.delay = HZ / 20` in `drm_fbdev_dma.c`). It then damages the
+range from the lowest to the highest dirty page, at full width.
+
+| | Full frame (first frame, 170 rows) | Clock tick (11 rows changed) |
+|---|---|---|
+| Pages faulted | 27 | 3 |
+| Copy into the mapping | 0.26 ms | under 0.1 ms |
+| Wait for deferred I/O | 50.5 ms | 49.5 to 50.6 ms |
+| Wait for TE | 7.1 ms | 1.1 ms |
+| SPI transfer (`RAMWR`) | 17.56 ms for 108,800 B = 49.6 Mbit/s | 2.14 ms, about 20 rows sent |
+| Damage work total | 24.96 ms | 3.48 to 3.50 ms |
+| Write to glass | 75.5 ms | about 53 ms |
+
+- The SPI rate confirms 50 MHz. A full frame (17.6 ms) fits the 20 ms refresh with 2.4 ms to spare.
+- A 4 KB page is 6.4 rows, so 11 changed rows sent about 20. Two changes far apart send every row
+  between them.
+- Before the fixes below, the 50 ms delay capped fbdev at about 13 to 19 updates a second.
+
+### Fixes, measured (12 arrow-key presses, each a 7-frame highlight animation)
+
+| | Before | `fsync()` in fb.rs | + driver `fbdev_delay=1` |
+|---|---|---|---|
+| Draw | 0.5 ms | 0.5 ms | 0.5 ms |
+| Copy into the mapping (+ fsync) | 0.3 to 0.5 ms | 0.5 to 0.6 ms | 0.5 to 0.6 ms |
+| `fsync()` call | none | 0.09 ms median, 2.9 ms max | 0.1 ms median, 4.0 ms max |
+| First write to first frame on glass | 60.8 ms | 9.5 ms | 9.8 ms |
+| Animation frames sent | 2 to 3 of 7 | 7 of 7 | 7 of 7 |
+| Key frame to last frame on glass | 175 ms | 126 ms | 127 ms |
+
+- **Draw is 0.5 ms.** The 21 ms seen on clock ticks happens between the wake and the draw
+  (`wake to draw` in the log), in the work the tick does before drawing. It isn't draw or flush.
+- **`fsync()` doesn't block the loop.** `fb_deferred_io_fsync` runs the deferred-I/O work now, but
+  that work only queues `damage_work`. The SPI send happens in that worker after `fsync()` returns.
+- **Driver `fbdev_delay`:** it defaults to 1 jiffy (`CONFIG_HZ=250`, so 4 ms). This helps apps
+  that write `/dev/fb_lcd` without `fsync()`, such as stock apps. A test writer without `fsync()`
+  measured 5.1 to 10.2 ms from write to send (median 6.6 ms), against 50 ms before. The cost is more
+  write faults and SPI sends for apps that draw nonstop.
+- One `Timeout waiting for TE signal` per boot, on the first frame. It was there before these
+  changes too.
+- **Tearing margin left alone.** 66.7 MHz (400 / 6) is above the DT's 60 MHz cap and the
+  ST7789V's rated write clock. For more margin, slow the refresh with FRCTRL2 instead.
+
+## Frame pacing (driver v2, 2026-11-20)
+
+The first TE wait never waited. The driver disabled the TE IRQ between frames.
+`pinctrl-bcm2835` has no `irq_disable`, so the disable was lazy. The next edge
+was marked pending, and `enable_irq` replayed it from a tasklet 36 µs later.
+Every send started at a random refresh phase. The "Wait for TE" times in the
+table above are those replays, not real waits. The 39.9 fps full-frame rate was
+the send time, not a panel limit.
+
+The second cost was `drm_fb_swab`. It loaded each pixel from the
+write-combined GEM buffer: 6.7 ms for a full frame.
+
+What `os/kernel/panel-mipi-dbi-m` does now:
+- **TE.** The TE IRQ timestamps both edges while frames flow. It learns the
+  period (19.76 ms) and the blanking time (0.58 ms). The IRQ is unlazy, so a
+  stale edge is dropped. It turns itself off after 20 edges without a send. Idle
+  on home: `te_on 0`, and the IRQ count stays flat.
+- **Send time.** A send starts where it can't cross the scan. That is before the
+  scan reaches its first line (lead), or late enough that the scan passes its
+  last line first (trail). Otherwise it sleeps until trail. Margin:
+  `te_margin_us` (300). The wire time comes from measured sends: 163 ns/byte.
+- **Fast copy.** Each row is memcpy'd out of the GEM buffer, then swapped and
+  transposed in one pass. Prep went from 7.2 ms to 1.33 ms per full frame.
+- **Present.** `GH0ST_FBIO_PRESENT` (`_IO('F', 0xC0)`) returns once the
+  mapping's writes are on the wire. Stock fbdev answers ENOTTY.
+- **Stats.** `/sys/bus/spi/devices/spi0.0/te_stats` shows period, blanking,
+  wire speed, and lead/trail/sleep counts.
+
+gh0st waits on `present` after each animation frame and draws the next one at
+once, so animations lock to the refresh.
+
+| | Before | Now |
+|---|---|---|
+| Key-press glide (partial rows) | about 21 ms timer, sends not synced | 77 of 94 sends one refresh apart (19.76 ms) |
+| Full screen, back to back | 39.9 fps, random phase | 50.8 fps: 153 frames in 3 s, every gap 19 to 20 ms |
+| Full frame: prep / RAMWR / total | 7.2 / 17.6 / 25.0 ms | 1.33 / 17.56 / 19.21 ms |
+
+The other 17 key-press gaps are the first two sends of a glide: one leads in a
+refresh, the next trails in the same refresh. The panel still shows one new
+frame per refresh.
+
+By eye: a blind A/B (`scripts/ab-test.sh`, 5 rounds, scan sync `te=0`
+against `te=1`) picked the sync every round. That's 5 of 5, a 1 in 32 chance
+if guessing. Whether any tear remains is not settled ("hard to tell, looks a
+lot better"). The model rests on TE being high during blanking and on the scan
+following the send order (MADCTL ML).
+
 ## Still to check
 
 
@@ -53,14 +155,13 @@ Both screens went dark during the minute.
 | Check | Assumed now | Where it matters |
 |---|---|---|
 | Panel device and bpp | `/dev/fb_lcd`, 16 bpp RGB565, no byte swap | `gh0st-ui/src/fb.rs` |
-| Rows pushed per flush | Only pages written to the fbdev mapping | flush cost, animation |
 | Boot splash `fb_load` | May hold DRM until the stock binary path runs | first frame of gh0st |
 | Keyboard device | `/dev/input/by-path/platform-3f804000.i2c-event` | `gh0st-core/src/evdev.rs` |
 | Kernel key repeat | Ignored; gh0st repeats at 500/50 ms | `keys.rs` |
 | Sym map file | `/usr/share/keymaps/tca8418_keypad_m5stack_keymap.map` | `keys.rs` |
 | Backlight | `/sys/class/backlight/backlight`, writable by UID 1000 | `backlight.rs` |
 | Backlight GPIO | stock drives M5IOE1 line 9 low at boot; gh0st does not yet | cold boot |
-| Remaining tearing | slower refresh (FRCTRL2) or a faster SPI clock (66.7 MHz) | driver |
+| Remaining tearing | check by eye with `scripts/tear-test.sh`; if it tears, widen `te_margin_us` or slow the refresh (FRCTRL2). No faster SPI clock (above the DT cap and the ST7789V rating) | driver |
 | Battery | a `type=Battery` supply under `/sys/class/power_supply` | `battery.rs` |
 | Battery uevents | sent on capacity change? if not, add a slow timer | idle wakeups |
 | `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |

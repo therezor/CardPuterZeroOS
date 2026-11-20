@@ -151,10 +151,10 @@ LightDM + LXDE (Kali image).
 - **Storage:** ext4 `noatime,commit=60`, no persistent journal by default (§7). `/tmp` on tmpfs
   **capped at `size=32M`**: the tmpfs default is 50% of RAM, and ffmpeg/camera/apt temp files land
   there. Big temp files belong in `/var/tmp` (on disk).
-- **Display throughput:** a full 320×170 RGB565 frame is 108,800 bytes ≈ 15–21 ms over SPI
-  (≤60 MHz requested; the real clock depends on the core-clock divider). Full redraws therefore cap
-  around 45–65 fps, so partial (damage) updates are the main lever. The TE pin is unused in the DT
-  (possible tearing on fast animation).
+- **Display throughput (measured, `hardware-facts.md`):** SPI runs at 50 MHz (400 MHz VPU / 8). A
+  full 108,800-byte frame takes 17.6 ms, so partial updates are the main lever. Upstream fbdev waits
+  50 ms before each send. gh0st's patched driver cuts that to one jiffy (4 ms) for every fbdev app,
+  uses the TE pin and runs the panel at 50 Hz. gh0st also calls `fsync()` after each flush.
 
 ## 6. Desktop mode: later, as an app
 

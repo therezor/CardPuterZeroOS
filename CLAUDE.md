@@ -36,6 +36,8 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
 - `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC).
 - `docs/apps.md`: what the shell gives an app. The terminal is built to it.
+- `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
+  sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
   our `.desktop` entries.
 - `scripts/deploy.sh`, `scripts/measure.sh`: install on a device, measure it.
@@ -83,9 +85,12 @@ cargo run -p gh0st-shell --example mockups   # writes mockups/*.png
 GH0ST_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
 GH0ST_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
 GH0ST_HOST=pi@<device> scripts/measure.sh gh0st       # PSS, wakeups, CPU idle
+GH0ST_HOST=pi@<device> scripts/tear-test.sh 10    # full-screen stripes at the panel rate
+GH0ST_HOST=pi@<device> scripts/ab-test.sh          # blind A/B of a driver param by eye
 ```
 
-`GH0ST_LOG=debug` logs the first frame time and the rows each flush writes.
+`GH0ST_LOG=debug` logs the first frame time and, for each frame, the rows flushed and
+the wake-to-draw, draw and flush times.
 
 ## Host runs
 

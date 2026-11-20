@@ -35,8 +35,10 @@ The binary is about 1 MB, static, with its fonts and icons built in.
 
 It also fixes the panel driver. The stock driver sends frames without waiting
 for the panel's refresh, and the panel is mounted rotated, so every app tore.
-`os/kernel/panel-mipi-dbi-m` waits for the TE signal on GPIO5, sends lines in
-the panel's own scan order and runs the panel at 50 Hz.
+`os/kernel/panel-mipi-dbi-m` tracks the TE signal on GPIO5 and starts each send
+where it can't cross the panel's scan. It sends lines in the panel's own scan
+order and runs the panel at 50.6 Hz. Home animations wait on a present ioctl and
+lock to the refresh, at 50 fps even for full-screen redraws.
 
 ## Install
 
@@ -79,7 +81,7 @@ as PNGs.
 - `crates/gh0st-shell`: the home screen and the shell process.
 - `crates/gh0st`: the `gh0st` binary.
 - `os/kernel/panel-mipi-dbi-m`: the patched panel driver and its overlay.
-- `docs/`: hardware facts, the app contract, the distro plan.
+- `docs/`: hardware facts, the panel driver, the app contract, the distro plan.
 
 ## Status
 
