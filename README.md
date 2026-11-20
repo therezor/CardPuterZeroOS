@@ -92,4 +92,4 @@ leave an app open) and the terminal, which lives in its own repository.
 
 The Rust code is MIT. The panel driver is GPL-2.0, from M5Stack and Noralf
 Trønnes. Inter and JetBrains Mono are under the SIL Open Font License, and
-the Lucide icons under ISC.
+the Lucide icons under ISC. The skull is Phosphor's `skull-fill`, MIT.
