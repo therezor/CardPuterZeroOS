@@ -96,10 +96,3 @@ GH0ST_HOST=pi@<device> scripts/ab-test.sh 5 6    # blind A/B of a driver paramet
 ```sh
 sudo ./install.sh uninstall   # M5's driver back, then reboot
 ```
-
-## Open questions
-
-- Whether any tearing remains. The A/B shows a clear gain, not a clean result.
-- TE high during blanking, and the scan following send order, are assumed. A high-speed camera
-  would confirm both.
-- The MADCTL tests ran while the old TE wait was broken. They need repeating.
