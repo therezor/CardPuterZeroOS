@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/cpz", "crates/cpz-core", "crates/cpz-ui", "crates/cpz-shell"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "Lean Rust shell for the M5Stack CardputerZero"
+
+[workspace.dependencies]
+cpz-core = { path = "crates/cpz-core" }
+cpz-ui = { path = "crates/cpz-ui" }
+cpz-shell = { path = "crates/cpz-shell" }
+libc = "0.2"
+
+# A 512 MB board: small text, no unwinding tables, stripped.
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+incremental = false
+
+# Mockups and tests draw a lot of pixels; keep them quick in debug builds.
+[profile.dev.package."*"]
+opt-level = 2
