@@ -15,6 +15,7 @@ use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::rt;
 use gh0st_core::status::{self, Net, Watch};
 use gh0st_ui::display::{Display, Frames};
+use gh0st_ui::drm;
 use gh0st_ui::fb::{self, Framebuffer};
 use gh0st_ui::theme::{self, Theme};
 use gh0st_ui::widgets::{self, Battery, Status};
@@ -188,13 +189,10 @@ impl Shell {
                 (Box::new(frames), Input::Script(Script::stdin()))
             }
             None => {
-                let fb_path = fb::find();
-                let fb = Framebuffer::open(&fb_path)
-                    .map_err(|e| format!("{}: {e}", fb_path.display()))?;
                 let kb_path = evdev::find().ok_or("no keyboard found")?;
                 let dev = evdev::Device::open(&kb_path)
                     .map_err(|e| format!("{}: {e}", kb_path.display()))?;
-                (Box::new(fb), Input::Device(dev))
+                (open_panel()?, Input::Device(dev))
             }
         };
         let on_device = sim.is_none();
@@ -744,9 +742,12 @@ impl Shell {
             keymap: keys::SYM_MAP_PATH,
         };
         let pause = app.entry.terminal && app.entry.sysplause;
+        self.display.suspend();
         let mut running = match child::spawn(&argv, &dev, pause) {
             Ok(r) => r,
             Err(e) => {
+                self.display.resume();
+                self.full_flush = true;
                 self.toast(format!("Could not open {}: {e}", app.entry.name));
                 return;
             }
@@ -870,6 +871,7 @@ impl Shell {
                 rt::now_ms() - self.t0
             );
         }
+        self.display.resume();
         self.kb.reset();
         self.enter_armed = false;
         self.last_input = rt::now_ms();
@@ -984,6 +986,23 @@ fn watches(d: &Dirs) -> Vec<(bool, Watch)> {
 #[cfg(not(target_os = "linux"))]
 fn watches(_: &Dirs) -> Vec<(bool, Watch)> {
     Vec::new()
+}
+
+/// DRM when it opens, so a frame goes out whole and only the rectangle that
+/// changed is sent. fbdev otherwise (`GH0ST_FBDEV=1` forces it).
+fn open_panel() -> Result<Box<dyn Display>, String> {
+    let fb_path = fb::find();
+    let fbdev = fb_path.to_string_lossy().into_owned();
+    if std::env::var_os("GH0ST_FBDEV").is_none() {
+        if let Some(card) = drm::find() {
+            match drm::Drm::open(&card, fbdev.clone()) {
+                Ok(d) => return Ok(Box::new(d)),
+                Err(e) => eprintln!("gh0st: DRM {}: {e}; using fbdev", card.display()),
+            }
+        }
+    }
+    let fb = Framebuffer::open(&fb_path).map_err(|e| format!("{}: {e}", fb_path.display()))?;
+    Ok(Box::new(fb))
 }
 
 fn is_screenshot(k: &Key) -> bool {

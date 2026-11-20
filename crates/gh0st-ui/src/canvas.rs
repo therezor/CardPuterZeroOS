@@ -59,6 +59,13 @@ impl Canvas {
         self.px[d..d + n].copy_from_slice(&src.row(y)[..n]);
     }
 
+    /// Copies `w` pixels of row `y` from `src`, starting at `x`.
+    pub fn copy_span_from(&mut self, src: &Canvas, y: i32, x: i32, w: i32) {
+        let d = (y * self.w + x) as usize;
+        let s = (y * src.w + x) as usize;
+        self.px[d..d + w as usize].copy_from_slice(&src.px[s..s + w as usize]);
+    }
+
     pub fn clip(&self) -> Rect {
         self.clip
     }

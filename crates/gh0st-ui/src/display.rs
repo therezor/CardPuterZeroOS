@@ -17,6 +17,11 @@ pub trait Display {
     fn read_into(&mut self, c: &mut Canvas);
     /// The device path a child app should draw to.
     fn device(&self) -> String;
+    /// Lets go of the panel before an app starts. Overlays drawn meanwhile
+    /// (the ESC hint) go through whatever the app sees.
+    fn suspend(&mut self) {}
+    /// Takes the panel back after the app exits.
+    fn resume(&mut self) {}
 }
 
 impl Display for Framebuffer {

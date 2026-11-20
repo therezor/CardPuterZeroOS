@@ -4,6 +4,7 @@
 pub mod canvas;
 pub mod color;
 pub mod display;
+pub mod drm;
 pub mod fb;
 pub mod font;
 pub mod geom;
