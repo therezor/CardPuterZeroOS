@@ -16,7 +16,7 @@ cd os/kernel/panel-mipi-dbi-m && sudo ./install.sh   # on the device, then reboo
 | Full-screen redraws | 40 fps, tearing | 50.8 fps, one frame per refresh |
 | fbdev write to send | 50 ms | 6.6 ms |
 | Frames of a 7-frame glide shown | 2 to 3 | 7 |
-| Full-frame prep | 7.2 ms | 1.3 ms |
+| Full-frame prep | 6.7 ms | 1.3 ms |
 | Blind A/B, which tears less | lost 5 of 5 | won 5 of 5 |
 
 ## How it works
@@ -33,8 +33,8 @@ since blanking started:
 - lead: p ≤ b + l1 × t − margin, and the write is faster per line than the scan
 - trail: p ≥ b + (l2 + 1) × t − W + margin
 
-A full frame can lead until 0.28 ms and trail from 2.5 ms. M5's driver waited on a stale TE edge
-that the kernel replayed, so its sends started anywhere.
+A full frame can lead until 0.28 ms and trail from 2.5 ms. M5's driver doesn't use TE at all, so
+its sends start anywhere in the refresh.
 
 ### TE tracking
 
