@@ -47,6 +47,18 @@ pub fn main(args: &[String]) -> i32 {
             return 2;
         }
     };
+    // Two shells would both read the keyboard and both draw. The sim is
+    // allowed beside a real one: it touches no device.
+    let _lock = match sim {
+        Some(_) => None,
+        None => match single_instance() {
+            Ok(f) => Some(f),
+            Err(e) => {
+                eprintln!("gh0st shell: {e}");
+                return 1;
+            }
+        },
+    };
     match Shell::start(t0, sim) {
         Ok(mut s) => s.run(),
         Err(e) => {
@@ -986,6 +998,30 @@ fn watches(d: &Dirs) -> Vec<(bool, Watch)> {
 #[cfg(not(target_os = "linux"))]
 fn watches(_: &Dirs) -> Vec<(bool, Watch)> {
     Vec::new()
+}
+
+/// Holds an exclusive lock for the life of the process. Close-on-exec, so an
+/// app started from the shell never inherits it.
+fn single_instance() -> Result<std::fs::File, String> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    // SAFETY: getuid has no failure mode.
+    let path = dir.join(format!("gh0st-shell-{}.lock", unsafe { libc::getuid() }));
+    let f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    // SAFETY: flock on a descriptor we own.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(format!("another shell is running ({})", path.display()));
+    }
+    Ok(f)
 }
 
 /// DRM when it opens, so a frame goes out whole and only the rectangle that
