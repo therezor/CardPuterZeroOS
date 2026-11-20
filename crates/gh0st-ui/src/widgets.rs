@@ -8,6 +8,7 @@ use crate::font::Font;
 use crate::geom::Rect;
 use crate::icon::{self, IconSize};
 use crate::image::Image;
+use crate::pixel;
 use crate::theme::Theme;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +26,11 @@ pub struct Battery {
 }
 
 pub struct Status<'a> {
+    /// Open apps after the skull, in launch order.
+    pub dock: &'a [Visual<'a>],
+    /// The filled slot: 0 is the skull, 1 the first app. `None` fills none.
+    pub front: Option<usize>,
+    /// The page's name, after the dock. Empty on home.
     pub title: &'a str,
     pub clock: &'a str,
     pub battery: Option<Battery>,
@@ -84,6 +90,8 @@ pub fn soft(t: &Theme) -> Color {
     mix(t.c.muted, t.c.fg, 150)
 }
 
+/// The top bar, as on pt35: the skull, a slot for each open app, the page's
+/// name, then network, battery and clock on the right.
 pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     let r = Rect::new(0, 0, t.m.width, t.m.bar_h);
     c.fill(r, t.c.bg);
@@ -107,8 +115,79 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
         }
         Net::None => {}
     }
-    let title = Rect::new(inner.x, inner.y, x - inner.x, inner.h);
-    text_in(c, t.f.small_bold, title, s.title, t.c.fg);
+    let end = x;
+
+    let y = (inner.h - t.m.slot_h + 1) / 2;
+    let step = t.m.slot_w + t.m.slot_gap;
+    let mut sx = t.m.pad / 2;
+    let skull = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
+    let ink = slot(c, t, skull, s.front == Some(0));
+    pixel::draw_in(c, pixel::SKULL_SMALL, skull, 1, ink);
+    sx += step + t.m.slot_gap;
+
+    // Every app gets a slot while they fit; past that the last one counts
+    // the rest.
+    let fit = ((end - sx + t.m.slot_gap) / step).max(0) as usize;
+    let n = s.dock.len();
+    let shown = if n <= fit { n } else { fit.saturating_sub(1) };
+    for (i, v) in s.dock.iter().take(shown).enumerate() {
+        let r = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
+        let front = s.front == Some(i + 1);
+        let ink = slot(c, t, r, front);
+        slot_visual(c, t, r, v, front, ink);
+        sx += step;
+    }
+    if shown < n {
+        let r = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
+        let ink = slot(c, t, r, false);
+        let mut buf = String::with_capacity(4);
+        buf.push('+');
+        buf.push_str(&(n - shown).min(99).to_string());
+        text_centre(c, t.f.small_bold, r, &buf, ink);
+        sx += step;
+    }
+    if !s.title.is_empty() {
+        let x = sx + t.m.slot_gap;
+        let title = Rect::new(x, inner.y, end - x, inner.h);
+        text_in(c, t.f.small_bold, title, s.title, t.c.fg);
+    }
+}
+
+/// A bar slot: filled when its app is in front, outlined when not. Returns
+/// the ink for what goes inside.
+fn slot(c: &mut Canvas, t: &Theme, r: Rect, front: bool) -> Color {
+    if front {
+        c.round_rect(r, t.m.radius, t.c.accent);
+        t.c.accent_fg
+    } else {
+        c.stroke_round_rect(r, t.m.radius, t.c.border);
+        t.c.muted
+    }
+}
+
+fn slot_visual(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, front: bool, ink: Color) {
+    let s = t.m.slot_icon;
+    let (x, y) = r.centre(s, s);
+    match v {
+        Visual::Badge { icon: name, tint } => {
+            let col = if front { ink } else { *tint };
+            icon::draw(c, name, IconSize::Tiny, x, y, col);
+        }
+        Visual::Image(img) => {
+            let (x, y) = r.centre(img.w, img.h);
+            c.image(x, y, img);
+        }
+        Visual::Letter { ch, tint } => {
+            let col = if front { ink } else { *tint };
+            let mut buf = [0u8; 4];
+            let up = ch.to_uppercase().next().unwrap_or(*ch);
+            text_centre(c, t.f.small_bold, r, up.encode_utf8(&mut buf), col);
+        }
+        Visual::Mark { bitmap, tint } => {
+            let col = if front { ink } else { *tint };
+            pixel::draw_in(c, bitmap, r, 1, col);
+        }
+    }
 }
 
 /// Battery outline with fill and percentage, right-aligned to `right`.
@@ -244,6 +323,11 @@ pub enum Visual<'a> {
     Image(&'a Image),
     /// No icon at all: the name's first letter on a tinted badge.
     Letter { ch: char, tint: Color },
+    /// A pixel-art mark on a tinted badge: the skull on the Home card.
+    Mark {
+        bitmap: &'static [&'static str],
+        tint: Color,
+    },
 }
 
 pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
@@ -274,6 +358,12 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
             let mut buf = [0u8; 4];
             let up = ch.to_uppercase().next().unwrap_or(*ch);
             text_centre(c, f, r, up.encode_utf8(&mut buf), ink);
+        }
+        Visual::Mark { bitmap, tint } => {
+            let (fill, ink) = tinted(*tint);
+            c.round_rect(r, t.m.radius, fill);
+            let scale = if r.w >= 32 { 2 } else { 1 };
+            pixel::draw_in(c, bitmap, r, scale, ink);
         }
         Visual::Image(img) => {
             let fill = if selected {
@@ -383,6 +473,32 @@ pub fn app_row_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selec
     }
 }
 
+/// A switcher card: a large badge, the name and a short state line.
+pub struct Card<'a> {
+    pub label: &'a str,
+    pub note: &'a str,
+    pub visual: Visual<'a>,
+}
+
+/// A card without its selection frame: a thin edge so it reads as a card,
+/// then its content.
+pub fn card_content(c: &mut Canvas, t: &Theme, r: Rect, card: &Card, selected: bool) {
+    if !selected {
+        c.stroke_round_rect(r, t.m.radius_large, t.c.border);
+    }
+    let b = t.m.badge;
+    // Badge, name and state as one block, centred in the card.
+    let block = b + 6 + 18 + 15;
+    let br = Rect::new(r.x + (r.w - b) / 2, r.y + (r.h - block) / 2, b, b);
+    badge(c, t, br, &card.visual, selected);
+    let f = if selected { t.f.body_bold } else { t.f.body };
+    let col = if selected { t.c.fg } else { soft(t) };
+    let lr = Rect::new(r.x + 4, br.bottom() + 6, r.w - 8, 18);
+    text_centre(c, f, lr, card.label, col);
+    let nr = Rect::new(r.x + 4, lr.bottom(), r.w - 8, 15);
+    text_centre(c, t.f.small, nr, card.note, t.c.muted);
+}
+
 pub enum Trailing<'a> {
     None,
     Chevron,
@@ -391,6 +507,8 @@ pub enum Trailing<'a> {
     Toggle(bool),
     /// A setting with a few values, changed with left and right.
     Choice(&'a str),
+    /// A 0-100 level, changed with left and right: a short bar and a percent.
+    Level(u8),
     /// Wi-Fi: signal bars and a lock for a secured network.
     Signal {
         level: u8,
@@ -442,6 +560,24 @@ pub fn list_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool) {
             let col = if selected { t.c.fg } else { muted };
             right = text_right(c, t.f.small_bold, right, r, "\u{203a}", arrow) - 6;
             right = text_right(c, t.f.small, right, r, v, col) - 6;
+            right = text_right(c, t.f.small_bold, right, r, "\u{2039}", arrow) - 8;
+        }
+        Trailing::Level(p) => {
+            let arrow = if selected { t.c.accent } else { muted };
+            let col = if selected { t.c.fg } else { muted };
+            let label = Percent::new(p);
+            right = text_right(c, t.f.small_bold, right, r, "\u{203a}", arrow) - 6;
+            let w = t.f.small.measure("100%");
+            text_right(c, t.f.small, right, r, label.as_str(), col);
+            right -= w + 6;
+            let bar = Rect::new(right - 40, r.y + (r.h - 4) / 2, 40, 4);
+            c.round_rect(bar, 2, t.c.border);
+            let fill = (bar.w * p.min(100) as i32 + 50) / 100;
+            if fill > 0 {
+                let on = if selected { t.c.accent } else { muted };
+                c.round_rect(Rect::new(bar.x, bar.y, fill, bar.h), 2, on);
+            }
+            right = bar.x - 6;
             right = text_right(c, t.f.small_bold, right, r, "\u{2039}", arrow) - 8;
         }
         Trailing::Signal { level, secure } => {

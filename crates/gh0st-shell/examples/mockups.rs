@@ -1,6 +1,6 @@
-//! Renders the review mockups at panel size and 3x. Home comes from the real
-//! `Home` view; the other screens are laid out here with the real widgets
-//! until their apps exist. Data is made up. Run from the workspace root:
+//! Renders the review mockups at panel size and 3x. Home, the switcher and
+//! Settings come from their real views; data is made up. Run from the
+//! workspace root:
 //!
 //!     GH0ST_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
 //!     GH0ST_CJK_FONT=$GH0ST_STOCK/share/font/NotoSansCJK-Regular.ttc \
@@ -8,14 +8,17 @@
 //!
 //! Both env vars are optional.
 
-use gh0st_shell::home::{Entry, Home, Icon, Layout};
+use gh0st_shell::home::{self, Entry, Home, Icon, Layout, Size};
+use gh0st_shell::settings::pages::{self, AppRow, Device, Iface, Logs, Network, State};
+use gh0st_shell::settings::{self, Cursor, Dialog, PageId};
+use gh0st_shell::switcher::{self, Card, Switcher};
 use gh0st_ui::Canvas;
 use gh0st_ui::color::{Color, hex};
 use gh0st_ui::geom::Rect;
 use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::snapshot::write_png;
 use gh0st_ui::theme::{self, Theme};
-use gh0st_ui::widgets::{self, Battery, Hint, Net, Row, Status, Trailing};
+use gh0st_ui::widgets::{self, Battery, Net, Status, Visual};
 use std::path::{Path, PathBuf};
 
 fn entries(t: &Theme, stock: Option<&Path>) -> Vec<Entry> {
@@ -81,26 +84,11 @@ fn entries(t: &Theme, stock: Option<&Path>) -> Vec<Entry> {
     ]
 }
 
-fn status_at(c: &mut Canvas, t: &Theme, title: &str, percent: u8) {
-    let s = Status {
-        title,
-        clock: "14:32",
-        battery: Some(Battery {
-            percent,
-            charging: false,
-        }),
-        net: Net::Wifi(3),
-    };
-    widgets::status_bar(c, t, &s);
-}
-
-fn status(c: &mut Canvas, t: &Theme, title: &str) {
-    status_at(c, t, title, 87);
-}
-
-fn home_status() -> Status<'static> {
+fn status<'a>(dock: &'a [Visual<'a>], front: Option<usize>, title: &'a str) -> Status<'a> {
     Status {
-        title: "Gh0stdeck",
+        dock,
+        front,
+        title,
         clock: "14:32",
         battery: Some(Battery {
             percent: 87,
@@ -116,6 +104,28 @@ fn new_canvas(t: &Theme) -> Canvas {
     c
 }
 
+/// Two apps left open: Music and the terminal.
+fn open_apps(t: &Theme, stock: Option<&Path>, n: usize) -> Vec<Card> {
+    let all = entries(t, stock);
+    let pick = ["Music", "Terminal", "Files", "Camera", "Recorder", "Store"];
+    pick.iter()
+        .take(n)
+        .filter_map(|name| all.iter().find(|e| e.name == *name))
+        .map(|e| Card {
+            id: e.id.clone(),
+            name: e.name.clone(),
+            icon: e.icon.clone(),
+            state: switcher::State::Paused,
+        })
+        .collect()
+}
+
+fn dock<'a>(t: &Theme, apps: &'a [Card]) -> Vec<Visual<'a>> {
+    apps.iter()
+        .map(|c| home::visual(t, &c.icon, &c.name, Size::Tiny))
+        .collect()
+}
+
 fn home(t: &Theme, stock: Option<&Path>, layout: Layout, search: Option<&str>) -> Canvas {
     let mut h = Home::new(entries(t, stock), layout, t);
     match search {
@@ -125,263 +135,153 @@ fn home(t: &Theme, stock: Option<&Path>, layout: Layout, search: Option<&str>) -
         }
         None => h.select(1),
     }
+    let apps = open_apps(t, stock, 2);
+    let d = dock(t, &apps);
     let mut c = new_canvas(t);
-    h.draw(&mut c, t, &home_status(), 0);
+    h.draw(&mut c, t, &status(&d, Some(0), ""), 0);
     c
 }
 
-fn rows(c: &mut Canvas, t: &Theme, items: &[Row], selected: usize, total: usize) {
-    let (area, n) = widgets::rows_area(t, t.m.row_h);
-    for (i, row) in items.iter().take(n).enumerate() {
-        let r = Rect::new(area.x, area.y + i as i32 * t.m.row_h, area.w - 4, t.m.row_h);
-        widgets::list_row(c, t, r, row, i == selected);
+fn switcher_scene(t: &Theme, stock: Option<&Path>, n: usize, at: usize) -> Canvas {
+    let mut s = Switcher::new(t);
+    let mut apps = open_apps(t, stock, n);
+    if n > 3 {
+        apps[2].state = switcher::State::Closing;
     }
-    let track = Rect::new(area.x, area.y, area.w - 4, area.h);
-    widgets::scrollbar(c, t, track, 0, n, total);
-}
-
-fn settings(t: &Theme) -> Canvas {
+    s.set_apps(apps);
+    s.select(at);
+    let d = s.dock(t);
     let mut c = new_canvas(t);
-    status(&mut c, t, "Settings");
-    let tint = t.c.accent;
-    let items = [
-        Row {
-            icon: Some("wifi"),
-            tint,
-            label: "Wi-Fi",
-            trailing: Trailing::ValueChevron("HomeNet"),
-        },
-        Row {
-            icon: Some("network"),
-            tint,
-            label: "Network",
-            trailing: Trailing::ValueChevron("192.168.1.42"),
-        },
-        Row {
-            icon: Some("bluetooth"),
-            tint,
-            label: "Bluetooth",
-            trailing: Trailing::Toggle(false),
-        },
-        Row {
-            icon: Some("sun"),
-            tint,
-            label: "Display",
-            trailing: Trailing::ValueChevron("80%"),
-        },
-        Row {
-            icon: Some("volume-2"),
-            tint,
-            label: "Sound",
-            trailing: Trailing::ValueChevron("60%"),
-        },
-        Row {
-            icon: Some("palette"),
-            tint,
-            label: "Appearance",
-            trailing: Trailing::ValueChevron("Mint"),
-        },
-    ];
-    rows(&mut c, t, &items, 0, 13);
-    let hints = [
-        Hint {
-            key: "Enter",
-            label: "open",
-        },
-        Hint {
-            key: "Esc",
-            label: "back",
-        },
-    ];
-    widgets::hint_bar(&mut c, t, &hints, None);
+    s.draw(&mut c, t, &status(&d, Some(s.selected()), ""), 0);
     c
 }
 
-fn appearance(t: &Theme, layout: Layout) -> Canvas {
-    let mut c = new_canvas(t);
-    status(&mut c, t, "Appearance");
-    let tint = t.c.accent;
-    let items = [
-        Row {
-            icon: Some("layout-grid"),
-            tint,
-            label: "Home layout",
-            trailing: Trailing::Choice(layout.label()),
-        },
-        Row {
-            icon: Some("palette"),
-            tint,
-            label: "Palette",
-            trailing: Trailing::ValueChevron(t.c.name),
-        },
-        Row {
-            icon: Some("arrow-left-right"),
-            tint,
-            label: "Animations",
-            trailing: Trailing::Toggle(true),
-        },
-        Row {
-            icon: Some("clock"),
-            tint,
-            label: "Clock",
-            trailing: Trailing::Choice("24 h"),
-        },
-    ];
-    rows(&mut c, t, &items, 0, items.len());
-    let hints = [
-        Hint {
-            key: "Z C",
-            label: "change",
-        },
-        Hint {
-            key: "Esc",
-            label: "back",
-        },
-    ];
-    widgets::hint_bar(&mut c, t, &hints, None);
-    c
-}
-
-fn wifi_rows(t: &Theme) -> [Row<'static>; 6] {
-    let tint = t.c.accent;
-    [
-        Row {
-            icon: Some("wifi"),
-            tint,
-            label: "Wi-Fi",
-            trailing: Trailing::Toggle(true),
-        },
-        Row {
-            icon: Some("check"),
-            tint,
-            label: "HomeNet",
-            trailing: Trailing::Signal {
-                level: 3,
-                secure: true,
+fn sample_state() -> State {
+    let net = |ssid: &str, bars, secure, known, active| Network {
+        ssid: ssid.into(),
+        bars,
+        secure,
+        known,
+        active,
+    };
+    let app = |file: &str, name: &str, shown| AppRow {
+        file: file.into(),
+        name: name.into(),
+        shown,
+    };
+    State {
+        brightness: Some(80),
+        dark_secs: 30,
+        volume: Some(60),
+        muted: false,
+        layout: Layout::Grid,
+        palette: "Mint",
+        animations: true,
+        clock_24h: true,
+        apps: vec![
+            app("store.desktop", "Store", true),
+            app("files.desktop", "Files", true),
+            app("camera.desktop", "Camera", true),
+            app("music.desktop", "Music", true),
+            app("zclaw.desktop", "ZClaw", false),
+            app("piano.desktop", "Piano", true),
+        ],
+        wifi_on: true,
+        wifi_busy: None,
+        networks: vec![
+            net("HomeNet", 3, true, true, true),
+            net("Office-5G", 4, true, false, false),
+            net("Cafe Guest", 2, false, false, false),
+            net("\u{413}\u{430}\u{43b}\u{44f}_WiFi", 1, true, false, false),
+        ],
+        ifaces: vec![
+            Iface {
+                name: "wlan0".into(),
+                state: "connected".into(),
+                connection: "HomeNet".into(),
+                ipv4: "192.168.1.42/24".into(),
+                mac: "2c:cf:67:0a:41:9e".into(),
+                gateway: "192.168.1.1".into(),
+                dns: "1.1.1.1, 9.9.9.9".into(),
             },
-        },
-        Row {
-            icon: Some(""),
-            tint,
-            label: "Office-5G",
-            trailing: Trailing::Signal {
-                level: 4,
-                secure: true,
+            Iface {
+                name: "eth0".into(),
+                state: "unavailable".into(),
+                ..Iface::default()
             },
-        },
-        Row {
-            icon: Some(""),
-            tint,
-            label: "Cafe Guest",
-            trailing: Trailing::Signal {
-                level: 2,
-                secure: false,
+        ],
+        bt_on: true,
+        bt_scanning: true,
+        devices: vec![
+            Device {
+                mac: "41:42:A1:00:12:9F".into(),
+                name: "Buds Pro".into(),
+                paired: true,
+                connected: true,
             },
-        },
-        Row {
-            icon: Some(""),
-            tint,
-            label: "Галя_WiFi",
-            trailing: Trailing::Signal {
-                level: 1,
-                secure: true,
+            Device {
+                mac: "F4:7B:09:22:10:01".into(),
+                name: "MX Keys".into(),
+                paired: true,
+                connected: false,
             },
-        },
-        Row {
-            icon: Some("search"),
-            tint: t.c.muted,
-            label: "Join hidden network",
-            trailing: Trailing::Chevron,
-        },
-    ]
-}
-
-fn wifi(t: &Theme) -> Canvas {
-    let mut c = new_canvas(t);
-    status(&mut c, t, "Wi-Fi");
-    rows(&mut c, t, &wifi_rows(t), 2, 6);
-    let hints = [
-        Hint {
-            key: "Enter",
-            label: "join",
-        },
-        Hint {
-            key: "R",
-            label: "rescan",
-        },
-        Hint {
-            key: "Esc",
-            label: "back",
-        },
-    ];
-    widgets::hint_bar(&mut c, t, &hints, None);
-    c
-}
-
-fn wifi_password(t: &Theme) -> Canvas {
-    let mut c = wifi(t);
-    let r = Rect::new(28, 36, 264, 88);
-    let inner = widgets::dialog(&mut c, t, r, "Join \u{201c}Office-5G\u{201d}", t.c.accent);
-    let field = Rect::new(inner.x, inner.y + 2, inner.w, 24);
-    widgets::text_field(&mut c, t, field, "hunter22", true, true, "Password");
-    let line = Rect::new(inner.x, field.bottom() + 8, inner.w, 16);
-    let mut x = line.x;
-    for (key, label) in [("Tab", "show"), ("Enter", "join"), ("Esc", "cancel")] {
-        x = widgets::key_pill(&mut c, t, x, line, key) + 4;
-        x = widgets::text_in(
-            &mut c,
-            t.f.small,
-            Rect::new(x, line.y + 1, 60, line.h - 1),
-            label,
-            t.c.muted,
-        ) + 12;
+            Device {
+                mac: "5C:EA:1D:8A:3B:70".into(),
+                name: String::new(),
+                paired: false,
+                connected: false,
+            },
+        ],
+        zone: "Europe/London".into(),
+        zones: [
+            "Africa/Cairo",
+            "America/New_York",
+            "Asia/Tokyo",
+            "Europe/Kyiv",
+            "Europe/Lisbon",
+            "Europe/London",
+            "Europe/Warsaw",
+        ]
+        .map(String::from)
+        .to_vec(),
+        network_time: true,
+        ssh: false,
+        logs: Logs::Off,
+        about: [
+            ("Version", "Gh0stdeck 0.1.0"),
+            ("OS", "Debian 13 (trixie)"),
+            ("Kernel", "6.18.39+rpt-rpi-v8"),
+            ("Memory", "61 MB of 352 MB used"),
+            ("Storage", "3.1 GB of 29 GB used"),
+            ("Battery", "87%, 3.98 V"),
+            ("Uptime", "2 h 14 min"),
+            ("Host", "cardputer"),
+        ]
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .to_vec(),
     }
-    c
 }
 
-fn network(t: &Theme) -> Canvas {
+fn settings_scene(
+    t: &Theme,
+    stock: Option<&Path>,
+    id: PageId,
+    selected: usize,
+    dialog: Option<Dialog>,
+) -> Canvas {
+    let st = sample_state();
+    let page = pages::build(&id, &st);
+    let apps = open_apps(t, stock, 2);
+    let d = dock(t, &apps);
+    let title = page.title.clone();
+    let mut cur = Cursor {
+        selected,
+        top: 0,
+    };
+    let per = settings::rows(t).1;
+    cur.fit(page.len(), per);
     let mut c = new_canvas(t);
-    status(&mut c, t, "Network");
-    let (area, _) = widgets::rows_area(t, t.m.row_h);
-    let w = area.w - 4;
-    let mut y = area.y;
-    let row = Row {
-        icon: Some("ethernet-port"),
-        tint: t.c.accent,
-        label: "Ethernet",
-        trailing: Trailing::Toggle(true),
-    };
-    widgets::list_row(&mut c, t, Rect::new(area.x, y, w, t.m.row_h), &row, true);
-    y += t.m.row_h + 2;
-    let line = 14;
-    let sec = |c: &mut Canvas, y: &mut i32, s: &str| {
-        widgets::section(c, t, Rect::new(area.x, *y, w, line + 2), s);
-        *y += line + 2;
-    };
-    let ro = |c: &mut Canvas, y: &mut i32, k: &str, v: &str| {
-        widgets::readout(c, t, Rect::new(area.x, *y, w, line), k, v);
-        *y += line;
-    };
-    sec(&mut c, &mut y, "eth0 \u{00b7} connected");
-    ro(&mut c, &mut y, "IPv4", "192.168.1.50/24");
-    ro(&mut c, &mut y, "MAC", "2c:cf:67:0a:41:9e");
-    ro(&mut c, &mut y, "Gateway", "192.168.1.1");
-    sec(&mut c, &mut y, "wlan0 \u{00b7} HomeNet");
-    ro(&mut c, &mut y, "IPv4", "192.168.1.42/24");
-    ro(&mut c, &mut y, "DNS", "1.1.1.1, 9.9.9.9");
-    let track = Rect::new(area.x, area.y, w, area.h);
-    widgets::scrollbar(&mut c, t, track, 0, 8, 12);
-    let hints = [
-        Hint {
-            key: "Enter",
-            label: "toggle",
-        },
-        Hint {
-            key: "Esc",
-            label: "back",
-        },
-    ];
-    widgets::hint_bar(&mut c, t, &hints, None);
+    settings::draw(&mut c, t, &status(&d, Some(0), &title), &page, cur, dialog.as_ref());
     c
 }
 
@@ -450,7 +350,6 @@ fn terminal(t: &Theme) -> Canvas {
 
 fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
     let mut c = home(t, stock, Layout::Grid, None);
-    status_at(&mut c, t, "Gh0stdeck", 3);
     let r = Rect::new(40, 30, 240, 110);
     let inner = widgets::dialog(&mut c, t, r, "Battery critically low", t.c.critical);
     icon::draw(
@@ -486,22 +385,57 @@ fn main() {
         let mut scenes: Vec<(&str, Canvas)> = vec![
             ("home-grid", home(&t, stock, Layout::Grid, None)),
             ("home-list", home(&t, stock, Layout::List, None)),
+            ("switcher", switcher_scene(&t, stock, 2, 1)),
+            ("settings", settings_scene(&t, stock, PageId::Root, 0, None)),
         ];
         if palette.name == "Mint" {
+            let s = |id, sel| settings_scene(&t, stock, id, sel, None);
             scenes.extend([
+                ("home-grid-search", home(&t, stock, Layout::Grid, Some("re"))),
+                ("home-list-search", home(&t, stock, Layout::List, Some("re"))),
+                ("switcher-home", switcher_scene(&t, stock, 2, 0)),
+                ("switcher-many", switcher_scene(&t, stock, 5, 4)),
+                ("settings-scrolled", s(PageId::Root, 8)),
+                ("display", s(PageId::Display, 0)),
+                ("sound", s(PageId::Sound, 0)),
+                ("appearance", s(PageId::Appearance, 1)),
+                ("apps", s(PageId::Apps, 4)),
+                ("wifi", s(PageId::Wifi, 2)),
                 (
-                    "home-grid-search",
-                    home(&t, stock, Layout::Grid, Some("re")),
+                    "wifi-password",
+                    settings_scene(
+                        &t,
+                        stock,
+                        PageId::Wifi,
+                        2,
+                        Some(Dialog::Text {
+                            title: "Join \u{201c}Office-5G\u{201d}".into(),
+                            placeholder: "Password",
+                            text: "hunter22".into(),
+                            masked: true,
+                        }),
+                    ),
                 ),
+                ("network", s(PageId::Network, 0)),
+                ("bluetooth", s(PageId::Bluetooth, 1)),
+                ("system", s(PageId::System, 2)),
+                ("timezone", s(PageId::TimeZone(Some("Europe".into())), 2)),
+                ("privacy", s(PageId::Privacy, 0)),
+                ("about", s(PageId::About, 0)),
                 (
-                    "home-list-search",
-                    home(&t, stock, Layout::List, Some("re")),
+                    "power-off",
+                    settings_scene(
+                        &t,
+                        stock,
+                        PageId::System,
+                        5,
+                        Some(Dialog::Confirm {
+                            title: "Power off?".into(),
+                            line: "Open apps close first.".into(),
+                            yes: "power off",
+                        }),
+                    ),
                 ),
-                ("appearance", appearance(&t, Layout::Grid)),
-                ("settings", settings(&t)),
-                ("wifi", wifi(&t)),
-                ("wifi-password", wifi_password(&t)),
-                ("network", network(&t)),
                 ("terminal", terminal(&t)),
                 ("low-battery", low_battery(&t, stock)),
             ]);

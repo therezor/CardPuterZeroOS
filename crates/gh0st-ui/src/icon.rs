@@ -1,5 +1,5 @@
 //! Built-in symbols: Lucide outlines rasterized by `build.rs` into 8-bit alpha
-//! masks at three sizes. They take any colour at draw time.
+//! masks at four sizes. They take any colour at draw time.
 
 use crate::canvas::Canvas;
 use crate::color::Color;
@@ -8,6 +8,8 @@ include!(concat!(env!("OUT_DIR"), "/icons.rs"));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconSize {
+    /// A top-bar slot.
+    Tiny = 12,
     Small = 14,
     Medium = 20,
     Large = 36,
@@ -52,7 +54,12 @@ mod tests {
     #[test]
     fn every_icon_is_baked_at_every_size() {
         for name in ICON_NAMES {
-            for s in [IconSize::Small, IconSize::Medium, IconSize::Large] {
+            for s in [
+                IconSize::Tiny,
+                IconSize::Small,
+                IconSize::Medium,
+                IconSize::Large,
+            ] {
                 let m = icon(name, s).unwrap();
                 assert!(m.data.iter().any(|&a| a > 0), "{name} at {s:?} is blank");
             }

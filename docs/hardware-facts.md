@@ -148,6 +148,25 @@ if guessing. Whether any tear remains is not settled ("hard to tell, looks a
 lot better"). The model rests on TE being high during blanking and on the scan
 following the send order (MADCTL ML).
 
+## Paused apps and the keyboard
+
+Measured 2026-11-20 with `python3` reading the evdev node directly.
+
+- A client that stops reading keeps queuing keys. A paused app replays them
+  on SIGCONT.
+- Writing `EV_MSC/MSC_SCAN` + `SYN_REPORT` pairs to the node reaches every
+  client. 64 pairs overflow a stopped client's queue: it then starts with
+  `SYN_DROPPED` and holds none of the earlier keys. The keypad declares
+  `MSC_SCAN` (`B: MSC=10`), so the core does not drop them. UID 1000 can
+  open the node read-write (group `input`).
+- `passwd` run as the user reads the current and new passwords from piped
+  stdin (a wrong current password fails with exit 10).
+- nmcli as UID 1000: `wifi.scan` and `enable-disable-wifi` yes;
+  `network-control` and `settings.modify.*` need auth (no active session).
+- `rfkill` and `evtest` are not installed. `/dev/rfkill` carries an ACL for
+  the user while a session is open. `pkexec` is installed.
+- `/etc/systemd/journald.conf.d/persist.conf` sets `Storage=persistent`.
+
 ## Still to check
 
 
@@ -166,6 +185,7 @@ following the send order (MADCTL ML).
 | Battery uevents | sent on capacity change? if not, add a slow timer | idle wakeups |
 | `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |
 | Root actions | time and ADB need root; reboot, power off, 5V rails do not | Settings |
+| Fn+K | the code it sends (the switcher's key); Fn+H sends Home | key capture |
 
 ## Baseline (stock APPLaunch)
 
