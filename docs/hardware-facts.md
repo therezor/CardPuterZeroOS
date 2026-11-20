@@ -13,7 +13,8 @@ Measured on the device unless marked.
 - Keyboard: `tca8418c` at `/dev/input/by-path/platform-3f804000.i2c-event`.
   The sym map file exists. Fn sends 389 (`KEY_DVD`) and Sym 383 (`KEY_CD`),
   not `KEY_FN`. The kernel driver applies their layers itself: Fn+F/Z/X/C
-  arrive as Up/Left/Down/Right, Fn+H as Home, Fn+G as SysRq, Fn+A/S/D as
+  arrive as Up/Left/Down/Right, Fn+K as Home (102), Fn+H as Help (138),
+  Fn+G as SysRq, Fn+A/S/D as
   mute and volume, Fn+Y/U as brightness. Ctrl 29, Alt 56.
 - The only side button is power/boot. It sends no key event.
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
@@ -185,7 +186,6 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
 | Battery uevents | sent on capacity change? if not, add a slow timer | idle wakeups |
 | `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |
 | Root actions | time and ADB need root; reboot, power off, 5V rails do not | Settings |
-| Fn+K | the code it sends (the switcher's key); Fn+H sends Home | key capture |
 
 ## Baseline (stock APPLaunch)
 
