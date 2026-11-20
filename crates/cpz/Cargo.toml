@@ -7,3 +7,4 @@ license.workspace = true
 description.workspace = true
 
 [dependencies]
+cpz-shell.workspace = true

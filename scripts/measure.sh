@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Measures a launcher on the device: memory (PSS), wakeups and CPU while idle.
+# Run the same way for stock and for cpz, so the numbers compare. Usage:
+#   CPZ_HOST=pi@cardputer.local scripts/measure.sh M5CardputerZero-APPLaunch
+#   CPZ_HOST=pi@cardputer.local scripts/measure.sh cpz
+set -euo pipefail
+
+host=${CPZ_HOST:?set CPZ_HOST}
+name=${1:?process name, for example cpz or M5CardputerZero-APPLaunch}
+secs=${2:-60}
+
+ssh "$host" bash -s -- "$name" "$secs" <<'REMOTE'
+set -euo pipefail
+name=$1 secs=$2
+pid=$(pgrep -o -x "$name" || pgrep -o -f "$name")
+ticks=$(getconf CLK_TCK)
+cpu() { awk '{print $14 + $15}' "/proc/$pid/stat"; }
+switches() { awk '/ctxt_switches/ {s += $2} END {print s}' "/proc/$pid/status"; }
+threads() { awk '/^Threads/ {print $2}' "/proc/$pid/status"; }
+echo "process   $name (pid $pid, $(threads) threads)"
+grep -E '^(Rss|Pss|Private_Dirty)' "/proc/$pid/smaps_rollup" | sed 's/^/memory    /'
+c0=$(cpu) s0=$(switches)
+sleep "$secs"
+c1=$(cpu) s1=$(switches)
+echo "idle      ${secs}s"
+echo "wakeups   $((s1 - s0)) context switches"
+echo "cpu       $(( (c1 - c0) * 1000 / ticks )) ms"
+REMOTE

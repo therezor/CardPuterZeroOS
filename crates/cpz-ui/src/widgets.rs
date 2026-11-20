@@ -548,3 +548,50 @@ pub fn dialog(c: &mut Canvas, t: &Theme, r: Rect, title: &str, accent: Color) ->
         r.bottom() - head.bottom() - 14,
     )
 }
+
+/// A short message above the hint bar, the only answer a hotkey gets.
+pub fn toast(c: &mut Canvas, t: &Theme, text: &str) {
+    let w = (t.f.small_bold.measure(text) + 20).min(t.m.width - 2 * t.m.margin);
+    let h = 18;
+    let r = Rect::new((t.m.width - w) / 2, t.m.height - t.m.hint_h - h - 6, w, h);
+    c.round_rect(r, t.m.radius, t.c.surface);
+    c.stroke_round_rect(r, t.m.radius, t.c.border);
+    text_centre(c, t.f.small_bold, r, text, t.c.fg);
+}
+
+/// A strip across the top of the panel, drawn over whatever an app shows:
+/// the ESC hold hint and the low-battery countdown.
+pub fn banner(c: &mut Canvas, t: &Theme, text: &str, color: Color) -> Rect {
+    let r = Rect::new(0, 0, t.m.width, t.m.bar_h + 4);
+    c.fill(r, color);
+    text_centre(c, t.f.small_bold, r, text, t.c.bg);
+    r
+}
+
+/// The lock screen: the time, large, and how to get back in.
+pub fn lock_screen(c: &mut Canvas, t: &Theme, clock: &str, s: &Status) {
+    c.fill(c.bounds(), t.c.bg);
+    status_bar(c, t, s);
+    let b = body(t);
+    let w = t.f.big.measure(clock);
+    t.f.big
+        .draw(c, (t.m.width - w) / 2, b.y + b.h / 2 + 4, clock, t.c.fg);
+    let s = IconSize::Small as i32;
+    icon::draw(
+        c,
+        "lock",
+        IconSize::Small,
+        (t.m.width - s) / 2,
+        b.y + b.h / 2 - 38,
+        t.c.muted,
+    );
+    hint_bar(
+        c,
+        t,
+        &[Hint {
+            key: "Enter",
+            label: "unlock",
+        }],
+        None,
+    );
+}

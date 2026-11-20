@@ -22,7 +22,8 @@ Raspberry Pi CM0 (4x Cortex-A53, 512 MB). ST7789V 320x170 RGB565 on SPI, driven
 by DRM `panel-mipi-dbi-m` with fbdev emulation at `/dev/fb_lcd`. TCA8418
 keyboard on evdev (`/dev/input/by-path/platform-3f804000.i2c-event`). BQ27220
 battery in `/sys/class/power_supply`. Details and sources in
-`docs/distro-plan.md`. Nothing here is measured on a device yet: mark what is.
+`docs/distro-plan.md`. Nothing here is measured on a device yet: mark what is, in
+`docs/hardware-facts.md`.
 
 ## Layout
 
@@ -33,6 +34,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/cpz-core`: syscalls, event loop, input, config, apps, children.
 - `crates/cpz`: one multi-call binary. The name it runs under picks the program.
 - `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC).
+- `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
+  our `.desktop` entries.
+- `scripts/deploy.sh`, `scripts/measure.sh`: install on a device, measure it.
 
 ## Rules
 
@@ -69,3 +73,13 @@ CPZ_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
 CPZ_CJK_FONT=$CPZ_STOCK/share/font/NotoSansCJK-Regular.ttc \
 cargo run -p cpz-shell --example mockups   # writes mockups/*.png
 ```
+
+## Device loop
+
+```sh
+CPZ_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
+CPZ_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
+CPZ_HOST=pi@<device> scripts/measure.sh cpz       # PSS, wakeups, CPU idle
+```
+
+`CPZ_LOG=debug` logs the first frame time and the rows each flush writes.

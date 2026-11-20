@@ -51,6 +51,18 @@ pub struct App {
 }
 
 impl App {
+    #[cfg(test)]
+    pub(crate) fn for_test(entry: DesktopEntry, ours: bool) -> App {
+        App {
+            file: "test.desktop".into(),
+            entry,
+            icon: IconRef::None,
+            ours,
+            mtime: 0,
+            seq: 0,
+        }
+    }
+
     /// Stock's per-app switch in config.json, so Settings > Apps and stock
     /// agree on what is shown: `app_desktop_<name>_<fnv1a hex>`.
     pub fn stock_key(&self) -> String {

@@ -1,0 +1,205 @@
+//! The event loop's parts. One thread blocks in `poll(2)` until a file
+//! descriptor is ready or the earliest deadline passes. Nothing ticks: every
+//! timer is a deadline someone asked for, so an idle shell does not wake.
+
+use std::io;
+use std::os::fd::RawFd;
+use std::sync::atomic::{AtomicI32, Ordering};
+
+/// Milliseconds on the monotonic clock.
+pub fn now_ms() -> u64 {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: valid pointer to a timespec; CLOCK_MONOTONIC always exists.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    ts.tv_sec as u64 * 1000 + ts.tv_nsec as u64 / 1_000_000
+}
+
+/// The earliest of some optional deadlines.
+pub fn earliest(deadlines: impl IntoIterator<Item = Option<u64>>) -> Option<u64> {
+    deadlines.into_iter().flatten().min()
+}
+
+pub fn pollfd(fd: RawFd) -> libc::pollfd {
+    libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    }
+}
+
+/// Blocks until a descriptor is readable or `deadline` passes. Returns false
+/// on timeout. EINTR counts as a wake: a signal has just been queued.
+pub fn wait(fds: &mut [libc::pollfd], deadline: Option<u64>) -> io::Result<bool> {
+    let timeout = match deadline {
+        None => -1,
+        Some(d) => d.saturating_sub(now_ms()).min(i32::MAX as u64) as i32,
+    };
+    for f in fds.iter_mut() {
+        f.revents = 0;
+    }
+    // SAFETY: the slice is a valid array of pollfd for its length.
+    let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
+    if n < 0 {
+        let e = io::Error::last_os_error();
+        return if e.kind() == io::ErrorKind::Interrupted {
+            Ok(true)
+        } else {
+            Err(e)
+        };
+    }
+    Ok(n > 0)
+}
+
+pub fn readable(f: &libc::pollfd) -> bool {
+    f.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+}
+
+static SIG_PIPE: AtomicI32 = AtomicI32::new(-1);
+
+extern "C" fn on_signal(sig: libc::c_int) {
+    let fd = SIG_PIPE.load(Ordering::Relaxed);
+    if fd >= 0 {
+        let b = sig as u8;
+        // SAFETY: write(2) is async-signal-safe; a full pipe just drops it.
+        unsafe { libc::write(fd, &b as *const u8 as *const libc::c_void, 1) };
+    }
+}
+
+/// Signals delivered as bytes on a pipe the loop polls (the self-pipe trick),
+/// so a handler never runs shell code.
+pub struct Signals {
+    read: RawFd,
+}
+
+impl Signals {
+    pub fn install(sigs: &[libc::c_int]) -> io::Result<Signals> {
+        let mut p = [0; 2];
+        // SAFETY: p is a two-element array as pipe(2) wants.
+        if unsafe { libc::pipe(p.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        for fd in p {
+            set_nonblock_cloexec(fd)?;
+        }
+        SIG_PIPE.store(p[1], Ordering::Relaxed);
+        for &s in sigs {
+            // SAFETY: a zeroed sigaction with a plain handler and SA_RESTART.
+            unsafe {
+                let mut sa: libc::sigaction = std::mem::zeroed();
+                sa.sa_sigaction = on_signal as *const () as usize;
+                sa.sa_flags = libc::SA_RESTART;
+                libc::sigemptyset(&mut sa.sa_mask);
+                if libc::sigaction(s, &sa, std::ptr::null_mut()) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+        }
+        Ok(Signals { read: p[0] })
+    }
+
+    pub fn fd(&self) -> RawFd {
+        self.read
+    }
+
+    /// Signals received since the last call, in order, deduplicated.
+    pub fn drain(&self) -> Vec<libc::c_int> {
+        let mut buf = [0u8; 64];
+        let mut out: Vec<libc::c_int> = Vec::new();
+        loop {
+            // SAFETY: reading into a local buffer of its stated size.
+            let n =
+                unsafe { libc::read(self.read, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            if n <= 0 {
+                break;
+            }
+            for &b in &buf[..n as usize] {
+                let s = b as libc::c_int;
+                if !out.contains(&s) {
+                    out.push(s);
+                }
+            }
+        }
+        out
+    }
+}
+
+pub fn set_nonblock_cloexec(fd: RawFd) -> io::Result<()> {
+    // SAFETY: fcntl on a descriptor we own.
+    unsafe {
+        let fl = libc::fcntl(fd, libc::F_GETFL);
+        if fl < 0 || libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let fd_fl = libc::fcntl(fd, libc::F_GETFD);
+        if fd_fl < 0 || libc::fcntl(fd, libc::F_SETFD, fd_fl | libc::FD_CLOEXEC) < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+/// Local wall time as (hour, minute, second).
+pub fn local_hms() -> (u32, u32, u32) {
+    // SAFETY: time(NULL) and localtime_r with a local struct tm.
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        (tm.tm_hour as u32, tm.tm_min as u32, tm.tm_sec as u32)
+    }
+}
+
+/// "14:32", and the monotonic deadline of the next minute change. The clock
+/// is the only timer an idle home screen keeps.
+pub fn clock_text() -> ([u8; 5], u64) {
+    let (h, m, s) = local_hms();
+    let text = [
+        b'0' + (h / 10) as u8,
+        b'0' + (h % 10) as u8,
+        b':',
+        b'0' + (m / 10) as u8,
+        b'0' + (m % 10) as u8,
+    ];
+    (text, now_ms() + (60 - s.min(59)) as u64 * 1000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_times_out_at_the_deadline() {
+        let start = now_ms();
+        let woke = wait(&mut [], Some(start + 30)).unwrap();
+        assert!(!woke);
+        assert!(now_ms() >= start + 29);
+    }
+
+    #[test]
+    fn earliest_ignores_missing_deadlines() {
+        assert_eq!(earliest([None, Some(9), Some(4), None]), Some(4));
+        assert_eq!(earliest([None, None]), None);
+    }
+
+    #[test]
+    fn a_signal_wakes_the_loop_through_the_pipe() {
+        let s = Signals::install(&[libc::SIGUSR1]).unwrap();
+        // SAFETY: raising a signal we installed a handler for.
+        unsafe { libc::raise(libc::SIGUSR1) };
+        let mut fds = [pollfd(s.fd())];
+        assert!(wait(&mut fds, Some(now_ms() + 1000)).unwrap());
+        assert_eq!(s.drain(), [libc::SIGUSR1]);
+    }
+
+    #[test]
+    fn the_clock_reads_hh_mm() {
+        let (t, next) = clock_text();
+        let s = std::str::from_utf8(&t).unwrap();
+        assert_eq!(s.len(), 5);
+        assert_eq!(&s[2..3], ":");
+        assert!(next > now_ms() && next <= now_ms() + 60_000);
+    }
+}

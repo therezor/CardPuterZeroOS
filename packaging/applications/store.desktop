@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Store
+Comment=Find and install apps
+Exec=/usr/share/APPLaunch/bin/M5CardputerZero-AppStore
+TryExec=/usr/share/APPLaunch/bin/M5CardputerZero-AppStore
+Icon=share/images/store_100.png
+Terminal=false

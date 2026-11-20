@@ -148,6 +148,27 @@ impl Home {
         self.keep_visible();
     }
 
+    /// The `n`th item on screen (0-based), for the digit keys.
+    pub fn select_on_screen(&mut self, n: usize) -> bool {
+        if n >= self.per_screen() || self.top + n >= self.shown.len() {
+            return false;
+        }
+        self.selected = self.top + n;
+        true
+    }
+
+    /// New app list after a rescan, keeping the selection on the same app.
+    pub fn replace_entries(&mut self, entries: Vec<Entry>) {
+        let keep = self.selected().map(|e| e.id.clone());
+        self.entries = entries;
+        self.refilter();
+        if let Some(id) = keep {
+            if let Some(pos) = self.shown.iter().position(|&i| self.entries[i].id == id) {
+                self.select(pos);
+            }
+        }
+    }
+
     pub fn start_search(&mut self) {
         self.mode = Mode::Search;
     }
