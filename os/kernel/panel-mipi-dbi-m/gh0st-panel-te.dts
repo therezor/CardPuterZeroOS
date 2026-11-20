@@ -1,0 +1,16 @@
+// Gives the panel driver the TE pin M5 wired but left commented out in
+// cardputerzero-v5-overlay (te-gpios = <&gpio 5 0>). Load it after that
+// overlay: it targets the node that one creates.
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target-path = "/soc/spi@7e204000/st7789v@0";
+		__overlay__ {
+			te-gpios = <&gpio 5 0>;
+		};
+	};
+};

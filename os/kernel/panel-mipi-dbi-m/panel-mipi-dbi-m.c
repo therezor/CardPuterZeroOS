@@ -3,6 +3,16 @@
  * DRM driver for MIPI DBI compatible display panels
  *
  * Copyright 2022 Noralf Trønnes
+ *
+ * gh0st changes (CardputerZero, ST7789V 320x170 on SPI):
+ * - TE sync: each transfer starts on the panel's tearing-effect edge
+ *   (te-gpios, GPIO5 on the CardputerZero).
+ * - Native order: the panel is mounted rotated (MADCTL MV), so it refreshes
+ *   across the rows we send. Transfers are transposed and sent along the
+ *   panel's own scan lines, so a write never crosses the refresh.
+ * - Refresh rate: FRCTRL2 slows the panel to 50 Hz, so a full 17 ms transfer
+ *   at the 50 MHz SPI clock stays ahead of the 20 ms refresh.
+ * Each is a module parameter, for tuning on the device.
  */
 
 #include <linux/backlight.h>
@@ -17,7 +27,10 @@
 
 #include <drm/clients/drm_client_setup.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_damage_helper.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_fbdev_dma.h>
 #include <drm/drm_gem_atomic_helper.h>
 #include <drm/drm_gem_dma_helper.h>
@@ -29,16 +42,31 @@
 #include <video/mipi_display.h>
 
 
-/*
- * TE support is intentionally disabled for now. Keep these definitions here
- * so TE can be enabled again when the panel wiring and timing are verified.
- */
-#if 0
 #ifndef MIPI_DCS_SET_TEAR_ON
 #define MIPI_DCS_SET_TEAR_ON		0x35
 #endif
 #define MIPI_DCS_TEAR_MODE_VBLANK	0x00
-#endif
+#define ST7789_FRCTRL2			0xC6
+
+static bool te = true;
+module_param(te, bool, 0644);
+MODULE_PARM_DESC(te, "Start each transfer on the TE edge, when te-gpios is set (default true)");
+
+static bool native_order = true;
+module_param(native_order, bool, 0444);
+MODULE_PARM_DESC(native_order, "Send pixels along the panel's scan lines (default true)");
+
+static uint madctl_native = 0x40;
+module_param(madctl_native, uint, 0444);
+MODULE_PARM_DESC(madctl_native, "MADCTL used with native_order (default 0x40)");
+
+static uint frctrl = 0x15;
+module_param(frctrl, uint, 0444);
+MODULE_PARM_DESC(frctrl, "ST7789 FRCTRL2 value, 0x15 = 50 Hz, 0x0f = 60 Hz, 0 = keep (default 0x15)");
+
+static uint te_timeout_ms = 50;
+module_param(te_timeout_ms, uint, 0644);
+MODULE_PARM_DESC(te_timeout_ms, "Longest wait for a TE edge before sending anyway (default 50)");
 
 
 struct panel_mipi_dbi_format {
@@ -56,12 +84,11 @@ static const struct panel_mipi_dbi_format panel_mipi_dbi_formats[] = {
 struct panel_mipi_dbi_device {
     struct mipi_dbi_dev dbidev;
 
-    /*
-     * TE support is intentionally disabled for now and may be enabled later.
-     * struct gpio_desc *te;
-     * int te_irq;
-     * struct completion te_completion;
-     */
+    struct gpio_desc *te;
+    int te_irq;
+    struct completion te_completion;
+    /* Transposed copy of the damaged area, for native_order. */
+    u16 *tbuf;
     struct mutex display_lock;		/* Serialize reset and display transfers */
 };
 
@@ -264,6 +291,24 @@ static void panel_mipi_dbi_commands_execute(struct mipi_dbi *dbi,
     }
 }
 
+static bool panel_mipi_dbi_native(struct panel_mipi_dbi_device *panel)
+{
+    return native_order && panel->tbuf && panel->dbidev.pixel_format == DRM_FORMAT_RGB565;
+}
+
+/* Settings applied after the firmware init sequence, every time it runs. */
+static void panel_mipi_dbi_tune(struct panel_mipi_dbi_device *panel)
+{
+    struct mipi_dbi *dbi = &panel->dbidev.dbi;
+
+    if (panel_mipi_dbi_native(panel))
+        mipi_dbi_command(dbi, MIPI_DCS_SET_ADDRESS_MODE, madctl_native & 0xff);
+    if (frctrl)
+        mipi_dbi_command(dbi, ST7789_FRCTRL2, frctrl & 0xff);
+    if (panel->te)
+        mipi_dbi_command(dbi, MIPI_DCS_SET_TEAR_ON, MIPI_DCS_TEAR_MODE_VBLANK);
+}
+
 static int panel_mipi_dbi_reinitialize(struct panel_mipi_dbi_device *panel)
 {
     struct mipi_dbi_dev *dbidev = &panel->dbidev;
@@ -276,13 +321,7 @@ static int panel_mipi_dbi_reinitialize(struct panel_mipi_dbi_device *panel)
         return ret;
 
     panel_mipi_dbi_commands_execute(dbi, dbidev->driver_private);
-
-    /* TE support is intentionally disabled; re-enable this with TE support. */
-    /*
-    if (panel->te)
-        mipi_dbi_command(dbi, MIPI_DCS_SET_TEAR_ON,
-                 MIPI_DCS_TEAR_MODE_VBLANK);
-    */
+    panel_mipi_dbi_tune(panel);
 
     if (dbidev->regulator)
         regulator_disable(dbidev->regulator);
@@ -337,11 +376,6 @@ static const struct attribute_group panel_mipi_dbi_attr_group = {
     .attrs = panel_mipi_dbi_attrs,
 };
 
-/*
- * TE support is intentionally disabled for now. Keep the handler and wait
- * logic here for possible later re-enablement when TE timing is verified.
- */
-#if 0
 /* TE interrupt handler: wake waiters when a TE signal arrives */
 static irqreturn_t panel_mipi_dbi_te_isr(int irq, void *data)
 {
@@ -355,7 +389,7 @@ static irqreturn_t panel_mipi_dbi_te_isr(int irq, void *data)
 /* Wait for the panel TE sync signal before flushing */
 static void panel_mipi_dbi_wait_for_te(struct panel_mipi_dbi_device *panel)
 {
-    if (!panel->te)
+    if (!panel->te || !te)
         return;
 
     reinit_completion(&panel->te_completion);
@@ -364,13 +398,83 @@ static void panel_mipi_dbi_wait_for_te(struct panel_mipi_dbi_device *panel)
     enable_irq(panel->te_irq);
 
     if (!wait_for_completion_timeout(&panel->te_completion,
-                     msecs_to_jiffies(100)))
+                     msecs_to_jiffies(te_timeout_ms)))
         dev_warn_once(panel->dbidev.drm.dev,
                   "Timeout waiting for TE signal\n");
 
     disable_irq(panel->te_irq);
 }
-#endif
+
+/*
+ * Sends one damaged rectangle. Native order transposes it so pixels go out
+ * along the panel's scan lines: with MADCTL 0x40 a landscape pixel (x, y)
+ * is panel column y + top_offset on scan line x, the same place MADCTL 0xA0
+ * put it, but the address counter now walks the scan line.
+ */
+static void panel_mipi_dbi_fb_dirty(struct iosys_map *src, struct drm_framebuffer *fb,
+                    struct drm_rect *rect,
+                    struct drm_format_conv_state *fmtcnv_state)
+{
+    struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(fb->dev);
+    struct panel_mipi_dbi_device *panel = to_panel_mipi_dbi_device(dbidev);
+    struct mipi_dbi *dbi = &dbidev->dbi;
+    unsigned int w = rect->x2 - rect->x1;
+    unsigned int h = rect->y2 - rect->y1;
+    unsigned int xs, xe, ys, ye, x, y;
+    u16 *tx = dbidev->tx_buf;
+    void *out = tx;
+    int ret;
+
+    ret = mipi_dbi_buf_copy(tx, src, fb, rect, dbi->swap_bytes, fmtcnv_state);
+    if (ret)
+        goto err;
+
+    if (panel_mipi_dbi_native(panel)) {
+        for (x = 0; x < w; x++)
+            for (y = 0; y < h; y++)
+                panel->tbuf[x * h + y] = tx[y * w + x];
+        out = panel->tbuf;
+        xs = rect->y1 + dbidev->top_offset;
+        xe = rect->y2 - 1 + dbidev->top_offset;
+        ys = rect->x1 + dbidev->left_offset;
+        ye = rect->x2 - 1 + dbidev->left_offset;
+    } else {
+        xs = rect->x1 + dbidev->left_offset;
+        xe = rect->x2 - 1 + dbidev->left_offset;
+        ys = rect->y1 + dbidev->top_offset;
+        ye = rect->y2 - 1 + dbidev->top_offset;
+    }
+
+    /* Start right after the panel begins a refresh, so the write leads. */
+    panel_mipi_dbi_wait_for_te(panel);
+
+    mipi_dbi_command(dbi, MIPI_DCS_SET_COLUMN_ADDRESS, (xs >> 8) & 0xff, xs & 0xff,
+             (xe >> 8) & 0xff, xe & 0xff);
+    mipi_dbi_command(dbi, MIPI_DCS_SET_PAGE_ADDRESS, (ys >> 8) & 0xff, ys & 0xff,
+             (ye >> 8) & 0xff, ye & 0xff);
+    ret = mipi_dbi_command_buf(dbi, MIPI_DCS_WRITE_MEMORY_START, out,
+                   drm_format_info_min_pitch(drm_format_info(dbidev->pixel_format), 0, w) * h);
+err:
+    if (ret)
+        drm_err_once(fb->dev, "Failed to update display %d\n", ret);
+}
+
+static void panel_mipi_dbi_enable_flush(struct mipi_dbi_dev *dbidev,
+                    struct drm_plane_state *plane_state)
+{
+    struct drm_shadow_plane_state *shadow = to_drm_shadow_plane_state(plane_state);
+    struct drm_framebuffer *fb = plane_state->fb;
+    struct drm_rect rect = { .x1 = 0, .x2 = fb->width, .y1 = 0, .y2 = fb->height };
+    int idx;
+
+    if (!drm_dev_enter(&dbidev->drm, &idx))
+        return;
+
+    panel_mipi_dbi_fb_dirty(&shadow->data[0], fb, &rect, &shadow->fmtcnv_state);
+    backlight_enable(dbidev->backlight);
+
+    drm_dev_exit(idx);
+}
 
 static void panel_mipi_dbi_enable(struct drm_simple_display_pipe *pipe,
                   struct drm_crtc_state *crtc_state,
@@ -393,15 +497,9 @@ static void panel_mipi_dbi_enable(struct drm_simple_display_pipe *pipe,
         goto out_exit;
     if (!ret)
         panel_mipi_dbi_commands_execute(dbi, dbidev->driver_private);
+    panel_mipi_dbi_tune(panel);
 
-    /* TE support is intentionally disabled; re-enable this with TE support. */
-    /*
-    if (panel->te)
-        mipi_dbi_command(dbi, MIPI_DCS_SET_TEAR_ON,
-                 MIPI_DCS_TEAR_MODE_VBLANK);
-    */
-
-    mipi_dbi_enable_flush(dbidev, crtc_state, plane_state);
+    panel_mipi_dbi_enable_flush(dbidev, plane_state);
 out_exit:
     mutex_unlock(&panel->display_lock);
     drm_dev_exit(idx);
@@ -414,9 +512,23 @@ static void panel_mipi_dbi_pipe_update(struct drm_simple_display_pipe *pipe,
     struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
     struct panel_mipi_dbi_device *panel = to_panel_mipi_dbi_device(dbidev);
 
+    struct drm_plane_state *state = pipe->plane.state;
+    struct drm_shadow_plane_state *shadow = to_drm_shadow_plane_state(state);
+    struct drm_framebuffer *fb = state->fb;
+    struct drm_rect rect;
+    int idx;
+
+    if (!pipe->crtc.state->active || WARN_ON(!fb))
+        return;
+    if (!drm_dev_enter(fb->dev, &idx))
+        return;
+
     mutex_lock(&panel->display_lock);
-    mipi_dbi_pipe_update(pipe, old_state);
+    if (drm_atomic_helper_damage_merged(old_state, state, &rect))
+        panel_mipi_dbi_fb_dirty(&shadow->data[0], fb, &rect, &shadow->fmtcnv_state);
     mutex_unlock(&panel->display_lock);
+
+    drm_dev_exit(idx);
 }
 
 static void panel_mipi_dbi_disable(struct drm_simple_display_pipe *pipe)
@@ -546,11 +658,6 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
     if (device_property_present(dev, "write-only"))
         dbi->read_commands = NULL;
 
-    /*
-     * TE support is intentionally disabled for now. Keep GPIO and IRQ setup
-     * commented out so it can be enabled later after TE timing is verified.
-     */
-#if 0
     /* Get the optional TE pin and request its IRQ */
     panel->te = devm_gpiod_get_optional(dev, "te", GPIOD_IN);
     if (IS_ERR(panel->te))
@@ -574,7 +681,6 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
         if (ret)
             return dev_err_probe(dev, ret, "Failed to request TE irq\n");
     }
-#endif
 
     dbidev->driver_private = panel_mipi_dbi_commands_from_fw(dev);
     if (IS_ERR(dbidev->driver_private))
@@ -585,6 +691,9 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
         return ret;
 
     buf_size = DIV_ROUND_UP(mode.hdisplay * mode.vdisplay * bpp, 8);
+    panel->tbuf = devm_kmalloc(dev, buf_size, GFP_KERNEL);
+    if (!panel->tbuf)
+        return -ENOMEM;
     ret = mipi_dbi_dev_init_with_formats(dbidev, &panel_mipi_dbi_pipe_funcs,
                          formats, ARRAY_SIZE(formats),
                          &mode, 0, buf_size);
