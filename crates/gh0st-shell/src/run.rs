@@ -1037,12 +1037,13 @@ fn single_instance() -> Result<std::fs::File, String> {
     Ok(f)
 }
 
-/// DRM when it opens, so a frame goes out whole and only the rectangle that
-/// changed is sent. fbdev otherwise (`GH0ST_FBDEV=1` forces it).
+/// fbdev, as stock apps use it. The panel driver syncs every send to the
+/// panel's refresh, so fbdev no longer tears. `GH0ST_DRM=1` draws through DRM
+/// instead: tighter rectangles, but the handover to and from an app shows.
 fn open_panel() -> Result<Box<dyn Display>, String> {
     let fb_path = fb::find();
     let fbdev = fb_path.to_string_lossy().into_owned();
-    if std::env::var_os("GH0ST_FBDEV").is_none() {
+    if std::env::var_os("GH0ST_DRM").is_some() {
         if let Some(card) = drm::find() {
             match drm::Drm::open(&card, fbdev.clone()) {
                 Ok(d) => return Ok(Box::new(d)),
