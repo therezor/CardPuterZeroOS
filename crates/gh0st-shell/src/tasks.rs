@@ -109,6 +109,16 @@ impl Tasks {
     /// Returns the dropped ones.
     pub fn sweep(&mut self, now: u64) -> Vec<Task> {
         for t in &mut self.list {
+            // The leader of a paused app died; what is left is stopped and
+            // would never exit on its own.
+            if t.leader_done && t.state == State::Paused && child::group_alive(t.pgid) {
+                child::terminate(t.pgid);
+                t.state = State::Closing {
+                    since: now,
+                    killed: false,
+                };
+                t.pixels = None;
+            }
             if let State::Closing { since, killed } = &mut t.state {
                 if !*killed && now >= *since + KILL_GRACE_MS {
                     child::kill(t.pgid);

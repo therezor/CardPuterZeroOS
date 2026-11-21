@@ -185,6 +185,8 @@ pub enum Dialog {
         placeholder: &'static str,
         text: String,
         masked: bool,
+        /// A password: Tab shows or hides it.
+        secret: bool,
     },
     Confirm {
         title: String,
@@ -306,14 +308,15 @@ fn draw_dialog(c: &mut Canvas, t: &Theme, d: &Dialog) {
             placeholder,
             text,
             masked,
+            secret,
         } => {
             let inner = widgets::dialog(c, t, r, title, t.c.accent);
             let field = Rect::new(inner.x, inner.y + 2, inner.w, 24);
             widgets::text_field(c, t, field, text, *masked, true, placeholder);
-            let keys: &[(&str, &str)] = if *masked {
-                &[("Tab", "show"), ("Enter", "ok"), ("Esc", "cancel")]
-            } else {
-                &[("Enter", "ok"), ("Esc", "cancel")]
+            let keys: &[(&str, &str)] = match (*secret, *masked) {
+                (true, true) => &[("Tab", "show"), ("Enter", "ok"), ("Esc", "cancel")],
+                (true, false) => &[("Tab", "hide"), ("Enter", "ok"), ("Esc", "cancel")],
+                _ => &[("Enter", "ok"), ("Esc", "cancel")],
             };
             dialog_keys(c, t, Rect::new(inner.x, field.bottom() + 8, inner.w, 16), keys);
         }

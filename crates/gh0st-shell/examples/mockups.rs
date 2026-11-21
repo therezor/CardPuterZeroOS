@@ -415,6 +415,7 @@ fn main() {
                             placeholder: "Password",
                             text: "hunter22".into(),
                             masked: true,
+                            secret: true,
                         }),
                     ),
                 ),

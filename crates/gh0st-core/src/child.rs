@@ -86,9 +86,58 @@ fn signal_group(pgid: i32, sig: libc::c_int) {
     }
 }
 
-/// Pauses every process in the group.
-pub fn stop(pgid: i32) {
-    signal_group(pgid, libc::SIGSTOP);
+/// Pauses every process in the group. False if the signal reached none of
+/// them: a group led by a root process, say.
+pub fn stop(pgid: i32) -> bool {
+    // SAFETY: signalling a process group we started.
+    pgid > 0 && unsafe { libc::kill(-pgid, libc::SIGSTOP) } == 0
+}
+
+/// Waits up to `ms` until every live member of the group is stopped. A
+/// member the shell may not signal (run through sudo) never stops.
+pub fn group_stopped(pgid: i32, ms: u64) -> bool {
+    let end = crate::rt::now_ms() + ms;
+    loop {
+        if !group_has_running(pgid) {
+            return true;
+        }
+        if crate::rt::now_ms() >= end {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+}
+
+/// Any member of the group still running, from `/proc`. Without `/proc` (a
+/// host run) the stop is trusted.
+fn group_has_running(pgid: i32) -> bool {
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    rd.flatten().any(|e| {
+        let name = e.file_name();
+        let Some(pid) = name.to_str().filter(|n| n.bytes().all(|b| b.is_ascii_digit())) else {
+            return false;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        match stat_state_pgrp(&stat) {
+            Some((state, pgrp)) => pgrp == pgid && !matches!(state, 'T' | 't' | 'Z' | 'X'),
+            None => false,
+        }
+    })
+}
+
+/// State and process group from a `/proc/PID/stat` line. The name field can
+/// hold spaces and brackets, so parsing starts after its last `)`.
+fn stat_state_pgrp(stat: &str) -> Option<(char, i32)> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let mut f = rest.split_whitespace();
+    let state = f.next()?.chars().next()?;
+    let _ppid = f.next()?;
+    let pgrp = f.next()?.parse().ok()?;
+    Some((state, pgrp))
 }
 
 pub fn cont(pgid: i32) {
@@ -231,6 +280,15 @@ mod tests {
     }
 
     #[test]
+    fn stat_lines_read_past_odd_names() {
+        assert_eq!(
+            stat_state_pgrp("123 (we (ird) x) T 1 120 120 0"),
+            Some(('T', 120))
+        );
+        assert_eq!(stat_state_pgrp("garbage"), None);
+    }
+
+    #[test]
     fn the_group_outlives_its_leader_until_the_last_member_exits() {
         let _one = CHILD_TESTS.lock().unwrap();
         // The leader exits at once; its background child keeps the group
@@ -253,8 +311,9 @@ mod tests {
     fn a_paused_group_stops_resumes_and_still_takes_terminate() {
         let _one = CHILD_TESTS.lock().unwrap();
         let pgid = spawn(&sh("exec sleep 30"), &dev(), false).unwrap();
-        stop(pgid);
+        assert!(stop(pgid));
         assert_eq!(wait_stopped(pgid, 2000), Stopped::Yes);
+        assert!(group_stopped(pgid, 1000));
         cont(pgid);
         stop(pgid);
         assert_eq!(wait_stopped(pgid, 2000), Stopped::Yes);

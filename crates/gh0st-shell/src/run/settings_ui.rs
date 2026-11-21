@@ -24,6 +24,7 @@ pub(super) enum Ask {
     PasswordCurrent,
     PasswordNew(String),
     PasswordRepeat(String, String),
+    Forget(String),
 }
 
 /// pkexec runs the root helper by this path (see packaging/polkit).
@@ -53,7 +54,8 @@ pub(super) enum NetJob {
     /// `timedatectl show` and whether SSH runs.
     SysQuery,
     Zones,
-    TimeSet,
+    /// A time zone change, or network time when `None`.
+    TimeSet(Option<String>),
     /// The root helper; what to say when it works.
     Helper(String),
     /// After the helper unblocks the radio, power it on.
@@ -414,7 +416,12 @@ impl Shell {
             },
             _ if k.state == State::Release => {}
             code::TAB => {
-                if let Dialog::Text { masked, .. } = dialog {
+                if let Dialog::Text {
+                    masked,
+                    secret: true,
+                    ..
+                } = dialog
+                {
                     *masked = !*masked;
                 }
             }
@@ -462,6 +469,7 @@ impl Shell {
                     placeholder: "Password, empty if open",
                     text: String::new(),
                     masked: true,
+                    secret: true,
                 },
                 Ask::HiddenPassword(text.clone()),
             ),
@@ -472,6 +480,7 @@ impl Shell {
                     placeholder: "Password",
                     text: String::new(),
                     masked: true,
+                    secret: true,
                 },
                 Ask::PasswordNew(std::mem::take(&mut text)),
             ),
@@ -481,6 +490,7 @@ impl Shell {
                     placeholder: "Password",
                     text: String::new(),
                     masked: true,
+                    secret: true,
                 },
                 Ask::PasswordRepeat(cur, std::mem::take(&mut text)),
             ),
@@ -503,6 +513,7 @@ impl Shell {
                 wipe(&mut cur);
                 wipe(&mut new);
             }
+            Ask::Forget(ssid) => self.forget(&ssid),
             Ask::HiddenPassword(ssid) => {
                 let argv = [
                     "nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid, "hidden",
@@ -544,12 +555,21 @@ impl Shell {
             }
             PageId::Wifi if k.is(code::BACKSPACE) => {
                 if let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() {
-                    let known = self.settings.as_ref().is_some_and(|ui| ui.state.profiles.contains(&ssid));
-                    if known {
-                        self.start_job(
-                            JobKind::Net(NetJob::Forget(ssid.clone())),
-                            &["nmcli", "connection", "delete", "id", &ssid],
+                    let (known, active) = self.settings.as_ref().map_or((false, false), |ui| {
+                        let active = ui.state.networks.iter().any(|n| n.active && n.ssid == ssid);
+                        (ui.state.profiles.contains(&ssid), active)
+                    });
+                    if known && active {
+                        self.ask(
+                            Dialog::Confirm {
+                                title: format!("Forget \u{201c}{ssid}\u{201d}?"),
+                                line: "You are on it now; it drops.".into(),
+                                yes: "forget",
+                            },
+                            Ask::Forget(ssid),
                         );
+                    } else if known {
+                        self.forget(&ssid);
                     } else {
                         self.toast(format!("{ssid} is not saved"));
                     }
@@ -592,6 +612,13 @@ impl Shell {
         let mut argv = vec!["pkexec", HELPER];
         argv.extend_from_slice(args);
         self.start_job(JobKind::Net(NetJob::Helper(done)), &argv);
+    }
+
+    fn forget(&mut self, ssid: &str) {
+        self.start_job(
+            JobKind::Net(NetJob::Forget(ssid.to_string())),
+            &["nmcli", "connection", "delete", "id", ssid],
+        );
     }
 
     fn query_bt(&mut self) {
@@ -719,10 +746,16 @@ impl Shell {
                     self.query_bt();
                 }
             }
-            NetJob::TimeSet => {
-                if !j.ok() {
-                    self.toast(helper_failure(&out));
+            NetJob::TimeSet(zone) => {
+                match (j.ok(), zone) {
+                    // The C library reads /etc/localtime once; naming the
+                    // zone makes the clock follow at once.
+                    // SAFETY: the shell is single-threaded.
+                    (true, Some(z)) => unsafe { std::env::set_var("TZ", z) },
+                    (true, None) => {}
+                    (false, _) => self.toast(helper_failure(&out)),
                 }
+                self.refresh_status();
                 self.query_sys();
             }
             NetJob::Helper(done) => {
@@ -826,7 +859,7 @@ impl Shell {
             Setting::NetworkTime => {
                 let on = self.settings.as_ref().is_some_and(|ui| ui.state.network_time);
                 let argv = ["timedatectl", "set-ntp", if on { "false" } else { "true" }];
-                self.start_job(JobKind::Net(NetJob::TimeSet), &argv);
+                self.start_job(JobKind::Net(NetJob::TimeSet(None)), &argv);
             }
             Setting::Ssh => {
                 let on = self.settings.as_ref().is_some_and(|ui| ui.state.ssh);
@@ -852,6 +885,7 @@ impl Shell {
                     placeholder: "Network name",
                     text: String::new(),
                     masked: false,
+                    secret: false,
                 },
                 Ask::HiddenName,
             ),
@@ -872,12 +906,10 @@ impl Shell {
             Command::SetZone(zone) => {
                 let known = self.settings.as_ref().is_some_and(|ui| ui.state.zones.contains(&zone));
                 if known {
-                    self.start_job(JobKind::Net(NetJob::TimeSet), &["timedatectl", "set-timezone", &zone]);
-                    // The C library reads /etc/localtime once; naming the
-                    // zone makes the clock follow at once.
-                    // SAFETY: the shell is single-threaded.
-                    unsafe { std::env::set_var("TZ", &zone) };
-                    self.refresh_status();
+                    self.start_job(
+                        JobKind::Net(NetJob::TimeSet(Some(zone.clone()))),
+                        &["timedatectl", "set-timezone", &zone],
+                    );
                     if let Some(ui) = self.settings.as_mut() {
                         ui.state.zone = zone;
                         ui.stack.retain(|(p, _)| !matches!(p, PageId::TimeZone(_)));
@@ -891,6 +923,7 @@ impl Shell {
                     placeholder: "Password",
                     text: String::new(),
                     masked: true,
+                    secret: true,
                 },
                 Ask::PasswordCurrent,
             ),
@@ -922,6 +955,7 @@ impl Shell {
                     placeholder: "Password",
                     text: String::new(),
                     masked: true,
+                    secret: true,
                 },
                 Ask::WifiPassword(ssid),
             );

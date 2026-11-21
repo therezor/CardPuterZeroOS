@@ -873,6 +873,13 @@ impl Shell {
             }
             return;
         }
+        // A dialog takes every key, Tab (show password) included.
+        if self.screen == Screen::Settings
+            && self.settings.as_ref().is_some_and(|u| u.dialog.is_some())
+        {
+            self.settings_key(k, now);
+            return;
+        }
         if k.is(code::TAB) {
             match k.state {
                 State::Press => self.tab_down = Some(now),
@@ -1179,9 +1186,18 @@ impl Shell {
         let Some(t) = self.tasks.front_mut() else {
             return;
         };
-        child::stop(t.pgid);
+        let sent = child::stop(t.pgid);
         if !t.leader_done && child::wait_stopped(t.pgid, STOP_WAIT_MS) == Stopped::Exited {
             t.leader_done = true;
+        }
+        // An app run through sudo is root's: the stop does not reach it,
+        // and a "paused" app that keeps drawing would sit over the switcher.
+        if !sent || !child::group_stopped(t.pgid, STOP_WAIT_MS) {
+            child::cont(t.pgid);
+            let name = t.name.clone();
+            self.spare = Some(frame);
+            self.toast(format!("{name} can't be paused"));
+            return;
         }
         self.display.read_into(&mut frame);
         let id = t.id.clone();
