@@ -1271,7 +1271,14 @@ pub fn form_field(c: &mut Canvas, t: &Theme, r: Rect, f: &Field) -> i32 {
     c.stroke_round_rect(fr, t.m.radius, t.c.critical);
     let s = IconSize::Tiny as i32;
     let nr = Rect::new(r.x + 3, fr.bottom() + 2, r.w - 6, t.m.field_note_h);
-    icon::draw(c, "triangle-alert", IconSize::Tiny, nr.x, nr.y + (nr.h - s) / 2, t.c.critical);
+    icon::draw(
+        c,
+        "triangle-alert",
+        IconSize::Tiny,
+        nr.x,
+        nr.y + (nr.h - s) / 2,
+        t.c.critical,
+    );
     let tr = Rect::new(nr.x + s + 4, nr.y, nr.w - s - 4, nr.h);
     text_in(c, t.f.small, tr, why, t.c.critical);
     nr.bottom() - r.y

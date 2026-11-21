@@ -62,8 +62,9 @@ impl Steps {
 
     /// A step that always applies.
     pub fn step<P: Page + 'static>(mut self, mut make: impl FnMut(&str) -> P + 'static) -> Steps {
-        self.makers
-            .push(Box::new(move |label| Some(Box::new(make(label)) as Box<dyn Page>)));
+        self.makers.push(Box::new(move |label| {
+            Some(Box::new(make(label)) as Box<dyn Page>)
+        }));
         self
     }
 

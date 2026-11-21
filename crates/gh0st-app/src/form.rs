@@ -249,7 +249,10 @@ mod tests {
     #[test]
     fn a_lone_text_field_has_no_tab() {
         let f = Form::new().text("Name");
-        assert_eq!(f.hints("back", "next"), [("Esc", "back"), ("Enter", "next")]);
+        assert_eq!(
+            f.hints("back", "next"),
+            [("Esc", "back"), ("Enter", "next")]
+        );
     }
 
     #[test]
