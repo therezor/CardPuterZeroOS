@@ -460,29 +460,11 @@ impl Shell {
             .file
             .bytes()
             .fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize));
-        // A symbol picked in Settings > Apps wins over the app's own.
         let custom = self
             .config
             .get_str(&apps::app_key(&a.file, "icon"))
-            .and_then(|n| gh0st_ui::icon::ICON_NAMES.iter().find(|i| **i == n));
-        let icon = match &a.icon {
-            _ if custom.is_some() => Icon::Symbol {
-                name: custom.copied().unwrap_or("settings"),
-                tint,
-            },
-            IconRef::Symbol(name) => match gh0st_ui::icon::ICON_NAMES
-                .iter()
-                .find(|n| **n == name.as_str())
-            {
-                Some(n) => Icon::Symbol { name: n, tint },
-                None => Icon::Letter { tint },
-            },
-            IconRef::Path(p) => match self.picture(p) {
-                Some(pic) => Icon::Picture(pic),
-                None => Icon::Letter { tint },
-            },
-            IconRef::None => Icon::Letter { tint },
-        };
+            .and_then(symbol);
+        let icon = icon_for(&a.icon, a.ours, custom, tint, |p| self.picture(p));
         Entry {
             id: a.file.clone(),
             name: a.entry.name.clone(),
@@ -1655,6 +1637,40 @@ fn is_screenshot(k: &Key) -> bool {
     k.is(code::SYSRQ) || k.is(code::PRINT) || (k.ctrl && k.alt && k.code == 31)
 }
 
+/// A symbol baked into gh0st-ui, by name.
+fn symbol(name: &str) -> Option<&'static str> {
+    gh0st_ui::icon::ICON_NAMES
+        .iter()
+        .find(|n| **n == name)
+        .copied()
+}
+
+/// An app's icon. A symbol picked in Settings > Apps (`custom`) wins over
+/// the app's own. A system app (ours, with `Icon=gh0st:`) keeps the theme's
+/// colours either way. Any other symbol takes the hashed `tint`: SDK apps
+/// use `gh0st:` too.
+fn icon_for(
+    own: &IconRef,
+    ours: bool,
+    custom: Option<&'static str>,
+    tint: usize,
+    picture: impl FnOnce(&Path) -> Option<Rc<Picture>>,
+) -> Icon {
+    let name = match own {
+        IconRef::Symbol(name) => custom.or_else(|| symbol(name)),
+        _ => custom,
+    };
+    match (own, name) {
+        (IconRef::Symbol(_), Some(name)) if ours => Icon::System { name },
+        (_, Some(name)) => Icon::Symbol { name, tint },
+        (IconRef::Path(p), None) => match picture(p) {
+            Some(pic) => Icon::Picture(pic),
+            None => Icon::Letter { tint },
+        },
+        _ => Icon::Letter { tint },
+    }
+}
+
 fn palette_of(c: &Config) -> theme::Palette {
     c.get_str("gh0st.palette")
         .and_then(theme::palette)
@@ -1746,6 +1762,34 @@ fn parse_volume(s: &str) -> Option<(u8, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_system_apps_take_theme_colours() {
+        let sys = IconRef::Symbol("settings".into());
+        let png = IconRef::Path("/x.png".into());
+        let style = |own: &IconRef, custom| match icon_for(own, true, custom, 3, |_| None) {
+            Icon::System { name } => format!("system {name}"),
+            Icon::Symbol { name, tint } => format!("tint {tint} {name}"),
+            Icon::Letter { tint } => format!("letter {tint}"),
+            Icon::Picture(_) => "picture".into(),
+        };
+        assert_eq!(style(&sys, None), "system settings");
+        assert_eq!(style(&sys, Some("pin")), "system pin");
+        assert_eq!(style(&png, Some("pin")), "tint 3 pin");
+        assert_eq!(style(&png, None), "letter 3", "PNG failed to load");
+        assert_eq!(style(&IconRef::Symbol("nope".into()), None), "letter 3");
+        let theirs = icon_for(&sys, false, None, 3, |_| None);
+        assert!(
+            matches!(
+                theirs,
+                Icon::Symbol {
+                    name: "settings",
+                    tint: 3
+                }
+            ),
+            "an SDK app from the Store keeps a tint"
+        );
+    }
 
     #[test]
     fn wpctl_volume_reads_as_percent_and_mute() {

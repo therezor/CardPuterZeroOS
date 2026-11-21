@@ -18,6 +18,10 @@ use this page directly.
 - `Icon` is a PNG path, absolute or relative to `/usr/share/APPLaunch`, or
   `gh0st:<name>` for a symbol built into gh0st. Without an icon the shell
   shows the first letter of the name. Stock drops such an entry.
+- A system app is one in `/usr/share/gh0st/applications` with a `gh0st:`
+  icon, such as Settings and Terminal. Its symbol draws in the theme's
+  accent on the same neutral badge as a PNG icon. Every other symbol or
+  letter badge takes a tint picked from the app's file name.
 - `TryExec` names a program that must exist. If it doesn't, the shell hides
   the entry.
 - An app with `Terminal=true` shows only when a terminal is installed.

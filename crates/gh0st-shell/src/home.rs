@@ -26,6 +26,8 @@ pub enum Mode {
 
 #[derive(Clone)]
 pub enum Icon {
+    /// A system app's symbol (`Icon=gh0st:`), in the theme's own colours.
+    System { name: &'static str },
     /// A baked symbol on a badge in theme tint `tint`.
     Symbol { name: &'static str, tint: usize },
     /// The app's own PNG, scaled once for each badge size. Shared, so a
@@ -541,6 +543,7 @@ pub enum Size {
 pub fn visual<'a>(t: &Theme, icon: &'a Icon, name: &str, size: Size) -> Visual<'a> {
     let tint = |i: usize| t.c.tints[i % t.c.tints.len()];
     match icon {
+        Icon::System { name } => Visual::System { icon: name },
         Icon::Symbol { name, tint: i } => Visual::Badge {
             icon: name,
             tint: tint(*i),

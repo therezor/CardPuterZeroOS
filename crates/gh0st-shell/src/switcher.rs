@@ -322,9 +322,8 @@ impl Switcher {
                     // An empty line, so every badge sits on one row.
                     stats: Some(""),
                     paused: false,
-                    visual: Visual::Badge {
+                    visual: Visual::System {
                         icon: widgets::LOGO,
-                        tint: t.c.accent,
                     },
                 },
                 Some(app) => CardView {

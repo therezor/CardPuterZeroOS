@@ -38,19 +38,15 @@ fn entries(t: &Theme, stock: Option<&Path>) -> Vec<Entry> {
         e(
             "Terminal",
             "Shell on this device",
-            Icon::Symbol {
+            Icon::System {
                 name: "square-terminal",
-                tint: 0,
             },
             true,
         ),
         e(
             "Settings",
             "Wi-Fi, display, sound",
-            Icon::Symbol {
-                name: "settings",
-                tint: 1,
-            },
+            Icon::System { name: "settings" },
             true,
         ),
         e(

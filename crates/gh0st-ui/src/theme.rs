@@ -19,7 +19,7 @@ pub struct Palette {
     pub critical: Color,
     pub ok: Color,
     pub border: Color,
-    /// Badge tints for built-in apps, so the grid is not one colour.
+    /// Badge tints for apps that are not ours, so the grid is not one colour.
     pub tints: [Color; 6],
 }
 

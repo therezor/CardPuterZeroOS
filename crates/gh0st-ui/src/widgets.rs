@@ -189,6 +189,9 @@ fn slot_visual(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual) {
     let s = t.m.slot_icon;
     let (x, y) = r.centre(s, s);
     match v {
+        Visual::System { icon: name } => {
+            icon::draw(c, name, IconSize::Tiny, x, y, t.c.accent);
+        }
         Visual::Badge { icon: name, tint } => {
             icon::draw(c, name, IconSize::Tiny, x, y, *tint);
         }
@@ -390,12 +393,24 @@ pub fn page_dots(c: &mut Canvas, t: &Theme, right: i32, cy: i32, page: usize, co
 
 /// What a tile or row shows as its picture.
 pub enum Visual<'a> {
+    /// A system app's symbol in `accent` on the neutral badge.
+    System { icon: &'a str },
     /// A baked icon on a tinted badge.
     Badge { icon: &'a str, tint: Color },
     /// An app's own PNG, already scaled.
     Image(&'a Image),
     /// No icon at all: the name's first letter on a tinted badge.
     Letter { ch: char, tint: Color },
+}
+
+/// The badge under an app's own picture and a system app's symbol: theme
+/// colours, never a tint.
+pub fn neutral_fill(t: &Theme, selected: bool) -> Color {
+    if selected {
+        mix(t.c.surface, t.c.fg, 36)
+    } else {
+        mix(t.c.bg, t.c.surface, 200)
+    }
 }
 
 pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
@@ -406,18 +421,24 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
             (mix(t.c.bg, tint, 46), tint)
         }
     };
+    let symbol = |c: &mut Canvas, name: &str, fill: Color, ink: Color| {
+        c.round_rect(r, t.m.radius, fill);
+        let size = if r.w >= 32 {
+            IconSize::Medium
+        } else {
+            IconSize::Bar
+        };
+        let s = size as i32;
+        let (x, y) = r.centre(s, s);
+        icon::draw(c, name, size, x, y, ink);
+    };
     match v {
+        Visual::System { icon: name } => {
+            symbol(c, name, neutral_fill(t, selected), t.c.accent);
+        }
         Visual::Badge { icon: name, tint } => {
             let (fill, ink) = tinted(*tint);
-            c.round_rect(r, t.m.radius, fill);
-            let size = if r.w >= 32 {
-                IconSize::Medium
-            } else {
-                IconSize::Bar
-            };
-            let s = size as i32;
-            let (x, y) = r.centre(s, s);
-            icon::draw(c, name, size, x, y, ink);
+            symbol(c, name, fill, ink);
         }
         Visual::Letter { ch, tint } => {
             let (fill, ink) = tinted(*tint);
@@ -428,12 +449,7 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
             text_centre(c, f, r, up.encode_utf8(&mut buf), ink);
         }
         Visual::Image(img) => {
-            let fill = if selected {
-                mix(t.c.surface, t.c.fg, 36)
-            } else {
-                mix(t.c.bg, t.c.surface, 200)
-            };
-            c.round_rect(r, t.m.radius, fill);
+            c.round_rect(r, t.m.radius, neutral_fill(t, selected));
             let (x, y) = r.centre(img.w, img.h);
             c.image(x, y, img);
         }
@@ -870,4 +886,22 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, clock: &str, s: &Status) {
         }],
         None,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::color::contrast;
+    use crate::theme::PALETTES;
+
+    #[test]
+    fn system_symbols_read_on_the_neutral_badge() {
+        for p in PALETTES {
+            let t = Theme::new(*p);
+            for selected in [false, true] {
+                let fill = neutral_fill(&t, selected);
+                assert!(contrast(p.accent, fill) >= 3.0, "{} {selected}", p.name);
+            }
+        }
+    }
 }
