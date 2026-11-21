@@ -11,4 +11,5 @@ pub mod esc;
 pub mod evdev;
 pub mod keys;
 pub mod rt;
+pub mod script;
 pub mod status;

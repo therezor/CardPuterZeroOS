@@ -124,10 +124,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-app"
+version = "0.1.0"
+dependencies = [
+ "gh0st-core",
+ "gh0st-ui",
+ "libc",
+]
+
+[[package]]
 name = "gh0st-core"
 version = "0.1.0"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "gh0st-settings"
+version = "0.1.0"
+dependencies = [
+ "gh0st-app",
 ]
 
 [[package]]

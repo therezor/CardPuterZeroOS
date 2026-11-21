@@ -33,9 +33,16 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/gh0st-shell`: the home screen (grid or list, nav and search modes).
   `examples/mockups.rs` renders every screen to PNG.
 - `crates/gh0st-core`: syscalls, event loop, input, config, apps, children.
+- `crates/gh0st-app`: the app SDK. Pages, OS bars, soft keys, lists, jobs,
+  a sim backend and a test driver. Apps depend on it alone. The guide is
+  `docs/sdk.md`, which is also the crate's rustdoc, so its examples compile in
+  `cargo test`.
+- `crates/gh0st-settings`: Settings, an SDK app with its own binary.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
 - `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC).
-- `docs/apps.md`: what the shell gives an app. The terminal is built to it.
+- `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
+  home is an app built to it: Settings, the terminal.
+- `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
@@ -94,8 +101,9 @@ the wake-to-draw, draw and flush times.
 
 ## Host runs
 
-`gh0st shell --sim DIR` runs the real loop on any host: keys come from a script
-on stdin (format in `crates/gh0st-shell/src/sim.rs`), frames land in DIR as
+`gh0st shell --sim DIR`, and `--sim DIR` on any SDK app such as
+`gh0st-settings`, runs the real loop on any host: keys come from a script
+on stdin (format in `crates/gh0st-core/src/script.rs`), frames land in DIR as
 PNGs. Point it at test apps and a scratch home so nothing real changes:
 
 ```sh

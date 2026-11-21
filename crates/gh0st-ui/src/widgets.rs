@@ -199,6 +199,65 @@ pub fn hint_bar(c: &mut Canvas, t: &Theme, hints: &[Hint], pages: Option<(usize,
     }
 }
 
+/// One slot of the soft-key bar. An empty icon or label leaves that part out.
+#[derive(Clone, Copy, Default)]
+pub struct SoftKey<'a> {
+    pub icon: &'a str,
+    pub label: &'a str,
+    /// Drawn lit, for a toggle that is on.
+    pub lit: bool,
+}
+
+/// Bottom bar with one slot per number key 4 to 8, each centred over its key
+/// with a tick on the bottom edge pointing at it. Same height as the hint bar,
+/// so switching between them never moves the content.
+pub fn softkey_bar(c: &mut Canvas, t: &Theme, keys: &[SoftKey; 5]) {
+    let r = hint_rect(t);
+    c.fill(r, t.c.surface);
+    c.hline(0, r.w, r.y, t.c.border);
+    let pitch = t.m.softkey_x[1] - t.m.softkey_x[0];
+    let s = IconSize::Small as i32;
+    for (k, &cx) in keys.iter().zip(&t.m.softkey_x) {
+        if k.icon.is_empty() && k.label.is_empty() {
+            continue;
+        }
+        let slot = Rect::new(cx - pitch / 2 + 1, r.y + 2, pitch - 2, r.h - 4);
+        let (fg, tick) = if k.lit {
+            c.round_rect(slot, t.m.radius_small, t.c.accent);
+            (t.c.accent_fg, t.c.accent)
+        } else {
+            (t.c.fg, t.c.muted)
+        };
+        c.fill(Rect::new(cx - 1, r.bottom() - 2, 2, 2), tick);
+        let gap = if k.icon.is_empty() || k.label.is_empty() {
+            0
+        } else {
+            2
+        };
+        let iw = if k.icon.is_empty() { 0 } else { s };
+        let lw = t.f.small.measure(k.label).min(slot.w - iw - gap);
+        let mut x = cx - (iw + gap + lw) / 2;
+        if !k.icon.is_empty() {
+            icon::draw(c, k.icon, IconSize::Small, x, r.y + (r.h - s) / 2, fg);
+            x += iw + gap;
+        }
+        if !k.label.is_empty() {
+            let col = if k.lit || k.icon.is_empty() {
+                fg
+            } else {
+                soft(t)
+            };
+            text_in(
+                c,
+                t.f.small,
+                Rect::new(x, r.y + 1, lw, r.h - 1),
+                k.label,
+                col,
+            );
+        }
+    }
+}
+
 /// Search replaces the hint bar: the query, a caret, and how to leave.
 pub fn search_bar(c: &mut Canvas, t: &Theme, query: &str) {
     let r = hint_rect(t);

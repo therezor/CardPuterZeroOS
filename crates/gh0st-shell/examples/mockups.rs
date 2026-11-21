@@ -1,6 +1,6 @@
 //! Renders the review mockups at panel size and 3x. Home comes from the real
 //! `Home` view; the other screens are laid out here with the real widgets
-//! until their apps exist. Data is made up. Run from the workspace root:
+//! until their apps exist. Settings is an app now: run `gh0st-settings --sim`. Data is made up. Run from the workspace root:
 //!
 //!     GH0ST_STOCK=<launcher>/projects/APPLaunch/APPLaunch \
 //!     GH0ST_CJK_FONT=$GH0ST_STOCK/share/font/NotoSansCJK-Regular.ttc \
@@ -10,12 +10,12 @@
 
 use gh0st_shell::home::{Entry, Home, Icon, Layout};
 use gh0st_ui::Canvas;
-use gh0st_ui::color::{Color, hex};
+use gh0st_ui::color::{Color, hex, mix};
 use gh0st_ui::geom::Rect;
 use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::snapshot::write_png;
 use gh0st_ui::theme::{self, Theme};
-use gh0st_ui::widgets::{self, Battery, Hint, Net, Row, Status, Trailing};
+use gh0st_ui::widgets::{self, Battery, Hint, Net, Row, SoftKey, Status, Trailing};
 use std::path::{Path, PathBuf};
 
 fn entries(t: &Theme, stock: Option<&Path>) -> Vec<Entry> {
@@ -140,105 +140,67 @@ fn rows(c: &mut Canvas, t: &Theme, items: &[Row], selected: usize, total: usize)
     widgets::scrollbar(c, t, track, 0, n, total);
 }
 
-fn settings(t: &Theme) -> Canvas {
+/// A made-up camera preview, to judge the soft keys over busy content.
+fn viewfinder(c: &mut Canvas, t: &Theme) {
+    let b = widgets::body(t);
+    let (top, bottom) = (hex("#5b7da3"), hex("#1d2a22"));
+    for y in b.y..b.bottom() {
+        let a = ((y - b.y) * 255 / b.h.max(1)) as u8;
+        c.fill(Rect::new(0, y, b.w, 1), mix(top, bottom, a));
+    }
+    c.circle(250.0, (b.y + 30) as f32, 14.0, hex("#f2d98b"));
+    let hill = hex("#2f4a35");
+    for x in 0..b.w {
+        let h = 30 + ((x as f32 / 23.0).sin() * 9.0) as i32 + x / 20;
+        c.fill(Rect::new(x, b.bottom() - h, 1, h), hill);
+    }
+    let grid = hex("#ffffff");
+    for i in 1..3 {
+        c.fill_alpha(Rect::new(b.w * i / 3, b.y, 1, b.h), grid, 60);
+        c.fill_alpha(Rect::new(0, b.y + b.h * i / 3, b.w, 1), grid, 60);
+    }
+    let f = Rect::new(b.w / 2 - 18, b.y + b.h / 2 - 14, 36, 28);
+    c.stroke_round_rect(f, 2, hex("#ffffff"));
+    let tag = Rect::new(6, b.y + 5, 34, 14);
+    c.fill_alpha(tag, hex("#000000"), 120);
+    widgets::text_centre(c, t.f.small_bold, tag, "1.0x", hex("#ffffff"));
+}
+
+/// The camera's soft keys in one style: `icons`, `labels` or both.
+fn softkeys(t: &Theme, icons: bool, labels: bool) -> Canvas {
     let mut c = new_canvas(t);
-    status(&mut c, t, "Settings");
-    let tint = t.c.accent;
-    let items = [
-        Row {
-            icon: Some("wifi"),
-            tint,
-            label: "Wi-Fi",
-            trailing: Trailing::ValueChevron("HomeNet"),
-        },
-        Row {
-            icon: Some("network"),
-            tint,
-            label: "Network",
-            trailing: Trailing::ValueChevron("192.168.1.42"),
-        },
-        Row {
-            icon: Some("bluetooth"),
-            tint,
-            label: "Bluetooth",
-            trailing: Trailing::Toggle(false),
-        },
-        Row {
-            icon: Some("sun"),
-            tint,
-            label: "Display",
-            trailing: Trailing::ValueChevron("80%"),
-        },
-        Row {
-            icon: Some("volume-2"),
-            tint,
-            label: "Sound",
-            trailing: Trailing::ValueChevron("60%"),
-        },
-        Row {
-            icon: Some("palette"),
-            tint,
-            label: "Appearance",
-            trailing: Trailing::ValueChevron("Mint"),
-        },
+    viewfinder(&mut c, t);
+    status(&mut c, t, "Camera");
+    let k = |icon: &'static str, label: &'static str| SoftKey {
+        icon: if icons { icon } else { "" },
+        label: if labels { label } else { "" },
+        lit: false,
+    };
+    let keys = [
+        k("arrow-left", "Back"),
+        k("zoom-out", "Out"),
+        k("camera", "Shoot"),
+        k("zoom-in", "In"),
+        k("images", "Pics"),
     ];
-    rows(&mut c, t, &items, 0, 13);
-    let hints = [
-        Hint {
-            key: "Enter",
-            label: "open",
-        },
-        Hint {
-            key: "Esc",
-            label: "back",
-        },
-    ];
-    widgets::hint_bar(&mut c, t, &hints, None);
+    widgets::softkey_bar(&mut c, t, &keys);
     c
 }
 
-fn appearance(t: &Theme, layout: Layout) -> Canvas {
+/// A lit slot for a toggle that is on: the camera's grid.
+fn softkeys_lit(t: &Theme) -> Canvas {
     let mut c = new_canvas(t);
-    status(&mut c, t, "Appearance");
-    let tint = t.c.accent;
-    let items = [
-        Row {
-            icon: Some("layout-grid"),
-            tint,
-            label: "Home layout",
-            trailing: Trailing::Choice(layout.label()),
-        },
-        Row {
-            icon: Some("palette"),
-            tint,
-            label: "Palette",
-            trailing: Trailing::ValueChevron(t.c.name),
-        },
-        Row {
-            icon: Some("arrow-left-right"),
-            tint,
-            label: "Animations",
-            trailing: Trailing::Toggle(true),
-        },
-        Row {
-            icon: Some("clock"),
-            tint,
-            label: "Clock",
-            trailing: Trailing::Choice("24 h"),
-        },
+    viewfinder(&mut c, t);
+    status(&mut c, t, "Camera");
+    let k = |icon, label, lit| SoftKey { icon, label, lit };
+    let keys = [
+        k("arrow-left", "Back", false),
+        k("layout-grid", "Grid", true),
+        k("camera", "Shoot", false),
+        k("timer", "Timer", false),
+        k("images", "Pics", false),
     ];
-    rows(&mut c, t, &items, 0, items.len());
-    let hints = [
-        Hint {
-            key: "Z C",
-            label: "change",
-        },
-        Hint {
-            key: "Esc",
-            label: "back",
-        },
-    ];
-    widgets::hint_bar(&mut c, t, &hints, None);
+    widgets::softkey_bar(&mut c, t, &keys);
     c
 }
 
@@ -497,8 +459,15 @@ fn main() {
                     "home-list-search",
                     home(&t, stock, Layout::List, Some("re")),
                 ),
-                ("appearance", appearance(&t, Layout::Grid)),
-                ("settings", settings(&t)),
+                ("softkeys-icons", softkeys(&t, true, false)),
+                ("softkeys-labels", softkeys(&t, false, true)),
+                ("softkeys-both", softkeys(&t, true, true)),
+                ("softkeys-both-22px", {
+                    let mut tall = t;
+                    tall.m.hint_h = 22;
+                    softkeys(&tall, true, true)
+                }),
+                ("softkeys-lit", softkeys_lit(&t)),
                 ("wifi", wifi(&t)),
                 ("wifi-password", wifi_password(&t)),
                 ("network", network(&t)),

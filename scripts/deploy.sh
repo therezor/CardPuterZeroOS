@@ -30,20 +30,23 @@ if [ "${1:-}" = rollback ]; then
     exit 0
 fi
 
-cargo build --release --target "$target" -p gh0st --manifest-path "$root/Cargo.toml"
-bin="$root/target/$target/release/gh0st"
+cargo build --release --target "$target" -p gh0st -p gh0st-settings --manifest-path "$root/Cargo.toml"
+out="$root/target/$target/release"
 
-scp -q "$bin" "$root/packaging/applications/store.desktop" \
+scp -q "$out/gh0st" "$out/gh0st-settings" "$root/packaging/applications/store.desktop" \
+    "$root/packaging/applications/settings.desktop" \
     "$root/packaging/systemd/APPLaunch.service.d/gh0st.conf" "$host:/tmp/"
 scp -q "$root/packaging/systemd/fb_load.service.d/gh0st.conf" "$host:/tmp/fb_load-gh0st.conf"
 remote 'set -e
     sudo install -m 755 /tmp/gh0st /usr/bin/gh0st
+    sudo install -m 755 /tmp/gh0st-settings /usr/bin/gh0st-settings
     sudo ln -sf gh0st /usr/bin/gh0st-shell
     sudo install -d /usr/share/gh0st/applications /etc/systemd/user/APPLaunch.service.d
-    sudo install -m 644 /tmp/store.desktop /usr/share/gh0st/applications/store.desktop
+    sudo install -m 644 /tmp/store.desktop /tmp/settings.desktop /usr/share/gh0st/applications/
     sudo install -m 644 /tmp/gh0st.conf /etc/systemd/user/APPLaunch.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/fb_load-gh0st.conf /etc/systemd/system/fb_load.service.d/gh0st.conf
     sudo systemctl daemon-reload
-    rm -f /tmp/gh0st /tmp/store.desktop /tmp/gh0st.conf /tmp/fb_load-gh0st.conf'
+    rm -f /tmp/gh0st /tmp/gh0st-settings /tmp/store.desktop /tmp/settings.desktop \
+        /tmp/gh0st.conf /tmp/fb_load-gh0st.conf'
 restart_launcher
 echo "gh0st $(git -C "$root" rev-parse --short HEAD) running on $host"

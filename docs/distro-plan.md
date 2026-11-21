@@ -22,7 +22,7 @@ Why not another distro:
   way (mmdebstrap minbase + RPi kernel/firmware + M5 modules), so the path is proven.
 
 Buildroot stays an option for a later "appliance" variant **only if** we drop stock-app/AppStore
-compatibility (open question 1). It would have the lowest RAM use and fastest boot, but it needs
+compatibility. It would have the lowest RAM use and fastest boot, but it needs
 the M5 modules ported and every app rebuilt.
 
 | Option | Drivers | Stock `.deb` apps | RAM/boot floor | Effort |
@@ -106,7 +106,7 @@ LightDM + LXDE (Kali image).
    `gpu_mem`, so `gpu_mem` can still be cut (item 1). HDMI needs vc4, and the future desktop app
    depends on it. The camera is in the base image, so CMA must fit full-res capture: IMX219
    3280×2464 raw is ≈10 MB per buffer, with several buffers in flight. Verify full-res stills and
-   preview with `cma-64` in Phase 1. Idle CMA isn't wasted: movable pages (page cache, anon) borrow
+   preview with `cma-64` in the image spike (`roadmap.md` M1b). Idle CMA isn't wasted: movable pages (page cache, anon) borrow
    it until HDMI or the camera needs it.
 4. **Never installed.** The build is additive (minbase), so these are a checklist against
    Recommends pulling them in, not a removal step: `cloud-init`, `avahi-daemon`,
@@ -132,7 +132,7 @@ LightDM + LXDE (Kali image).
    Small image + first-boot root resize instead of a fixed 14.8 GiB image. **Risk to test:** M5
    deliberately removed first-boot resize (their notes were deleted in `3b0e6f6`), while Kali's
    `cz-firstboot-resize` works on this device.
-9. **Kernel (phase 3).** Build our own `rpt` 6.18 kernel package with the M5 drivers in-tree and a
+9. **Kernel (`roadmap.md` L2).** Build our own `rpt` 6.18 kernel package with the M5 drivers in-tree and a
    trimmed config (no unused SoC/FS/net drivers). Until then, **pin** the kernel (`apt-mark hold`)
    and ship the M5 modules as our own `.deb` built in CI per kernel version, with the driver commit
    pinned.
@@ -250,19 +250,17 @@ The bigger leaks are in the base OS and its defaults:
 - Discover apps from `/usr/share/APPLaunch/applications/*.desktop`. Keys: `Name`, `Exec`, `Icon`
   (relative to `/usr/share/APPLaunch/` or absolute), `Terminal`, `Sysplause`. Reject `Exec` with
   shell metacharacters. Use inotify instead of the stock 3 s polling.
-- `Terminal=true` means the launcher needs a **built-in PTY terminal page**.
-- Launch with fork+exec in a new process group. While the child runs, don't draw and ignore keys
-  (the evdev device is **shared, not grabbed**). ESC-hold → `SIGTERM` then `SIGKILL` to the pgid.
-- Apps draw to `/dev/fb_lcd` (fbdev emulation). Before exec the launcher must **close its DRM fd,
-  or render via fbdev itself**, and reopen after the child exits. Whether a plain DRM-master drop is
-  enough for fbdev output to show is **to verify**. `fb_load` hands off by writing the logo to fbdev
-  and closing its DRM fd.
+- `Terminal=true` runs the entry in the terminal app (`apps.md`).
+- Launch with fork+exec in a new process group. While the child runs, the shell draws only what
+  the app asks for (`apps.md`) and reads only ESC and the global keys (the evdev device is
+  **shared, not grabbed**). ESC-hold → `SIGTERM` then `SIGKILL` to the pgid.
+- Apps draw to `/dev/fb_lcd` (fbdev emulation). The shell draws through fbdev too, so there is
+  no DRM master to hand over.
 - Runs as UID 1000 in a lingering user session (PipeWire, session D-Bus, `XDG_RUNTIME_DIR`), with
   `WorkingDirectory=/usr/share/APPLaunch`.
-- **Gotcha:** `fb_load` (boot splash) hard-codes `/usr/share/APPLaunch/bin/M5CardputerZero-APPLaunch`
-  and `LaunchWizard` and keeps the DRM device open until one of them runs. With the Rust launcher at
-  another path it never exits and likely blocks the launcher's display (to verify). Patch its watch
-  list, or let the launcher own the splash.
+- `fb_load` (boot splash) hard-codes the stock launcher and `LaunchWizard` paths and holds the
+  panel until one of them runs. `packaging/systemd/fb_load.service.d` drops `--keep-open`, so it
+  draws the logo and lets go. M8 replaces it.
 - **Radios:** `rfkill default_state=0` blocks Wi-Fi and BT at every boot. The launcher unblocks
   them when the user enables them; `systemd-rfkill` persists that state across boots.
 - **Hardware controls** via sysfs:
@@ -272,25 +270,11 @@ The bigger leaks are in the base OS and its defaults:
     with access granted by M5's `cardputerzero-leds.conf` / `60-cardputerzero-leds.rules`;
   - low-battery shutdown (cz-battery-saver defaults to 8%).
 
-**Design rules taken from the measurements:**
-
-- **Render only on change.** DRM dumb buffer in RGB565 + `DRM_IOCTL_MODE_DIRTYFB` with damage
-  rects. The `mipi_dbi` pipeline merges damage, so only dirty rows go over SPI. No animation loop
-  while idle, and nothing rendered at all while the backlight is off or a child app runs.
-- **Audio only while playing.** Open the stream per sound, close it after, and let the sink suspend
-  (−35–40 mA).
-- **Single-threaded event loop** (epoll: evdev, timerfd, signalfd, inotify, udev netlink for
-  `power_supply`/hotplug). No multi-threaded tokio runtime; `zbus` for NM/BlueZ calls.
-- **Battery** from `/sys/class/power_supply/` on uevent or a 30 s timer, not tight polling.
-- **Build:** `opt-level="s"`, `lto="fat"`, `codegen-units=1`, `panic="abort"`, `strip=true`.
-  Target RSS and binary size are to be measured against the stock launcher.
-- **UI toolkit:** Slint's software renderer (partial rendering, RGB565, own platform backend;
-  check its GPLv3 / royalty-free / commercial license fits) or `embedded-graphics` with our own
-  widgets for the smallest footprint. Avoid `egui`/`iced`: they redraw continuously or need a GPU.
-- Owns the privacy settings: logs (§7), updates (manual), Wi-Fi MAC policy, SSH/ADB/BT toggles,
-  first-boot setup **on the device** (keyboard tutorial, user + password, Wi-Fi, timezone, regdomain,
-  SSH/ADB opt-in). The only setup path: there is no Imager customisation or cloud-init. Until setup
-  completes, SSH and ADB stay off, and the only network connection is the Wi-Fi the user joins in setup.
+**Design rules.** The shell is built, so its rules live in `CLAUDE.md` and the
+code: one `poll` loop with no threads, fbdev with row-level flushes, no
+dependencies past `libc`, `png` and `ab_glyph`. What it gives apps is in
+`apps.md`. The privacy settings, first-boot setup and the root helper are
+milestones in `roadmap.md`.
 
 ## 9. Baseline to measure on a device (before changing anything)
 
@@ -312,26 +296,8 @@ Repeat the same set on each build to track the effect of every change.
 
 ## 10. Roadmap
 
-1. **Phase 0:** baseline the stock image (§9).
-2. **Phase 1:** mmdebstrap trixie minbase image + pinned kernel + M5 modules `.deb` (pinned commit)
-   + privacy defaults + USB autosuspend rule, running the **stock** APPLaunch for parity testing.
-   - Targets hardware rev v0.5, like M5's CI (`CONFIG_CARDPUTERO_V0_5`: `cardputerzero-v5-overlay`,
-     `bq27220_v5`, `bmi270_bmm150_overlay`). Verify the same image boots cleanly on the Lite SKU (no
-     camera/IMU, so the imx219/bmi270 probes should fail harmlessly).
-   - Disable the bundled **ZClaw** (startup probes to Cloudflare and Microsoft) in
-     `/usr/share/APPLaunch/preinstalled-desktop-apps.tsv`.
-   - Still ship what stock APPLaunch uses at runtime: NetworkManager, BlueZ, PipeWire-pulse,
-     polkit + `60-applaunch-updater.rules`, and `fb_load`.
-3. **Phase 2:** Rust launcher replaces APPLaunch (same `.desktop` contract), with logging and
-   privacy settings. Patch or replace `fb_load`.
-4. **Phase 2b:** desktop mode as an installable launcher app (§6).
-5. **Phase 3:** custom kernel with M5 drivers in-tree and trimmed config; tune CMA size. Optional
-   Buildroot appliance build.
-
-## 11. Open questions
-
-1. Must stock M5 apps and the AppStore keep working? This decides Debian vs Buildroot.
-2. Do we have a device to baseline on?
+Moved to `roadmap.md`, with the decisions made since this research: stock apps
+and the Store keep working (so Debian, not Buildroot), and a dev device exists.
 
 ## Sources
 

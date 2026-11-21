@@ -3,4 +3,3 @@
 pub mod home;
 pub mod run;
 pub mod search;
-pub mod sim;

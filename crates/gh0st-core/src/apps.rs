@@ -290,7 +290,7 @@ mod tests {
             "ours",
             "settings.desktop",
             "Settings",
-            "/usr/bin/gh0st settings",
+            "/usr/bin/gh0st-settings",
             "Icon=gh0st:settings\n",
         );
         t.add("stock", "files.desktop", "Files", "/bin/files", "");

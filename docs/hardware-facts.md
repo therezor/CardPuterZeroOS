@@ -37,6 +37,31 @@ Measured on the device unless marked.
   `gpioset` are installed. `fb_load.service` has exited by the time the
   launcher runs. LightDM and labwc run too (HDMI desktop).
 
+## The stock system, read 2026-11-20
+
+Read without changing anything, on the stock M5 image with gh0st installed.
+
+- 352 MB visible to Linux, 216 MB used and 93 MB in swap at idle.
+- Swap is already zram: `rpi-swap` sets up `/dev/zram0` (352 MB, priority 100)
+  from `/etc/rpi/swap.conf`, with a file on a loop device for writeback
+  (`rpi-setup-loop@var-swap`) and `rpi-zram-writeback.timer`. That timer wakes
+  the system and writes swap to the SD card.
+  `config.txt` has `gpu_mem=128` and `dtoverlay=vc4-kms-v3d,cma-64`.
+- Running: LightDM, avahi, rpcbind, nfs-blkmap, udisks2, accounts-daemon, cron,
+  polkit, rtkit, wpa_supplicant, NetworkManager, bluetooth, timesyncd, sshd.
+- Listening: sshd on 22, rpcbind on 111 (TCP and UDP), avahi on 5353, and two
+  random UDP ports.
+- memcg is off, though `CONFIG_MEMCG=y`. The firmware adds
+  `cgroup_disable=memory` to the command line; it isn't in `cmdline.txt`. The
+  Pi fix is `cgroup_enable=memory` in `cmdline.txt`.
+- PSI is built in but off: there is no `/proc/pressure`. It needs `psi=1`.
+- `cmdline.txt` sets `cfg80211.ieee80211_regdom=AE`.
+- Kernel config: cgroup freezer, `CGROUP_BPF`, `NO_HZ_IDLE`, `HZ=250`. As modules:
+  zram, zstd, Adiantum, ChaCha20, NHPoly1305 (with NEON), dm-crypt, nftables with
+  `NFT_SOCKET`, WireGuard. Built in: fscrypt, seccomp.
+- Missing: Landlock and Yama (the LSM list is `capability` only), suspend
+  (`PM_SLEEP` is off), and a PSCI CPU idle driver.
+
 ## Idle, 60 s on home (`scripts/measure.sh`)
 
 | | Stock APPLaunch 0.6.105 | Shell (first device run) |

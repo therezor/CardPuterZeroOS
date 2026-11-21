@@ -1,0 +1,12 @@
+[package]
+name = "gh0st-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The gh0st app SDK: pages, OS bars, soft keys, widgets and system calls"
+
+[dependencies]
+gh0st-core.workspace = true
+gh0st-ui.workspace = true
+libc.workspace = true

@@ -1,5 +1,5 @@
-//! Keys from a script on stdin, for `gh0st shell --sim DIR` on a host. One step
-//! per line:
+//! Keys from a script on stdin, for `--sim DIR` runs on a host (the shell and
+//! every SDK app). One step per line:
 //!
 //! ```text
 //! s                 tap a key: a letter, digit or a name (enter, esc, tab...)
@@ -11,7 +11,7 @@
 //! # comment
 //! ```
 
-use gh0st_core::keys::{self, code};
+use crate::keys::{self, code};
 use std::collections::VecDeque;
 use std::os::fd::RawFd;
 
@@ -28,7 +28,7 @@ pub struct Script {
 
 impl Script {
     pub fn stdin() -> Script {
-        let _ = gh0st_core::rt::set_nonblock_cloexec(0);
+        let _ = crate::rt::set_nonblock_cloexec(0);
         Script {
             fd: 0,
             buf: Vec::new(),
@@ -36,6 +36,26 @@ impl Script {
             cursor: 0,
             eof: false,
         }
+    }
+
+    /// A script given as text, already ended: for tests.
+    pub fn from_text(text: &str) -> Script {
+        let mut s = Script {
+            fd: -1,
+            buf: Vec::new(),
+            queue: VecDeque::new(),
+            cursor: 0,
+            eof: true,
+        };
+        for l in text.lines() {
+            s.parse(l.trim(), 0);
+        }
+        s
+    }
+
+    /// Every queued event, in order, without times.
+    pub fn drain_all(&mut self) -> Vec<(u16, i32)> {
+        self.queue.drain(..).map(|(_, c, v)| (c, v)).collect()
     }
 
     /// Stdin until it ends, then nothing (poll ignores a negative fd).

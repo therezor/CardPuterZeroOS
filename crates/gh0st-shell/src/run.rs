@@ -3,7 +3,6 @@
 //! One thread, one `poll`. While idle the only timer is the clock's minute.
 
 use crate::home::{Entry, Home, Icon, Layout, Mode, Picture};
-use crate::sim::Script;
 use gh0st_core::apps::{self, App, Dirs, IconRef};
 use gh0st_core::backlight::Backlight;
 use gh0st_core::battery::{self, LowBattery, Reading, Warning};
@@ -13,6 +12,7 @@ use gh0st_core::esc::EscHold;
 use gh0st_core::evdev;
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::rt;
+use gh0st_core::script::Script;
 use gh0st_core::status::{self, Net, Watch};
 use gh0st_ui::display::{Display, Frames};
 use gh0st_ui::drm;
@@ -36,7 +36,7 @@ const STATE_DIR: &str = ".local/state/gh0st";
 const GROUP_RECHECK_MS: u64 = 200;
 
 /// `gh0st shell`, or `gh0st shell --sim DIR` on a host: keys from a script on
-/// stdin (see `sim.rs`), frames saved as PNGs in DIR.
+/// stdin (see `gh0st_core::script`), frames saved as PNGs in DIR.
 pub fn main(args: &[String]) -> i32 {
     let t0 = rt::now_ms();
     let sim = match args {
@@ -1088,12 +1088,7 @@ fn is_screenshot(k: &Key) -> bool {
 
 fn palette_of(c: &Config) -> theme::Palette {
     c.get_str("gh0st.palette")
-        .and_then(|n| {
-            theme::PALETTES
-                .iter()
-                .find(|p| p.name.eq_ignore_ascii_case(n))
-        })
-        .copied()
+        .and_then(theme::palette)
         .unwrap_or(theme::MINT)
 }
 

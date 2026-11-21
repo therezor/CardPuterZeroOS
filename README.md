@@ -79,6 +79,8 @@ as PNGs.
 - `crates/gh0st-core`: config, `.desktop` parsing, keyboard map, the event
   loop and child processes.
 - `crates/gh0st-shell`: the home screen and the shell process.
+- `crates/gh0st-app`: the app SDK. The guide is `docs/sdk.md`.
+- `crates/gh0st-settings`: Settings, an app built on the SDK.
 - `crates/gh0st`: the `gh0st` binary.
 - `os/kernel/panel-mipi-dbi-m`: the patched panel driver and its overlay.
 - `docs/`: hardware facts, the panel driver, the app contract, the distro plan.
