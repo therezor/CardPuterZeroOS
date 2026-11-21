@@ -119,7 +119,7 @@ pub const APP_ICONS: &[&str] = &[
     "usb",
     "lock",
     "settings",
-    "gh0st-fox",
+    "gh0st-skull",
 ];
 
 pub fn icon_label(icon: &str) -> String {

@@ -11,7 +11,6 @@ pub enum IconSize {
     /// A top-bar slot.
     Tiny = 12,
     Small = 14,
-    /// The fox in the top bar.
     Bar = 16,
     Medium = 20,
     Large = 36,
