@@ -24,6 +24,38 @@ pub struct Battery {
     pub charging: bool,
 }
 
+/// Ten rows tall, so the bolt fits inside without cutting the outline.
+const BATTERY_W: i32 = 17;
+const BATTERY_H: i32 = 10;
+
+/// The charging bolt, as tall as the room inside the outline. Drawn by
+/// hand: the smallest baked icon is 12 px.
+const BOLT_W: i32 = 5;
+const BOLT_H: i32 = BATTERY_H - 2;
+const BOLT: [u8; (BOLT_W * BOLT_H) as usize] = pixel_mask(
+    b"\
+..###\
+.###.\
+.##..\
+#####\
+..##.\
+.##..\
+.#...\
+#....",
+);
+
+const fn pixel_mask<const N: usize>(art: &[u8; N]) -> [u8; N] {
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < N {
+        if art[i] == b'#' {
+            out[i] = 255;
+        }
+        i += 1;
+    }
+    out
+}
+
 pub struct Status<'a> {
     /// Open apps after the mark, in launch order.
     pub dock: &'a [Visual<'a>],
@@ -212,7 +244,7 @@ fn slot_visual(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual) {
 fn battery(c: &mut Canvas, t: &Theme, right: i32, r: Rect, b: Battery) -> i32 {
     let label = Percent::new(b.percent);
     let x = text_right(c, t.f.small, right, r, label.as_str(), t.c.fg) - 4;
-    let (w, h) = (15, 8);
+    let (w, h) = (BATTERY_W, BATTERY_H);
     let bx = x - w - 2;
     let by = r.y + (r.h - h) / 2;
     let fill = if b.charging {
@@ -225,10 +257,21 @@ fn battery(c: &mut Canvas, t: &Theme, right: i32, r: Rect, b: Battery) -> i32 {
         t.c.fg
     };
     c.stroke_round_rect(Rect::new(bx, by, w, h), 1, t.c.muted);
-    c.fill(Rect::new(bx + w, by + 2, 2, h - 4), t.c.muted);
+    c.fill(Rect::new(bx + w, by + (h - 4) / 2, 2, 4), t.c.muted);
     let inner = w - 4;
     let level = ((inner * b.percent.min(100) as i32) + 50) / 100;
     c.fill(Rect::new(bx + 2, by + 2, level.max(1), h - 4), fill);
+    if b.charging {
+        let (ox, oy) = (bx + (w - BOLT_W) / 2, by + 1);
+        // A background ring parts the bolt from the fill. It stays inside
+        // the outline.
+        let room = Rect::new(bx + 1, by + 1, w - 2, h - 2);
+        for (i, _) in BOLT.iter().enumerate().filter(|(_, a)| **a != 0) {
+            let (x, y) = (ox + i as i32 % BOLT_W, oy + i as i32 / BOLT_W);
+            c.fill(Rect::new(x - 1, y - 1, 3, 3).intersect(&room), t.c.bg);
+        }
+        c.mask8(ox, oy, BOLT_W, BOLT_H, &BOLT, t.c.fg);
+    }
     bx
 }
 
@@ -1005,6 +1048,43 @@ mod tests {
             for selected in [false, true] {
                 let fill = neutral_fill(&t, selected);
                 assert!(contrast(p.accent, fill) >= 3.0, "{} {selected}", p.name);
+            }
+        }
+    }
+
+    fn bar(t: &Theme, percent: u8, charging: bool) -> Canvas {
+        let mut c = Canvas::new(t.m.width, t.m.bar_h);
+        let s = Status {
+            dock: &[],
+            front: None,
+            title: "",
+            clock: "12:00",
+            battery: Some(Battery { percent, charging }),
+            net: Net::Wifi(3),
+            bluetooth: true,
+        };
+        status_bar(&mut c, t, &s);
+        c
+    }
+
+    #[test]
+    fn charging_draws_a_bolt_inside_the_battery_and_moves_nothing() {
+        let bolt = BOLT.iter().filter(|&&a| a != 0).count();
+        for p in PALETTES {
+            let t = Theme::new(*p);
+            for percent in [1, 15, 50, 100] {
+                let (on, off) = (bar(&t, percent, true), bar(&t, percent, false));
+                let ink = |c: &Canvas| c.pixels().iter().filter(|&&px| px == t.c.fg).count();
+                // Above 20% the fill itself is fg until charging turns it accent.
+                if percent <= 20 {
+                    assert_eq!(ink(&on), ink(&off) + bolt, "{} {percent}%", p.name);
+                }
+                let changed: Vec<i32> = (0..on.pixels().len())
+                    .filter(|&i| on.pixels()[i] != off.pixels()[i])
+                    .map(|i| i as i32 % t.m.width)
+                    .collect();
+                let span = changed.iter().max().unwrap() - changed.iter().min().unwrap();
+                assert!(span < BATTERY_W, "{} {percent}%: {span}", p.name);
             }
         }
     }

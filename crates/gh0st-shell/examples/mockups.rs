@@ -138,6 +138,19 @@ fn home(t: &Theme, stock: Option<&Path>, layout: Layout, search: Option<&str>) -
     c
 }
 
+fn charging(t: &Theme, stock: Option<&Path>, percent: u8) -> Canvas {
+    let mut h = Home::new(entries(t, stock), Layout::Grid, t);
+    h.select(1);
+    let mut s = status(&[], Some(0), "");
+    s.battery = Some(Battery {
+        percent,
+        charging: true,
+    });
+    let mut c = new_canvas(t);
+    h.draw(&mut c, t, &s, 0);
+    c
+}
+
 fn switcher_scene(t: &Theme, stock: Option<&Path>, n: usize, at: usize) -> Canvas {
     let mut s = Switcher::new(t);
     let mut apps = open_apps(t, stock, n);
@@ -293,6 +306,8 @@ fn main() {
                 ("switcher-many", switcher_scene(&t, stock, 5, 4)),
                 ("terminal", terminal(&t)),
                 ("low-battery", low_battery(&t, stock)),
+                ("charging-low", charging(&t, stock, 5)),
+                ("charging-high", charging(&t, stock, 87)),
             ]);
         }
         let tag = palette.name.to_lowercase();
