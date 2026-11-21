@@ -51,6 +51,8 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
   home is an app built to it: Settings, the terminal.
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
+- `docs/setup.md`: first-boot setup, the steps and how it hands over to the
+  shell.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and

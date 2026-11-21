@@ -276,13 +276,16 @@ and runs through pkexec today. It runs only when called and exits after.
 **A3. Settings, privacy and the rest.** See Settings: what comes next.
 
 **M4. First boot, identity, lock.**
-- Setup runs on the device: a keyboard tutorial, then user, password, Wi-Fi,
-  timezone, regdomain and SSH opt-in. The device uses no network until the user
-  joins one.
+- Setup runs on the device, as root before any user session: welcome, keyboard
+  tutorial, country and time zone, privacy review, network, date and time when
+  not synced, account (name and a required password), device name and look.
+  The device uses no network until the user joins one. Designed 2026-11-21 in
+  `setup.md`.
 - The image ships an empty machine-id. SSH host keys are made when the user
   first turns SSH on. The random seed is made at first boot.
-- The lock screen asks for the password, checked by the helper, with a growing
-  delay after each wrong try.
+- The lock screen asks for the password, checked with `unix_chkpwd`, with a
+  growing delay after each wrong try. Settings' Unlock with password turns
+  that off.
 - Screen-off and lock work while an app runs too. Stock Camera grabs the
   keyboard, so idle can't come from key events alone.
 - Factory reset formats the user data partition and returns to setup.
