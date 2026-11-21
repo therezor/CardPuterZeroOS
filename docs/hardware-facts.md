@@ -16,6 +16,10 @@ Measured on the device unless marked.
   arrive as Up/Left/Down/Right, Fn+K as Home (102), Fn+H as Help (138),
   Fn+G as SysRq, Fn+A/S/D as
   mute and volume, Fn+Y/U as brightness. Ctrl 29, Alt 56.
+- Fn+Esc keeps the Esc code: the reader sees Fn (389) down, Esc down, Esc
+  up, Fn up. A tapped Fn gives the same sequence as a held one: the driver
+  holds a one-shot Fn down until the next key comes up. Plain Esc comes alone.
+  Measured 2026-11-21 with a raw evdev read.
 - The only side button is power/boot. It sends no key event.
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
   400 MHz core clock divides to 50 MHz, so a full frame takes about 17.4 ms.
