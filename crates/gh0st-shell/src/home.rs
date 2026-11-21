@@ -421,7 +421,11 @@ impl Home {
                     }
                     Layout::List => None,
                 };
-                widgets::hint_bar(c, t, &hints, pages);
+                widgets::hint_bar(c, t, &hints, None);
+                if let Some((page, count)) = pages {
+                    let cy = t.m.height - t.m.hint_h / 2;
+                    widgets::page_dots(c, t, t.m.width - t.m.pad, cy, page, count);
+                }
             }
         }
     }

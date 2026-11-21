@@ -113,14 +113,15 @@ fn writes_queue_until_there_is_room() {
 }
 
 #[test]
-fn raw_keys_bring_releases_and_keep_esc() {
+fn raw_keys_bring_releases_and_esc_comes_from_fn_esc() {
     let (r, _) = pipe();
     let (page, seen) = reader(r, None, 0);
     let mut d = Driver::new(page);
-    d.keys("ctrl+c\nesc");
+    d.keys("ctrl+c\nfn+esc\nesc");
     assert!(!d.quit());
+    assert_eq!(d.toast(), Some("Hold to exit"), "plain Esc goes back");
     let keys = &seen.borrow().keys;
     assert!(keys.contains(&(46, KeyState::Press)));
     assert!(keys.contains(&(46, KeyState::Release)));
-    assert!(keys.contains(&(1, KeyState::Press)));
+    assert!(keys.contains(&(1, KeyState::Press)), "Fn+Esc is the Esc key");
 }

@@ -69,6 +69,27 @@ icons take a tone, not a colour.
 Contrast is tested for every palette: `fg` on `bg` 7:1, `fg` on `surface` 4.5:1,
 `muted` and `disabled` on `bg` 3:1, `accent_fg` on `accent` 4.5:1.
 
+### Custom colour schemes
+
+A scheme is a file of roles, `<name>.palette`, in
+`~/.config/cardputerzero/palettes/` or `/usr/share/gh0st/palettes/`. Settings
+lists it after the built-ins, and `gh0st.palette` names it as it names Mint.
+
+```
+# Dusk: Nord with an orange accent
+base = nord
+accent = #f0a35e
+accent_fg = #2e3440
+tint2 = #d08770
+```
+
+`base` picks the built-in to start from, Mint if left out. Every role it
+does not set keeps the base's: `bg surface fg muted accent accent_fg info
+warning critical ok border`, `tint1` to `tint6`, `ansi0` to `ansi15`.
+`soft` and `disabled` follow from the rest. A scheme whose text would not
+read (`fg` under 4.5:1 on `bg`, or `accent_fg` under 3:1 on `accent`) is
+refused, and the device stays on Mint.
+
 ## Type
 
 Seven styles, all from faces the device already has baked:

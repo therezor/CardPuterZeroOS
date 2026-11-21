@@ -1,143 +1,199 @@
 //! The OS bars a page asks for. The page draws in what is left.
 
+use gh0st_ui::widgets::Look;
 use gh0st_ui::{Rect, Theme};
 
-/// One slot of the soft-key bar, over a number key 4 to 8.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SoftKey {
+/// An action over one of the number keys 5, 6 or 7: an icon and one short
+/// word. Pressing the key runs it. docs/design.md says when to use each
+/// look; a chip never repeats Enter or Esc.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chip {
     pub(crate) icon: String,
-    pub(crate) label: String,
-    pub(crate) lit: bool,
+    pub(crate) word: String,
+    pub(crate) look: Look,
+    /// A command it runs, instead of `Key::Soft`.
+    pub(crate) command: Option<u32>,
+    /// It runs only after its key is held, filling red: for loss of data.
+    pub(crate) hold: bool,
 }
 
-impl SoftKey {
-    /// An icon and a label. With an icon, about five letters fit.
-    pub fn new(icon: &str, label: &str) -> SoftKey {
-        SoftKey {
+impl Chip {
+    /// An icon and a word. Five letters or fewer keep the icon on a full
+    /// bar. Icons are the Lucide names gh0st has built in.
+    pub fn new(icon: &str, word: &str) -> Chip {
+        Chip {
             icon: icon.into(),
-            label: label.into(),
-            lit: false,
+            word: word.into(),
+            look: Look::Normal,
+            command: None,
+            hold: false,
         }
     }
 
-    /// An icon alone. Icons are the Lucide names gh0st has built in.
-    pub fn icon(icon: &str) -> SoftKey {
-        SoftKey::new(icon, "")
-    }
-
-    /// A label alone. About eight letters fit.
-    pub fn label(label: &str) -> SoftKey {
-        SoftKey::new("", label)
-    }
-
-    /// An empty slot. Its number key types its digit.
-    pub fn none() -> SoftKey {
-        SoftKey::default()
-    }
-
-    /// Draws the slot lit, for a toggle that is on.
-    pub fn lit(mut self, on: bool) -> SoftKey {
-        self.lit = on;
+    /// Runs the command `id` when pressed, as its keys and menu row do.
+    pub fn runs(mut self, id: u32) -> Chip {
+        self.command = Some(id);
         self
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.icon.is_empty() && self.label.is_empty()
+    /// Takes something away: a red edge.
+    pub fn danger(mut self) -> Chip {
+        self.look = Look::Danger;
+        self
+    }
+
+    /// Loses data that can't come back: red, and it runs only after its key
+    /// is held 0.7 s, filling as it goes.
+    pub fn hold(mut self) -> Chip {
+        self.look = Look::Danger;
+        self.hold = true;
+        self
+    }
+
+    /// Armed: pressing it again does it. Filled red.
+    pub fn armed(mut self, on: bool) -> Chip {
+        if on {
+            self.look = Look::DangerMain;
+        }
+        self
+    }
+
+    /// The page's main action, when it is not on Enter.
+    pub fn main(mut self) -> Chip {
+        self.look = Look::Main;
+        self
+    }
+
+    /// A toggle that is on.
+    pub fn on(mut self, on: bool) -> Chip {
+        if on {
+            self.look = Look::On;
+        }
+        self
+    }
+
+    /// Can't be used now: drawn faint, and its key does nothing.
+    pub fn disabled(mut self, off: bool) -> Chip {
+        if off {
+            self.look = Look::Disabled;
+        }
+        self
+    }
+
+    /// Working on it: "…" after the word, and no second press.
+    pub fn busy(mut self, busy: bool) -> Chip {
+        if busy {
+            self.look = Look::Busy;
+        }
+        self
+    }
+
+    /// Icon, word and look, as the action bar draws them: for mockups.
+    pub fn parts(&self) -> (&str, &str, Look) {
+        (&self.icon, &self.word, self.look)
+    }
+
+    pub(crate) fn runs_key(&self) -> bool {
+        !matches!(self.look, Look::Disabled | Look::Busy)
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Bottom {
-    None,
-    Hints(Vec<(String, String)>),
-    /// Hints from the page's live commands that have one.
-    Commands,
-    Soft(Box<[SoftKey; 5]>),
-}
-
-/// Which OS bars a page shows. The top bar has the title, network, battery
-/// and clock. The bottom bar has key hints or soft keys. Every bar left out
-/// gives its rows to the page.
+/// Which OS bars a page shows. The top bar says where you are and shows the
+/// device. The action bar under the screen has the page's chips over keys 5
+/// to 7 and the menu on 8; while the page is typing it shows key hints
+/// instead. Every bar left out gives its rows to the page.
 ///
 /// ```
-/// use gh0st_app::{Bars, SoftKey};
+/// use gh0st_app::{Bars, Chip};
 ///
-/// let list = Bars::top().hints([("Enter", "open"), ("Esc", "back")]);
-/// let camera = Bars::none().softkeys([
-///     SoftKey::icon("arrow-left"),
-///     SoftKey::icon("zoom-out"),
-///     SoftKey::icon("camera"),
-///     SoftKey::icon("zoom-in"),
-///     SoftKey::icon("images"),
-/// ]);
+/// let list = Bars::top().chip(5, Chip::new("search", "Find"));
+/// let form = Bars::top().hints([("Esc", "cancel"), ("Enter", "save")]);
+/// let camera = Bars::actions()
+///     .chip(5, Chip::new("zoom-out", "Out"))
+///     .chip(6, Chip::new("zoom-in", "In"));
 /// let game = Bars::none();
-/// # let _ = (list, camera, game);
+/// # let _ = (list, form, camera, game);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bars {
     pub(crate) top: bool,
-    pub(crate) bottom: Bottom,
+    pub(crate) bottom: bool,
+    /// Keys 5, 6 and 7.
+    pub(crate) chips: [Option<Chip>; 3],
+    /// The menu chip on 8.
+    pub(crate) menu: bool,
+    /// The hint bar while typing.
+    pub(crate) hints: Vec<(String, String)>,
 }
 
 impl Bars {
-    /// No bars: the page has the whole 320x170 screen.
+    /// No bars: the page has the whole 320x170 screen. Esc, Enter, 8 and
+    /// Fn+H still work.
     pub fn none() -> Bars {
         Bars {
             top: false,
-            bottom: Bottom::None,
+            bottom: false,
+            chips: [None, None, None],
+            menu: true,
+            hints: Vec::new(),
         }
     }
 
-    /// The top bar only. This is the default.
+    /// The top bar and the action bar, with the menu on 8. The default.
     pub fn top() -> Bars {
         Bars {
             top: true,
-            bottom: Bottom::None,
+            bottom: true,
+            ..Bars::none()
         }
     }
 
-    /// Adds a bottom bar of key hints, such as `("Enter", "open")`.
+    /// The top bar alone: a page that takes every key, as a terminal does.
+    pub fn top_only() -> Bars {
+        Bars {
+            top: true,
+            ..Bars::none()
+        }
+    }
+
+    /// The action bar alone, for a full-screen page with actions.
+    pub fn actions() -> Bars {
+        Bars {
+            bottom: true,
+            ..Bars::none()
+        }
+    }
+
+    /// A chip over key 5, 6 or 7.
+    pub fn chip(mut self, key: u8, chip: Chip) -> Bars {
+        if let Some(slot) = (5..=7).contains(&key).then(|| &mut self.chips[(key - 5) as usize]) {
+            *slot = Some(chip);
+        }
+        self
+    }
+
+    /// No menu chip on 8, for a page under its own menu.
+    pub fn no_menu(mut self) -> Bars {
+        self.menu = false;
+        self
+    }
+
+    /// Key hints shown while the page is typing, when digits type and no chip
+    /// can run: `("Esc", "cancel"), ("Enter", "save")`. Enter's pill is
+    /// filled. Without these the bar names Esc and Enter plainly.
     pub fn hints<'a>(mut self, hints: impl IntoIterator<Item = (&'a str, &'a str)>) -> Bars {
-        self.bottom = Bottom::Hints(
-            hints
-                .into_iter()
-                .map(|(k, l)| (k.to_string(), l.to_string()))
-                .collect(),
-        );
-        self
-    }
-
-    /// Adds a bottom bar of key hints taken from the page's commands: each
-    /// live command with a [`hint`](crate::Command::hint), in order. The
-    /// hints follow the page's mode by themselves.
-    pub fn command_hints(mut self) -> Bars {
-        self.bottom = Bottom::Commands;
-        self
-    }
-
-    /// Adds a bottom bar of soft keys, one per number key 4 to 8.
-    pub fn softkeys(mut self, keys: [SoftKey; 5]) -> Bars {
-        self.bottom = Bottom::Soft(Box::new(keys));
+        self.hints = hints
+            .into_iter()
+            .map(|(k, l)| (k.to_string(), l.to_string()))
+            .collect();
         self
     }
 
     /// Where the page draws: the screen minus the bars.
     pub fn content(&self, t: &Theme) -> Rect {
         let top = if self.top { t.m.bar_h } else { 0 };
-        let bottom = if self.bottom == Bottom::None {
-            0
-        } else {
-            t.m.hint_h
-        };
+        let bottom = if self.bottom { t.m.hint_h } else { 0 };
         Rect::new(0, top, t.m.width, t.m.height - top - bottom)
-    }
-
-    /// Which soft-key slots show, for keys 4 to 8.
-    pub(crate) fn soft_slots(&self) -> [bool; 5] {
-        match &self.bottom {
-            Bottom::Soft(keys) => std::array::from_fn(|i| !keys[i].is_empty()),
-            _ => [false; 5],
-        }
     }
 }
 
@@ -156,26 +212,24 @@ mod tests {
         let t = Theme::default();
         let h = t.m.height;
         assert_eq!(Bars::none().content(&t).h, h);
-        assert_eq!(Bars::top().content(&t).h, h - t.m.bar_h);
-        let both = Bars::top().hints([("Esc", "back")]);
+        assert_eq!(Bars::top_only().content(&t).h, h - t.m.bar_h);
         assert_eq!(
-            both.content(&t),
+            Bars::top().content(&t),
             Rect::new(0, t.m.bar_h, 320, h - t.m.bar_h - t.m.hint_h)
         );
-        let soft = Bars::none().softkeys(Default::default());
-        assert_eq!(soft.content(&t).y, 0);
-        assert_eq!(soft.content(&t).h, h - t.m.hint_h);
+        let actions = Bars::actions();
+        assert_eq!(actions.content(&t).y, 0);
+        assert_eq!(actions.content(&t).h, h - t.m.hint_h);
     }
 
     #[test]
-    fn empty_slots_leave_their_digits_alone() {
-        let b = Bars::top().softkeys([
-            SoftKey::label("Back"),
-            SoftKey::none(),
-            SoftKey::icon("camera"),
-            SoftKey::none(),
-            SoftKey::none(),
-        ]);
-        assert_eq!(b.soft_slots(), [true, false, true, false, false]);
+    fn chips_go_only_on_five_to_seven() {
+        let b = Bars::top()
+            .chip(4, Chip::new("x", "Back"))
+            .chip(6, Chip::new("camera", "Shoot"))
+            .chip(8, Chip::new("x", "Menu"));
+        assert_eq!(b.chips[0], None);
+        assert_eq!(b.chips[1].as_ref().map(|c| c.word.as_str()), Some("Shoot"));
+        assert_eq!(b.chips[2], None);
     }
 }

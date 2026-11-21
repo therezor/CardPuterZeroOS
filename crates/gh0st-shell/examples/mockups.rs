@@ -83,7 +83,12 @@ fn status<'a>(dock: &'a [Visual<'a>], front: Option<usize>, title: &'a str) -> S
     Status {
         dock,
         front,
+        icon: "",
         title,
+        context: "",
+        tabs: &[],
+        front_tab: 0,
+        item: None,
         clock: "14:32",
         battery: Some(Battery {
             percent: 87,
@@ -251,7 +256,9 @@ fn terminal(t: &Theme) -> Canvas {
 fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
     let mut c = home(t, stock, Layout::Grid, None);
     let r = Rect::new(40, 30, 240, 110);
-    let inner = widgets::dialog(&mut c, t, r, "Battery critically low", t.c.critical);
+    let all = c.bounds();
+    widgets::scrim(&mut c, t, all);
+    let inner = widgets::card(&mut c, t, r, "Battery critically low", t.c.critical);
     icon::draw(
         &mut c,
         "plug-zap",

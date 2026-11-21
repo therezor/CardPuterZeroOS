@@ -10,6 +10,7 @@ use gh0st_app::gfx::Canvas;
 use gh0st_app::gfx::geom::Rect;
 use gh0st_app::gfx::theme::Theme;
 use gh0st_app::gfx::widgets::{self, Row, Trailing};
+use gh0st_app::{Chip, Key};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageId {
@@ -220,7 +221,7 @@ impl Cursor {
     }
 }
 
-/// A box over the page that takes every key until it closes.
+/// A dialog Settings wants, before the SDK draws it.
 pub enum Dialog {
     /// One line of text: a password, a network name.
     Text {
@@ -252,7 +253,7 @@ pub fn lines(t: &Theme) -> (Rect, usize) {
 
 /// The page body and any dialog. The SDK has cleared the body and draws
 /// the bars.
-pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor, dialog: Option<&Dialog>) {
+pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor) {
     match &page.body {
         Body::List(items) => {
             let (area, n) = rows(t);
@@ -281,9 +282,6 @@ pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor, dialog: Option<
             widgets::scrollbar(c, t, track, cur.top, n, lines_.len());
         }
     }
-    if let Some(d) = dialog {
-        draw_dialog(c, t, d);
-    }
 }
 
 fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
@@ -308,87 +306,85 @@ fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
     }
 }
 
-/// What the keys do on this row, then the page's own keys, then Esc.
-pub fn hints(page: &Page, item: Option<&Item>) -> Vec<(&'static str, &'static str)> {
-    let mut out = Vec::new();
-    let what = item.map(|i| (&i.act, &i.value));
-    match what {
-        Some((Act::Open(_), _)) => out.push(("Enter", "open")),
-        Some((Act::Set(_), Value::Toggle(_))) => out.push(("Enter", "toggle")),
-        Some((Act::Set(_), _)) => out.push(("Z C", "change")),
-        Some((Act::Run(cmd), _)) => out.push((
-            "Enter",
-            match cmd {
-                Command::Join(_) | Command::JoinHidden => "join",
-                Command::Device(_) => "connect",
-                Command::BtScan => "scan",
-                Command::SetZone(_) | Command::SetCountry(_) | Command::Choose(..) => "set",
-                Command::DeviceName | Command::SwapSize => "edit",
-                Command::Restart => "restart",
-                Command::ConnEdit(_) => "edit",
-                Command::ConnUp => "reconnect",
-                Command::ConnForget => "forget",
-                _ => "run",
-            },
-        )),
+/// The chips over keys 5 to 7, and the key each stands for: the page's own,
+/// then the selected row's. Enter and Esc get none.
+pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Chip, Key)> {
+    let mut v = Vec::new();
+    match id {
+        PageId::Wifi | PageId::Bluetooth => {
+            let scan = if *id == PageId::Wifi { 'r' } else { 's' };
+            v.push((5, Chip::new("refresh-cw", "Scan"), Key::Char(scan)));
+            let forget = Chip::new("trash-2", "Forget").danger();
+            v.push((6, forget, Key::Backspace));
+        }
+        PageId::Apps if !moving => {
+            v.push((5, Chip::new("arrow-up-down", "Move"), Key::Char('m')));
+        }
         _ => {}
     }
-    out.extend(page.keys.iter().copied());
-    out.push(("Esc", "back"));
-    out
+    let pair = match page.item(cur.selected).map(|i| &i.value) {
+        Some(Value::Choice(_)) => Some((("chevron-left", "Prev"), ("chevron-right", "Next"))),
+        Some(Value::Level(_)) => Some((("minus", "Less"), ("plus", "More"))),
+        _ => None,
+    };
+    if let Some(((i1, w1), (i2, w2))) = pair {
+        v.retain(|c| c.0 > 6);
+        v.push((5, Chip::new(i1, w1), Key::Left));
+        v.push((6, Chip::new(i2, w2), Key::Right));
+    }
+    v
 }
 
-fn draw_dialog(c: &mut Canvas, t: &Theme, d: &Dialog) {
-    let r = Rect::new(28, 36, t.m.width - 56, 88);
+/// Each page's icon in the top bar.
+pub fn icon(id: &PageId) -> &'static str {
+    match id {
+        PageId::Wifi | PageId::Conn(_) => "wifi",
+        PageId::Network => "network",
+        PageId::Bluetooth => "bluetooth",
+        PageId::Display => "sun",
+        PageId::Sound => "volume-2",
+        PageId::Appearance => "palette",
+        PageId::Apps | PageId::App(_) => "layout-grid",
+        PageId::System | PageId::Advanced | PageId::Swap => "cpu",
+        PageId::TimeZone(_) => "clock",
+        PageId::Country(_) => "globe",
+        PageId::Privacy => "shield",
+        PageId::About => "info",
+        _ => "settings",
+    }
+}
+
+/// Settings' dialog as the SDK draws it.
+pub fn sdk_dialog(d: &Dialog) -> gh0st_app::Dialog {
     match d {
         Dialog::Text {
             title,
             placeholder,
             text,
-            masked,
-            secret,
+            secret: true,
+            ..
         } => {
-            let inner = widgets::dialog(c, t, r, title, t.c.accent);
-            let field = Rect::new(inner.x, inner.y + 2, inner.w, 24);
-            widgets::text_field(c, t, field, text, *masked, true, placeholder);
-            let keys: &[(&str, &str)] = match (*secret, *masked) {
-                (true, true) => &[("Tab", "show"), ("Enter", "ok"), ("Esc", "cancel")],
-                (true, false) => &[("Tab", "hide"), ("Enter", "ok"), ("Esc", "cancel")],
-                _ => &[("Enter", "ok"), ("Esc", "cancel")],
-            };
-            dialog_keys(
-                c,
-                t,
-                Rect::new(inner.x, field.bottom() + 8, inner.w, 16),
-                keys,
-            );
+            let d = gh0st_app::Dialog::password(title)
+                .placeholder(placeholder)
+                .value(text);
+            // A network asks to be joined; the rest just take a password.
+            if title.starts_with("Join") { d.yes("join") } else { d }
         }
+        Dialog::Text {
+            title,
+            placeholder,
+            text,
+            ..
+        } => gh0st_app::Dialog::text(title, placeholder).value(text),
         Dialog::Confirm {
             title,
             line,
             yes,
             no,
         } => {
-            let inner = widgets::dialog(c, t, r, title, t.c.critical);
-            let l = Rect::new(inner.x, inner.y + 2, inner.w, 22);
-            widgets::text_in(c, t.f.body, l, line, t.c.fg);
-            let keys = [("Enter", *yes), ("Esc", *no)];
-            dialog_keys(
-                c,
-                t,
-                Rect::new(inner.x, l.bottom() + 10, inner.w, 16),
-                &keys,
-            );
+            let d = gh0st_app::Dialog::confirm(title, line).yes(yes).no(no);
+            if *yes == "forget" { d.danger() } else { d }
         }
-    }
-}
-
-fn dialog_keys(c: &mut Canvas, t: &Theme, line: Rect, keys: &[(&str, &str)]) {
-    let mut x = line.x;
-    for (key, label) in keys {
-        x = widgets::key_pill(c, t, x, line, key) + 4;
-        let r = Rect::new(x, line.y + 1, line.right() - x, line.h - 1);
-        x = widgets::text_in(c, t.f.small, r, label, t.c.muted) + 12;
     }
 }
 

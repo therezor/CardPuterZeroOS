@@ -1,6 +1,6 @@
-//! Commands and the app menu, on a page that is not the terminal: Fn+Esc
-//! opens the menu, settings change in place, actions close it, and the keys
-//! run the same commands.
+//! Commands and the app menu, on a page that is not the terminal: 8 opens
+//! the menu, settings change in place, actions close it, and the keys run
+//! the same commands.
 
 use gh0st_app::prelude::*;
 use gh0st_app::testing::Driver;
@@ -33,10 +33,6 @@ impl Page for Reader {
 
     fn draw(&self, ui: &mut Ui) {
         ui.text(SIZES[self.size]);
-    }
-
-    fn bars(&self) -> Bars {
-        Bars::top().command_hints()
     }
 
     fn typing(&self) -> bool {
@@ -117,24 +113,24 @@ fn keys_run_commands_without_the_menu() {
 #[test]
 fn a_choice_steps_in_place_and_the_menu_stays() {
     let mut a = app();
-    a.d.keys("fn+esc");
+    a.d.keys("8");
     a.d.frame();
     // Text size is the first row: Right steps it, the menu stays open, so
     // t steps it again through the menu.
     a.d.keys("fn+c\nt\nenter");
     assert_eq!(a.ids(), [SIZE, SIZE, SIZE]);
     a.d.keys("esc");
-    assert!(!a.d.quit(), "Esc closes the menu first");
+    assert_eq!(a.d.toast(), None, "Esc closes the menu first");
     a.d.keys("esc");
-    assert!(a.d.quit(), "then Esc reaches the page");
+    assert_eq!(a.d.toast(), Some("Hold to exit"), "then Esc reaches the page");
 }
 
 #[test]
 fn a_toggle_flips_in_place_on_enter() {
     let mut a = app();
-    a.d.keys("help\nfn+x\nenter\nenter");
+    a.d.keys("8\nfn+x\nenter\nenter");
     assert_eq!(a.ids(), [NIGHT, NIGHT]);
-    a.d.keys("fn+esc");
+    a.d.keys("8");
     a.d.keys("b");
     assert_eq!(a.ids(), [NIGHT, NIGHT, NIGHT], "closed: b runs it directly");
 }
@@ -142,10 +138,10 @@ fn a_toggle_flips_in_place_on_enter() {
 #[test]
 fn an_action_closes_the_menu_then_runs() {
     let mut a = app();
-    a.d.keys("fn+esc\nn");
+    a.d.keys("8\nn");
     assert_eq!(a.ids(), [FIND]);
     a.d.keys("esc");
-    assert!(a.d.quit(), "the menu had closed: Esc went to the page");
+    assert_eq!(a.d.toast(), Some("Hold to exit"), "the menu had closed");
 }
 
 #[test]
@@ -153,43 +149,44 @@ fn a_mode_that_is_off_keeps_its_menu_row() {
     let mut a = app();
     a.d.keys("e");
     assert_eq!(a.ids(), [EDIT]);
-    // Editing: n types, and Find runs only from the menu.
-    a.d.keys("n");
-    assert_eq!(*a.typed.borrow(), "n");
-    a.d.keys("fn+esc\nn");
+    // Editing: n and 8 type. Help, then 8, reaches the menu, and Find
+    // runs from there.
+    a.d.keys("n\n8");
+    assert_eq!(*a.typed.borrow(), "n8");
+    a.d.keys("help\n8\nn");
     assert_eq!(a.ids(), [EDIT, FIND]);
 }
 
 #[test]
 fn close_app_asks_once_more() {
     let mut a = app();
-    a.d.keys("fn+esc\nfn+f\nenter");
+    a.d.keys("8\nfn+f\nenter");
     assert!(!a.d.quit());
     a.d.keys("enter");
     assert!(a.d.quit());
 }
 
 #[test]
-fn h_opens_keys_and_esc_goes_back_to_the_menu() {
+fn the_help_row_opens_help_and_esc_goes_back_to_the_menu() {
     let mut a = app();
-    a.d.keys("fn+esc\nh\nesc\nn");
+    a.d.keys("8\nfn+f\nfn+f\nenter\nesc\nn");
     assert_eq!(a.ids(), [FIND], "back in the menu, n picked Find");
 }
 
 #[test]
 fn the_menu_reopens_on_a_setting_just_changed() {
     let mut a = app();
-    a.d.keys("fn+esc\nfn+x\nenter\nfn+esc");
-    a.d.keys("fn+esc\nenter");
+    a.d.keys("8\nfn+x\nenter\n8");
+    a.d.keys("8\nenter");
     assert_eq!(a.ids(), [NIGHT, NIGHT]);
 }
 
 #[test]
 fn after_an_action_the_menu_opens_at_the_top() {
     let mut a = app();
-    a.d.keys("fn+esc\nfn+x\nenter\nfn+x\nenter");
+    a.d.keys("8\nfn+x\nenter\nfn+x\nenter");
     assert_eq!(a.ids(), [NIGHT, FIND]);
-    a.d.keys("fn+esc\nenter");
+    a.d.keys("8\nenter");
     assert_eq!(a.ids(), [NIGHT, FIND, SIZE], "the first row, not Find");
 }
 
@@ -221,13 +218,13 @@ fn snapshots() {
     };
     let dir = std::path::PathBuf::from(dir);
     let mut a = app();
-    a.d.save(&dir.join("page-hints.png")).unwrap();
-    a.d.keys("fn+esc");
+    a.d.save(&dir.join("page.png")).unwrap();
+    a.d.keys("8");
     a.d.save(&dir.join("menu-1.png")).unwrap();
     a.d.keys("fn+x");
     a.d.save(&dir.join("menu-2.png")).unwrap();
     a.d.keys("fn+f\nfn+f\nenter");
     a.d.save(&dir.join("menu-3.png")).unwrap();
-    a.d.keys("esc\nh");
-    a.d.save(&dir.join("menu-keys.png")).unwrap();
+    a.d.keys("esc\nhelp");
+    a.d.save(&dir.join("help.png")).unwrap();
 }

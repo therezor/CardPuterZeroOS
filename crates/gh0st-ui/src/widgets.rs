@@ -1,6 +1,7 @@
-//! Shared pieces every gh0st app draws: the status bar, the hint bar, tiles,
-//! rows, fields and dialogs. Each one draws into a rect it is given and takes
-//! every size and colour from the theme.
+//! Shared pieces every gh0st app draws: the top bar, the action bar and its
+//! chips, the hint bar, tiles, rows, fields, cards, toasts. Each one draws
+//! into a rect it is given and takes every size and colour from the theme.
+//! docs/design.md says how they are used.
 
 use crate::canvas::Canvas;
 use crate::color::{Color, mix};
@@ -8,7 +9,7 @@ use crate::font::Font;
 use crate::geom::Rect;
 use crate::icon::{self, IconSize};
 use crate::image::Image;
-use crate::theme::Theme;
+use crate::theme::{Theme, Tone};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Net {
@@ -61,8 +62,18 @@ pub struct Status<'a> {
     pub dock: &'a [Visual<'a>],
     /// The filled slot: 0 is the mark, 1 the first app. `None` fills none.
     pub front: Option<usize>,
+    /// The page's icon, before its name. Empty draws the gh0st mark.
+    pub icon: &'a str,
     /// The page's name, after the dock. Empty on home.
     pub title: &'a str,
+    /// After the title in Caption: the parent page, a step, a file. The
+    /// first thing to go when the bar is full.
+    pub context: &'a str,
+    /// Sessions of the app, the front one underlined.
+    pub tabs: &'a [&'a str],
+    pub front_tab: usize,
+    /// One word of the app's own after a dot, in a tone: "REC".
+    pub item: Option<(&'a str, Tone)>,
     pub clock: &'a str,
     pub battery: Option<Battery>,
     pub net: Net,
@@ -86,6 +97,18 @@ pub fn content(t: &Theme) -> Rect {
         b.y + t.m.margin_v,
         b.w - 2 * t.m.margin,
         b.h - 2 * t.m.margin_v,
+    )
+}
+
+/// The body for the home grid and the switcher: the side margins and the
+/// smaller `grid_v` above and below.
+pub fn grid(t: &Theme) -> Rect {
+    let b = body(t);
+    Rect::new(
+        b.x + t.m.margin,
+        b.y + t.m.grid_v,
+        b.w - 2 * t.m.margin,
+        b.h - 2 * t.m.grid_v,
     )
 }
 
@@ -123,12 +146,20 @@ pub fn text_centre(c: &mut Canvas, f: Font, r: Rect, s: &str, color: Color) {
 
 /// Labels that are not selected: softer than `fg`, clearer than `muted`.
 pub fn soft(t: &Theme) -> Color {
-    mix(t.c.muted, t.c.fg, 150)
+    t.c.soft()
 }
 
-/// The top bar, as on pt35: the mark, a slot for each open app, the page's
-/// name, then network, battery and clock on the right.
+/// The top bar: where you are on the left, the device on the right. When
+/// the title does not fit, the context goes first, then Bluetooth, then the
+/// title shortens; the clock and battery always stay.
 pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
+    if !draw_status(c, t, s, s.bluetooth) {
+        draw_status(c, t, s, false);
+    }
+}
+
+/// False when the title needs Bluetooth's room and `bluetooth` may give it.
+fn draw_status(c: &mut Canvas, t: &Theme, s: &Status, bluetooth: bool) -> bool {
     let r = Rect::new(0, 0, t.m.width, t.m.bar_h);
     c.fill(r, t.c.bg);
     c.hline(0, r.w, r.bottom() - 1, t.c.border);
@@ -149,12 +180,22 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
             icon::draw(c, "ethernet-port", IconSize::Small, x, inner.y + 1, t.c.fg);
             x -= 8;
         }
-        Net::None => {}
+        Net::None => {
+            x -= 12;
+            icon::draw(c, "wifi-off", IconSize::Tiny, x, inner.y + 2, t.c.muted);
+            x -= 8;
+        }
     }
-    if s.bluetooth {
+    if bluetooth {
         x -= 12;
         icon::draw(c, "bluetooth", IconSize::Tiny, x, inner.y + 2, t.c.fg);
         x -= 7;
+    }
+    if let Some((word, tone)) = s.item {
+        let col = t.c.tone(tone);
+        let tx = text_right(c, t.f.small_bold, x, inner, word, col);
+        c.circle((tx - 6) as f32, (inner.h / 2) as f32 + 0.5, 2.5, col);
+        x = tx - 9 - 8;
     }
     let end = x;
 
@@ -165,15 +206,12 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     // is in front.
     let logo = t.m.slot_icon;
     let home = s.front == Some(0);
-    let ink = if home { t.c.accent } else { t.c.muted };
-    icon::draw(
-        c,
-        LOGO,
-        IconSize::Tiny,
-        t.m.pad,
-        y + (t.m.slot_h - logo) / 2,
-        ink,
-    );
+    let (mark, ink) = if s.icon.is_empty() {
+        (LOGO, if home || s.dock.is_empty() { t.c.accent } else { t.c.muted })
+    } else {
+        (s.icon, t.c.accent)
+    };
+    icon::draw(c, mark, IconSize::Tiny, t.m.pad, y + (t.m.slot_h - logo) / 2, ink);
     let side = (t.m.slot_w - logo) / 2;
     if home {
         front_mark(c, t, t.m.pad - side, t.m.slot_w);
@@ -205,11 +243,33 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
         text_centre(c, t.f.small_bold, r, &buf, t.c.muted);
         sx += step;
     }
-    if !s.title.is_empty() {
-        let x = sx + t.m.slot_gap;
-        let title = Rect::new(x, inner.y, end - x, inner.h);
-        text_in(c, t.f.small_bold, title, s.title, t.c.fg);
+    for (i, tab) in s.tabs.iter().enumerate() {
+        let r = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
+        let col = if i == s.front_tab { t.c.fg } else { t.c.muted };
+        text_centre(c, t.f.small_bold, r, tab, col);
+        if i == s.front_tab {
+            front_mark(c, t, r.x, r.w);
+        }
+        sx += step;
     }
+    if s.title.is_empty() {
+        return true;
+    }
+    let x = sx + t.m.slot_gap;
+    let room = end - x;
+    let tw = t.f.small_bold.measure(s.title);
+    if tw > room && bluetooth {
+        return false;
+    }
+    let title = Rect::new(x, inner.y, tw.min(room), inner.h);
+    let after = text_in(c, t.f.small_bold, title, s.title, t.c.fg);
+    if !s.context.is_empty() {
+        let cx = after + 6;
+        if cx + t.f.small.measure(s.context) <= end {
+            text_in(c, t.f.small, Rect::new(cx, inner.y, end - cx, inner.h), s.context, t.c.muted);
+        }
+    }
+    true
 }
 
 /// What is in front: an accent line on the bar's bottom edge, under it.
@@ -243,7 +303,9 @@ fn slot_visual(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual) {
 /// Returns its left edge.
 fn battery(c: &mut Canvas, t: &Theme, right: i32, r: Rect, b: Battery) -> i32 {
     let label = Percent::new(b.percent);
-    let x = text_right(c, t.f.small, right, r, label.as_str(), t.c.fg) - 4;
+    let low = !b.charging && b.percent <= 5;
+    let ink = if low { t.c.critical } else { t.c.fg };
+    let x = text_right(c, t.f.small, right, r, label.as_str(), ink) - 4;
     let (w, h) = (BATTERY_W, BATTERY_H);
     let bx = x - w - 2;
     let by = r.y + (r.h - h) / 2;
@@ -322,82 +384,225 @@ fn hint_rect(t: &Theme) -> Rect {
     Rect::new(0, t.m.height - t.m.hint_h, t.m.width, t.m.hint_h)
 }
 
-/// Bottom bar: key pills with what they do, and page dots on the right.
-pub fn hint_bar(c: &mut Canvas, t: &Theme, hints: &[Hint], pages: Option<(usize, usize)>) {
+/// The bar while a field has focus, when digits type and no chip can run:
+/// the keys that still work, in pills, with what they do. Enter's pill is
+/// filled, as a main chip is. `right` goes on the far side while it fits:
+/// "Fn h help".
+pub fn hint_bar(c: &mut Canvas, t: &Theme, hints: &[Hint], right: Option<Hint>) {
     let r = hint_rect(t);
     c.fill(r, t.c.surface);
     c.hline(0, r.w, r.y, t.c.border);
-    let mut x = t.m.pad;
-    for h in hints {
-        // "z c" is two keys: a pill each, as in menus.
-        for k in h.key.split(' ').filter(|k| !k.is_empty()) {
-            x = key_pill(c, t, x, r, k) + 2;
+    let y = r.y + (r.h - t.m.pill_h + 1) / 2;
+    let end = key_row(c, t, t.m.pad, y, hints);
+    if let Some(h) = right {
+        let lw = t.f.small.measure(h.label);
+        let lx = r.right() - t.m.pad - lw;
+        let kx = lx - 4 - pills_w(t, h.key);
+        if kx >= end + 12 {
+            pills(c, t, kx, y, h.key, Pill::Normal);
+            text_in(c, t.f.small, Rect::new(lx, y, lw, t.m.pill_h), h.label, t.c.muted);
         }
-        x += 2;
-        let label = Rect::new(x, r.y + 1, r.right() - x, r.h - 1);
-        x = text_in(c, t.f.small, label, h.label, t.c.muted) + 12;
-    }
-    if let Some((page, count)) = pages {
-        page_dots(c, t, r.right() - t.m.pad, r.y + r.h / 2 + 1, page, count);
     }
 }
 
-/// One slot of the soft-key bar. An empty icon or label leaves that part out.
-#[derive(Clone, Copy, Default)]
-pub struct SoftKey<'a> {
+/// Key pills with what they do, from `x`, top at `y`: in the hint bar, in a
+/// card, under a message. Enter's pill is filled. Returns the right edge.
+pub fn key_row(c: &mut Canvas, t: &Theme, x: i32, y: i32, hints: &[Hint]) -> i32 {
+    let mut x = x;
+    for (i, h) in hints.iter().enumerate() {
+        if i > 0 {
+            x += 12;
+        }
+        let style = if h.key == "Enter" { Pill::Main } else { Pill::Normal };
+        x = pills(c, t, x, y, h.key, style) + 4;
+        let lr = Rect::new(x, y, t.f.small.measure(h.label), t.m.pill_h);
+        x = text_in(c, t.f.small, lr, h.label, t.c.muted);
+    }
+    x
+}
+
+/// The width `key_row` draws.
+pub fn key_row_w(t: &Theme, hints: &[Hint]) -> i32 {
+    hints
+        .iter()
+        .map(|h| pills_w(t, h.key) + 4 + t.f.small.measure(h.label))
+        .sum::<i32>()
+        + 12 * (hints.len() as i32 - 1).max(0)
+}
+
+/// How a chip looks. docs/design.md says when each is used.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Look {
+    #[default]
+    Normal,
+    /// The page's main action when it is not on Enter.
+    Main,
+    /// A toggle that is on.
+    On,
+    Danger,
+    /// Danger, armed: filled.
+    DangerMain,
+    /// Can't be used now: the key does nothing.
+    Disabled,
+    /// While its key is down.
+    Pressed,
+    /// Held to confirm, filling red: 0 to 100.
+    Hold(u8),
+    /// Working: no second press.
+    Busy,
+}
+
+/// An action chip over one of keys 4 to 8: an icon, one word, or both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Chip<'a> {
     pub icon: &'a str,
-    pub label: &'a str,
-    /// Drawn lit, for a toggle that is on.
-    pub lit: bool,
+    pub word: &'a str,
+    pub look: Look,
 }
 
-/// Bottom bar with one slot per number key 4 to 8, each centred over its key
-/// with a tick on the bottom edge pointing at it. Same height as the hint bar,
-/// so switching between them never moves the content.
-pub fn softkey_bar(c: &mut Canvas, t: &Theme, keys: &[SoftKey; 5]) {
-    let r = hint_rect(t);
-    c.fill(r, t.c.surface);
-    c.hline(0, r.w, r.y, t.c.border);
-    let pitch = t.m.softkey_x[1] - t.m.softkey_x[0];
-    let s = IconSize::Small as i32;
-    for (k, &cx) in keys.iter().zip(&t.m.softkey_x) {
-        if k.icon.is_empty() && k.label.is_empty() {
+impl Chip<'_> {
+    pub fn is_empty(&self) -> bool {
+        self.icon.is_empty() && self.word.is_empty()
+    }
+}
+
+/// Icon, gap, word.
+fn chip_ink_w(t: &Theme, ch: &Chip) -> i32 {
+    let busy = if ch.look == Look::Busy {
+        t.f.small_bold.measure("\u{2026}")
+    } else {
+        0
+    };
+    let word = if ch.word.is_empty() {
+        0
+    } else {
+        t.f.small_bold.measure(ch.word) + busy
+    };
+    match (ch.icon.is_empty(), ch.word.is_empty()) {
+        (false, true) => IconSize::Tiny as i32,
+        (true, _) => word,
+        (false, false) => IconSize::Tiny as i32 + 3 + word,
+    }
+}
+
+/// A chip's natural width: its ink with even padding.
+pub fn chip_w(t: &Theme, ch: &Chip) -> i32 {
+    chip_ink_w(t, ch) + 2 * t.m.chip_pad
+}
+
+/// Widths for a bar. Chips are centred on their keys, so neighbours share
+/// the room between their centres. A crowded pair gives up padding in
+/// proportion to what each has spare, down to the least; only past that
+/// does a chip lose its icon.
+pub fn bar_widths(t: &Theme, chips: &[Chip; 5]) -> [i32; 5] {
+    let room = t.m.softkey_x[1] - t.m.softkey_x[0] - 2;
+    let want = chips.map(|ch| if ch.is_empty() { 0 } else { chip_w(t, &ch) });
+    let need = chips.map(|ch| chip_ink_w(t, &ch) + 2 * t.m.chip_pad_min);
+    let mut half = want.map(|w| w / 2);
+    for a in 0..4 {
+        let b = a + 1;
+        if want[a] == 0 || want[b] == 0 || half[a] + half[b] <= room {
             continue;
         }
-        let slot = Rect::new(cx - pitch / 2 + 1, r.y + 2, pitch - 2, r.h - 4);
-        let (fg, tick) = if k.lit {
-            c.round_rect(slot, t.m.radius_small, t.c.accent);
-            (t.c.accent_fg, t.c.accent)
-        } else {
-            (t.c.fg, t.c.muted)
-        };
-        c.fill(Rect::new(cx - 1, r.bottom() - 2, 2, 2), tick);
-        let gap = if k.icon.is_empty() || k.label.is_empty() {
-            0
-        } else {
-            2
-        };
-        let iw = if k.icon.is_empty() { 0 } else { s };
-        let lw = t.f.small.measure(k.label).min(slot.w - iw - gap);
-        let mut x = cx - (iw + gap + lw) / 2;
-        if !k.icon.is_empty() {
-            icon::draw(c, k.icon, IconSize::Small, x, r.y + (r.h - s) / 2, fg);
-            x += iw + gap;
-        }
-        if !k.label.is_empty() {
-            let col = if k.lit || k.icon.is_empty() {
-                fg
+        let (na, nb) = (need[a] / 2, need[b] / 2);
+        let (ha, hb) = if na + nb <= room {
+            let (sa, sb) = (want[a] / 2 - na, want[b] / 2 - nb);
+            let extra = room - na - nb;
+            let ga = if sa + sb > 0 {
+                extra * sa / (sa + sb)
             } else {
-                soft(t)
+                extra / 2
             };
-            text_in(
-                c,
-                t.f.small,
-                Rect::new(x, r.y + 1, lw, r.h - 1),
-                k.label,
-                col,
-            );
-        }
+            (na + ga, nb + extra - ga)
+        } else {
+            (room / 2, room - room / 2)
+        };
+        half[a] = half[a].min(ha);
+        half[b] = half[b].min(hb);
+    }
+    half.map(|h| 2 * h)
+}
+
+fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color) {
+    let busy;
+    let word = if ch.look == Look::Busy {
+        busy = format!("{}\u{2026}", ch.word);
+        busy.as_str()
+    } else {
+        ch.word
+    };
+    // Centred, so the padding is even on both sides.
+    let x = r.x + (r.w - chip_ink_w(t, ch)) / 2;
+    let s = IconSize::Tiny as i32;
+    let iy = r.y + (r.h - s) / 2;
+    if word.is_empty() {
+        icon::draw(c, ch.icon, IconSize::Tiny, x, iy, ink);
+        return;
+    }
+    let mut lx = x;
+    if !ch.icon.is_empty() {
+        icon::draw(c, ch.icon, IconSize::Tiny, x, iy, ink);
+        lx += s + 3;
+    }
+    // Capitals centre on the chip less its bottom row: descenders get the
+    // spare row below.
+    let tr = Rect::new(lx, r.y, r.right() - lx, r.h - 1);
+    text_in(c, t.f.small_bold, tr, word, ink);
+}
+
+/// One chip centred on `cx`, top at `top`, `w` wide. `line_to` draws the
+/// line from its foot down toward the key.
+pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32, line_to: Option<i32>) {
+    // A word is never cut: short of room, a chip drops its icon first.
+    let tight = chip_ink_w(t, ch) + 2 * t.m.chip_pad_min > w;
+    let bare;
+    let (ch, w) = if tight && !ch.icon.is_empty() && !ch.word.is_empty() {
+        bare = Chip { icon: "", ..*ch };
+        (&bare, chip_w(t, &bare).min(w))
+    } else {
+        (ch, w)
+    };
+    let r = Rect::new(cx - w / 2, top, w, t.m.chip_h);
+    let k = &t.c;
+    let rad = t.m.chip_r;
+    let (fill, ink, line, ring) = match ch.look {
+        Look::Normal => (k.surface, k.fg, k.muted, Some(k.border)),
+        Look::Main => (k.accent, k.accent_fg, k.accent, None),
+        Look::On => (mix(k.bg, k.accent, 80), k.accent, k.accent, None),
+        Look::Danger | Look::Hold(_) => (k.surface, k.critical, k.critical, Some(k.critical)),
+        Look::DangerMain => (k.critical, k.bg, k.critical, None),
+        Look::Disabled => (k.bg, k.disabled(), k.border, Some(k.border)),
+        Look::Pressed => (k.fg, k.bg, k.fg, None),
+        Look::Busy => (k.surface, k.muted, k.muted, Some(k.border)),
+    };
+    c.round_rect(r, rad, fill);
+    if let Some(ring) = ring {
+        c.stroke_round_rect(r, rad, ring);
+    }
+    chip_ink(c, t, r, ch, ink);
+    if let Look::Hold(pc) = ch.look {
+        let old = c.clip();
+        let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
+        c.set_clip(part.intersect(&old));
+        c.round_rect(r, rad, k.critical);
+        chip_ink(c, t, r, ch, k.bg);
+        c.set_clip(old);
+    }
+    if let Some(bottom) = line_to {
+        c.fill(Rect::new(cx - 1, r.bottom(), 2, bottom - r.bottom()), line);
+    }
+}
+
+/// The action bar: a chip above each of keys 4 to 8 that has one, with a
+/// line down toward its key. No fill behind them.
+pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
+    let h = t.m.height;
+    c.fill(hint_rect(t), t.c.bg);
+    let line = 2;
+    let top = h - line - t.m.chip_h;
+    let w = bar_widths(t, chips);
+    for (i, ch) in chips.iter().enumerate().filter(|(_, ch)| !ch.is_empty()) {
+        chip(c, t, t.m.softkey_x[i], top, ch, w[i], Some(h));
     }
 }
 
@@ -412,19 +617,11 @@ pub fn search_bar(c: &mut Canvas, t: &Theme, query: &str) {
     let right = r.right() - t.m.pad;
     let cancel = Rect::new(0, r.y + 1, 0, r.h - 1);
     let lx = text_right(c, t.f.small, right, cancel, "cancel", t.c.muted);
-    let pill = t.f.small_bold.measure("Esc") + 7;
-    key_pill(c, t, lx - 4 - pill, r, "Esc");
+    let pill = pills_w(t, "Esc");
+    pills(c, t, lx - 4 - pill, r.y + (r.h - t.m.pill_h + 1) / 2, "Esc", Pill::Normal);
     let field = Rect::new(tx, r.y + 1, lx - pill - 16 - tx, r.h - 1);
     let end = text_in(c, t.f.body, field, query, t.c.fg);
     c.fill(Rect::new(end + 2, r.y + 4, 1, r.h - 7), t.c.accent);
-}
-
-pub fn key_pill(c: &mut Canvas, t: &Theme, x: i32, r: Rect, key: &str) -> i32 {
-    let w = (t.f.small_bold.measure(key) + 7).max(13);
-    let pill = Rect::new(x, r.y + 3, w, r.h - 5);
-    c.round_rect(pill, t.m.radius_small, t.c.border);
-    text_centre(c, t.f.small_bold, pill, key, t.c.fg);
-    pill.right()
 }
 
 pub fn page_dots(c: &mut Canvas, t: &Theme, right: i32, cy: i32, page: usize, count: usize) {
@@ -537,23 +734,25 @@ pub fn tile(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: bool) 
 
 /// A tile without its selection frame, for when the frame is animating.
 pub fn tile_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected: bool) {
+    // Badge and name as one block, with even room from the frame to the
+    // badge and from the name's baseline to the frame; descenders use the
+    // room below.
     let b = t.m.badge;
-    let br = Rect::new(r.x + (r.w - b) / 2, r.y + 6, b, b);
+    let f = if selected { t.f.small_bold } else { t.f.small };
+    let gap = 5;
+    let block = b + gap + f.cap();
+    let top = r.y + 1 + (r.h - 2 - block) / 2;
+    let br = Rect::new(r.x + (r.w - b) / 2, top, b, b);
     badge(c, t, br, &item.visual, selected);
     if item.pinned {
-        pin_mark(c, t, r.right() - 4, r.y + 4, selected);
+        let s = IconSize::Tiny as i32;
+        let col = if selected { t.c.accent } else { t.c.muted };
+        icon::draw(c, "pin", IconSize::Tiny, r.right() - 5 - s, r.y + 4, col);
     }
-    let f = if selected { t.f.small_bold } else { t.f.small };
     let col = if selected { t.c.fg } else { soft(t) };
-    let lr = Rect::new(
-        r.x + 3,
-        br.bottom() + 4,
-        r.w - 6,
-        r.bottom() - br.bottom() - 6,
-    );
-    let w = f.measure(item.label).min(lr.w);
-    let y = lr.y + f.cap() + 1;
-    f.draw_elided(c, lr.x + (lr.w - w) / 2, y, item.label, lr.w, col);
+    let w = f.measure(item.label).min(r.w - 8);
+    let y = br.bottom() + gap + f.cap();
+    f.draw_elided(c, r.x + (r.w - w) / 2, y, item.label, r.w - 8, col);
 }
 
 /// The pin icon with its right edge at `right`.
@@ -672,6 +871,7 @@ pub fn meter(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: &str, share
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Trailing<'a> {
     None,
     Chevron,
@@ -689,8 +889,13 @@ pub enum Trailing<'a> {
         level: u8,
         secure: bool,
     },
+    /// The one picked, in a list of choices.
+    Check,
+    /// A count or a word in a tone: "3", "New".
+    Tag(&'a str, Tone),
 }
 
+#[derive(Clone, Copy)]
 pub struct Row<'a> {
     /// An empty name keeps the icon column, so rows with and without a mark
     /// line up. `None` drops the column.
@@ -734,15 +939,23 @@ pub fn menu_row(
     let right = r.right() - 8;
     if !keys.is_empty() {
         let w = pills_w(t, keys);
-        pills(c, t, right - w, r.y + (r.h - PILL_H) / 2, keys, dim);
+        let style = if dim { Pill::Dim } else { Pill::Normal };
+        pills(c, t, right - w, r.y + (r.h - t.m.pill_h) / 2, keys, style);
     }
     let gap = if keys_w > 0 { keys_w + 6 } else { 0 };
     let body = Rect::new(r.x, r.y, r.w - gap, r.h);
     row_body(c, t, body, row, selected, dim);
 }
 
-/// The height of a key pill outside a bar.
-pub const PILL_H: i32 = 15;
+/// How a key pill is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pill {
+    Normal,
+    /// The row can't be used now.
+    Dim,
+    /// The key that does the main thing: Enter.
+    Main,
+}
 
 /// The width of `keys` as pills: one pill per space-separated key.
 pub fn pills_w(t: &Theme, keys: &str) -> i32 {
@@ -757,17 +970,21 @@ pub fn pills_w(t: &Theme, keys: &str) -> i32 {
 }
 
 fn pill_w(t: &Theme, key: &str) -> i32 {
-    (t.f.small_bold.measure(key) + 7).max(13)
+    (t.f.small_bold.measure(key) + 10).max(t.m.pill_h)
 }
 
 /// Draws `keys` as pills from `x`, top at `y`. Returns the right edge.
-pub fn pills(c: &mut Canvas, t: &Theme, x: i32, y: i32, keys: &str, dim: bool) -> i32 {
+pub fn pills(c: &mut Canvas, t: &Theme, x: i32, y: i32, keys: &str, style: Pill) -> i32 {
+    let (fill, ink) = match style {
+        Pill::Normal => (t.c.border, t.c.fg),
+        Pill::Dim => (t.c.border, t.c.muted),
+        Pill::Main => (t.c.accent, t.c.accent_fg),
+    };
     let mut x = x;
-    let fg = if dim { t.c.muted } else { t.c.fg };
     for k in keys.split(' ').filter(|k| !k.is_empty()) {
-        let pill = Rect::new(x, y, pill_w(t, k), PILL_H);
-        c.round_rect(pill, t.m.radius_small, t.c.border);
-        text_centre(c, t.f.small_bold, pill, k, fg);
+        let pill = Rect::new(x, y, pill_w(t, k), t.m.pill_h);
+        c.round_rect(pill, t.m.radius_small, fill);
+        text_centre(c, t.f.small_bold, pill, k, ink);
         x = pill.right() + 3;
     }
     x - 3
@@ -786,9 +1003,9 @@ pub fn keys_line(
     value: &str,
 ) {
     let x = r.x + 9;
-    let y = r.y + (r.h - PILL_H) / 2;
+    let y = r.y + (r.h - t.m.pill_h) / 2;
     // Keys wider than the column push their label right, never under it.
-    let end = pills(c, t, x, y, keys, false);
+    let end = pills(c, t, x, y, keys, Pill::Normal);
     let mut right = r.right() - 8;
     if !value.is_empty() {
         right = text_right(c, t.f.small, right, r, value, t.c.muted) - 8;
@@ -848,6 +1065,14 @@ fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: 
             }
             right = bar.x - 6;
             right = text_right(c, t.f.small_bold, right, r, "\u{2039}", arrow) - 8;
+        }
+        Trailing::Check => {
+            let s = IconSize::Small as i32;
+            icon::draw(c, "check", IconSize::Small, right - s, r.y + (r.h - s) / 2, t.c.accent);
+            right -= s + 8;
+        }
+        Trailing::Tag(word, tone) => {
+            right = tag(c, t, right, r, word, tone) - 8;
         }
         Trailing::Signal { level, secure } => {
             let bars = Rect::new(right - 11, r.y + (r.h - 9) / 2, 11, 9);
@@ -971,40 +1196,204 @@ pub fn text_field(
     }
 }
 
-/// A raised card in the middle of the screen with a title. Returns the body.
-pub fn dialog(c: &mut Canvas, t: &Theme, r: Rect, title: &str, accent: Color) -> Rect {
-    c.fill_alpha(Rect::new(0, 0, t.m.width, t.m.height), t.c.bg, 150);
+/// Dims `r` behind a card. Give it the page's area, not the bars: the
+/// chips and the top bar stay readable.
+pub fn scrim(c: &mut Canvas, t: &Theme, r: Rect) {
+    c.fill_alpha(r, t.c.bg, 160);
+}
+
+/// A card with a title, edged in `edge`: `accent`, or `critical` for one
+/// that loses data. Returns the body.
+pub fn card(c: &mut Canvas, t: &Theme, r: Rect, title: &str, edge: Color) -> Rect {
     c.round_rect(r, t.m.radius_large, t.c.surface);
-    c.stroke_round_rect(r, t.m.radius_large, accent);
+    c.stroke_round_rect(r, t.m.radius_large, edge);
     let head = Rect::new(r.x + 12, r.y + 6, r.w - 24, 18);
     text_in(c, t.f.body_bold, head, title, t.c.fg);
     Rect::new(
         r.x + 12,
         head.bottom() + 4,
         r.w - 24,
-        r.bottom() - head.bottom() - 14,
+        r.bottom() - head.bottom() - 10,
     )
 }
 
-/// A short message above the hint bar, the only answer a hotkey gets.
+/// A short line in a card that floats above `bottom`, with its tone's icon.
+/// `held` fills a bar along its foot, 0 to 100, for a key that must be held.
 /// Returns where it went.
-pub fn toast(c: &mut Canvas, t: &Theme, text: &str) -> Rect {
-    let w = (t.f.small_bold.measure(text) + 20).min(t.m.width - 2 * t.m.margin);
-    let h = 18;
-    let r = Rect::new((t.m.width - w) / 2, t.m.height - t.m.hint_h - h - 6, w, h);
-    c.round_rect(r, t.m.radius, t.c.surface);
-    c.stroke_round_rect(r, t.m.radius, t.c.border);
-    text_centre(c, t.f.small_bold, r, text, t.c.fg);
+pub fn toast(
+    c: &mut Canvas,
+    t: &Theme,
+    bottom: i32,
+    tone: Tone,
+    text: &str,
+    held: Option<u8>,
+) -> Rect {
+    let s = IconSize::Tiny as i32;
+    let w = (8 + s + 5 + t.f.small_bold.measure(text) + 10).min(t.m.width - 2 * t.m.margin);
+    let h = t.m.toast_h;
+    let r = Rect::new((t.m.width - w) / 2, bottom - h - 4, w, h);
+    let col = t.c.tone(tone);
+    c.round_rect(r, t.m.radius_large, t.c.surface);
+    c.stroke_round_rect(r, t.m.radius_large, mix(t.c.border, col, 110));
+    icon::draw(c, tone.icon(), IconSize::Tiny, r.x + 8, r.y + (h - s) / 2, col);
+    let tx = r.x + 8 + s + 5;
+    let tr = Rect::new(tx, r.y, r.right() - 8 - tx, h);
+    text_in(c, t.f.small_bold, tr, text, t.c.fg);
+    if let Some(pc) = held {
+        let bar = Rect::new(r.x + 4, r.bottom() - 4, r.w - 8, 2);
+        c.fill(bar, t.c.border);
+        c.fill(Rect::new(bar.x, bar.y, bar.w * pc.min(100) as i32 / 100, 2), col);
+    }
     r
 }
 
-/// A strip across the top of the panel, drawn over whatever an app shows:
-/// the ESC hold hint and the low-battery countdown.
-pub fn banner(c: &mut Canvas, t: &Theme, text: &str, color: Color) -> Rect {
-    let r = Rect::new(0, 0, t.m.width, t.m.bar_h + 4);
-    c.fill(r, color);
-    text_centre(c, t.f.small_bold, r, text, t.c.bg);
+/// The shell's urgent word over any app, in its tone's colour. It takes the
+/// top bar's place, so the page under it neither moves nor hides.
+pub fn banner(c: &mut Canvas, t: &Theme, text: &str, tone: Tone) -> Rect {
+    let r = Rect::new(0, 0, t.m.width, t.m.bar_h);
+    c.fill(r, t.c.tone(tone));
+    let s = IconSize::Tiny as i32;
+    let w = (s + 5 + t.f.small_bold.measure(text)).min(r.w - 2 * t.m.pad);
+    let x = (r.w - w) / 2;
+    icon::draw(c, tone.icon(), IconSize::Tiny, x, (r.h - 1 - s) / 2, t.c.bg);
+    let tr = Rect::new(x + s + 5, 0, w - s - 5, r.h - 1);
+    text_in(c, t.f.small_bold, tr, text, t.c.bg);
     r
+}
+
+/// The volume or brightness level in the top bar's place.
+pub fn level_bar(c: &mut Canvas, t: &Theme, icon_name: &str, label: &str, level: u8) -> Rect {
+    let r = Rect::new(0, 0, t.m.width, t.m.bar_h);
+    c.fill(r, t.c.surface);
+    c.hline(0, r.w, r.bottom() - 1, t.c.accent);
+    let inner = Rect::new(t.m.pad, 0, r.w - 2 * t.m.pad, r.h - 1);
+    let s = IconSize::Tiny as i32;
+    icon::draw(c, icon_name, IconSize::Tiny, inner.x, (inner.h - s) / 2, t.c.accent);
+    let lr = Rect::new(inner.x + s + 6, 0, t.f.small_bold.measure(label), inner.h);
+    let lx = text_in(c, t.f.small_bold, lr, label, t.c.fg);
+    let p = Percent::new(level);
+    let px = text_right(c, t.f.small, inner.right(), inner, p.as_str(), t.c.fg);
+    let bar = Rect::new(lx + 10, (inner.h - 4) / 2, px - 10 - lx - 10, 4);
+    c.round_rect(bar, 2, t.c.border);
+    let fill = bar.w * level.min(100) as i32 / 100;
+    if fill > 0 {
+        c.round_rect(Rect::new(bar.x, bar.y, fill, bar.h), 2, t.c.accent);
+    }
+    r
+}
+
+/// A count or a word in a tone, right-aligned to `right`. Returns its left.
+pub fn tag(c: &mut Canvas, t: &Theme, right: i32, r: Rect, word: &str, tone: Tone) -> i32 {
+    let col = t.c.tone(tone);
+    let w = t.f.small_bold.measure(word) + 8;
+    let tr = Rect::new(right - w, r.y + (r.h - 13) / 2, w, 13);
+    c.round_rect(tr, t.m.radius_small, mix(t.c.bg, col, 60));
+    text_centre(c, t.f.small_bold, tr, word, col);
+    tr.x
+}
+
+/// What a [`message`] shows.
+pub struct Message<'a> {
+    pub icon: &'a str,
+    /// The icon's tone; none draws it muted, for an empty list.
+    pub tone: Option<Tone>,
+    pub text: &'a str,
+    pub note: &'a str,
+    /// What Enter, or another key, does here: in pills under the note.
+    pub keys: &'a [Hint<'a>],
+}
+
+/// A message that fills `area`: a large icon, a line, a note, and the keys
+/// that act on it. Empty lists and errors use it.
+pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
+    let (icon_name, text, note, keys) = (m.icon, m.text, m.note, m.keys);
+    let ink = m.tone.map_or(t.c.muted, |k| t.c.tone(k));
+    let s = IconSize::Large as i32;
+    let block = s + 8 + 18 + if note.is_empty() { 0 } else { 15 }
+        + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
+    let top = area.y + (area.h - block).max(0) / 2;
+    icon::draw(c, icon_name, IconSize::Large, area.x + (area.w - s) / 2, top, ink);
+    let tr = Rect::new(area.x + 12, top + s + 8, area.w - 24, 18);
+    text_centre(c, t.f.body_bold, tr, text, t.c.fg);
+    let mut y = tr.bottom();
+    if !note.is_empty() {
+        text_centre(c, t.f.small, Rect::new(tr.x, y + 1, tr.w, 15), note, t.c.muted);
+        y += 15;
+    }
+    if !keys.is_empty() {
+        let w = key_row_w(t, keys);
+        key_row(c, t, area.x + (area.w - w) / 2, y + 8, keys);
+    }
+}
+
+/// A labelled bar 4 px high: what, how far, the bar. With no value a
+/// segment sits at `phase` (0 to 255) along it; move it only while shown.
+pub fn progress(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: Option<u8>, phase: u8) {
+    let line = Rect::new(r.x, r.y, r.w, 16);
+    let right = match value {
+        Some(v) => {
+            let p = Percent::new(v);
+            text_right(c, t.f.small, line.right(), line, p.as_str(), t.c.muted) - 8
+        }
+        None => line.right(),
+    };
+    text_in(c, t.f.small, Rect::new(line.x, line.y, right - line.x, line.h), label, t.c.fg);
+    let bar = Rect::new(r.x, line.bottom() + 3, r.w, 4);
+    c.round_rect(bar, 2, t.c.border);
+    let part = match value {
+        Some(v) => Rect::new(bar.x, bar.y, bar.w * v.min(100) as i32 / 100, bar.h),
+        None => {
+            let w = bar.w / 4;
+            Rect::new(bar.x + (bar.w - w) * phase as i32 / 255, bar.y, w, bar.h)
+        }
+    };
+    if part.w > 0 {
+        c.round_rect(part, 2, t.c.accent);
+    }
+}
+
+/// A row that can't be used now: icon and label in `disabled`, and why on
+/// its right.
+pub fn disabled_row(c: &mut Canvas, t: &Theme, r: Rect, icon_name: &str, label: &str, why: &str) {
+    let ink = t.c.disabled();
+    let s = IconSize::Small as i32;
+    icon::draw(c, icon_name, IconSize::Small, r.x + 9, r.y + (r.h - s) / 2, ink);
+    let x = r.x + 9 + s + 9;
+    let wx = text_right(c, t.f.small, r.right() - 8, r, why, ink);
+    text_in(c, t.f.body, Rect::new(x, r.y, wx - 8 - x, r.h), label, ink);
+}
+
+/// A row with a second line in Caption under its label, `app_row_h` high.
+pub fn note_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, note: &str, selected: bool) {
+    if selected {
+        row_selection(c, t, r);
+    }
+    let top = Rect::new(r.x, r.y + 2, r.w, 16);
+    let body = Row { label: "", ..*row };
+    row_body(c, t, r, &body, selected, false);
+    let x = r.x + 9 + if row.icon.is_some() { IconSize::Small as i32 + 9 } else { 0 };
+    let right = r.right() - 8 - trailing_w(t, &row.trailing);
+    let f = if selected { t.f.body_bold } else { t.f.body };
+    let col = if selected { t.c.fg } else { soft(t) };
+    text_in(c, f, Rect::new(x, top.y, right - x, top.h), row.label, col);
+    let nr = Rect::new(x, r.y + 17, right - x, 13);
+    text_in(c, t.f.small, nr, note, t.c.muted);
+}
+
+/// About how wide a row's right side draws, so a second line stops short.
+fn trailing_w(t: &Theme, tr: &Trailing) -> i32 {
+    match tr {
+        Trailing::None => 0,
+        Trailing::Value(v) | Trailing::Alert(v) => t.f.small.measure(v) + 8,
+        Trailing::ValueChevron(v) => t.f.small.measure(v) + 8 + 17,
+        Trailing::Chevron => 17,
+        Trailing::Toggle(_) => 30,
+        Trailing::Choice(v) => t.f.small.measure(v) + 28,
+        Trailing::Level(_) => 110,
+        Trailing::Signal { secure, .. } => 18 + if *secure { 18 } else { 0 },
+        Trailing::Check => 22,
+        Trailing::Tag(w, _) => t.f.small_bold.measure(w) + 16,
+    }
 }
 
 /// The lock screen: the time, large, and how to get back in.
@@ -1024,15 +1413,12 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, clock: &str, s: &Status) {
         b.y + b.h / 2 - 38,
         t.c.muted,
     );
-    hint_bar(
-        c,
-        t,
-        &[Hint {
-            key: "Enter",
-            label: "unlock",
-        }],
-        None,
-    );
+    let hints = [Hint {
+        key: "Enter",
+        label: "unlock",
+    }];
+    let w = key_row_w(t, &hints);
+    key_row(c, t, (t.m.width - w) / 2, b.bottom() - t.m.pill_h - 6, &hints);
 }
 
 #[cfg(test)]
@@ -1057,7 +1443,12 @@ mod tests {
         let s = Status {
             dock: &[],
             front: None,
+            icon: "",
             title: "",
+            context: "",
+            tabs: &[],
+            front_tab: 0,
+            item: None,
             clock: "12:00",
             battery: Some(Battery { percent, charging }),
             net: Net::Wifi(3),
@@ -1072,7 +1463,9 @@ mod tests {
         let bolt = BOLT.iter().filter(|&&a| a != 0).count();
         for p in PALETTES {
             let t = Theme::new(*p);
-            for percent in [1, 15, 50, 100] {
+            // At 5% and under the percent turns critical, which this does
+            // not count.
+            for percent in [15, 50, 100] {
                 let (on, off) = (bar(&t, percent, true), bar(&t, percent, false));
                 let ink = |c: &Canvas| c.pixels().iter().filter(|&&px| px == t.c.fg).count();
                 // Above 20% the fill itself is fg until charging turns it accent.

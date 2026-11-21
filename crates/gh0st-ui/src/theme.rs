@@ -1,7 +1,7 @@
 //! Colour, geometry and type in one place. Widgets read everything from here
 //! and hardcode nothing, so a palette or a size changes in one line.
 
-use crate::color::{Color, hex};
+use crate::color::{Color, hex, mix};
 use crate::font::{self, Font};
 
 #[derive(Clone, Copy)]
@@ -15,15 +15,62 @@ pub struct Palette {
     pub accent: Color,
     /// Text on an `accent` fill.
     pub accent_fg: Color,
+    /// Tones: neutral notices, take care, errors and loss, done.
+    pub info: Color,
     pub warning: Color,
     pub critical: Color,
     pub ok: Color,
+    /// Lines, tracks, key pills and chip edges.
     pub border: Color,
     /// Badge tints for apps that are not ours, so the grid is not one colour.
     pub tints: [Color; 6],
     /// The terminal's 16 ANSI colours: black, red, green, yellow, blue,
     /// magenta, cyan, white, then the bright eight.
     pub ansi: [Color; 16],
+}
+
+impl Palette {
+    /// Labels that are not selected: softer than `fg`, clearer than `muted`.
+    pub fn soft(&self) -> Color {
+        mix(self.muted, self.fg, 150)
+    }
+
+    /// Things that can't be used now: about 3:1 on `bg`.
+    pub fn disabled(&self) -> Color {
+        mix(self.bg, self.muted, 180)
+    }
+
+    pub fn tone(&self, tone: Tone) -> Color {
+        match tone {
+            Tone::Info => self.info,
+            Tone::Ok => self.ok,
+            Tone::Warning => self.warning,
+            Tone::Critical => self.critical,
+        }
+    }
+}
+
+/// What a toast, banner, tag or row icon says about itself. Apps name a tone,
+/// never a colour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tone {
+    #[default]
+    Info,
+    Ok,
+    Warning,
+    Critical,
+}
+
+impl Tone {
+    /// The icon a toast or banner of this tone shows.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Tone::Info => "info",
+            Tone::Ok => "circle-check",
+            Tone::Warning => "triangle-alert",
+            Tone::Critical => "circle-x",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -38,6 +85,9 @@ pub struct Metrics {
     pub margin: i32,
     /// Content inset below the status bar and above the hint bar.
     pub margin_v: i32,
+    /// The same for the home grid and the switcher's cards, which need the
+    /// height.
+    pub grid_v: i32,
     /// Space between tiles.
     pub gap: i32,
     /// Badges and rows.
@@ -75,6 +125,15 @@ pub struct Metrics {
     /// Centres of the five bottom slots. The screen sits over the number keys
     /// 4 to 8, so each slot is above its key. Stock's guide gives these.
     pub softkey_x: [i32; 5],
+    /// An action chip: its height, corner, the space each side of its ink,
+    /// and the least that may shrink to when neighbours crowd it.
+    pub chip_h: i32,
+    pub chip_r: i32,
+    pub chip_pad: i32,
+    pub chip_pad_min: i32,
+    /// A key pill in the hint bar, a card or a message.
+    pub pill_h: i32,
+    pub toast_h: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -105,6 +164,7 @@ pub const MINT: Palette = Palette {
     muted: hex("#7aa48e"),
     accent: hex("#3ddc97"),
     accent_fg: hex("#06130d"),
+    info: hex("#5fd0e8"),
     warning: hex("#e8c468"),
     critical: hex("#ef6b73"),
     ok: hex("#3ddc97"),
@@ -145,8 +205,10 @@ pub const NORD: Palette = Palette {
     muted: hex("#a3adc2"),
     accent: hex("#88c0d0"),
     accent_fg: hex("#2e3440"),
+    info: hex("#81a1c1"),
     warning: hex("#ebcb8b"),
-    critical: hex("#bf616a"),
+    // Nord's red lifted a step, so a danger word reads on `surface`.
+    critical: hex("#d0737c"),
     ok: hex("#a3be8c"),
     border: hex("#4c566a"),
     tints: [
@@ -185,10 +247,13 @@ pub const PAPER: Palette = Palette {
     muted: hex("#5e665f"),
     accent: hex("#1f7a55"),
     accent_fg: hex("#f4f1ea"),
-    warning: hex("#9a6a00"),
+    info: hex("#1d6f8a"),
+    // Darker than pt35's, so "Press again" and warning icons read on the
+    // light ground.
+    warning: hex("#7d5600"),
     critical: hex("#b3363f"),
     ok: hex("#1f7a55"),
-    border: hex("#c9c2b3"),
+    border: hex("#b3ab9a"),
     tints: [
         hex("#1f7a55"),
         hex("#1d6f8a"),
@@ -219,7 +284,7 @@ pub const PAPER: Palette = Palette {
 
 pub const PALETTES: &[Palette] = &[MINT, NORD, PAPER];
 
-/// A palette by its name, any case: the value of `gh0st.palette`.
+/// A built-in palette by its name, any case.
 pub fn palette(name: &str) -> Option<Palette> {
     PALETTES
         .iter()
@@ -227,24 +292,153 @@ pub fn palette(name: &str) -> Option<Palette> {
         .copied()
 }
 
-/// 320x170: an 18 px bar on top, an 18 px hint bar below, 134 px between. The
-/// grid inside that is 4x2 tiles of 74x60 with 4 px gaps and a 6/5 px margin.
+/// Where custom colour schemes live, the user's first: `<name>.palette`.
+pub fn palette_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(std::path::Path::new(&home).join(".config/cardputerzero/palettes"));
+    }
+    dirs.push("/usr/share/gh0st/palettes".into());
+    dirs
+}
+
+/// The value of `gh0st.palette`: a built-in, else a scheme file by that
+/// name. None if there is neither or the file is unreadable on screen.
+pub fn find(name: &str) -> Option<Palette> {
+    if let Some(p) = palette(name) {
+        return Some(p);
+    }
+    if name.is_empty() || name.contains(['/', '.']) {
+        return None;
+    }
+    palette_dirs().iter().find_map(|d| {
+        let text = std::fs::read_to_string(d.join(format!("{name}.palette"))).ok()?;
+        parse_palette(&text, name).ok()
+    })
+}
+
+/// Every palette there is: the built-ins, then each scheme file that loads,
+/// by name. For a picker.
+pub fn all() -> Vec<Palette> {
+    let mut out = PALETTES.to_vec();
+    for d in palette_dirs() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        let mut names: Vec<String> = rd
+            .flatten()
+            .filter_map(|e| {
+                let n = e.file_name().into_string().ok()?;
+                n.strip_suffix(".palette").map(str::to_string)
+            })
+            .collect();
+        names.sort();
+        for n in names {
+            if out.iter().any(|p| p.name.eq_ignore_ascii_case(&n)) {
+                continue;
+            }
+            if let Some(p) = find(&n) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Reads a scheme: one `role = #rrggbb` a line, `#` comments. `base = nord`
+/// starts from a built-in (Mint if not given); any role left out keeps the
+/// base's. Roles: bg surface fg muted accent accent_fg info warning critical
+/// ok border, tint1 to tint6, ansi0 to ansi15. Refused when its text would
+/// not read on its own background.
+pub fn parse_palette(text: &str, name: &str) -> Result<Palette, String> {
+    let lines: Vec<(&str, &str)> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        // The value is the first word: what follows it is a comment.
+        .map(|(k, v)| (k.trim(), v.split_whitespace().next().unwrap_or("")))
+        .collect();
+    let base = lines
+        .iter()
+        .find(|(k, _)| *k == "base")
+        .map(|(_, v)| palette(v).ok_or(format!("no built-in palette {v}")))
+        .transpose()?
+        .unwrap_or(MINT);
+    let mut p = base;
+    p.name = intern(name);
+    for (k, v) in lines {
+        if k == "base" {
+            continue;
+        }
+        let c = crate::color::parse_hex(v).ok_or(format!("{k}: {v} is not #rrggbb"))?;
+        let slot = match k {
+            "bg" => &mut p.bg,
+            "surface" => &mut p.surface,
+            "fg" => &mut p.fg,
+            "muted" => &mut p.muted,
+            "accent" => &mut p.accent,
+            "accent_fg" => &mut p.accent_fg,
+            "info" => &mut p.info,
+            "warning" => &mut p.warning,
+            "critical" => &mut p.critical,
+            "ok" => &mut p.ok,
+            "border" => &mut p.border,
+            _ => match k.strip_prefix("tint").and_then(|n| n.parse::<usize>().ok()) {
+                Some(n @ 1..=6) => &mut p.tints[n - 1],
+                _ => match k.strip_prefix("ansi").and_then(|n| n.parse::<usize>().ok()) {
+                    Some(n @ 0..=15) => &mut p.ansi[n],
+                    // Unknown keys are left for newer versions.
+                    _ => continue,
+                },
+            },
+        };
+        *slot = c;
+    }
+    use crate::color::contrast;
+    if contrast(p.fg, p.bg) < 4.5 || contrast(p.fg, p.surface) < 3.0 {
+        return Err("fg does not read on bg or surface".into());
+    }
+    if contrast(p.accent_fg, p.accent) < 3.0 {
+        return Err("accent_fg does not read on accent".into());
+    }
+    Ok(p)
+}
+
+/// A scheme's name for the life of the process. Each name is kept once, so
+/// loading the same scheme again costs nothing.
+fn intern(name: &str) -> &'static str {
+    use std::sync::Mutex;
+    static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(n) = names.iter().find(|n| **n == name) {
+        return n;
+    }
+    let n: &'static str = Box::leak(name.to_string().into_boxed_str());
+    names.push(n);
+    n
+}
+
+/// 320x170: an 18 px bar on top, a 20 px action bar below, 132 px between:
+/// five 26 px rows. The grid inside that is 4x2 tiles of 74x61 with 4 px gaps
+/// and a 6/3 px margin.
 /// Bar slots are 14x14, so a 12 px icon keeps a 1 px side and top pad.
 pub const CARDPUTER: Metrics = Metrics {
     width: 320,
     height: 170,
     bar_h: 18,
-    hint_h: 18,
+    hint_h: 20,
     pad: 8,
     margin: 6,
     margin_v: 5,
+    grid_v: 3,
     gap: 4,
     radius: 3,
     radius_large: 4,
     radius_small: 2,
     cols: 4,
     rows: 2,
-    badge: 36,
+    badge: 34,
     badge_small: 24,
     app_row_h: 33,
     row_h: 26,
@@ -259,6 +453,14 @@ pub const CARDPUTER: Metrics = Metrics {
     slot_icon: 12,
     cards: 3,
     softkey_x: [49, 105, 161, 217, 273],
+    // Odd, so a 10 px capital has two clear rows above and below inside the
+    // edge; with a 2 px line to the key it fills the 20 px bar but one row.
+    chip_h: 17,
+    chip_r: 3,
+    chip_pad: 7,
+    chip_pad_min: 4,
+    pill_h: 15,
+    toast_h: 20,
 };
 
 /// How far dim terminal text fades toward its background, of 255.
@@ -354,11 +556,32 @@ mod tests {
     use crate::color::contrast;
 
     #[test]
+    fn a_scheme_starts_from_its_base_and_overrides_roles() {
+        let p = parse_palette(
+            "# dusk\nbase = nord\naccent = #f0a35e # orange\ntint2 = #112233\nwhat = #000000\n",
+            "Dusk",
+        )
+        .unwrap();
+        assert_eq!(p.name, "Dusk");
+        assert_eq!(p.bg, NORD.bg);
+        assert_eq!(p.accent, hex("#f0a35e"));
+        assert_eq!(p.tints[1], hex("#112233"));
+        assert!(parse_palette("bg = #dcf3e5\n", "Bad").is_err(), "fg on a light bg");
+        assert!(parse_palette("accent = red\n", "Bad").is_err());
+        assert!(find("../etc/passwd").is_none());
+    }
+
+    #[test]
     fn every_palette_keeps_text_readable() {
         for p in PALETTES {
             assert!(contrast(p.fg, p.bg) >= 7.0, "{} fg", p.name);
             assert!(contrast(p.fg, p.surface) >= 4.5, "{} fg on surface", p.name);
             assert!(contrast(p.muted, p.bg) >= 3.0, "{} muted", p.name);
+            assert!(contrast(p.disabled(), p.bg) >= 2.8, "{} disabled", p.name);
+            for tone in [Tone::Info, Tone::Ok, Tone::Warning, Tone::Critical] {
+                let c = p.tone(tone);
+                assert!(contrast(c, p.surface) >= 3.0, "{} {tone:?} on surface", p.name);
+            }
             assert!(
                 contrast(p.accent_fg, p.accent) >= 4.5,
                 "{} accent text",

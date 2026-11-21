@@ -64,6 +64,8 @@ pub struct Command {
     pub(crate) mode: &'static str,
     pub(crate) live: bool,
     pub(crate) hint: &'static str,
+    /// A chip over key 5, 6 or 7 that runs it: key, icon, word.
+    pub(crate) chip: Option<(u8, &'static str, &'static str)>,
     flags: u8,
 }
 
@@ -78,6 +80,7 @@ impl Command {
             mode: "",
             live: true,
             hint: "",
+            chip: None,
             flags: MENU,
         }
     }
@@ -118,7 +121,15 @@ impl Command {
         self
     }
 
-    /// A short word for a hint bar: `("f x", "scroll")`.
+    /// A chip over key 5, 6 or 7 that runs it while it is live: an icon and
+    /// one short word. A command on Enter or Esc gets none.
+    pub fn chip(mut self, key: u8, icon: &'static str, word: &'static str) -> Command {
+        debug_assert!((5..=7).contains(&key), "chips go on keys 5 to 7");
+        self.chip = Some((key, icon, word));
+        self
+    }
+
+    /// A short word for the hint bar while typing: `("Tab", "show")`.
     pub fn hint(mut self, label: &'static str) -> Command {
         self.hint = label;
         self
@@ -326,6 +337,18 @@ impl Commands {
                 index,
             })
         })
+    }
+
+    /// The chip each live command asks for, by key 5 to 7: id, icon, word,
+    /// and whether it can run now.
+    pub(crate) fn chips(&self) -> [Option<(u32, &'static str, &'static str, bool)>; 3] {
+        let mut out = [None; 3];
+        for c in self.list.iter().filter(|c| c.live) {
+            if let Some((key, icon, word)) = c.chip {
+                out[(key - 5) as usize] = Some((c.id, icon, word, c.is_on()));
+            }
+        }
+        out
     }
 
     /// Key and word for each live command with a hint, for a hint bar. A

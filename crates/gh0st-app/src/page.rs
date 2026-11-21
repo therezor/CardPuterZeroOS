@@ -3,10 +3,12 @@
 use crate::bars::Bars;
 use crate::key::Key;
 use crate::command::{Commands, Step};
+use crate::dialog::{Answer, Dialog};
 use crate::ui::Ui;
 use gh0st_core::config::{self, Config};
 use gh0st_core::keys::Key as RawKey;
 use gh0st_ui::Theme;
+use gh0st_ui::theme::Tone;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 
@@ -18,33 +20,65 @@ use std::path::PathBuf;
 /// every event the SDK calls `draw`, and only the rows that changed go to
 /// the panel, so a page never schedules its own redraws.
 pub trait Page {
-    /// The title in the OS top bar.
+    /// The page's name in the top bar.
     fn title(&self) -> &str;
+
+    /// The page's icon in the top bar, a Lucide name. Empty takes the first
+    /// page's, then the gh0st mark.
+    fn icon(&self) -> &str {
+        ""
+    }
+
+    /// What follows the title, muted: a step, a file. `None` shows the
+    /// app's name on a page above the first.
+    fn context(&self) -> Option<&str> {
+        None
+    }
+
+    /// One word of the app's own in the top bar, in a tone: `("REC",
+    /// Tone::Critical)` while recording.
+    fn status(&self) -> Option<(&str, Tone)> {
+        None
+    }
+
+    /// Sessions, numbered in the top bar: how many, and which is in front.
+    /// None by default.
+    fn tabs(&self) -> (usize, usize) {
+        (0, 0)
+    }
 
     /// Draws the page into the area its bars leave.
     fn draw(&self, ui: &mut Ui);
 
-    /// The OS bars this page shows. The default is the top bar alone.
+    /// The OS bars this page shows: the top bar and the action bar, with the
+    /// menu on 8.
     fn bars(&self) -> Bars {
         Bars::top()
     }
 
-    /// A key press. Esc doesn't come here: see [`back`](Page::back).
+    /// A key press. Esc and 4 don't come here: see [`back`](Page::back).
     fn key(&mut self, key: Key, cx: &mut Cx) {
         let _ = (key, cx);
     }
 
-    /// Esc was pressed. Return false to keep the page open, for example to
-    /// close a dialog first. The default closes the page.
+    /// Esc, or 4, was pressed: go back one step. Return false to stay, for
+    /// example after leaving a mode. The default closes the page; on the
+    /// first page the SDK asks for a 0.7 s hold before the app closes.
     fn back(&mut self, cx: &mut Cx) -> bool {
         let _ = cx;
         true
     }
 
     /// True while the page takes text. Letters and digits then type instead
-    /// of moving the selection or pressing soft keys.
+    /// of moving the selection or running chips, and the action bar shows
+    /// the page's [`hints`](Bars::hints).
     fn typing(&self) -> bool {
         false
+    }
+
+    /// A dialog from [`Cx::ask`] closed: Yes with its field's text, or No.
+    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
+        let _ = (id, answer, cx);
     }
 
     /// The page has opened. Start jobs and timers here.
@@ -156,7 +190,7 @@ pub(crate) enum Request {
     Push(Box<dyn Page>),
     Back,
     Quit,
-    Toast(String),
+    Toast(String, Tone),
     Timer {
         id: u64,
         ms: u64,
@@ -181,6 +215,7 @@ pub(crate) enum Request {
     Redraw,
     Notify(String),
     ShowKeys,
+    Ask(u32, Dialog),
 }
 
 /// The app's settings in the shared device config,
@@ -304,9 +339,21 @@ impl Cx<'_> {
         self.s.requests.push(Request::Quit);
     }
 
-    /// A short message over the bottom bar for two seconds.
+    /// A short line that floats above the action bar for two seconds.
     pub fn toast(&mut self, text: &str) {
-        self.s.requests.push(Request::Toast(text.to_string()));
+        self.toast_tone(Tone::Info, text);
+    }
+
+    /// A toast in a tone: Ok for done, Warning for take care, Critical for
+    /// an error.
+    pub fn toast_tone(&mut self, tone: Tone, text: &str) {
+        self.s.requests.push(Request::Toast(text.to_string(), tone));
+    }
+
+    /// Opens a dialog over the page. It takes every key until Enter, Esc or
+    /// its held chip closes it, then [`Page::answer`] hears `id` and how.
+    pub fn ask(&mut self, id: u32, dialog: Dialog) {
+        self.s.requests.push(Request::Ask(id, dialog));
     }
 
     /// Fires [`Page::timer`] once, `ms` from now.
@@ -409,8 +456,7 @@ impl Cx<'_> {
         self.s.requests.push(Request::Redraw);
     }
 
-    /// Opens the Keys screen: every key of this page's commands, as the
-    /// menu's Keys row does. For a page's own help key.
+    /// Opens Help: every key of this page, as Fn+H does.
     pub fn show_keys(&mut self) {
         self.s.requests.push(Request::ShowKeys);
     }

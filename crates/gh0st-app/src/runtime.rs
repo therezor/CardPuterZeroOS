@@ -1,21 +1,55 @@
 //! The page stack and everything that drives it: keys, timers, jobs, the
 //! frame. The device loop, the sim and the test driver all feed this.
 
-use crate::bars::{Bars, Bottom};
+use crate::bars::{Bars, Chip};
 use crate::key::{self, Key};
-use crate::command::Commands;
+use crate::command::{Commands, Step};
+use crate::dialog::{self, Answer, Dialog};
 use crate::menu::{Menu, Out, Sheet, SheetOut};
 use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer, Watch};
 use crate::ui::Ui;
 use gh0st_core::keys::{Keyboard, State};
 use gh0st_core::keys::code as keys_code;
 use gh0st_core::{battery, child, job, rt, status};
-use gh0st_ui::widgets::{self, Battery, Hint, Net, SoftKey as Slot, Status};
+use gh0st_ui::theme::Tone;
+use gh0st_ui::widgets::{self, Battery, Hint, Look, Net, Status};
 use gh0st_ui::{Canvas, Rect, Theme, theme};
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 const TOAST_MS: u64 = 2000;
+/// How long Esc is held on the first page to close the app, and a red chip
+/// to run.
+const HOLD_MS: u64 = 700;
+/// A frame of the hold's fill.
+const HOLD_FRAME_MS: u64 = 40;
+/// Tab numbers for the top bar.
+const TABS: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+struct Toast {
+    text: String,
+    tone: Tone,
+    until: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Held {
+    /// Esc on the first page: the app closes.
+    Exit,
+    /// A red chip on key 5 to 7: it runs.
+    Chip(u8),
+    /// A dialog's held yes on 7.
+    Dialog,
+}
+
+/// A key held to confirm. It exists only while the key is down.
+struct Hold {
+    code: u16,
+    what: Held,
+    start: u64,
+    next: u64,
+    pc: u8,
+}
 
 struct TimerEntry {
     id: u64,
@@ -110,7 +144,8 @@ impl Bar {
 enum Overlay {
     None,
     Menu(Menu),
-    Keys(Sheet),
+    Help(Sheet),
+    Dialog { id: u32, owner: usize, d: Box<Dialog> },
 }
 
 pub(crate) struct Runtime {
@@ -132,14 +167,17 @@ pub(crate) struct Runtime {
     pub paused: bool,
     /// The shell link, when the shell started the app.
     pub link: Option<gh0st_core::link::Link>,
-    /// The app menu or the Keys screen, while one is open.
+    /// The app menu or Help, while one is open.
     overlay: Overlay,
     /// Keys whose press the menu or a command took: their repeats and
     /// releases don't reach the page.
     taken: Vec<u16>,
     /// The menu row last picked, and the depth of the page it was on.
     menu_last: Option<(usize, u32)>,
-    toast: Option<(String, u64)>,
+    toast: Option<Toast>,
+    hold: Option<Hold>,
+    /// The chip whose key is down, and that key: drawn pressed.
+    pressed: Option<(u16, u8)>,
     bar: Bar,
     palette: String,
     pub dirty: bool,
@@ -154,7 +192,7 @@ impl Runtime {
             .get_str("gh0st.palette")
             .unwrap_or("")
             .to_string();
-        s.theme = Theme::new(theme::palette(&palette).unwrap_or(theme::MINT));
+        s.theme = Theme::new(theme::find(&palette).unwrap_or(theme::MINT));
         let t = s.theme;
         Runtime {
             stack: vec![page],
@@ -173,6 +211,8 @@ impl Runtime {
             taken: Vec::new(),
             menu_last: None,
             toast: None,
+            hold: None,
+            pressed: None,
             bar: Bar::new(),
             palette,
             dirty: true,
@@ -231,7 +271,7 @@ impl Runtime {
                 }
                 Request::Back => self.pop(now),
                 Request::Quit => self.quit_all(),
-                Request::Toast(text) => self.toast = Some((text, now + TOAST_MS)),
+                Request::Toast(text, tone) => self.show_toast(text, tone, now),
                 Request::Timer { id, ms, every } => self.timers.push(TimerEntry {
                     id,
                     owner,
@@ -269,11 +309,18 @@ impl Runtime {
                     Some(l) if self.paused => {
                         l.send(&["toast", &text]);
                     }
-                    _ => self.toast = Some((text, now + TOAST_MS)),
+                    _ => self.show_toast(text, Tone::Info, now),
                 },
+                Request::Ask(id, d) => {
+                    self.overlay = Overlay::Dialog {
+                        id,
+                        owner,
+                        d: Box::new(d),
+                    };
+                    self.dirty = true;
+                }
                 Request::ShowKeys => {
-                    let cmds = self.commands_of(owner);
-                    self.overlay = Overlay::Keys(Sheet::new(cmds.iter(), None));
+                    self.overlay = Overlay::Help(self.help(owner, None));
                     self.dirty = true;
                 }
             }
@@ -286,9 +333,22 @@ impl Runtime {
         let name = self.s.settings.get_str("gh0st.palette").unwrap_or("");
         if name != self.palette {
             self.palette = name.to_string();
-            self.s.theme = Theme::new(theme::palette(name).unwrap_or(theme::MINT));
+            self.s.theme = Theme::new(theme::find(name).unwrap_or(theme::MINT));
             self.dirty = true;
         }
+    }
+
+    pub(crate) fn toast_text(&self) -> Option<&str> {
+        self.toast.as_ref().map(|t| t.text.as_str())
+    }
+
+    fn show_toast(&mut self, text: String, tone: Tone, now: u64) {
+        self.toast = Some(Toast {
+            text,
+            tone,
+            until: now + TOAST_MS,
+        });
+        self.dirty = true;
     }
 
     fn pop(&mut self, now: u64) {
@@ -354,22 +414,30 @@ impl Runtime {
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
+        if raw.state == State::Release {
+            if self.hold.as_ref().is_some_and(|h| h.code == raw.code) {
+                self.let_go(now);
+            }
+            if self.pressed.is_some_and(|p| p.0 == raw.code) {
+                self.pressed = None;
+                self.dirty = true;
+            }
+        }
         let taken = self.taken.iter().position(|&c| c == raw.code);
         if let (State::Release, Some(i)) = (raw.state, taken) {
             self.taken.swap_remove(i);
             return;
         }
-        // Fn+Esc and Help (Fn+H) are the menu key in every app, raw-key
-        // pages too. Plain Esc stays the page's.
-        let menu_key = raw.code == keys_code::HELP || (raw.code == keys_code::ESC && raw.fn_);
-        if menu_key {
+        // Help (Fn+H) in every app, raw-key pages too.
+        let in_dialog = matches!(self.overlay, Overlay::Dialog { .. });
+        if raw.code == keys_code::HELP && !in_dialog {
             if raw.state == State::Press {
                 self.take(raw.code);
-                if let Overlay::None = self.overlay {
-                    let select = self.menu_last.filter(|l| l.0 == top).map(|l| l.1);
-                    self.overlay = Overlay::Menu(Menu::new(top, self.commands_of(top), select));
+                if let Overlay::Help(_) = self.overlay {
+                    self.close_overlay();
                 } else {
                     self.close_overlay();
+                    self.overlay = Overlay::Help(self.help(top, None));
                 }
                 self.dirty = true;
             }
@@ -401,25 +469,183 @@ impl Runtime {
                 None => {}
             }
         }
-        if self.stack[top].raw_keys() {
+        let raw_page = self.stack[top].raw_keys();
+        // Esc goes back a step on every page, raw-key ones too; Fn+Esc is
+        // the Esc key itself, for a program that wants it.
+        if raw.code == keys_code::ESC {
+            if raw.fn_ && raw_page {
+                let plain = gh0st_core::keys::Key { fn_: false, ..*raw };
+                self.call_quiet(top, now, |p, cx| p.raw(&plain, cx));
+            } else if raw.state == State::Press {
+                self.back(top, raw.code, now);
+            }
+            return;
+        }
+        if raw_page {
             self.call_quiet(top, now, |p, cx| p.raw(raw, cx));
             return;
         }
         let typing = self.stack[top].typing();
-        let Some(k) = key::map(raw, typing, self.top_bars().soft_slots()) else {
+        let bars = self.top_bars();
+        let plain = !raw.ctrl && !raw.alt && !raw.fn_;
+        if raw.ch == Some('8') && plain && !typing && bars.menu && bars.bottom {
+            if raw.state == State::Press {
+                self.take(raw.code);
+                self.open_menu(top);
+            }
+            return;
+        }
+        let chips = self.chips_of(top, &bars);
+        let live = chips.each_ref().map(|c| c.is_some());
+        let Some(k) = key::map(raw, typing, live) else {
             return;
         };
-        if k == Key::Back {
-            let page = &mut self.stack[top];
-            let close = page.back(&mut Cx { s: &mut self.s });
-            self.apply(top, now);
-            if close && self.stack.len() == top + 1 {
-                self.pop(now);
+        match k {
+            Key::Back => self.back(top, raw.code, now),
+            Key::Soft(n) => {
+                if let Some(chip) = chips[(n - 5) as usize].clone() {
+                    self.press_chip(top, n, raw.code, chip, now);
+                }
             }
-            self.dirty = true;
-        } else {
-            self.call(top, now, |p, cx| p.key(k, cx));
+            _ => self.call(top, now, |p, cx| p.key(k, cx)),
         }
+    }
+
+    /// Esc or 4: the page goes back a step if it can. On the first page,
+    /// closing needs a hold, started only by this press.
+    fn back(&mut self, top: usize, code: u16, now: u64) {
+        let page = &mut self.stack[top];
+        let close = page.back(&mut Cx { s: &mut self.s });
+        self.apply(top, now);
+        self.dirty = true;
+        if !close || self.stack.len() != top + 1 {
+            return;
+        }
+        if top > 0 {
+            self.pop(now);
+            return;
+        }
+        self.hold = Some(Hold {
+            code,
+            what: Held::Exit,
+            start: now,
+            next: now + HOLD_FRAME_MS,
+            pc: 0,
+        });
+        self.show_toast("Hold to exit".into(), Tone::Info, now);
+    }
+
+    fn press_chip(&mut self, top: usize, n: u8, code: u16, chip: Chip, now: u64) {
+        if !chip.runs_key() {
+            return;
+        }
+        self.pressed = Some((code, n));
+        self.dirty = true;
+        if chip.hold {
+            self.hold = Some(Hold {
+                code,
+                what: Held::Chip(n),
+                start: now,
+                next: now + HOLD_FRAME_MS,
+                pc: 0,
+            });
+            return;
+        }
+        self.run_chip(top, n, chip.command, now);
+    }
+
+    fn run_chip(&mut self, top: usize, n: u8, command: Option<u32>, now: u64) {
+        match command {
+            Some(id) => self.call(top, now, |p, cx| p.command(id, Step::Run, cx)),
+            None => self.call(top, now, |p, cx| p.key(Key::Soft(n), cx)),
+        }
+    }
+
+    /// Closes the dialog and tells its page how.
+    fn answer(&mut self, yes: bool, now: u64) {
+        let Overlay::Dialog { id, owner, mut d } = std::mem::replace(&mut self.overlay, Overlay::None)
+        else {
+            return;
+        };
+        let answer = if yes {
+            Answer::Yes(d.take_text())
+        } else {
+            // A half-typed password goes too.
+            d.take_text().clear();
+            Answer::No
+        };
+        self.dirty = true;
+        self.call(owner, now, |p, cx| p.answer(id, answer, cx));
+    }
+
+    /// The held key came up before the hold was done: nothing happens. A
+    /// red chip says it wants holding.
+    fn let_go(&mut self, now: u64) {
+        let Some(h) = self.hold.take() else {
+            return;
+        };
+        if let (Held::Dialog, Overlay::Dialog { d, .. }) = (h.what, &self.overlay) {
+            let say = format!("Hold to {}", d.yes);
+            self.show_toast(say, Tone::Info, now);
+        }
+        if let Held::Chip(n) = h.what {
+            let top = self.stack.len().saturating_sub(1);
+            let bars = self.top_bars();
+            let word = self.chips_of(top, &bars)[(n - 5) as usize]
+                .as_ref()
+                .map(|c| c.word.to_lowercase())
+                .unwrap_or_default();
+            self.show_toast(format!("Hold to {word}"), Tone::Info, now);
+        }
+        self.dirty = true;
+    }
+
+    /// The chips over keys 5 to 7: the page's own, else its live commands'.
+    fn chips_of(&self, i: usize, bars: &Bars) -> [Option<Chip>; 3] {
+        let from_cmds = self.commands_of(i).chips();
+        std::array::from_fn(|k| {
+            bars.chips[k].clone().or_else(|| {
+                from_cmds[k].map(|(id, icon, word, on)| Chip::new(icon, word).runs(id).disabled(!on))
+            })
+        })
+    }
+
+    fn open_menu(&mut self, top: usize) {
+        let select = self.menu_last.filter(|l| l.0 == top).map(|l| l.1);
+        self.overlay = Overlay::Menu(Menu::new(top, self.commands_of(top), select));
+        self.dirty = true;
+    }
+
+    /// Help for page `i`: its chips and the menu, Esc and Enter, its
+    /// commands, then the keys that work everywhere.
+    fn help(&self, i: usize, menu: Option<Menu>) -> Sheet {
+        let bars = self.stack.get(i).map(|p| p.bars()).unwrap_or_default();
+        let cmds = self.commands_of(i);
+        let mut under = Vec::new();
+        if bars.bottom {
+            for (k, chip) in self.chips_of(i, &bars).iter().enumerate() {
+                let Some(chip) = chip else {
+                    continue;
+                };
+                let mut keys = (k + 5).to_string();
+                if let Some(c) = chip.command.and_then(|id| cmds.iter().find(|c| c.id == id)) {
+                    if !c.keys.is_empty() {
+                        keys = format!("{keys} {}", c.keys_text());
+                    }
+                }
+                under.push((keys, chip.word.clone()));
+            }
+            if bars.menu {
+                under.push(("8".into(), "Menu".into()));
+            }
+        }
+        let back = if i == 0 { "Back; hold to exit" } else { "Back" };
+        let keys = vec![
+            ("Esc".into(), back.into()),
+            ("Enter".into(), "Open, or the main thing".into()),
+        ];
+        let listed: Vec<&crate::command::Command> = cmds.iter().collect();
+        Sheet::new(under, keys, listed.into_iter(), menu)
     }
 
     fn take(&mut self, code: u16) {
@@ -442,8 +668,8 @@ impl Runtime {
         let overlay = std::mem::replace(&mut self.overlay, Overlay::None);
         let menu = match overlay {
             Overlay::Menu(m) => Some(m),
-            Overlay::Keys(s) => s.menu,
-            Overlay::None => None,
+            Overlay::Help(s) => s.menu,
+            Overlay::None | Overlay::Dialog { .. } => None,
         };
         // Back on a setting just changed, to change it again; anywhere else
         // the menu opens at the top, on the most used row.
@@ -455,21 +681,55 @@ impl Runtime {
         if raw.state != State::Release {
             self.dirty = true;
         }
+        if let Overlay::Dialog { d, .. } = &mut self.overlay {
+            if d.hold && raw.ch == Some('7') && raw.state == State::Press {
+                self.pressed = Some((raw.code, 7));
+                self.hold = Some(Hold {
+                    code: raw.code,
+                    what: Held::Dialog,
+                    start: now,
+                    next: now + HOLD_FRAME_MS,
+                    pc: 0,
+                });
+                return;
+            }
+            match d.key(raw) {
+                dialog::Out::Nothing => {}
+                dialog::Out::Yes => self.answer(true, now),
+                dialog::Out::No => self.answer(false, now),
+            }
+            return;
+        }
         match &mut self.overlay {
-            Overlay::None => {}
-            Overlay::Keys(s) => {
-                if s.key(raw) == SheetOut::Back {
+            Overlay::None | Overlay::Dialog { .. } => {}
+            Overlay::Help(s) => match s.key(raw) {
+                SheetOut::Nothing => {}
+                // One level back: to the menu it came from, else the page.
+                SheetOut::Back => {
                     let menu = match std::mem::replace(&mut self.overlay, Overlay::None) {
-                        Overlay::Keys(s) => s.menu,
+                        Overlay::Help(s) => s.menu,
                         _ => None,
                     };
                     if let Some(m) = menu {
                         self.overlay = Overlay::Menu(m);
                     }
                 }
-            }
+                SheetOut::Menu => {
+                    let top = self.stack.len().saturating_sub(1);
+                    self.overlay = Overlay::None;
+                    self.open_menu(top);
+                }
+            },
             Overlay::Menu(m) => {
                 let owner = m.owner;
+                // 8 opened it and 8 closes it.
+                let eight = raw.ch == Some('8') && !raw.ctrl && !raw.alt && !raw.fn_;
+                if eight {
+                    if raw.state == State::Press {
+                        self.close_overlay();
+                    }
+                    return;
+                }
                 match m.key(raw) {
                     Out::Nothing => {}
                     Out::Close => self.close_overlay(),
@@ -477,11 +737,10 @@ impl Runtime {
                         self.close_overlay();
                         self.quit_all();
                     }
-                    Out::Keys => {
+                    Out::Help => {
                         if let Overlay::Menu(m) = std::mem::replace(&mut self.overlay, Overlay::None) {
-                            let mut sheet = Sheet::new(m.page_commands(), None);
-                            sheet.menu = Some(m);
-                            self.overlay = Overlay::Keys(sheet);
+                            let owner = m.owner;
+                            self.overlay = Overlay::Help(self.help(owner, Some(m)));
                         }
                     }
                     Out::Run { id, step, close } => {
@@ -562,6 +821,8 @@ impl Runtime {
     /// Another app or the shell is in front: no keys, no frames.
     pub fn pause_input(&mut self, now: u64) {
         self.overlay = Overlay::None;
+        self.hold = None;
+        self.pressed = None;
         self.taken.clear();
         self.kb.reset();
         self.paused = true;
@@ -652,6 +913,9 @@ impl Runtime {
     /// end, or while the top bar shows, the clock's minute and the battery
     /// read.
     pub fn next_at(&self) -> Option<u64> {
+        if self.quit {
+            return None;
+        }
         if self.paused {
             let pending = (!self.pending.is_empty()).then_some(0);
             return rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([pending]));
@@ -661,7 +925,8 @@ impl Runtime {
         let battery = (top && self.bar.battery_dir.is_some()).then_some(self.bar.battery_at);
         rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([
             self.kb.repeat_at(),
-            self.toast.as_ref().map(|t| t.1),
+            self.toast.as_ref().map(|t| t.until),
+            self.hold.as_ref().map(|h| h.next.min(h.start + HOLD_MS)),
             clock,
             battery,
             (!self.pending.is_empty()).then_some(0),
@@ -685,7 +950,9 @@ impl Runtime {
             }
             self.call(owner, now, |p, cx| p.timer(Timer(id), cx));
         }
-        if self.toast.as_ref().is_some_and(|t| t.1 <= now) {
+        self.hold_tick(now);
+        // A toast stays while its hold lasts.
+        if self.toast.as_ref().is_some_and(|t| t.until <= now) && self.hold.is_none() {
             self.toast = None;
             self.dirty = true;
         }
@@ -704,6 +971,37 @@ impl Runtime {
         }
     }
 
+    fn hold_tick(&mut self, now: u64) {
+        let Some(h) = self.hold.as_mut() else {
+            return;
+        };
+        if now < h.next && now < h.start + HOLD_MS {
+            return;
+        }
+        if now < h.start + HOLD_MS {
+            h.pc = ((now - h.start) * 100 / HOLD_MS) as u8;
+            h.next = now + HOLD_FRAME_MS;
+            self.dirty = true;
+            return;
+        }
+        let what = h.what;
+        self.hold = None;
+        self.pressed = None;
+        self.dirty = true;
+        match what {
+            Held::Exit => self.quit_all(),
+            Held::Dialog => self.answer(true, now),
+            Held::Chip(n) => {
+                let top = self.stack.len().saturating_sub(1);
+                let bars = self.top_bars();
+                let command = self.chips_of(top, &bars)[(n - 5) as usize]
+                    .as_ref()
+                    .and_then(|c| c.command);
+                self.run_chip(top, n, command, now);
+            }
+        }
+    }
+
     /// Draws the top page and, until the shell draws them, its bars.
     pub fn render(&mut self) {
         self.dirty = false;
@@ -717,76 +1015,152 @@ impl Runtime {
             let mut ui = Ui::new(&mut self.canvas, &t, area);
             page.draw(&mut ui);
         }
-        // Above the hint bar the menu and the Keys screen draw.
+        // Above the action bar the menu and Help draw.
         let panel_h = (t.m.height - t.m.hint_h - area.y).min(area.h);
         let panel = Rect::new(area.x, area.y, area.w, panel_h);
-        let overlay_hints: Option<Vec<(&str, &str)>> = match &self.overlay {
-            Overlay::None => None,
-            Overlay::Menu(m) => {
-                m.draw(&mut self.canvas, &t, panel);
-                Some(m.hints().to_vec())
-            }
-            Overlay::Keys(s) => {
-                s.draw(&mut self.canvas, &t, panel);
-                Some(s.hints().to_vec())
-            }
-        };
+        match &self.overlay {
+            Overlay::None => {}
+            Overlay::Menu(m) => m.draw(&mut self.canvas, &t, panel),
+            Overlay::Help(s) => s.draw(&mut self.canvas, &t, panel),
+            Overlay::Dialog { d, .. } => d.draw(&mut self.canvas, &t, area),
+        }
         let full = self.canvas.bounds();
         self.canvas.set_clip(full);
-        let c = &mut self.canvas;
+        let top = self.stack.len() - 1;
+        let root = &self.stack[0];
         if bars.top {
-            // The dock of open apps is the shell's; an app's own bar has none.
+            let icon = match page.icon() {
+                "" => root.icon(),
+                i => i,
+            };
+            let context = match page.context() {
+                Some(c) => c,
+                None if top > 0 => root.title(),
+                None => "",
+            };
+            let (n, front) = page.tabs();
             let s = Status {
                 dock: &[],
                 front: None,
+                icon,
                 title: page.title(),
+                context,
+                tabs: &TABS[..n.min(TABS.len())],
+                front_tab: front,
+                item: page.status(),
                 clock: &self.bar.clock,
                 battery: self.bar.battery,
                 net: self.bar.net,
                 bluetooth: self.bar.bluetooth,
             };
-            widgets::status_bar(c, &t, &s);
+            widgets::status_bar(&mut self.canvas, &t, &s);
         }
-        if let Some(h) = &overlay_hints {
-            let hints: Vec<Hint> = h.iter().map(|&(key, label)| Hint { key, label }).collect();
-            widgets::hint_bar(c, &t, &hints, None);
-        } else {
-            match &bars.bottom {
-                Bottom::None => {}
-                Bottom::Hints(h) => {
-                    let hints: Vec<Hint> =
-                        h.iter().map(|(key, label)| Hint { key, label }).collect();
-                    widgets::hint_bar(c, &t, &hints, None);
+        let none = widgets::Chip::default();
+        let menu = |look| widgets::Chip {
+            icon: "menu",
+            word: "",
+            look,
+        };
+        let bottom = bars.bottom || !matches!(self.overlay, Overlay::None);
+        match &self.overlay {
+            Overlay::Menu(_) => {
+                let chips = [none, none, none, none, menu(Look::On)];
+                widgets::action_bar(&mut self.canvas, &t, &chips);
+            }
+            Overlay::Help(_) => {
+                let chips = [none, none, none, none, menu(Look::Normal)];
+                widgets::action_bar(&mut self.canvas, &t, &chips);
+            }
+            Overlay::Dialog { d, .. } if d.typing() => {
+                let h: Vec<Hint> = d
+                    .hints()
+                    .into_iter()
+                    .map(|(key, label)| Hint { key, label })
+                    .collect();
+                widgets::hint_bar(&mut self.canvas, &t, &h, None);
+            }
+            Overlay::Dialog { d, .. } => {
+                let mut chips = [none; 5];
+                // A chip's word starts with a capital; a hint's doesn't.
+                let mut word = d.yes.clone();
+                if let Some(f) = word.get_mut(..1) {
+                    f.make_ascii_uppercase();
                 }
-                Bottom::Commands => {
-                    let mut cmds = Commands::new();
-                    page.commands(&mut cmds);
-                    let h = cmds.hints();
-                    let hints: Vec<Hint> =
-                        h.iter().map(|(key, label)| Hint { key, label }).collect();
-                    widgets::hint_bar(c, &t, &hints, None);
+                if d.hold {
+                    let look = match &self.hold {
+                        Some(h) if h.what == Held::Dialog => Look::Hold(h.pc),
+                        _ => Look::Hold(0),
+                    };
+                    chips[3] = widgets::Chip {
+                        icon: "trash-2",
+                        word: &word,
+                        look,
+                    };
                 }
-                Bottom::Soft(keys) => {
-                    let slots: [Slot; 5] = std::array::from_fn(|i| Slot {
-                        icon: &keys[i].icon,
-                        label: &keys[i].label,
-                        lit: keys[i].lit,
-                    });
-                    widgets::softkey_bar(c, &t, &slots);
+                widgets::action_bar(&mut self.canvas, &t, &chips);
+            }
+            Overlay::None if !bars.bottom => {}
+            Overlay::None if page.typing() => {
+                let mut h: Vec<Hint> = bars
+                    .hints
+                    .iter()
+                    .map(|(key, label)| Hint { key, label })
+                    .collect();
+                if h.is_empty() {
+                    h = vec![
+                        Hint {
+                            key: "Esc",
+                            label: "back",
+                        },
+                        Hint {
+                            key: "Enter",
+                            label: "ok",
+                        },
+                    ];
                 }
+                let help = Hint {
+                    key: "Fn h",
+                    label: "help",
+                };
+                widgets::hint_bar(&mut self.canvas, &t, &h, Some(help));
+            }
+            Overlay::None => {
+                let found = self.chips_of(top, &bars);
+                let mut chips = [none; 5];
+                for (k, c) in found.iter().enumerate() {
+                    let Some(c) = c else {
+                        continue;
+                    };
+                    let n = k as u8 + 5;
+                    let look = match &self.hold {
+                        Some(h) if h.what == Held::Chip(n) => Look::Hold(h.pc),
+                        _ if self.pressed.is_some_and(|p| p.1 == n) => Look::Pressed,
+                        _ => c.look,
+                    };
+                    chips[k + 1] = widgets::Chip {
+                        icon: &c.icon,
+                        word: &c.word,
+                        look,
+                    };
+                }
+                if bars.menu {
+                    chips[4] = menu(Look::Normal);
+                }
+                widgets::action_bar(&mut self.canvas, &t, &chips);
             }
         }
-        if let Some((text, _)) = &self.toast {
-            let r = if bars.bottom != Bottom::None {
-                Rect::new(0, t.m.height - t.m.hint_h, t.m.width, t.m.hint_h)
-            } else if bars.top {
-                Rect::new(0, 0, t.m.width, t.m.bar_h)
+        if let Some(toast) = &self.toast {
+            let foot = if bottom {
+                t.m.height - t.m.hint_h
             } else {
-                Rect::new(0, t.m.height - t.m.hint_h, t.m.width, t.m.hint_h)
+                t.m.height
             };
-            c.fill(r, t.c.surface);
-            c.hline(0, r.w, r.y, t.c.accent);
-            widgets::text_centre(c, t.f.small_bold, r, text, t.c.fg);
+            let held = self
+                .hold
+                .as_ref()
+                .filter(|h| h.what == Held::Exit)
+                .map(|h| h.pc);
+            widgets::toast(&mut self.canvas, &t, foot, toast.tone, &toast.text, held);
         }
     }
 }
@@ -870,5 +1244,211 @@ mod tests {
         assert_eq!(run(true, false), (reads, 1));
         assert_eq!(run(false, false), (0, 0));
         assert_eq!(run(true, true), (0, 0));
+    }
+
+    mod keys {
+        use crate::prelude::*;
+        use crate::testing::Driver;
+        use gh0st_core::keys::Key as RawKey;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        type Log = Rc<RefCell<Vec<String>>>;
+
+        /// Logs what reaches it. `chips` sets a chip on 5 and a red one on 6.
+        struct Probe {
+            log: Log,
+            typing: bool,
+            raw: bool,
+        }
+
+        const ERASE: u32 = 1;
+
+        impl Page for Probe {
+            fn title(&self) -> &str {
+                "Probe"
+            }
+            fn draw(&self, _: &mut Ui) {}
+            fn bars(&self) -> Bars {
+                Bars::top()
+                    .chip(5, Chip::new("search", "Find"))
+                    .chip(6, Chip::new("trash-2", "Erase").hold().runs(ERASE))
+            }
+            fn typing(&self) -> bool {
+                self.typing
+            }
+            fn raw_keys(&self) -> bool {
+                self.raw
+            }
+            fn key(&mut self, key: Key, cx: &mut Cx) {
+                self.log.borrow_mut().push(format!("{key:?}"));
+                if key == Key::Enter {
+                    let log = self.log.clone();
+                    cx.push(Probe {
+                        log,
+                        typing: false,
+                        raw: false,
+                    });
+                }
+            }
+            fn raw(&mut self, key: &RawKey, _: &mut Cx) {
+                if key.state == gh0st_core::keys::State::Press {
+                    self.log.borrow_mut().push(format!("raw {} fn {}", key.code, key.fn_));
+                }
+            }
+            fn command(&mut self, id: u32, _: Step, _: &mut Cx) {
+                self.log.borrow_mut().push(format!("command {id}"));
+            }
+        }
+
+        fn probe(typing: bool, raw: bool) -> (Driver, Log) {
+            let log = Log::default();
+            let d = Driver::new(Probe {
+                log: log.clone(),
+                typing,
+                raw,
+            });
+            (d, log)
+        }
+
+        #[test]
+        fn esc_on_the_first_page_closes_only_when_held() {
+            let (mut d, _) = probe(false, false);
+            d.keys("esc").wait(1000);
+            assert!(!d.quit(), "a tap only asks for a hold");
+            assert_eq!(d.toast(), Some("Hold to exit"));
+            d.keys("down esc").wait(500);
+            assert!(!d.quit());
+            d.keys("up esc").wait(1000);
+            assert!(!d.quit(), "let go early: nothing happens");
+            d.keys("down esc").wait(800);
+            assert!(d.quit());
+        }
+
+        #[test]
+        fn a_hold_begun_on_a_deeper_page_goes_back_and_no_further() {
+            let (mut d, _) = probe(false, false);
+            d.keys("enter");
+            d.keys("down esc").wait(1500);
+            assert!(!d.quit());
+            assert_eq!(d.toast(), None);
+        }
+
+        #[test]
+        fn four_is_esc_and_five_runs_its_chip() {
+            let (mut d, log) = probe(false, false);
+            d.keys("enter\n5\n4\n4").wait(100);
+            assert_eq!(*log.borrow(), ["Enter", "Soft(5)"]);
+            assert!(!d.quit());
+            assert_eq!(d.toast(), Some("Hold to exit"), "the second 4 was on the first page");
+        }
+
+        #[test]
+        fn a_red_chip_runs_only_when_held() {
+            let (mut d, log) = probe(false, false);
+            d.keys("6").wait(100);
+            assert!(log.borrow().is_empty());
+            assert_eq!(d.toast(), Some("Hold to erase"));
+            d.keys("down 6").wait(800);
+            assert_eq!(*log.borrow(), [format!("command {ERASE}")]);
+        }
+
+        #[test]
+        fn while_typing_digits_type() {
+            let (mut d, log) = probe(true, false);
+            d.keys("5\n4\n8");
+            assert_eq!(*log.borrow(), ["Char('5')", "Char('4')", "Char('8')"]);
+        }
+
+        #[test]
+        fn eight_opens_the_menu_and_fn_h_help_and_esc_steps_back() {
+            let (mut d, log) = probe(false, false);
+            d.keys("8\n5");
+            assert!(log.borrow().is_empty(), "5 is the menu's now");
+            d.keys("8\n5");
+            assert_eq!(*log.borrow(), ["Soft(5)"], "8 closed the menu");
+            d.keys("8\nesc\n5");
+            assert_eq!(log.borrow().len(), 2, "Esc closed the menu");
+            d.keys("help\n8\nesc\n5");
+            assert_eq!(log.borrow().len(), 3, "help, then the menu, then back");
+            assert!(!d.quit());
+        }
+
+        #[test]
+        fn a_raw_page_gets_esc_from_fn_esc_and_goes_back_on_esc() {
+            let (mut d, log) = probe(false, true);
+            d.keys("fn+esc\n5");
+            let esc = gh0st_core::keys::code::ESC;
+            // The page sees Fn itself too: it takes every key.
+            let got: Vec<String> = log
+                .borrow()
+                .iter()
+                .filter(|l| l.starts_with(&format!("raw {esc} ")) || l.starts_with("raw 6 "))
+                .cloned()
+                .collect();
+            assert_eq!(got, [format!("raw {esc} fn false"), "raw 6 fn false".into()]);
+            d.keys("esc");
+            assert_eq!(d.toast(), Some("Hold to exit"));
+        }
+
+        #[test]
+        fn no_deadline_outlives_the_hold() {
+            let (mut d, _) = probe(false, false);
+            d.keys("down esc").wait(200).keys("up esc").wait(3000);
+            assert!(!d.quit());
+            assert_eq!(d.toast(), None, "the toast has gone too");
+        }
+
+        /// Asks on Enter: text on 5, a held erase on 6.
+        struct Asker {
+            log: Log,
+        }
+
+        impl Page for Asker {
+            fn title(&self) -> &str {
+                "Asker"
+            }
+            fn draw(&self, _: &mut Ui) {}
+            fn bars(&self) -> Bars {
+                Bars::top()
+                    .chip(5, Chip::new("pencil", "Name"))
+                    .chip(6, Chip::new("trash-2", "Erase").danger())
+            }
+            fn key(&mut self, key: Key, cx: &mut Cx) {
+                match key {
+                    Key::Soft(5) => cx.ask(1, Dialog::password("Join").yes("join")),
+                    Key::Soft(6) => cx.ask(2, Dialog::confirm("Erase?", "Gone.").yes("erase").hold()),
+                    _ => {}
+                }
+            }
+            fn answer(&mut self, id: u32, a: Answer, _: &mut Cx) {
+                self.log.borrow_mut().push(format!("{id} {a:?}"));
+            }
+        }
+
+        fn asker() -> (Driver, Log) {
+            let log = Log::default();
+            (Driver::new(Asker { log: log.clone() }), log)
+        }
+
+        #[test]
+        fn a_dialog_takes_the_keys_until_enter_or_esc() {
+            let (mut d, log) = asker();
+            d.keys("5\ntype hunter2\nbackspace\n8\nenter");
+            assert_eq!(*log.borrow(), ["1 Yes(\"hunter8\")"], "digits type, 8 too");
+            d.keys("5\nx\nesc");
+            assert_eq!(log.borrow()[1], "1 No");
+            assert!(!d.quit());
+        }
+
+        #[test]
+        fn a_held_dialog_ignores_enter_and_wants_seven_held() {
+            let (mut d, log) = asker();
+            d.keys("6\nenter\n7").wait(100);
+            assert!(log.borrow().is_empty());
+            assert_eq!(d.toast(), Some("Hold to erase"));
+            d.keys("down 7").wait(800);
+            assert_eq!(*log.borrow(), ["2 Yes(\"\")"]);
+        }
     }
 }

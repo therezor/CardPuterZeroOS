@@ -782,7 +782,10 @@ impl Shell {
             }
         }
         if d.show_hint {
-            self.show_banner("Hold ESC to close the app", self.t.c.warning);
+            self.show_banner(
+                "Not responding. Hold Esc to close it",
+                gh0st_ui::theme::Tone::Warning,
+            );
         }
         let pgid = self.tasks.front().map_or(0, |t| t.pgid);
         if d.terminate {
@@ -798,7 +801,7 @@ impl Shell {
                 "Battery low: powering off in {} s",
                 self.low.seconds_left(now)
             );
-            self.show_banner(&text, self.t.c.critical);
+            self.show_banner(&text, gh0st_ui::theme::Tone::Critical);
             if self.low.take_shutdown(now) {
                 child::fire(&["systemctl", "poweroff", "-i"]);
             }
@@ -849,14 +852,14 @@ impl Shell {
             .unwrap_or_else(|| Canvas::new(self.t.m.width, self.t.m.height))
     }
 
-    fn show_banner(&mut self, text: &str, color: gh0st_ui::Color) {
+    fn show_banner(&mut self, text: &str, tone: gh0st_ui::theme::Tone) {
         if let Some(b) = self.banner.take() {
             self.spare = Some(b.hide(self.display.as_mut()));
         }
         let t = self.t;
         let under = self.canvas_for_overlay();
         self.banner = Some(Overlay::show(self.display.as_mut(), under, |c| {
-            widgets::banner(c, &t, text, color)
+            widgets::banner(c, &t, text, tone)
         }));
     }
 
@@ -867,7 +870,8 @@ impl Shell {
         let t = self.t;
         let under = Canvas::new(t.m.width, t.m.height);
         self.popup = Some(Overlay::show(self.display.as_mut(), under, |c| {
-            widgets::toast(c, &t, text)
+            let bottom = t.m.height - t.m.hint_h;
+            widgets::toast(c, &t, bottom, gh0st_ui::theme::Tone::Info, text, None)
         }));
     }
 
@@ -1577,7 +1581,9 @@ impl Shell {
         if matches!(self.screen, Screen::Home | Screen::Switcher) {
             self.draw_low_battery();
             if let Some((text, _)) = &self.toast {
-                widgets::toast(&mut self.canvas, &t, text);
+                let bottom = t.m.height - t.m.hint_h;
+                let info = gh0st_ui::theme::Tone::Info;
+                widgets::toast(&mut self.canvas, &t, bottom, info, text, None);
             }
         }
         let drawn = Instant::now();
@@ -1640,7 +1646,8 @@ impl Shell {
         };
         let c = &mut self.canvas;
         let r = Rect::new(40, 30, 240, 110);
-        let inner = widgets::dialog(c, &t, r, title, color);
+        widgets::scrim(c, &t, c.bounds());
+        let inner = widgets::card(c, &t, r, title, color);
         gh0st_ui::icon::draw(
             c,
             "plug-zap",
@@ -1762,7 +1769,7 @@ fn icon_for(
 
 fn palette_of(c: &Config) -> theme::Palette {
     c.get_str("gh0st.palette")
-        .and_then(theme::palette)
+        .and_then(theme::find)
         .unwrap_or(theme::MINT)
 }
 
@@ -1794,7 +1801,12 @@ fn status_of<'a>(
     Status {
         dock,
         front,
+        icon: "",
         title: "",
+        context: "",
+        tabs: &[],
+        front_tab: 0,
+        item: None,
         clock,
         battery: battery.map(|r| Battery {
             percent: r.percent,

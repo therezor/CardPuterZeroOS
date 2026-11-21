@@ -2,6 +2,7 @@
 
 mod bars;
 mod command;
+mod dialog;
 mod field;
 mod key;
 mod list;
@@ -13,7 +14,8 @@ pub mod system;
 pub mod testing;
 mod ui;
 
-pub use bars::{Bars, SoftKey};
+pub use bars::{Bars, Chip};
+pub use dialog::{Answer, Dialog};
 pub use field::{Edit, TextField};
 /// A key event as [`Page::raw`] gets it.
 pub use gh0st_core::keys::{Key as RawKey, State as KeyState};
@@ -21,6 +23,8 @@ pub use key::{Key, codes};
 pub use list::{Action, List, Row};
 pub use command::{Command, Commands, Hit, Step};
 pub use page::{Cx, Job, JobEvent, Page, Settings, Timer, Watch};
+/// What a toast or a top-bar word says about itself.
+pub use gh0st_ui::theme::Tone;
 pub use run::run;
 pub use ui::Ui;
 
@@ -31,7 +35,8 @@ pub use gh0st_ui as gfx;
 /// Everything a page needs: `use gh0st_app::prelude::*;`.
 pub mod prelude {
     pub use crate::{
-        Action, Bars, Command, Commands, Cx, Edit, Job, JobEvent, Key, List, Page, Row, SoftKey,
-        Step, TextField, Timer, Ui, Watch,
+        Action, Answer, Bars, Chip, Command, Commands, Cx, Dialog, Edit, Job, JobEvent, Key,
+        List, Page, Row,
+        Step, TextField, Timer, Tone, Ui, Watch,
     };
 }

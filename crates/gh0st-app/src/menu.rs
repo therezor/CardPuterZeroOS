@@ -1,6 +1,6 @@
-//! The app menu and the Keys screen. Fn+Esc or Fn+H opens the menu in every
-//! app. The SDK builds both from the commands of the page in front, and adds
-//! Keys and Close app. The rules are in `apps.md`, "The app menu".
+//! The app menu and Help. Key 8 opens the menu in every app, Fn+H opens
+//! Help. The SDK builds both from the commands of the page in front, and
+//! adds Help and Close app to the menu. The rules are in docs/design.md.
 
 use crate::command::{Command, Commands, Hit, Kind, Step};
 use gh0st_core::keys::{Key as RawKey, Nav, State, code};
@@ -9,7 +9,7 @@ use gh0st_ui::{Canvas, Rect, Theme};
 use std::cell::Cell;
 
 /// Ids of the rows the SDK adds. Pages keep their ids below these.
-pub(crate) const KEYS: u32 = u32::MAX - 1;
+pub(crate) const HELP: u32 = u32::MAX - 1;
 pub(crate) const CLOSE_APP: u32 = u32::MAX;
 
 /// What a key in the menu asks of the runtime.
@@ -19,7 +19,7 @@ pub(crate) enum Out {
     Close,
     /// Run a page command; `close` shuts the menu first.
     Run { id: u32, step: Step, close: bool },
-    Keys,
+    Help,
     Quit,
 }
 
@@ -68,7 +68,7 @@ impl Menu {
         let keep = self.selected().map(|c| c.id);
         let grouped = cmds.iter().any(|c| c.in_menu() && !c.group.is_empty());
         cmds.group(if grouped { "App" } else { "" });
-        cmds.add(Command::action(KEYS, "Keys").keys("h").opens());
+        cmds.add(Command::action(HELP, "Help").opens());
         cmds.add(Command::action(CLOSE_APP, "Close app").confirm());
         self.cmds = cmds;
         self.rows.clear();
@@ -113,11 +113,6 @@ impl Menu {
     /// The setting changed in place last, if the selection is still on it.
     pub fn changed(&self) -> Option<u32> {
         self.changed.filter(|&id| self.selected_id() == Some(id))
-    }
-
-    /// The page's own commands, without the rows the SDK added.
-    pub fn page_commands(&self) -> impl Iterator<Item = &Command> {
-        self.cmds.iter().filter(|c| c.id != KEYS && c.id != CLOSE_APP)
     }
 
     pub fn key(&mut self, k: &RawKey) -> Out {
@@ -202,7 +197,7 @@ impl Menu {
                 }
                 self.armed = false;
                 match id {
-                    KEYS => Out::Keys,
+                    HELP => Out::Help,
                     CLOSE_APP => Out::Quit,
                     _ => Out::Run {
                         id,
@@ -218,26 +213,6 @@ impl Menu {
                 close,
             },
         }
-    }
-
-    /// The hint bar under the menu, for the selected row.
-    pub fn hints(&self) -> [(&'static str, &'static str); 3] {
-        let first = match self.selected() {
-            _ if self.armed => ("Enter", "confirm"),
-            Some(c) => match c.kind {
-                Kind::Action if c.opening() => ("Enter", "open"),
-                Kind::Action => ("Enter", "run"),
-                Kind::Toggle(_) => ("Enter", "switch"),
-                Kind::Choice(_) => ("z c", "change"),
-            },
-            None => ("Enter", "run"),
-        };
-        let esc = if self.armed {
-            ("Esc", "cancel")
-        } else {
-            ("Esc", "close")
-        };
-        [first, ("h", "keys"), esc]
     }
 
     fn line_h(&self, t: &Theme, l: &Line) -> i32 {
@@ -307,7 +282,7 @@ impl Menu {
                     let cmd = &self.cmds.list[self.rows[n]];
                     let selected = n == self.sel;
                     let trailing = match &cmd.kind {
-                        _ if selected && self.armed => Trailing::Alert("Enter again"),
+                        _ if selected && self.armed => Trailing::Alert("Press again"),
                         Kind::Action if cmd.opening() => Trailing::Chevron,
                         Kind::Action => Trailing::None,
                         Kind::Toggle(on) => Trailing::Toggle(*on),
@@ -341,11 +316,13 @@ enum Entry {
     },
 }
 
-/// What a key on the Keys screen asks.
+/// What a key in Help asks.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SheetOut {
     Nothing,
     Back,
+    /// 8: the menu, so pages that take every key can still reach it.
+    Menu,
 }
 
 /// Every key of the page in front, by the mode it works in, and the keys
@@ -360,13 +337,22 @@ pub(crate) struct Sheet {
 
 /// Keys the OS and the SDK give every app.
 const EVERYWHERE: &[(&str, &str)] = &[
-    ("Fn+Esc", "Menu, in every app"),
-    ("Fn+K", "Switch apps"),
-    ("Esc", "Held 3 s: close the app"),
+    ("Fn k", "Switch apps"),
+    ("Fn j", "Screenshot"),
+    ("Fn Esc", "The Esc key itself"),
+    ("Fn h", "This help"),
 ];
 
 impl Sheet {
-    pub fn new<'a>(cmds: impl Iterator<Item = &'a Command>, menu: Option<Menu>) -> Sheet {
+    /// `under`: the chips on screen, by key, then the menu. `keys`: what Esc
+    /// and Enter do here. Then the page's commands, then the keys that
+    /// work everywhere.
+    pub fn new<'a>(
+        under: Vec<(String, String)>,
+        keys: Vec<(String, String)>,
+        cmds: impl Iterator<Item = &'a Command>,
+        menu: Option<Menu>,
+    ) -> Sheet {
         let cmds: Vec<&Command> = cmds.filter(|c| !c.keys.is_empty()).collect();
         let section = |c: &Command| if c.mode.is_empty() { c.group } else { c.mode };
         let mut order: Vec<&'static str> = Vec::new();
@@ -376,6 +362,19 @@ impl Sheet {
             }
         }
         let mut lines = Vec::new();
+        for (head, list) in [("Under the screen", under), ("Keys", keys)] {
+            if list.is_empty() {
+                continue;
+            }
+            lines.push(Entry::Head(head));
+            for (keys, label) in list {
+                lines.push(Entry::Key {
+                    keys,
+                    label,
+                    value: String::new(),
+                });
+            }
+        }
         for s in order {
             if !s.is_empty() || !lines.is_empty() {
                 lines.push(Entry::Head(if s.is_empty() { "Other" } else { s }));
@@ -423,14 +422,10 @@ impl Sheet {
             None if k.state == State::Press && matches!(k.code, code::ESC | code::ENTER) => {
                 return SheetOut::Back;
             }
+            None if k.state == State::Press && k.ch == Some('8') => return SheetOut::Menu,
             None => {}
         }
         SheetOut::Nothing
-    }
-
-    pub fn hints(&self) -> [(&'static str, &'static str); 2] {
-        let back = if self.menu.is_some() { "back" } else { "close" };
-        [("f x", "scroll"), ("Esc", back)]
     }
 
     pub fn draw(&self, c: &mut Canvas, t: &Theme, panel: Rect) {
@@ -487,10 +482,10 @@ mod tests {
     }
 
     #[test]
-    fn rows_are_grouped_and_end_with_keys_and_close() {
+    fn rows_are_grouped_and_end_with_help_and_close() {
         let m = menu();
         let ids: Vec<u32> = m.rows.iter().map(|&i| m.cmds.list[i].id).collect();
-        assert_eq!(ids, [1, 2, 3, KEYS, CLOSE_APP]);
+        assert_eq!(ids, [1, 2, 3, HELP, CLOSE_APP]);
         assert!(matches!(m.lines[0], Line::Head("View")));
         assert!(matches!(m.lines[4], Line::Head("App")));
     }
@@ -531,7 +526,7 @@ mod tests {
         let mut m = menu();
         m.key(&press(code::UP));
         assert_eq!(m.key(&press(code::ENTER)), Out::Nothing);
-        assert_eq!(m.hints()[0], ("Enter", "confirm"));
+        assert!(m.armed);
         assert_eq!(m.key(&press(code::ESC)), Out::Nothing, "Esc disarms");
         assert_eq!(m.key(&press(code::ESC)), Out::Close);
         m.key(&press(code::ENTER));
@@ -539,19 +534,23 @@ mod tests {
     }
 
     #[test]
-    fn h_opens_the_keys_screen() {
+    fn the_help_row_opens_help() {
         let mut m = menu();
-        assert_eq!(m.key(&press(35)), Out::Keys);
+        m.key(&press(code::UP));
+        m.key(&press(code::UP));
+        assert_eq!(m.key(&press(code::ENTER)), Out::Help);
     }
 
     #[test]
-    fn the_keys_screen_groups_by_mode_and_ends_with_everywhere() {
+    fn help_starts_with_the_chips_and_groups_by_mode() {
         let mut cs = Commands::new();
         cs.group("View");
         cs.add(Command::action(1, "Find").keys("n").mode("Scroll mode", false));
         cs.add(Command::action(2, "Back").keys("Shift+PgUp").mode("Typing", true));
         cs.add(Command::action(3, "No keys"));
-        let s = Sheet::new(cs.iter(), None);
+        let under = vec![("5".to_string(), "Find".to_string())];
+        let keys = vec![("Esc".to_string(), "Back".to_string())];
+        let s = Sheet::new(under, keys, cs.iter(), None);
         let heads: Vec<&str> = s
             .lines
             .iter()
@@ -560,7 +559,10 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(heads, ["Scroll mode", "Typing", "Everywhere"]);
+        assert_eq!(
+            heads,
+            ["Under the screen", "Keys", "Scroll mode", "Typing", "Everywhere"]
+        );
     }
 
     #[test]

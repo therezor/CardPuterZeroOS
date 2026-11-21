@@ -142,7 +142,10 @@ pub struct Settings {
     stack: Vec<(PageId, Cursor)>,
     view: View,
     state: PageState,
+    /// A dialog the page wants, and what its answer is for. `asked` is set
+    /// once the SDK shows it.
     dialog: Option<(Dialog, Ask)>,
+    asked: bool,
     /// Running helpers, with what each is for and its output so far.
     jobs: HashMap<Job, (NetJob, String)>,
     backlight: Option<Backlight>,
@@ -158,6 +161,7 @@ impl Settings {
             view: pages::build(&PageId::Root, &state),
             state,
             dialog: None,
+            asked: false,
             jobs: HashMap::new(),
             backlight: Backlight::find(Path::new("/sys/class/backlight")),
             gpu_asked: false,
@@ -199,7 +203,7 @@ impl Settings {
         // file, not the theme, has the palette just picked.
         s.palette = config
             .get_str("gh0st.palette")
-            .and_then(theme::palette)
+            .and_then(theme::find)
             .map_or(cx.theme().c.name, |p| p.name);
         s.animations = config.get_bool("gh0st.animations").unwrap_or(true);
         s.clock_24h = config.get_str("gh0st.clock") != Some("12h");
@@ -355,11 +359,13 @@ impl Settings {
                 cx.settings().set_str("gh0st.home_layout", l.config_name());
             }
             Setting::Palette => {
-                let i = theme::PALETTES
+                // Built-ins, then the user's colour schemes.
+                let all = theme::all();
+                let i = all
                     .iter()
                     .position(|p| p.name == self.state.palette)
                     .unwrap_or(0);
-                let p = theme::PALETTES[cycle(i, d, theme::PALETTES.len())];
+                let p = all[cycle(i, d, all.len())];
                 // The SDK follows this key, so the new palette shows at once.
                 cx.settings().set_str("gh0st.palette", p.name);
             }
@@ -722,47 +728,16 @@ impl Settings {
         self.dialog = Some((d, a));
     }
 
-    fn dialog_key(&mut self, k: Key, cx: &mut Cx) {
-        let Some((dialog, _)) = self.dialog.as_mut() else {
+/// Hands a dialog the page wants to the SDK, once.
+    fn flush(&mut self, cx: &mut Cx) {
+        let Some((d, _)) = self.dialog.as_ref().filter(|_| !self.asked) else {
             return;
         };
-        match k {
-            Key::Enter => {
-                if let Some((dialog, ask)) = self.dialog.take() {
-                    self.answer(dialog, ask, cx);
-                }
-            }
-            Key::Tab => {
-                if let Dialog::Text {
-                    masked,
-                    secret: true,
-                    ..
-                } = dialog
-                {
-                    *masked = !*masked;
-                }
-            }
-            Key::Backspace => {
-                if let Dialog::Text { text, .. } = dialog {
-                    text.pop();
-                }
-            }
-            Key::Char(c) => {
-                if let Dialog::Text { text, .. } = dialog {
-                    if text.chars().count() < 64 {
-                        text.push(c);
-                    }
-                }
-            }
-            _ => {}
-        }
+        self.asked = true;
+        cx.ask(ASK, model::sdk_dialog(d));
     }
 
-    fn answer(&mut self, dialog: Dialog, ask: Ask, cx: &mut Cx) {
-        let mut text = match dialog {
-            Dialog::Text { text, .. } => text,
-            Dialog::Confirm { .. } => String::new(),
-        };
+    fn answered(&mut self, mut text: String, ask: Ask, cx: &mut Cx) {
         match ask {
             Ask::Confirm(Command::Restart) => self.power(true, cx),
             Ask::Confirm(Command::PowerOff) => self.power(false, cx),
@@ -1528,13 +1503,20 @@ impl Page for Settings {
         &self.view.title
     }
 
-    fn bars(&self) -> Bars {
-        let item = self.view.item(self.top().1.selected);
-        Bars::top().hints(model::hints(&self.view, item))
+    fn icon(&self) -> &str {
+        model::icon(&self.top().0)
     }
 
-    fn typing(&self) -> bool {
-        matches!(self.dialog, Some((Dialog::Text { .. }, _)))
+    fn context(&self) -> Option<&str> {
+        // One SDK page holds Settings' own stack: name the app above the
+        // first page, as the SDK would.
+        (self.stack.len() > 1).then_some("Settings")
+    }
+
+    fn bars(&self) -> Bars {
+        self.chips()
+            .into_iter()
+            .fold(Bars::top(), |b, (n, chip, _)| b.chip(n, chip))
     }
 
     fn start(&mut self, cx: &mut Cx) {
@@ -1543,39 +1525,39 @@ impl Page for Settings {
         self.query_bt(cx);
         self.query_sys(cx);
         self.query_volume(cx);
+        self.flush(cx);
+    }
+
+    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
+        if id != ASK {
+            return;
+        }
+        self.asked = false;
+        let Some((_, ask)) = self.dialog.take() else {
+            return;
+        };
+        if let Answer::Yes(text) = answer {
+            self.answered(text, ask, cx);
+        }
+        self.flush(cx);
     }
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
-        if self.dialog.is_some() {
-            self.dialog_key(key, cx);
-            return;
-        }
-        if self.page_key(key, cx) {
-            return;
-        }
-        match key {
-            Key::Enter => self.activate(cx),
-            Key::Up => self.move_cursor(-1, cx),
-            Key::Down => self.move_cursor(1, cx),
-            Key::Left => self.change(-1, cx),
-            Key::Right => self.change(1, cx),
-            Key::Char(d @ '1'..='9') => self.pick(d as usize - '1' as usize, cx),
-            // The shell acts on these keys; show the new values.
-            Key::Other(codes::VOLUMEUP | codes::VOLUMEDOWN | codes::MUTE) => self.query_volume(cx),
-            Key::Other(codes::BRIGHTNESSUP | codes::BRIGHTNESSDOWN) => self.refresh(cx),
-            _ => {}
-        }
+        // A chip runs what its key would.
+        let key = match key {
+            Key::Soft(n) => match self.chips().into_iter().find(|c| c.0 == n) {
+                Some((_, _, k)) => k,
+                None => return,
+            },
+            k => k,
+        };
+        self.page_or_list_key(key, cx);
+        self.flush(cx);
     }
 
-    /// Esc closes a dialog, then goes up a page. On the first page it leaves
-    /// the app, like any other.
+    /// Esc goes up a page. On the first page it leaves the app, like any
+    /// other.
     fn back(&mut self, cx: &mut Cx) -> bool {
-        if let Some((dialog, _)) = self.dialog.take() {
-            if let Dialog::Text { mut text, .. } = dialog {
-                wipe(&mut text);
-            }
-            return false;
-        }
         if self.state.moving.take().is_some() {
             self.refresh(cx);
             return false;
@@ -1602,14 +1584,42 @@ impl Page for Settings {
                 }
             }
         }
+        self.flush(cx);
     }
 
     fn draw(&self, ui: &mut Ui) {
         let t = *ui.theme();
-        let dialog = self.dialog.as_ref().map(|(d, _)| d);
-        model::draw(ui.canvas(), &t, &self.view, self.top().1, dialog);
+        model::draw(ui.canvas(), &t, &self.view, self.top().1);
     }
 }
+
+impl Settings {
+    fn page_or_list_key(&mut self, key: Key, cx: &mut Cx) {
+        if self.page_key(key, cx) {
+            return;
+        }
+        match key {
+            Key::Enter => self.activate(cx),
+            Key::Up => self.move_cursor(-1, cx),
+            Key::Down => self.move_cursor(1, cx),
+            Key::Left => self.change(-1, cx),
+            Key::Right => self.change(1, cx),
+            Key::Char(d @ '1'..='9') => self.pick(d as usize - '1' as usize, cx),
+            // The shell acts on these keys; show the new values.
+            Key::Other(codes::VOLUMEUP | codes::VOLUMEDOWN | codes::MUTE) => self.query_volume(cx),
+            Key::Other(codes::BRIGHTNESSUP | codes::BRIGHTNESSDOWN) => self.refresh(cx),
+            _ => {}
+        }
+    }
+
+    fn chips(&self) -> Vec<(u8, Chip, Key)> {
+        let (id, cur) = self.top();
+        model::chips(id, &self.view, *cur, self.state.moving.is_some())
+    }
+}
+
+/// What a chip or a dialog answer is for: the one dialog Settings shows.
+const ASK: u32 = 1;
 
 fn page_rows(t: &Theme, view: &View) -> usize {
     match view.body {

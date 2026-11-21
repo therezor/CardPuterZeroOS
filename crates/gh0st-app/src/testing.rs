@@ -18,7 +18,8 @@
 //! let mut d = Driver::new(Count(0));
 //! d.keys("enter\nenter");
 //! d.frame();
-//! d.keys("esc");
+//! // On the first page Esc closes the app only when held.
+//! d.keys("down esc").wait(800);
 //! assert!(d.quit());
 //! ```
 
@@ -103,6 +104,11 @@ impl Driver {
                 return self;
             }
         }
+    }
+
+    /// The toast showing now, if any.
+    pub fn toast(&self) -> Option<&str> {
+        self.rt.toast_text()
     }
 
     /// The screen as the panel would show it now.

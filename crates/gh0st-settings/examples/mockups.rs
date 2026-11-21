@@ -6,7 +6,7 @@
 use gh0st_app::gfx::Canvas;
 use gh0st_app::gfx::snapshot::write_png;
 use gh0st_app::gfx::theme::{self, Theme};
-use gh0st_app::gfx::widgets::{self, Battery, Hint, Net, Status};
+use gh0st_app::gfx::widgets::{self, Battery, Chip, Hint, Look, Net, Status};
 use gh0st_core::apps::Layout;
 use gh0st_core::sysconf::{self, GpuMem};
 use gh0st_settings::model::pages::{self, AppRow, Conn, Device, Iface, Logs, Network, State};
@@ -156,8 +156,8 @@ fn sample_state() -> State {
     }
 }
 
-/// One page as the device shows it: the OS top bar and hints the SDK draws,
-/// the page body and any dialog.
+/// One page as the device shows it: the bars the SDK draws, the page body
+/// and any dialog.
 fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dialog>) -> Canvas {
     let page = pages::build(&id, st);
     let mut cur = Cursor { selected, top: 0 };
@@ -167,7 +167,12 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
     let status = Status {
         dock: &[],
         front: None,
+        icon: model::icon(&id),
         title: &page.title,
+        context: if id == PageId::Root { "" } else { "Settings" },
+        tabs: &[],
+        front_tab: 0,
+        item: None,
         clock: "14:32",
         battery: Some(Battery {
             percent: 87,
@@ -177,13 +182,46 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
         bluetooth: st.bt_on,
     };
     widgets::status_bar(&mut c, t, &status);
-    let hints: Vec<Hint> = model::hints(&page, page.item(cur.selected))
-        .into_iter()
-        .map(|(key, label)| Hint { key, label })
-        .collect();
-    widgets::hint_bar(&mut c, t, &hints, None);
-    model::draw(&mut c, t, &page, cur, dialog.as_ref());
+    model::draw(&mut c, t, &page, cur);
+    let body = widgets::body(t);
+    let none = Chip::default();
+    match dialog.as_ref().map(model::sdk_dialog) {
+        Some(d) => {
+            d.draw(&mut c, t, body);
+            if d.typing() {
+                let hints: Vec<Hint> = d
+                    .hints()
+                    .into_iter()
+                    .map(|(key, label)| Hint { key, label })
+                    .collect();
+                widgets::hint_bar(&mut c, t, &hints, None);
+            } else {
+                widgets::action_bar(&mut c, t, &[none; 5]);
+            }
+        }
+        None => {
+            let found = model::chips(&id, &page, cur, false);
+            let mut chips = [none; 5];
+            let menu = Chip {
+                icon: "menu",
+                word: "",
+                look: Look::Normal,
+            };
+            chips[4] = menu;
+            let owned: Vec<(u8, gh0st_app::Chip)> = found.into_iter().map(|(n, ch, _)| (n, ch)).collect();
+            for (n, ch) in &owned {
+                chips[(*n - 4) as usize] = chip_of(ch);
+            }
+            widgets::action_bar(&mut c, t, &chips);
+        }
+    }
     c
+}
+
+/// An SDK chip as the widget draws it.
+fn chip_of(ch: &gh0st_app::Chip) -> Chip<'_> {
+    let (icon, word, look) = ch.parts();
+    Chip { icon, word, look }
 }
 
 fn main() {

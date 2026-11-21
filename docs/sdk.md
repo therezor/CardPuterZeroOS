@@ -5,6 +5,9 @@ stack of pages. Each page says which OS bars it wants, draws itself, and
 answers keys. The SDK runs the event loop, maps the keyboard, draws the bars,
 and sends only the changed rows to the panel.
 
+What every screen looks like, and what every key does, is in `design.md`.
+The SDK draws all of it, so an app follows it by using the SDK.
+
 Settings (`crates/gh0st-settings`) is built on this SDK, plus `gh0st-core`
 for the app list, pins and the backlight. Read it for a full app. Apps in other languages use the contract in `apps.md` directly.
 
@@ -34,7 +37,7 @@ impl Page for Hello {
 
     fn draw(&self, ui: &mut Ui) {
         ui.heading("Hello, CardputerZero");
-        ui.text("This page has the OS top bar. Press Esc to leave.");
+        ui.text("This page has the OS bars. Hold Esc to leave.");
     }
 }
 
@@ -47,7 +50,7 @@ Run it on a Mac or Linux PC. Keys come from stdin, one per line, and each new
 frame is saved as a PNG:
 
 ```sh
-echo esc | cargo run -- --sim frames
+printf 'down esc\nwait 800\nup esc\n' | cargo run -- --sim frames
 ```
 
 Build for the device. Copy `.cargo/config.toml` from this repo first. It sets
@@ -79,14 +82,15 @@ use belong to the page:
 
 | Bars | The page gets |
 |---|---|
-| `Bars::top()`, the default | 320x152, below the top bar |
-| `Bars::top().hints(...)` or `.softkeys(...)` | 320x134, between the bars |
-| `Bars::none().softkeys(...)` | 320x152, above the soft keys |
+| `Bars::top()`, the default | 320x132, between the top bar and the action bar |
+| `Bars::top_only()` | 320x152, below the top bar, for a page that takes every key |
+| `Bars::actions()` | 320x150, above the action bar |
 | `Bars::none()` | all 320x170 |
 
-The top bar shows the page title, network, battery and clock. The bottom bar
-shows key hints or soft keys. A page can change its bars at any time, for
-example to hide them while a video plays:
+The top bar shows where you are and the device. The action bar has the page's
+chips over keys 5 to 7 and the menu on 8, or key hints while the page types.
+A page can change its bars at any time, for example to hide them while a
+video plays:
 
 ```rust
 use gh0st_app::prelude::*;
@@ -100,12 +104,12 @@ impl Page for Player {
         "Player"
     }
 
+    fn icon(&self) -> &str {
+        "square-terminal"
+    }
+
     fn bars(&self) -> Bars {
-        if self.playing {
-            Bars::none()
-        } else {
-            Bars::top().hints([("Enter", "play"), ("Esc", "back")])
-        }
+        if self.playing { Bars::none() } else { Bars::top() }
     }
 
     fn draw(&self, ui: &mut Ui) {
@@ -113,6 +117,11 @@ impl Page for Player {
     }
 }
 ```
+
+The top bar shows the page's `icon` and `title`. On a page above the first,
+the app's name follows in grey, or the page's `context`. `status` puts one
+word of the app's own on the right, in a tone: `("REC", Tone::Critical)`.
+`tabs` numbers the app's sessions and underlines the front one.
 
 ## Pages
 
@@ -123,9 +132,10 @@ A page needs `title` and `draw`. The other methods have defaults:
 
 | Method | Called when |
 |---|---|
-| `bars` | Before each frame. The default is the top bar alone |
-| `key` | A key is pressed. Esc goes to `back` instead |
-| `back` | Esc is pressed. Return false to keep the page open |
+| `bars` | Before each frame. The default is the top bar and the action bar |
+| `icon`, `context`, `status`, `tabs` | Before each frame, for the top bar |
+| `key` | A key is pressed. Esc and 4 go to `back` instead |
+| `back` | Esc or 4 is pressed. Return false to stay, say after leaving a mode |
 | `typing` | Before each key. Return true while a text field has focus |
 | `start` | The page opens |
 | `resume` | The page above it closed |
@@ -137,7 +147,9 @@ After every event the SDK calls `draw` and compares the frame with the last
 one. Only rows that changed go over SPI. A page never asks for a redraw and
 never keeps a timer to animate an idle screen.
 
-When the user holds Esc for 3 seconds, the OS sends SIGTERM. The SDK then
+On the first page, Esc closes the app only when held for 0.7 s: a tap shows
+"Hold to exit", and the toast fills as the key is held. If the app hangs, the
+shell takes over: held for 3 seconds, Esc sends SIGTERM. The SDK then
 calls `stop` on every page, top first, and exits.
 
 ## Keys
@@ -146,13 +158,15 @@ calls `stop` on every page, top first, and exits.
 |---|---|
 | `Key::Up`, `Down`, `Left`, `Right` | Fn+F, X, Z, C. Bare F, X, Z and C too, unless the page is typing |
 | `Key::Enter`, `Tab`, `Backspace`, `Delete` | The key of that name |
-| `Key::Back` | Esc. It goes to `Page::back`, not `Page::key` |
-| `Key::Soft(4)` to `Key::Soft(8)` | Number keys 4 to 8, while their soft-key slot shows |
+| `Key::Back` | Esc, and 4 while not typing. It goes to `Page::back`, not `Page::key` |
+| `Key::Soft(5)` to `Key::Soft(7)` | Number keys 5 to 7, under a chip the page shows |
 | `Key::Char(c)` | Any key that types, with Shift, Caps and the Sym layer applied |
 | `Key::Ctrl(c)`, `Key::Alt(c)` | Ctrl or Alt with a letter or digit |
 | `Key::Other(code)` | Anything else, by Linux input code (`gh0st_app::codes`) |
 
-Fn+Esc and Fn+H never reach a page: they open the app menu (see Commands).
+8 opens the app menu and Fn+H opens Help; neither reaches a page. While the
+page types, 8 types. Fn+Esc goes back as Esc does, except on a raw-key page,
+where it is the Esc key itself.
 
 The OS acts on the brightness, volume, mute and screenshot keys itself. They
 still reach the page as `Key::Other`, so a page that shows those values can
@@ -162,7 +176,8 @@ read them again.
 
 A terminal needs every key as it is. A page whose `raw_keys` returns true gets
 each press, repeat and release in `Page::raw`, as a `RawKey` with its code, its
-text and Shift, Ctrl, Alt and Fn. Esc comes there too, not to `back`. Every
+text and Shift, Ctrl, Alt and Fn. Plain Esc still goes to `back`, as on every
+page; Fn+Esc comes to `raw` as plain Esc, for vim and the like. Every
 key but Esc and the modifiers repeats. `RawKey::text` keeps the character
 under Ctrl and Alt, so Ctrl+[ can become ESC. Nothing is drawn after a raw key
 unless the page calls `cx.redraw()`.
@@ -172,16 +187,16 @@ unless the page calls `cx.redraw()`.
 A page lists what the user can do once, in `commands`. The SDK builds four
 things from that list, so they never disagree:
 
-- **The app menu.** Fn+Esc or Fn+H opens it in every app. Rows come in the
-  order the page adds them, under the group headings it sets. The SDK adds
-  Keys and Close app last.
-- **The Keys screen.** Every command with keys, under the mode it works in,
-  then the keys that work everywhere. The menu's Keys row opens it, and so
-  does `cx.show_keys()`.
+- **The app menu.** 8 opens it in every app. Rows come in the order the page
+  adds them, under the group headings it sets. The SDK adds Help and Close
+  app last.
+- **Help.** Fn+H opens it: the chips on screen, Esc and Enter, every command
+  with keys under the mode it works in, then the keys that work everywhere.
+  The menu's Help row opens it too, and so does `cx.show_keys()`.
 - **The keys.** A command's keys run it while its mode is on. They also pick
   its row while the menu is open.
-- **Hints.** `Bars::command_hints()` shows a hint bar of the live commands
-  that have a `hint`. It follows the page's mode by itself.
+- **Chips.** `.chip(5, "search", "Find")` puts a chip over key 5 that runs
+  the command while it is live. A chip the page sets in `bars` wins.
 
 Three kinds of command:
 
@@ -215,24 +230,15 @@ impl Page for Reader {
         "Reader"
     }
 
-    fn bars(&self) -> Bars {
-        Bars::top().command_hints()
-    }
-
     fn commands(&self, c: &mut Commands) {
         c.group("View");
         // One row, two keys: r steps back, t forward.
         c.add(Command::choice(SIZE, "Text size", SIZES[self.size]).keys("r t"));
         c.add(Command::toggle(NIGHT, "Night", self.night).keys("b"));
-        c.add(Command::action(FIND, "Find").keys("n").opens());
-        // Keys only: on the Keys screen and the hint bar, not in the menu.
-        c.add(
-            Command::action(DOWN, "Scroll down")
-                .keys("x")
-                .keys_only()
-                .repeats()
-                .hint("scroll"),
-        );
+        // A menu row, the n key, and a chip over 5.
+        c.add(Command::action(FIND, "Find").keys("n").chip(5, "search", "Find").opens());
+        // Keys only: in Help, not in the menu.
+        c.add(Command::action(DOWN, "Scroll down").keys("x").keys_only().repeats());
     }
 
     fn command(&mut self, id: u32, step: Step, _: &mut Cx) {
@@ -267,7 +273,7 @@ impl Page for Reader {
 A choice with two keys steps back on the first and forward on the second.
 
 - **Modes.** `.mode("Scroll mode", on)` names the mode a command's keys work
-  in, for the Keys screen, and says whether it is on now. Its keys do
+  in, for Help, and says whether it is on now. Its keys do
   nothing while it is off, but its menu row and the menu's letter for it
   still work.
 - **Typing.** While `typing()` is true, letters, digits and symbols type, so
@@ -276,11 +282,12 @@ A choice with two keys steps back on the first and forward on the second.
   runs it again and again. Once a press has run a command, that key's
   repeats and release never reach the page, even when the command changed
   the mode.
-- **Asking first.** With `.confirm()`, a menu row needs Enter twice. Close app
-  always does.
+- **Asking first.** With `.confirm()`, a menu row needs pressing twice; it
+  says "Press again" in between. Close app always does.
 - **Mode switches.** A toggle with `.closes()` closes the menu once flipped,
   for a mode the user wants to use at once.
-- **Hints** show a command's first key, or both keys of a choice's pair.
+- **Hints.** `.hint(word)` names a command for a page that draws its own
+  hint bar: `Commands::hints()` lists the live ones.
 - **Fn.** Fn with Space, Enter, Tab, R, T, Y, G or V arrives as that key with
   Fn held: `"Fn+Space"`, `"Fn+r"`. The Fn layer changes every other key, and
   no program reads Fn, so these are free for an app's own commands even
@@ -290,13 +297,13 @@ A choice with two keys steps back on the first and forward on the second.
   the keys no live command took.
 - **Ids.** Keep yours below `0xffff_fff0`. The SDK's rows use the top ones.
 
-Fn+Esc and Fn+H never reach a page. The rules for every app's menu are in
-`apps.md`, The app menu.
+8 and Fn+H never reach a page. `design.md` has the rules for the menu and
+Help.
 
-## Soft keys
+## Chips
 
-The screen sits right above the number keys 4 to 8. The soft-key bar puts one
-slot over each key:
+The screen sits right above the number keys. A chip over 5, 6 or 7 runs when
+its key is pressed, and arrives as `Key::Soft(n)`:
 
 ```rust
 use gh0st_app::prelude::*;
@@ -311,18 +318,14 @@ impl Page for Counter {
     }
 
     fn bars(&self) -> Bars {
-        Bars::none().softkeys([
-            SoftKey::new("arrow-left", "Back"),
-            SoftKey::label("Less"),
-            SoftKey::label("Reset"),
-            SoftKey::label("More"),
-            SoftKey::none(),
-        ])
+        Bars::top()
+            .chip(5, Chip::new("minus", "Less"))
+            .chip(6, Chip::new("rotate-cw", "Reset").danger())
+            .chip(7, Chip::new("plus", "More"))
     }
 
-    fn key(&mut self, key: Key, cx: &mut Cx) {
+    fn key(&mut self, key: Key, _: &mut Cx) {
         match key {
-            Key::Soft(4) => cx.back(),
             Key::Soft(5) => self.n -= 1,
             Key::Soft(6) => self.n = 0,
             Key::Soft(7) => self.n += 1,
@@ -336,11 +339,19 @@ impl Page for Counter {
 }
 ```
 
-- Slot 4 is back by convention, as in the stock apps.
-- With an icon, a label fits about five letters. A label alone fits about
-  eight.
-- `SoftKey::none()` leaves a slot empty, and its number key types its digit.
-- `.lit(true)` marks a toggle that is on, such as a camera grid.
+- **No chip for Enter or Esc.** Back, Open, Cancel and Save are on those
+  keys; the bar is for the actions nobody would guess.
+- **4 is Esc** and has no chip. **8 is the menu**, an icon-only chip the SDK
+  adds. `.no_menu()` drops it for a page under its own menu.
+- **One word.** Five letters or fewer keep the icon on a full bar. A word is
+  never cut: short of room, the chip drops its icon.
+- **Looks.** `.danger()` for taking something away, `.hold()` for loss that
+  can't be undone (it runs only after its key is held 0.7 s), `.armed(true)`
+  for a press-again step, `.on(true)` for a toggle that is on, `.main()` for
+  a main action not on Enter, `.disabled(true)` and `.busy(true)`.
+- **Commands.** `Chip::new(..).runs(id)` runs a command instead of sending
+  `Key::Soft`; `Command::chip` does the same from the command's side.
+- **While typing** digits type, so the bar shows `Bars::hints` instead.
 - Icons are the Lucide names gh0st has built in (`assets/icons`).
 
 ## Lists
@@ -359,10 +370,6 @@ struct Prefs {
 impl Page for Prefs {
     fn title(&self) -> &str {
         "Preferences"
-    }
-
-    fn bars(&self) -> Bars {
-        Bars::top().hints([("Enter", "open"), ("Esc", "back")])
     }
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
@@ -404,8 +411,9 @@ leaves room for more below it.
 ## Text input
 
 A page with a text field returns true from `typing` while the field has focus.
-Letters and digits then type instead of moving or pressing soft keys. Show
-hints in that state, not soft keys:
+Letters and digits then type instead of moving or running chips, so the action
+bar shows the page's hints instead of its chips. Name what Esc and Enter do;
+Enter's pill is filled:
 
 ```rust
 use gh0st_app::prelude::*;
@@ -420,7 +428,7 @@ impl Page for Rename {
     }
 
     fn bars(&self) -> Bars {
-        Bars::top().hints([("Enter", "save"), ("Esc", "cancel")])
+        Bars::top().hints([("Esc", "cancel"), ("Enter", "save")])
     }
 
     fn typing(&self) -> bool {
@@ -480,8 +488,12 @@ impl Page for Bar {
 }
 ```
 
-Never pick colours or sizes by hand. Take them from the theme, so the app
-follows the palette the user picks in Settings.
+Never pick colours or sizes by hand. Take them from the theme by role, so the
+app follows the palette the user picks in Settings, custom schemes included:
+`theme().c.fg`, `.muted`, `.accent`, `.surface`, `.border`, `.c.soft()`,
+`.c.disabled()`, and a tone's colour with `.c.tone(Tone::Warning)`.
+`design.md` lists every role. `cx.toast_tone(Tone::Ok, "Saved")` gives a
+toast a tone.
 
 ## Work in the background
 
@@ -649,7 +661,10 @@ impl Page for Count {
 let mut d = Driver::new(Count(0));
 d.keys("enter\nenter");
 assert_eq!(d.depth(), 1);
+// The first page closes only on a held Esc.
 d.keys("esc");
+assert_eq!(d.toast(), Some("Hold to exit"));
+d.keys("down esc").wait(800);
 assert!(d.quit());
 ```
 

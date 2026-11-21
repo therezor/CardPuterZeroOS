@@ -944,17 +944,39 @@ fn selected_text(t: &Terminal, a: Pos, b: Pos, scratch: &mut (Vec<Cell>, Cluster
     out
 }
 
+/// The first run said how Esc works here.
+const TOLD: &str = "gh0st-term.esc_told";
+
 impl Page for Term {
     fn title(&self) -> &str {
         &self.title
     }
 
+    fn icon(&self) -> &str {
+        "square-terminal"
+    }
+
+    /// The program takes every key, so no action bar: its view modes draw
+    /// their own hints.
     fn bars(&self) -> Bars {
-        if self.bar { Bars::top() } else { Bars::none() }
+        if self.bar { Bars::top_only() } else { Bars::none() }
+    }
+
+    fn tabs(&self) -> (usize, usize) {
+        if self.tabs.len() > 1 {
+            (self.tabs.len(), self.cur)
+        } else {
+            (0, 0)
+        }
     }
 
     fn start(&mut self, cx: &mut Cx) {
         self.load(cx);
+        // Esc goes back here as everywhere: say once how a program gets it.
+        if cx.settings().get_bool(TOLD) != Some(true) {
+            cx.toast("Fn Esc sends Esc. Fn h: help");
+            cx.settings().set_bool(TOLD, true);
+        }
         let t = *cx.theme();
         self.area = self.bars().content(&t);
         if let Err(e) = self.open_tab(cx) {
@@ -1251,8 +1273,7 @@ impl Page for Term {
                 .iter()
                 .map(|(key, label)| Hint { key, label })
                 .collect();
-            let pages = (self.tabs.len() > 1).then_some((self.cur, self.tabs.len()));
-            widgets::hint_bar(c, &th, &hints, pages);
+            widgets::hint_bar(c, &th, &hints, None);
             if let Mode::Find(q) = &self.mode {
                 let r = Rect::new(0, th.m.height - 2 * th.m.hint_h, th.m.width, th.m.hint_h);
                 c.fill(r, th.c.surface);
