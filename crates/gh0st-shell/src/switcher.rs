@@ -351,8 +351,16 @@ impl Switcher {
             word,
             look: Look::Danger,
         };
-        let close = if self.selected > 0 { danger("circle-x", "Close") } else { none };
-        let all = if self.apps.is_empty() { none } else { danger("copy-x", "All") };
+        let close = if self.selected > 0 {
+            danger("circle-x", "Close")
+        } else {
+            none
+        };
+        let all = if self.apps.is_empty() {
+            none
+        } else {
+            danger("copy-x", "All")
+        };
         widgets::action_bar(c, t, &[none, close, none, all, none]);
     }
 

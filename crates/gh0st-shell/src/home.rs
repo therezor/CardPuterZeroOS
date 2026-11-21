@@ -37,7 +37,13 @@ pub fn chips(menu_open: bool) -> [widgets::Chip<'static>; 5] {
     if menu_open {
         return [none, none, none, none, menu];
     }
-    [chip("arrow-left-right", "Apps"), none, chip("search", "Find"), none, menu]
+    [
+        chip("arrow-left-right", "Apps"),
+        none,
+        chip("search", "Find"),
+        none,
+        menu,
+    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

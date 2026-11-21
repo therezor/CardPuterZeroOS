@@ -793,10 +793,7 @@ impl Shell {
             }
         }
         if d.show_hint {
-            self.show_banner(
-                "Hold Esc to close the app",
-                gh0st_ui::theme::Tone::Warning,
-            );
+            self.show_banner("Hold Esc to close the app", gh0st_ui::theme::Tone::Warning);
         }
         let pgid = self.tasks.front().map_or(0, |t| t.pgid);
         if d.terminate {
@@ -978,7 +975,13 @@ impl Shell {
         let inner = widgets::card(c, &t, r, "Close all apps?", t.c.critical);
         let mut y = inner.y;
         for l in lines {
-            widgets::text_in(c, t.f.body, Rect::new(inner.x, y, inner.w, 18), &l, t.c.soft());
+            widgets::text_in(
+                c,
+                t.f.body,
+                Rect::new(inner.x, y, inner.w, 18),
+                &l,
+                t.c.soft(),
+            );
             y += 18;
         }
         let hints = [
@@ -1084,7 +1087,8 @@ impl Shell {
                 State::Release if self.tab_down.take().is_some() => match self.screen {
                     Screen::Switcher => self.switcher_back(),
                     Screen::Home => {
-                        let at = self.last_used_card();
+                        // Opened from home, the switcher starts on Home: what is in front.
+                        let at = 0;
                         self.open_switcher(Back::Home, at);
                     }
                     _ => {}
@@ -1110,7 +1114,8 @@ impl Shell {
                 State::Press => self.home_armed = true,
                 State::Release if self.home_armed => {
                     self.home_armed = false;
-                    let at = self.last_used_card();
+                    // Opened from home, the switcher starts on Home: what is in front.
+                    let at = 0;
                     self.open_switcher(Back::Home, at);
                 }
                 _ => {}
@@ -1179,7 +1184,11 @@ impl Shell {
                 };
                 let v = (self.volume.unwrap_or(50) as i32 + step).clamp(0, 100) as u8;
                 self.apply_volume(v);
-                let label = if self.muted == Some(true) { "Muted" } else { "Volume" };
+                let label = if self.muted == Some(true) {
+                    "Muted"
+                } else {
+                    "Volume"
+                };
                 self.show_level("volume-2", label, v);
                 true
             }
@@ -1243,7 +1252,8 @@ impl Shell {
                 self.dirty = true;
             }
             Some('4') => {
-                let at = self.last_used_card();
+                // Opened from home, the switcher starts on Home: what is in front.
+                let at = 0;
                 self.open_switcher(Back::Home, at);
             }
             Some('8') => {
@@ -1262,7 +1272,11 @@ impl Shell {
 
     /// Home's menu rows: what each does, its label, its value, its keys.
     fn menu_rows(&self) -> [(MenuAct, String, String, &'static str); 4] {
-        let name = self.home.selected().map(|e| e.name.clone()).unwrap_or_default();
+        let name = self
+            .home
+            .selected()
+            .map(|e| e.name.clone())
+            .unwrap_or_default();
         let pinned = self
             .home
             .selected()
@@ -1326,7 +1340,8 @@ impl Shell {
             MenuAct::Layout => self.toggle_layout(),
             MenuAct::Find => self.home.start_search(),
             MenuAct::Switch => {
-                let at = self.last_used_card();
+                // Opened from home, the switcher starts on Home: what is in front.
+                let at = 0;
                 self.open_switcher(Back::Home, at);
             }
         }
@@ -1705,14 +1720,6 @@ impl Shell {
         self.cards()
             .iter()
             .position(|c| c.id == id)
-            .map_or(0, |i| i + 1)
-    }
-
-    /// The card used last, for the switcher's cursor. 0 is Home.
-    fn last_used_card(&self) -> usize {
-        let used: Vec<u64> = self.tasks.iter().map(|t| t.used).collect();
-        (0..used.len())
-            .max_by_key(|&i| used[i])
             .map_or(0, |i| i + 1)
     }
 
