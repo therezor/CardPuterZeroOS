@@ -194,16 +194,21 @@ chips, hint bar, menu, help and dialogs came with the design system.
   password. Zeroed when dropped.
 - `testing::Driver::jobs` runs jobs to the end, so tests see their lines and codes.
 
-**Settings** (`crates/gh0st-settings`):
+**Settings** (`crates/gh0st-settings`), built 2026-11-21:
 
-- An embedded start for setup: a given first page, no Bluetooth or volume queries (no
-  PipeWire as root).
-- The privacy rows as shared builders in `src/model/pages.rs`, used by Settings > Privacy
-  and by setup.
-- A Date and time page, on `set-time`.
-- **Unlock with password** under a Security heading, config key `gh0st.lock.password`,
-  default true.
-- The setup module itself.
+- `Settings::embedded(Embed { page, label, skip, done })`: one page as a setup step. It
+  asks only what that page shows (no volume: no PipeWire as root), carries the step's
+  label, puts Skip on 7 or Done on 6, and has Power off in its menu. Esc on its own page
+  goes back a step. It calls `cx.done()` once a country or time zone is set, or a network
+  joined, after the job's success. Tests in `tests/embed.rs`.
+- `pages::privacy`: the eight privacy rows, for Settings > Privacy and setup alike. The
+  network rows read what NetworkManager runs with from its config files
+  (`sysconf::nm_privacy`) and change through the helper verbs.
+- System > Date and time: a dialog, "2026-11-21 14:32", set through `set-time`.
+- System > **Unlock with password**, config key `gh0st.lock.password`, default true.
+- `PageId::Look`, setup's device name and look.
+
+Still to build: the setup module itself (phase 6).
 
 **Shell** (`crates/gh0st-shell`): the lock screen asks for the password when
 `gh0st.lock.password` is true. It checks with `/usr/sbin/unix_chkpwd`, which lets a user

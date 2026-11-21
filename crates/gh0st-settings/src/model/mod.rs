@@ -38,6 +38,8 @@ pub enum PageId {
     Choose(Choice),
     Privacy,
     About,
+    /// Setup's device name and look: name, layout, palette, clock.
+    Look,
 }
 
 /// A value a row changes in place: Enter flips a toggle, Z and C step the rest.
@@ -63,6 +65,13 @@ pub enum Setting {
     ConnMethod,
     ConnMac,
     Ssh,
+    /// One address per network, not the device's own.
+    WifiMac,
+    ScanMac,
+    SendHostname,
+    Ip6Privacy,
+    /// The lock screen asks for the password.
+    LockPassword,
 }
 
 /// A value picked on its own page, each option with a note. The gated
@@ -98,6 +107,8 @@ pub enum Command {
     DeviceName,
     /// Type the zram swap size in MB.
     SwapSize,
+    /// Type the date and time, for a clock network time can't set.
+    SetTime,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -350,6 +361,7 @@ pub fn icon(id: &PageId) -> &'static str {
         PageId::TimeZone(_) => "clock",
         PageId::Country(_) => "globe",
         PageId::Privacy => "shield",
+        PageId::Look => "palette",
         PageId::About => "info",
         _ => "settings",
     }

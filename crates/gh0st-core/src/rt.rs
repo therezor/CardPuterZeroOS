@@ -172,6 +172,40 @@ pub fn local_hms() -> (u32, u32, u32) {
     }
 }
 
+/// Local date and time now: year, month 1-12, day, hour, minute.
+pub fn local_ymdhm() -> (i32, u32, u32, u32, u32) {
+    // SAFETY: as in local_hms.
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        (
+            tm.tm_year + 1900,
+            tm.tm_mon as u32 + 1,
+            tm.tm_mday as u32,
+            tm.tm_hour as u32,
+            tm.tm_min as u32,
+        )
+    }
+}
+
+/// Seconds since 1970 for a local wall time, in the system's time zone.
+/// `None` when the C library can't place it.
+pub fn local_epoch(y: i32, mon: u32, d: u32, h: u32, min: u32) -> Option<i64> {
+    // SAFETY: a zeroed tm is valid; mktime reads and normalises it.
+    unsafe {
+        let mut tm: libc::tm = std::mem::zeroed();
+        tm.tm_year = y - 1900;
+        tm.tm_mon = mon as i32 - 1;
+        tm.tm_mday = d as i32;
+        tm.tm_hour = h as i32;
+        tm.tm_min = min as i32;
+        tm.tm_isdst = -1;
+        let t = libc::mktime(&mut tm);
+        (t != -1).then_some(t as i64)
+    }
+}
+
 /// "14:32", or "2:32" on a 12-hour clock, and the monotonic deadline of the
 /// next minute change. With the battery read, the only timers a lit, idle home
 /// screen keeps.

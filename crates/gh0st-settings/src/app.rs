@@ -16,7 +16,7 @@ use gh0st_core::apps::{self, Dirs, Layout};
 use gh0st_core::backlight::Backlight;
 use gh0st_core::config::{self, Config};
 use gh0st_core::sysconf::{self, CpuMode, GpuMem};
-use gh0st_core::{desktop, rfkill};
+use gh0st_core::{desktop, rfkill, rt};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -45,6 +45,29 @@ enum Ask {
     Auth(HelperCall),
     DeviceName,
     Swap,
+    DateTime,
+}
+
+/// Settings as one step of first-boot setup: one page with its label in the
+/// top bar, and the chips the step needs. It calls `cx.done()` once the
+/// step's work has finished: a country or a time zone set, a network joined.
+#[derive(Clone, Debug)]
+pub struct Embed {
+    /// The page the step shows.
+    pub page: PageId,
+    /// "Setup 3 of 8".
+    pub label: String,
+    /// Skip on 7: on to the next step, changing nothing.
+    pub skip: bool,
+    /// Done on 6, for a page where Enter works the rows.
+    pub done: bool,
+}
+
+/// What a chip does: the key it stands for, or the step is done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChipDo {
+    Key(Key),
+    Finish,
 }
 
 /// A root helper run, kept so a password prompt can run it again. It never
@@ -151,6 +174,10 @@ pub struct Settings {
     backlight: Option<Backlight>,
     /// vcgencmd was asked once; the running value holds until a restart.
     gpu_asked: bool,
+    /// A step of setup, when Settings runs as one.
+    embed: Option<Embed>,
+    /// The step is done once the helper or job now running succeeds.
+    finish_pending: bool,
 }
 
 impl Settings {
@@ -165,6 +192,25 @@ impl Settings {
             jobs: HashMap::new(),
             backlight: Backlight::find(Path::new("/sys/class/backlight")),
             gpu_asked: false,
+            embed: None,
+            finish_pending: false,
+        }
+    }
+
+    /// One page of Settings as a step of first-boot setup.
+    pub fn embedded(embed: Embed) -> Settings {
+        let mut s = Settings::new();
+        s.stack = vec![(embed.page.clone(), Cursor::default())];
+        s.view = pages::build(&embed.page, &s.state);
+        s.embed = Some(embed);
+        s
+    }
+
+    /// The step's work is done: on to the next.
+    fn finish(&mut self, cx: &mut Cx) {
+        if self.embed.is_some() {
+            self.finish_pending = false;
+            cx.done();
         }
     }
 
@@ -234,6 +280,10 @@ impl Settings {
         s.apps = rows;
         s.about = about();
         s.logs = logs_level();
+        s.nm = sysconf::nm_privacy(&nm_files());
+        s.lock_password = config.get_bool("gh0st.lock.password").unwrap_or(true);
+        let (y, mon, d, h, min) = rt::local_ymdhm();
+        s.now = format!("{y}-{mon:02}-{d:02} {h:02}:{min:02}");
     }
 
     /// Rebuilds the page on top from fresh local state.
@@ -416,6 +466,10 @@ impl Settings {
                 }
                 let _ = apps::save_pins(&pins);
             }
+            Setting::LockPassword => {
+                let on = self.state.lock_password;
+                cx.settings().set_bool("gh0st.lock.password", !on);
+            }
             _ => self.apply_system(s, d, cx),
         }
         self.refresh(cx);
@@ -596,6 +650,34 @@ impl Settings {
                 };
                 self.helper(cx, &["ssh", arg], done);
             }
+            Setting::WifiMac => {
+                let (arg, done) = match self.state.nm.mac_private {
+                    true => ("device", "Wi-Fi uses the device's address"),
+                    false => ("stable", "An address for each network"),
+                };
+                self.helper(cx, &["mac", arg], done);
+            }
+            Setting::ScanMac => {
+                let (arg, done) = match self.state.nm.scan_random {
+                    true => ("device", "Scans use the device's address"),
+                    false => ("random", "Scans use a random address"),
+                };
+                self.helper(cx, &["scan-mac", arg], done);
+            }
+            Setting::SendHostname => {
+                let (arg, done) = match self.state.nm.send_hostname {
+                    true => ("off", "The device name stays private"),
+                    false => ("on", "Networks see the device name"),
+                };
+                self.helper(cx, &["dhcp-hostname", arg], done);
+            }
+            Setting::Ip6Privacy => {
+                let (arg, done) = match self.state.nm.ip6_privacy {
+                    true => ("off", "IPv6 privacy off"),
+                    false => ("on", "IPv6 privacy on"),
+                };
+                self.helper(cx, &["ip6-privacy", arg], done);
+            }
             _ => cx.toast("Not available yet"),
         }
     }
@@ -670,8 +752,12 @@ impl Settings {
                     let argv = ["timedatectl", "set-timezone", &zone];
                     self.run(cx, NetJob::TimeSet(Some(zone.clone())), &argv);
                     self.state.zone = zone;
-                    self.stack
-                        .retain(|(p, _)| !matches!(p, PageId::TimeZone(_)));
+                    if self.embed.is_some() {
+                        self.finish_pending = true;
+                    } else {
+                        self.stack
+                            .retain(|(p, _)| !matches!(p, PageId::TimeZone(_)));
+                    }
                     self.refresh(cx);
                 }
             }
@@ -686,7 +772,8 @@ impl Settings {
                 Ask::PasswordCurrent,
             ),
             Command::SetCountry(cc) => {
-                if self.state.country.as_deref() != Some(cc.as_str()) {
+                let change = self.state.country.as_deref() != Some(cc.as_str());
+                if change {
                     let name = self
                         .state
                         .countries
@@ -695,10 +782,15 @@ impl Settings {
                         .map_or_else(|| cc.clone(), |(_, n)| n.clone());
                     let mut call =
                         HelperCall::new(&["regdom", &cc], format!("Wi-Fi country: {name}"));
-                    call.restart = true;
+                    // Setup goes on; the country applies from the next boot.
+                    call.restart = self.embed.is_none();
                     self.helper_call(cx, call);
                 }
-                self.stack.retain(|(p, _)| !matches!(p, PageId::Country(_)));
+                match (&self.embed, change) {
+                    (Some(_), true) => self.finish_pending = true,
+                    (Some(_), false) => self.finish(cx),
+                    (None, _) => self.stack.retain(|(p, _)| !matches!(p, PageId::Country(_))),
+                }
                 self.refresh(cx);
             }
             Command::Choose(c, word) => {
@@ -715,6 +807,16 @@ impl Settings {
                     secret: false,
                 },
                 Ask::DeviceName,
+            ),
+            Command::SetTime => self.ask(
+                Dialog::Text {
+                    title: "Date and time".into(),
+                    placeholder: "2026-11-21 14:32",
+                    text: self.state.now.clone(),
+                    masked: false,
+                    secret: false,
+                },
+                Ask::DateTime,
             ),
             Command::SwapSize => self.ask(
                 Dialog::Text {
@@ -817,6 +919,14 @@ impl Settings {
                 }
             }
             Ask::Swap => self.set_swap(cx, text.trim()),
+            Ask::DateTime => {
+                let epoch = pages::parse_date_time(&text)
+                    .and_then(|(y, mon, d, h, min)| rt::local_epoch(y, mon, d, h, min));
+                match epoch {
+                    Some(t) => self.helper(cx, &["set-time", &t.to_string()], "Clock set"),
+                    None => cx.toast("Type it as 2026-11-21 14:32"),
+                }
+            }
             Ask::Forget(ssid) => self.forget(cx, &ssid),
             Ask::ConnForget(name) => {
                 let argv = ["nmcli", "connection", "delete", "id", &name];
@@ -1336,6 +1446,9 @@ impl Settings {
             } => {
                 if ok {
                     cx.toast(&format!("Connected to {ssid}"));
+                    if self.embed.is_some() && self.stack.len() == 1 {
+                        self.finish(cx);
+                    }
                 } else {
                     // A failed first join leaves a profile behind, wrong
                     // password and all; the next try would not ask again.
@@ -1385,6 +1498,10 @@ impl Settings {
                     (true, None) => {}
                     (false, _) => cx.toast(&helper_failure(&out)),
                 }
+                if ok && zone.is_some() && self.finish_pending {
+                    self.finish(cx);
+                }
+                self.finish_pending &= ok;
                 self.query_sys(cx);
             }
             NetJob::Helper(call) => {
@@ -1394,10 +1511,19 @@ impl Settings {
                         if call.restart {
                             self.offer_restart(cx);
                         }
+                        if self.finish_pending {
+                            self.finish(cx);
+                        }
                     }
                     Step::Ask(title) => self.ask_password(cx, call.clone(), title),
-                    Step::Locked(secs) => cx.toast(&format!("Too many tries. Wait {secs} s")),
-                    Step::Failed(why) => cx.toast(&why),
+                    Step::Locked(secs) => {
+                        self.finish_pending = false;
+                        cx.toast(&format!("Too many tries. Wait {secs} s"));
+                    }
+                    Step::Failed(why) => {
+                        self.finish_pending = false;
+                        cx.toast(&why);
+                    }
                 }
                 self.query_sys(cx);
                 self.query_advanced(cx);
@@ -1520,6 +1646,9 @@ impl Page for Settings {
     }
 
     fn context(&self) -> Option<&str> {
+        if let Some(e) = &self.embed {
+            return Some(&e.label);
+        }
         // One SDK page holds Settings' own stack: name the app above the
         // first page, as the SDK would. The country list says how to jump.
         match self.top().0 {
@@ -1540,9 +1669,19 @@ impl Page for Settings {
                 c.add(cmd.keys(spec).keys_only());
             }
         }
+        // Setup's menu: no shell runs yet to power off from.
+        if self.embed.is_some() {
+            c.group("Setup");
+            c.add(gh0st_app::Command::action(POWER_OFF, "Power off"));
+        }
     }
 
     fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
+        if id == POWER_OFF {
+            self.run_command(Command::PowerOff, cx);
+            self.flush(cx);
+            return;
+        }
         let key = id
             .checked_sub(PAGE_KEYS)
             .and_then(|i| self.view.keys.get(i as usize))
@@ -1561,10 +1700,27 @@ impl Page for Settings {
 
     fn start(&mut self, cx: &mut Cx) {
         self.refresh(cx);
-        self.query_net(cx, false);
-        self.query_bt(cx);
-        self.query_sys(cx);
-        self.query_volume(cx);
+        // A setup step asks only what its page shows. No volume: PipeWire
+        // runs in the user's session, and setup comes before one.
+        match self.embed.as_ref().map(|e| e.page.clone()) {
+            None => {
+                self.query_net(cx, false);
+                self.query_bt(cx);
+                self.query_sys(cx);
+                self.query_volume(cx);
+            }
+            Some(PageId::Wifi) => self.query_net(cx, true),
+            Some(PageId::Privacy) => {
+                self.query_sys(cx);
+                self.query_bt(cx);
+            }
+            Some(PageId::TimeZone(_)) => {
+                self.run(cx, NetJob::Zones, &["timedatectl", "list-timezones"]);
+                self.query_sys(cx);
+            }
+            Some(_) => self.query_advanced(cx),
+        }
+        self.refresh(cx);
         self.flush(cx);
     }
 
@@ -1586,7 +1742,8 @@ impl Page for Settings {
         // A chip runs what its key would.
         let key = match key {
             Key::Soft(n) => match self.chips().into_iter().find(|c| c.0 == n) {
-                Some((_, _, k)) => k,
+                Some((_, _, ChipDo::Key(k))) => k,
+                Some((_, _, ChipDo::Finish)) => return self.finish(cx),
                 None => return,
             },
             k => k,
@@ -1653,9 +1810,25 @@ impl Settings {
         }
     }
 
-    fn chips(&self) -> Vec<(u8, Chip, Key)> {
+    /// The page's chips, then a setup step's Skip on 7 and Done on 6.
+    fn chips(&self) -> Vec<(u8, Chip, ChipDo)> {
         let (id, cur) = self.top();
-        model::chips(id, &self.view, *cur, self.state.moving.is_some())
+        let mut v: Vec<(u8, Chip, ChipDo)> =
+            model::chips(id, &self.view, *cur, self.state.moving.is_some())
+                .into_iter()
+                .map(|(n, chip, k)| (n, chip, ChipDo::Key(k)))
+                .collect();
+        if let Some(e) = self.embed.as_ref().filter(|_| self.stack.len() == 1) {
+            if e.skip {
+                v.retain(|c| c.0 != 7);
+                v.push((7, Chip::new("skip-forward", "Skip"), ChipDo::Finish));
+            }
+            if e.done {
+                v.retain(|c| c.0 != 6);
+                v.push((6, Chip::new("check", "Done").main(), ChipDo::Finish));
+            }
+        }
+        v
     }
 }
 
@@ -1664,6 +1837,28 @@ const ASK: u32 = 1;
 
 /// Command ids for a page's own keys, by their place in its list.
 const PAGE_KEYS: u32 = 100;
+
+/// Setup's Power off, in its menu.
+const POWER_OFF: u32 = 90;
+
+/// NetworkManager's config files' text, in the order it reads them.
+fn nm_files() -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_to_string(sysconf::NM_MAIN_CONF)
+        .into_iter()
+        .collect();
+    for dir in sysconf::NM_CONF_DIRS {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        let mut files: Vec<_> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "conf"))
+            .collect();
+        files.sort();
+        out.extend(files.iter().filter_map(|f| std::fs::read_to_string(f).ok()));
+    }
+    out
+}
 
 /// A page key as the SDK spells it, and the key it stands for.
 fn page_key_of(key: &str) -> Option<(&'static str, Key)> {

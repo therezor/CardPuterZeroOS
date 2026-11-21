@@ -4,7 +4,7 @@
 
 use super::{Act, Body, Choice, Command, ConnField, Item, Line, Page, PageId, Setting, Value};
 use gh0st_core::apps::Layout;
-use gh0st_core::sysconf::{self, CpuMode, GpuMem};
+use gh0st_core::sysconf::{self, CpuMode, GpuMem, NmPrivacy};
 
 /// Screen-off choices, in seconds. 0 is never.
 pub const DARK_TIMES: &[i64] = &[15, 30, 60, 120, 300, 0];
@@ -172,6 +172,12 @@ pub struct State {
     pub network_time: bool,
     pub ssh: bool,
     pub logs: Logs,
+    /// NetworkManager's privacy settings, read from its config files.
+    pub nm: NmPrivacy,
+    /// `gh0st.lock.password`: the lock screen asks for the password.
+    pub lock_password: bool,
+    /// The local date and time, "2026-11-21 14:32", when System opened.
+    pub now: String,
     /// `gpu_mem` in config.txt, and what the firmware runs with now.
     pub gpu_mem: GpuMem,
     pub gpu_running: Option<u32>,
@@ -447,16 +453,8 @@ pub fn build(id: &PageId, s: &State) -> Page {
                 vec![]
             },
         ),
-        PageId::Privacy => (
-            "Privacy",
-            Body::List(vec![Item::new(
-                "hard-drive",
-                "Logs",
-                Value::TextChevron(s.logs.label().into()),
-                Act::Open(PageId::Choose(Choice::Logs)),
-            )]),
-            vec![],
-        ),
+        PageId::Privacy => ("Privacy", Body::List(privacy(s)), vec![]),
+        PageId::Look => ("Device and look", Body::List(look(s)), vec![]),
         PageId::About => (
             "About",
             Body::Info(
@@ -724,6 +722,98 @@ fn bluetooth(s: &State) -> Vec<Item> {
     out
 }
 
+/// The private defaults, each switchable. Settings > Privacy and setup's
+/// privacy step show the same rows.
+pub fn privacy(s: &State) -> Vec<Item> {
+    let set = |icon, label, on, what| Item::new(icon, label, Value::Toggle(on), Act::Set(what));
+    vec![
+        set(
+            "wifi",
+            "Private Wi-Fi address",
+            s.nm.mac_private,
+            Setting::WifiMac,
+        ),
+        set(
+            "search",
+            "Random address in scans",
+            s.nm.scan_random,
+            Setting::ScanMac,
+        ),
+        set(
+            "tag",
+            "Send device name",
+            s.nm.send_hostname,
+            Setting::SendHostname,
+        ),
+        set(
+            "globe",
+            "IPv6 privacy address",
+            s.nm.ip6_privacy,
+            Setting::Ip6Privacy,
+        ),
+        set(
+            "clock",
+            "Network time",
+            s.network_time,
+            Setting::NetworkTime,
+        ),
+        Item::new(
+            "hard-drive",
+            "Keep logs",
+            Value::TextChevron(s.logs.label().into()),
+            Act::Open(PageId::Choose(Choice::Logs)),
+        ),
+        set("square-terminal", "SSH", s.ssh, Setting::Ssh),
+        set("bluetooth", "Bluetooth", s.bt_on, Setting::Bluetooth),
+    ]
+}
+
+/// Setup's device name and look.
+fn look(s: &State) -> Vec<Item> {
+    vec![
+        Item::new(
+            "tag",
+            "Device name",
+            Value::TextChevron(s.hostname.clone()),
+            Act::Run(Command::DeviceName),
+        ),
+        Item::new(
+            "layout-grid",
+            "Home layout",
+            Value::Choice(s.layout.label().into()),
+            Act::Set(Setting::Layout),
+        ),
+        Item::new(
+            "palette",
+            "Palette",
+            Value::Choice(s.palette.into()),
+            Act::Set(Setting::Palette),
+        ),
+        Item::new(
+            "clock",
+            "Clock",
+            Value::Choice(if s.clock_24h { "24 h" } else { "12 h" }.into()),
+            Act::Set(Setting::Clock),
+        ),
+    ]
+}
+
+/// "2026-11-21 14:32" as year, month, day, hour and minute.
+pub fn parse_date_time(s: &str) -> Option<(i32, u32, u32, u32, u32)> {
+    let (date, time) = s.trim().split_once(' ')?;
+    let mut d = date.split('-').map(|p| p.parse::<u32>().ok());
+    let (y, mon, day) = (d.next()??, d.next()??, d.next()??);
+    let (h, min) = time.trim().split_once(':')?;
+    let (h, min) = (h.parse::<u32>().ok()?, min.parse::<u32>().ok()?);
+    let ok = d.next().is_none()
+        && (2024..2100).contains(&y)
+        && (1..=12).contains(&mon)
+        && (1..=31).contains(&day)
+        && h < 24
+        && min < 60;
+    ok.then_some((y as i32, mon, day, h, min))
+}
+
 fn system(s: &State) -> Vec<Item> {
     vec![
         Item::new(
@@ -745,10 +835,22 @@ fn system(s: &State) -> Vec<Item> {
             Act::Set(Setting::Ssh),
         ),
         Item::new(
+            "clock",
+            "Date and time",
+            Value::TextChevron(s.now.clone()),
+            Act::Run(Command::SetTime),
+        ),
+        Item::new(
             "lock",
             "Password",
             Value::Chevron,
             Act::Run(Command::Password),
+        ),
+        Item::new(
+            "lock",
+            "Unlock with password",
+            Value::Toggle(s.lock_password),
+            Act::Set(Setting::LockPassword),
         ),
         Item::new(
             "sliders-horizontal",
@@ -1115,7 +1217,11 @@ mod tests {
         s.country = Some("AE".into());
         s.country_running = Some("AE".into());
         assert_eq!(build(&PageId::Advanced, &s).len(), 5);
-        let link = |s: &State| build(&PageId::System, s).item(4).unwrap().value.clone();
+        let link = |s: &State| {
+            let p = build(&PageId::System, s);
+            let i = (0..p.len()).find(|&i| p.item(i).unwrap().label == "Advanced");
+            p.item(i.unwrap()).unwrap().value.clone()
+        };
         assert_eq!(link(&s), Value::TextChevron(String::new()));
         s.gpu_mem = GpuMem::Set(64);
         assert_eq!(link(&s), Value::TextChevron("Restart needed".into()));
@@ -1295,5 +1401,91 @@ mod tests {
             cities.item(1).unwrap().act,
             Act::Run(Command::SetZone("Europe/London".into()))
         );
+    }
+    #[test]
+    fn privacy_shows_every_private_default_as_a_switch() {
+        let mut s = state();
+        s.nm = NmPrivacy {
+            mac_private: true,
+            scan_random: true,
+            send_hostname: false,
+            ip6_privacy: true,
+        };
+        s.network_time = true;
+        let p = build(&PageId::Privacy, &s);
+        let labels: Vec<&str> = (0..p.len())
+            .map(|i| p.item(i).unwrap().label.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Private Wi-Fi address",
+                "Random address in scans",
+                "Send device name",
+                "IPv6 privacy address",
+                "Network time",
+                "Keep logs",
+                "SSH",
+                "Bluetooth"
+            ]
+        );
+        let on: Vec<Value> = (0..5).map(|i| p.item(i).unwrap().value.clone()).collect();
+        assert_eq!(
+            on,
+            [true, true, false, true, true].map(Value::Toggle).to_vec()
+        );
+        assert_eq!(p.item(1).unwrap().act, Act::Set(Setting::ScanMac));
+    }
+
+    #[test]
+    fn system_has_the_clock_and_the_lock() {
+        let mut s = state();
+        s.now = "2026-11-21 14:32".into();
+        s.lock_password = true;
+        let p = build(&PageId::System, &s);
+        let find = |l: &str| (0..p.len()).find_map(|i| p.item(i).filter(|it| it.label == l));
+        assert_eq!(
+            find("Date and time").unwrap().value,
+            Value::TextChevron("2026-11-21 14:32".into())
+        );
+        assert_eq!(
+            find("Unlock with password").unwrap().value,
+            Value::Toggle(true)
+        );
+    }
+
+    #[test]
+    fn dates_parse_only_whole_and_in_range() {
+        assert_eq!(
+            parse_date_time("2026-11-21 14:32"),
+            Some((2026, 11, 21, 14, 32))
+        );
+        assert_eq!(
+            parse_date_time(" 2030-01-05  09:07 "),
+            Some((2030, 1, 5, 9, 7))
+        );
+        for bad in [
+            "",
+            "2026-11-21",
+            "14:32",
+            "2026-13-01 10:00",
+            "2026-11-32 10:00",
+            "2026-11-21 24:00",
+            "2026-11-21 10:60",
+            "2023-12-31 23:59",
+            "2026-11-21-1 10:00",
+            "2026/11/21 10:00",
+        ] {
+            assert_eq!(parse_date_time(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn look_is_the_name_then_the_look() {
+        let mut s = state();
+        s.hostname = "zero".into();
+        let p = build(&PageId::Look, &s);
+        assert_eq!(p.item(0).unwrap().value, Value::TextChevron("zero".into()));
+        assert_eq!(p.item(2).unwrap().act, Act::Set(Setting::Palette));
     }
 }

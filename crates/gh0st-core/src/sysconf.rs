@@ -440,6 +440,63 @@ pub fn ip6_privacy_conf(on: bool) -> String {
     format!("{NM_HEADER}[connection]\nipv6.ip6-privacy={v}\n")
 }
 
+/// NetworkManager's config files in the order it reads them; a later value
+/// wins.
+pub const NM_CONF_DIRS: [&str; 3] = [
+    "/usr/lib/NetworkManager/conf.d",
+    "/run/NetworkManager/conf.d",
+    "/etc/NetworkManager/conf.d",
+];
+pub const NM_MAIN_CONF: &str = "/etc/NetworkManager/NetworkManager.conf";
+
+/// The privacy settings NetworkManager runs with, from its config files'
+/// text in read order. Unset ones take NetworkManager's own defaults: the
+/// device's address, a random one while scanning, the name sent, no IPv6
+/// temporary addresses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NmPrivacy {
+    pub mac_private: bool,
+    pub scan_random: bool,
+    pub send_hostname: bool,
+    pub ip6_privacy: bool,
+}
+
+pub fn nm_privacy(files: &[String]) -> NmPrivacy {
+    let mut wifi_mac = String::new();
+    let (mut scan, mut v4_name, mut ip6) = (String::new(), String::new(), String::new());
+    for text in files {
+        let mut section = "";
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                section = name;
+                continue;
+            }
+            let Some((k, v)) = line.split_once('=') else {
+                continue;
+            };
+            let v = v.trim().to_string();
+            match (section, k.trim()) {
+                ("connection", "wifi.cloned-mac-address") => wifi_mac = v,
+                ("device", "wifi.scan-rand-mac-address") => scan = v,
+                ("connection", "ipv4.dhcp-send-hostname") => v4_name = v,
+                ("connection", "ipv6.ip6-privacy") => ip6 = v,
+                _ => {}
+            }
+        }
+    }
+    let yes = |v: &str, unset: bool| match v {
+        "" => unset,
+        _ => matches!(v, "yes" | "true" | "1" | "on"),
+    };
+    NmPrivacy {
+        mac_private: matches!(wifi_mac.as_str(), "stable-ssid" | "stable" | "random"),
+        scan_random: yes(&scan, true),
+        send_hostname: yes(&v4_name, true),
+        ip6_privacy: matches!(ip6.as_str(), "1" | "2"),
+    }
+}
+
 /// A login name `useradd` takes and setup allows: a lowercase letter, then
 /// up to 31 lowercase letters, digits, `-` and `_`.
 pub fn valid_user_name(s: &str) -> bool {
@@ -674,5 +731,37 @@ mod tests {
         ] {
             assert!(!valid_user_name(bad), "{bad}");
         }
+    }
+    #[test]
+    fn nm_privacy_reads_the_last_value_and_defaults_the_rest() {
+        let image = "[device]\nwifi.scan-rand-mac-address=yes\n\n[connection]\n\
+                     wifi.cloned-mac-address=stable-ssid\nipv4.dhcp-send-hostname=false\n\
+                     ipv6.ip6-privacy=2\n";
+        let p = nm_privacy(&[image.into()]);
+        assert_eq!(
+            p,
+            NmPrivacy {
+                mac_private: true,
+                scan_random: true,
+                send_hostname: false,
+                ip6_privacy: true
+            }
+        );
+        let ours = MacPolicy::Device.conf() + &dhcp_hostname_conf(true);
+        let p = nm_privacy(&[image.into(), ours]);
+        assert!(!p.mac_private && p.send_hostname && p.ip6_privacy);
+        // Stock ships none of these: NetworkManager's defaults.
+        let stock = nm_privacy(&["[main]\nplugins=ifupdown,keyfile\n".into()]);
+        assert_eq!(
+            stock,
+            NmPrivacy {
+                mac_private: false,
+                scan_random: true,
+                send_hostname: true,
+                ip6_privacy: false
+            }
+        );
+        // A key in the wrong section is not that setting.
+        assert!(!nm_privacy(&["[device]\nwifi.cloned-mac-address=random\n".into()]).mac_private);
     }
 }
