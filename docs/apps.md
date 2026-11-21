@@ -57,10 +57,11 @@ project, is built against this page.
 - Closing a paused app from the switcher sends SIGTERM and SIGCONT together,
   then SIGKILL 3 s later. So does a stopping shell.
 - An app allowed to run in the background (Settings > Apps) is not stopped.
-  It gets no keys while it is behind. It still draws to the same panel: the
-  shell repaints over it while the shell is in front, and keeps its pixels
-  for its return, but over another app its drawing shows. Draw nothing while
-  you are behind if you can tell.
+  While the shell is in front it gets no keys (the shell holds the grab),
+  and the shell repaints over anything it draws, keeping its pixels for its
+  return. While another app is in front it reads that app's keys and its
+  drawing shows over it: the keyboard and panel are shared and nothing
+  stands between two running apps.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
   and leaves them in front.
 

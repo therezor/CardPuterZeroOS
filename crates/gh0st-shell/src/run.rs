@@ -533,7 +533,8 @@ impl Shell {
             let shell = !app && self.screen != Screen::Off;
             let deadline = rt::earliest([
                 shell.then_some(self.clock_at),
-                self.kb.repeat_at(),
+                // Over an app no shell key repeats, so no repeat wakeups.
+                (!app).then(|| self.kb.repeat_at()).flatten(),
                 self.toast.as_ref().map(|t| t.1),
                 (!app).then_some(self.tab_down.map(|t| t + LOCK_HOLD_MS)).flatten(),
                 self.rescan_at,

@@ -633,17 +633,18 @@ impl Shell {
         let id = ui.top().0.clone();
         match id {
             PageId::Wifi if k.nav(true) == Some(keys::Nav::Right) => {
-                if let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() {
-                    let known = self.settings.as_ref().is_some_and(|ui| ui.state.profiles.contains(&ssid));
-                    if known {
-                        self.query_conn(&ssid);
-                        if let Some(ui) = self.settings.as_mut() {
-                            ui.stack.push((PageId::Conn(ssid), Cursor::default()));
-                        }
-                        self.refresh_settings();
+                let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() else {
+                    return false;
+                };
+                let known = self.settings.as_ref().is_some_and(|ui| ui.state.profiles.contains(&ssid));
+                if known {
+                    self.query_conn(&ssid);
+                    if let Some(ui) = self.settings.as_mut() {
+                        ui.stack.push((PageId::Conn(ssid), Cursor::default()));
                     }
+                    self.refresh_settings();
                 }
-                true
+                known
             }
             PageId::Wifi if k.ch == Some('r') => {
                 self.query_net(true);
@@ -651,7 +652,11 @@ impl Shell {
                 true
             }
             PageId::Wifi if k.is(code::BACKSPACE) => {
-                if let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() {
+                let ssid = match self.selected_act() {
+                    Some((Act::Run(Command::Join(s)) | Act::Open(PageId::Conn(s)), _)) => Some(s),
+                    _ => None,
+                };
+                if let Some(ssid) = ssid {
                     let (known, active) = self.settings.as_ref().map_or((false, false), |ui| {
                         let active = ui.state.networks.iter().any(|n| n.active && n.ssid == ssid);
                         (ui.state.profiles.contains(&ssid), active)
@@ -724,6 +729,15 @@ impl Shell {
         ui.state.conn.clone().filter(|c| c.name == *name)
     }
 
+    /// Changes the open connection's state at once, so a second quick step
+    /// starts from the new value rather than the one nmcli last reported.
+    fn update_conn(&mut self, f: impl FnOnce(&mut pages::Conn)) {
+        if let Some(c) = self.settings.as_mut().and_then(|ui| ui.state.conn.as_mut()) {
+            f(c);
+        }
+        self.refresh_settings();
+    }
+
     /// `nmcli connection modify` with `props` as property, value pairs.
     fn modify(&mut self, c: &pages::Conn, props: &[(&str, &str)], reconnect: bool) {
         let mut argv = vec!["nmcli", "connection", "modify", c.name.as_str()];
@@ -733,7 +747,7 @@ impl Shell {
         }
         let job = NetJob::ConnModify {
             name: c.name.clone(),
-            reconnect: reconnect && c.active,
+            reconnect,
         };
         self.start_job(JobKind::Net(job), &argv);
     }
@@ -890,11 +904,9 @@ impl Shell {
                 if !j.ok() {
                     self.toast(net::failure(&out, false));
                 } else if *reconnect {
-                    self.start_job(
-                        JobKind::Net(NetJob::ConnUp(name.clone())),
-                        &["nmcli", "--wait", "30", "connection", "up", name],
-                    );
-                    self.toast("Reconnecting\u{2026}");
+                    // Not applied at once: on the network you work over, a
+                    // new address or MAC would cut you off mid-change.
+                    self.toast("Saved. Reconnect applies it");
                 }
                 self.query_conn(name);
             }
@@ -1015,6 +1027,7 @@ impl Shell {
                 if let Some(c) = self.open_conn() {
                     let v = if c.autoconnect { "no" } else { "yes" };
                     self.modify(&c, &[("connection.autoconnect", v)], false);
+                    self.update_conn(|c| c.autoconnect = !c.autoconnect);
                 }
             }
             Setting::ConnMethod => {
@@ -1022,6 +1035,11 @@ impl Shell {
                     if c.manual {
                         let props = [("ipv4.method", "auto"), ("ipv4.addresses", ""), ("ipv4.gateway", "")];
                         self.modify(&c, &props, true);
+                        self.update_conn(|c| {
+                            c.manual = false;
+                            c.address.clear();
+                            c.gateway.clear();
+                        });
                     } else if c.current.is_empty() {
                         // Manual needs an address; ask for one.
                         self.ask_conn_field(&c, ConnField::Address);
@@ -1039,6 +1057,11 @@ impl Shell {
                             ("ipv4.gateway", gw.as_str()),
                         ];
                         self.modify(&c, &props, true);
+                        self.update_conn(|x| {
+                            x.manual = true;
+                            x.address = c.current.clone();
+                            x.gateway = gw.clone();
+                        });
                     }
                 }
             }
@@ -1052,6 +1075,7 @@ impl Shell {
                         "802-3-ethernet.cloned-mac-address"
                     };
                     self.modify(&c, &[(prop, next)], true);
+                    self.update_conn(|c| c.mac = next.to_string());
                 }
             }
             Setting::Ssh => {

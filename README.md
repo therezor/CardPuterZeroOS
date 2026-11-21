@@ -94,9 +94,10 @@ as PNGs.
 
 ## Status
 
-The shell, the switcher and Settings run on the device. Still to build:
-letting chosen apps keep running in the background, and the terminal, which
-lives in its own repository.
+The shell, the switcher and Settings run on the device. An app can be
+allowed to keep running in the background; while another app is in front it
+still shares that app's keyboard and panel. Still to build: the terminal,
+which lives in its own repository.
 
 ## Licenses
 
