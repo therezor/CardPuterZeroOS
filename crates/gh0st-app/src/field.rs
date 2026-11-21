@@ -40,6 +40,11 @@ impl TextField {
         self.text = text.to_string();
     }
 
+    /// Takes the text out, leaving the field empty.
+    pub fn take(&mut self) -> String {
+        std::mem::take(&mut self.text)
+    }
+
     pub fn is_masked(&self) -> bool {
         self.masked
     }

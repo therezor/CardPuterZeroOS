@@ -11,8 +11,8 @@ use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::snapshot::write_png;
 use gh0st_ui::theme::{self, Theme, Tone};
 use gh0st_ui::widgets::{
-    self, AppItem, Battery, Card, Chip, Hint, Look, Message, Net, Row, Status, Trailing, Visual,
-    soft, text_in,
+    self, AppItem, Battery, Card, Chip, Field, Hint, Look, Message, Net, Row, Status, Trailing,
+    Visual, soft, text_in,
 };
 use gh0st_ui::{Canvas, Color, Rect};
 use std::path::PathBuf;
@@ -153,18 +153,6 @@ fn para(c: &mut Canvas, t: &Theme, r: Rect, text: &str) {
     for (i, line) in wrap(t.f.body, text, r.w).iter().enumerate() {
         let lr = Rect::new(r.x, r.y + i as i32 * 18, r.w, 18);
         text_in(c, t.f.body, lr, line, soft(t));
-    }
-}
-
-fn field_label(c: &mut Canvas, t: &Theme, y: i32, s: &str, col: Color) {
-    text_in(c, t.f.small, Rect::new(15, y, t.m.width - 30, 13), s, col);
-}
-
-fn field(c: &mut Canvas, t: &Theme, y: i32, text: &str, masked: bool, focused: bool, error: bool) {
-    let r = Rect::new(12, y, t.m.width - 24, 22);
-    widgets::text_field(c, t, r, text, masked, focused, "");
-    if error {
-        c.stroke_round_rect(r, t.m.radius, t.c.critical);
     }
 }
 
@@ -554,21 +542,30 @@ fn picker(t: &Theme) -> Canvas {
 
 fn form(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    widgets::status_bar(&mut c, t, &sub("user", "Account", "Setup 7 of 10"));
-    field_label(&mut c, t, 21, "Your name on this device", t.c.muted);
-    field(&mut c, t, 35, "alex", false, false, false);
-    field_label(&mut c, t, 62, "Password, 4 or more", t.c.muted);
-    field(&mut c, t, 76, "abc", true, true, true);
-    icon::draw(
-        &mut c,
-        "triangle-alert",
-        IconSize::Tiny,
-        15,
-        103,
-        t.c.critical,
-    );
-    let er = Rect::new(31, 101, 260, 16);
-    text_in(&mut c, t.f.small, er, "Too short: 4 or more", t.c.critical);
+    widgets::status_bar(&mut c, t, &sub("user", "Account", "Setup 8 of 10"));
+    let fields = [
+        Field {
+            label: "Your name on this device",
+            text: "alex",
+            placeholder: "",
+            masked: false,
+            focused: false,
+            error: None,
+        },
+        Field {
+            label: "Password, 4 or more",
+            text: "abc",
+            placeholder: "",
+            masked: true,
+            focused: true,
+            error: Some("Too short: 4 or more"),
+        },
+    ];
+    let mut y = 21;
+    for f in &fields {
+        let r = Rect::new(12, y, t.m.width - 24, 0);
+        y += widgets::form_field(&mut c, t, r, f) + t.m.field_gap;
+    }
     let h = hints(&[("Esc", "back"), ("Tab", "next field"), ("Enter", "next")]);
     widgets::hint_bar(&mut c, t, &h, Some(HELP));
     c

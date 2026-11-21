@@ -12,16 +12,37 @@ use gh0st_ui::display::{Display, Frames};
 use gh0st_ui::fb::{self, Framebuffer};
 use std::path::PathBuf;
 
+/// How an app runs. [`run`] takes the default.
+#[derive(Clone, Copy, Debug)]
+pub struct Options {
+    /// False for an app the user must finish, as first-boot setup is: Esc
+    /// held on the first page does nothing, the menu has no Close app, and
+    /// the last page never closes. [`Cx::quit`](crate::Cx::quit) and
+    /// SIGTERM still end it.
+    pub closable: bool,
+}
+
+impl Default for Options {
+    fn default() -> Options {
+        Options { closable: true }
+    }
+}
+
 /// Runs an app whose first page is `page`, and exits when its last page
 /// closes. Pass `--sim DIR` to run it on a host: keys come from stdin in the
 /// format of `gh0st_core::script`, and each new frame is saved to DIR.
 pub fn run(page: impl Page + 'static) -> ! {
+    run_with(page, Options::default())
+}
+
+/// As [`run`], with [`Options`].
+pub fn run_with(page: impl Page + 'static, opts: Options) -> ! {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let sim = args
         .iter()
         .position(|a| a == "--sim")
         .map(|i| PathBuf::from(args.get(i + 1).map(String::as_str).unwrap_or("frames")));
-    let code = match main_loop(Box::new(page), sim) {
+    let code = match main_loop(Box::new(page), sim, opts) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("gh0st app: {e}");
@@ -38,8 +59,9 @@ enum Input {
     Script(Script),
 }
 
-fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
+fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result<(), String> {
     let mut rt_ = Runtime::new(page, None);
+    rt_.s.closable = opts.closable;
     if sim.is_some() {
         rt_.off_device();
     }

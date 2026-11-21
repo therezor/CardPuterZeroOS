@@ -274,6 +274,10 @@ impl Runtime {
                     self.call(top, now, |p, cx| p.start(cx));
                 }
                 Request::Back => self.pop(now),
+                Request::Done => {
+                    self.s.done = true;
+                    self.pop(now);
+                }
                 Request::Quit => self.quit_all(),
                 Request::Toast(text, tone) => self.show_toast(text, tone, now),
                 Request::Timer { id, ms, every } => self.timers.push(TimerEntry {
@@ -356,6 +360,10 @@ impl Runtime {
     }
 
     fn pop(&mut self, now: u64) {
+        if self.stack.len() == 1 && !self.s.closable {
+            self.s.done = false;
+            return;
+        }
         self.overlay = Overlay::None;
         self.menu_last = None;
         let Some(top) = self.stack.len().checked_sub(1) else {
@@ -367,6 +375,8 @@ impl Runtime {
             0 => self.quit = true,
             n => self.call(n - 1, now, |p, cx| p.resume(cx)),
         }
+        // Heard by the parent's resume, and by no page after it.
+        self.s.done = false;
         self.dirty = true;
     }
 
@@ -529,6 +539,9 @@ impl Runtime {
             self.pop(now);
             return;
         }
+        if !self.s.closable {
+            return;
+        }
         self.hold = Some(Hold {
             code,
             what: Held::Exit,
@@ -618,7 +631,8 @@ impl Runtime {
 
     fn open_menu(&mut self, top: usize) {
         let select = self.menu_last.filter(|l| l.0 == top).map(|l| l.1);
-        self.overlay = Overlay::Menu(Menu::new(top, self.commands_of(top), select));
+        let cmds = self.commands_of(top);
+        self.overlay = Overlay::Menu(Menu::new(top, cmds, select, self.s.closable));
         self.dirty = true;
     }
 
@@ -645,7 +659,11 @@ impl Runtime {
                 under.push(("8".into(), "Menu".into()));
             }
         }
-        let back = if i == 0 { "Back; hold to exit" } else { "Back" };
+        let back = if i == 0 && self.s.closable {
+            "Back; hold to exit"
+        } else {
+            "Back"
+        };
         let keys = vec![
             ("Esc".into(), back.into()),
             ("Enter".into(), "Open, or the main thing".into()),
@@ -787,6 +805,11 @@ impl Runtime {
                 self.pending.push((id, owner));
             }
         }
+    }
+
+    /// A job is still running, or has yet to report that it couldn't start.
+    pub fn has_jobs(&self) -> bool {
+        !self.jobs.is_empty() || !self.pending.is_empty()
     }
 
     /// The fds of running jobs' output, for poll, with their job ids.

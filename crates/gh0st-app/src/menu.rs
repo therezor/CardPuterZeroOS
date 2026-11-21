@@ -35,6 +35,8 @@ enum Line {
 
 pub(crate) struct Menu {
     pub owner: usize,
+    /// Close app is offered.
+    closable: bool,
     cmds: Commands,
     /// The menu's rows in display order, as indices into `cmds`.
     rows: Vec<usize>,
@@ -48,9 +50,10 @@ pub(crate) struct Menu {
 }
 
 impl Menu {
-    pub fn new(owner: usize, cmds: Commands, select: Option<u32>) -> Menu {
+    pub fn new(owner: usize, cmds: Commands, select: Option<u32>, closable: bool) -> Menu {
         let mut m = Menu {
             owner,
+            closable,
             cmds: Commands::new(),
             rows: Vec::new(),
             lines: Vec::new(),
@@ -73,7 +76,9 @@ impl Menu {
         let grouped = cmds.iter().any(|c| c.in_menu() && !c.group.is_empty());
         cmds.group(if grouped { "App" } else { "" });
         cmds.add(Command::action(HELP, "Help").opens());
-        cmds.add(Command::action(CLOSE_APP, "Close app").confirm());
+        if self.closable {
+            cmds.add(Command::action(CLOSE_APP, "Close app").confirm());
+        }
         self.cmds = cmds;
         self.rows.clear();
         self.lines.clear();
@@ -485,7 +490,7 @@ mod tests {
         cs.add(Command::choice(2, "Text size", "8x14").keys("r t"));
         cs.add(Command::toggle(3, "Top bar", true).keys("b"));
         cs.add(Command::action(4, "Scroll up").keys("f").keys_only());
-        Menu::new(0, cs, None)
+        Menu::new(0, cs, None, true)
     }
 
     #[test]
@@ -592,7 +597,7 @@ mod tests {
         let mut c = Canvas::new(t.m.width, t.m.height);
         let mut cs = Commands::new();
         cs.add(Command::choice(1, "Magnify grid", "132x43").keys("r t"));
-        let m = Menu::new(0, cs, None);
+        let m = Menu::new(0, cs, None, true);
         let panel = Rect::new(0, t.m.bar_h, t.m.width, t.m.height - t.m.bar_h - t.m.hint_h);
         m.draw(&mut c, &t, panel);
         let label = t.f.body_bold.measure("Magnify grid");

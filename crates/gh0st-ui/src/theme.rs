@@ -139,6 +139,12 @@ pub struct Metrics {
     /// its blocks: title, text, field, keys.
     pub card_pad: i32,
     pub card_gap: i32,
+    /// A form's text field, its label above, a line under it that says
+    /// what is wrong, and the space between two fields.
+    pub field_h: i32,
+    pub field_label_h: i32,
+    pub field_note_h: i32,
+    pub field_gap: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -469,6 +475,10 @@ pub const CARDPUTER: Metrics = Metrics {
     toast_h: 20,
     card_pad: 10,
     card_gap: 6,
+    field_h: 22,
+    field_label_h: 14,
+    field_note_h: 16,
+    field_gap: 6,
 };
 
 /// How far dim terminal text fades toward its background, of 255.

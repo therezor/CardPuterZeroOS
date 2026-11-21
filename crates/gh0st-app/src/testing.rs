@@ -24,6 +24,7 @@
 //! ```
 
 use crate::page::Page;
+use crate::run::Options;
 use crate::runtime::Runtime;
 use gh0st_core::script::Script;
 use gh0st_ui::Canvas;
@@ -38,6 +39,11 @@ impl Driver {
     /// Starts `page`. Settings go to a fresh file in the temp directory, so a
     /// test never touches the real config.
     pub fn new(page: impl Page + 'static) -> Driver {
+        Driver::with(page, Options::default())
+    }
+
+    /// As [`new`](Driver::new), run as [`run_with`](crate::run_with) runs it.
+    pub fn with(page: impl Page + 'static, opts: Options) -> Driver {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let config = std::env::temp_dir().join(format!(
@@ -45,6 +51,7 @@ impl Driver {
             std::process::id()
         ));
         let mut rt = Runtime::new(Box::new(page), Some(config));
+        rt.s.closable = opts.closable;
         rt.off_device();
         rt.start(0);
         Driver { rt, now: 0 }
@@ -104,6 +111,34 @@ impl Driver {
                 return self;
             }
         }
+    }
+
+    /// Runs the real loop over jobs from [`Cx::spawn`](crate::Cx::spawn)
+    /// until none is left, or `ms` of wall time: their lines and exit codes
+    /// reach the page as on the device.
+    pub fn jobs(&mut self, ms: u64) -> &mut Driver {
+        let end = gh0st_core::rt::now_ms() + ms;
+        while self.rt.has_jobs() {
+            let now = gh0st_core::rt::now_ms();
+            if now >= end {
+                break;
+            }
+            let jobs = self.rt.job_fds();
+            let mut fds: Vec<_> = jobs
+                .iter()
+                .map(|&(_, fd)| gh0st_core::rt::pollfd(fd))
+                .collect();
+            let _ = gh0st_core::rt::wait(&mut fds, Some(now + (end - now).min(10)));
+            self.now += 1;
+            for (f, &(id, _)) in fds.iter().zip(&jobs) {
+                if gh0st_core::rt::readable(f) {
+                    self.rt.read_job(id, self.now);
+                }
+            }
+            self.rt.reap(self.now);
+            self.rt.tick(self.now);
+        }
+        self
     }
 
     /// Another app comes in front, as Fn+K does: no keys, no frames.

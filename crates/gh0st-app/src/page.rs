@@ -189,6 +189,7 @@ pub enum JobEvent {
 pub(crate) enum Request {
     Push(Box<dyn Page>),
     Back,
+    Done,
     Quit,
     Toast(String, Tone),
     Timer {
@@ -281,6 +282,13 @@ pub(crate) struct Shared {
     pub app_id: String,
     /// The shell has paused the app: something else is in front.
     pub paused: bool,
+    /// The page that just closed called [`Cx::done`]: its parent hears it
+    /// in [`Page::resume`], as [`Steps`](crate::Steps) does.
+    pub done: bool,
+    /// False for an app the user can't close (first-boot setup): no hold
+    /// to exit, no Close app, and its last page stays. SIGTERM and
+    /// [`Cx::quit`] still end it.
+    pub closable: bool,
 }
 
 impl Shared {
@@ -293,6 +301,8 @@ impl Shared {
             next_id: 1,
             app_id: app_id(),
             paused: false,
+            done: false,
+            closable: true,
         }
     }
 
@@ -332,6 +342,13 @@ impl Cx<'_> {
     /// Closes this page, as Esc does.
     pub fn back(&mut self) {
         self.s.requests.push(Request::Back);
+    }
+
+    /// Closes this page because its job is done. In [`Steps`](crate::Steps)
+    /// that goes to the next step, where Esc and [`back`](Cx::back) go to
+    /// the one before; anywhere else it is the same as `back`.
+    pub fn done(&mut self) {
+        self.s.requests.push(Request::Done);
     }
 
     /// Closes every page and exits.

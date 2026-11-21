@@ -456,6 +456,59 @@ impl Page for Rename {
 
 `TextField::masked()` shows dots, for passwords.
 
+### Forms
+
+Two or more fields on a page go in a `Form`. Each has a label above it, Tab
+moves between them, and one that is wrong gets a red edge and a line under it
+until the user types in it. A form with a single password field uses Tab to
+show and hide it instead. `hints` names Tab's job for you:
+
+```rust
+use gh0st_app::prelude::*;
+
+struct Account {
+    form: Form,
+}
+
+impl Page for Account {
+    fn title(&self) -> &str {
+        "Account"
+    }
+
+    fn bars(&self) -> Bars {
+        Bars::top().hints(self.form.hints("back", "next"))
+    }
+
+    fn typing(&self) -> bool {
+        true
+    }
+
+    fn key(&mut self, key: Key, cx: &mut Cx) {
+        if self.form.key(key) != Some(Edit::Submit) {
+            return;
+        }
+        if self.form.value(1).len() < 4 {
+            self.form.error(1, "Too short: 4 or more");
+            return;
+        }
+        let password = self.form.take(1);
+        cx.spawn_with_input(&["passwd"], password.as_bytes());
+        password.into_bytes().fill(0);
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.form(&self.form);
+    }
+}
+
+let page = Account {
+    form: Form::new().text("Your name").password("Password, 4 or more"),
+};
+# let _ = page;
+```
+
+A form zeroes its fields when dropped, and its `Debug` shows labels only.
+
 ## Drawing
 
 Each `Ui` call stacks below the last, inside the page's area, with the OS
@@ -638,6 +691,72 @@ Wi-Fi, Bluetooth, time and the other root jobs come with the root helper
 (roadmap M3). Its sensitive verbs ask for the user's password on stdin, so an
 app can't flip them unseen.
 
+## Steps
+
+A run of pages the user walks in order, as first-boot setup is, goes in
+`Steps`. It is a page that opens one step at a time above itself, so each step
+is an ordinary page and its timers, jobs and dialogs end when it closes. A
+step calls `cx.done()` to go on; Esc goes to the step before.
+
+Each step is made as it opens, from a maker that gets its label for the top
+bar. A maker that returns `None` is skipped, in whichever direction the user
+is going:
+
+```rust
+use gh0st_app::prelude::*;
+
+struct Welcome(String);
+
+impl Page for Welcome {
+    fn title(&self) -> &str {
+        "Welcome"
+    }
+
+    // "Setup 1 of 3", after the title.
+    fn context(&self) -> Option<&str> {
+        Some(&self.0)
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.text("Press Enter to start.");
+    }
+
+    fn key(&mut self, key: Key, cx: &mut Cx) {
+        if key == Key::Enter {
+            cx.done();
+        }
+    }
+}
+
+let clock_synced = true;
+let setup = Steps::new("Setup")
+    .step(|label| Welcome(label.into()))
+    .optional(move |label| (!clock_synced).then(|| Welcome(label.into())))
+    .step(|label| Welcome(label.into()))
+    .on_step(|i| eprintln!("now on step {i}"));
+# let _ = setup;
+```
+
+Going back makes a step again, so keep what the user chose outside the
+steps, in state they share. `Steps::from(i)` opens at step `i`, to resume
+after a power cut; `on_step` hears each step as it opens, to save where the
+user is. A step that runs a job calls `done` only after the job's `Done`:
+closing the step stops its jobs.
+
+### An app that can't close
+
+First-boot setup must be finished. `run_with` takes `Options`:
+
+```rust,no_run
+use gh0st_app::{Options, Steps, run_with};
+
+run_with(Steps::new("Setup"), Options { closable: false });
+```
+
+Esc held on the first page then does nothing, the menu has no Close app, and
+the last page never closes. `cx.quit()` and SIGTERM still end the app, so the
+last step quits once its work is done.
+
 ## Tests
 
 `gh0st_app::testing::Driver` runs a page without a panel. Feed it keys and
@@ -679,6 +798,11 @@ Key names follow the sim's script format (`gh0st_core::script`): `enter`,
 `esc`, `x`, `fn+z`, `6`, `type hello`, `wait 500`. In scripts, `down esc`
 holds a key and `up esc` releases it, so use `fn+f` and `fn+x`, or bare `f`
 and `x`, for the arrows.
+
+`d.jobs(ms)` runs the real loop until every job the page spawned has ended,
+or `ms` of wall time has passed: lines and exit codes arrive as on the
+device. `d.pump(ms)` does the same for watched fds and adopted children.
+`Driver::with(page, opts)` runs a page as `run_with` would.
 
 ## Rules
 

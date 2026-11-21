@@ -3,6 +3,7 @@
 //! [`Ui::canvas`].
 
 use crate::field::TextField;
+use crate::form::Form;
 use crate::list::{List, Row, Trail};
 use gh0st_ui::font::Font;
 use gh0st_ui::icon::{self, IconSize};
@@ -240,6 +241,17 @@ impl<'a> Ui<'a> {
             placeholder,
         );
         self.y += 28;
+    }
+
+    /// Every field of a form, label above and error below, the focused one
+    /// with a caret.
+    pub fn form(&mut self, form: &Form) {
+        let t = self.t;
+        let (x, w) = self.inner();
+        for f in form.fields() {
+            let r = Rect::new(x - 3, self.y, w + 6, 0);
+            self.y += widgets::form_field(self.c, t, r, &f) + t.m.field_gap;
+        }
     }
 }
 

@@ -123,7 +123,7 @@ new one, add its SVG there: an unknown name draws nothing.
 
 **Left: where you are.** The page's icon and name in Label style. On a deeper
 page its parent follows in Caption: "Wi-Fi Settings". A step or a file goes
-there too: "Account Setup 7 of 10". An app with sessions shows them as tabs,
+there too: "Account Setup 8 of 10". An app with sessions shows them as tabs,
 the front one underlined, as the shell shows open apps.
 
 **Right: the device.** Read from right to left:
