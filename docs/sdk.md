@@ -278,6 +278,13 @@ A choice with two keys steps back on the first and forward on the second.
   the mode.
 - **Asking first.** With `.confirm()`, a menu row needs Enter twice. Close app
   always does.
+- **Mode switches.** A toggle with `.closes()` closes the menu once flipped,
+  for a mode the user wants to use at once.
+- **Hints** show a command's first key, or both keys of a choice's pair.
+- **Fn.** Fn with Space, Enter, Tab, R, T, Y, G or V arrives as that key with
+  Fn held: `"Fn+Space"`, `"Fn+r"`. The Fn layer changes every other key, and
+  no program reads Fn, so these are free for an app's own commands even
+  while it types.
 - **Disabled.** `.enabled(false)` dims the row and its keys do nothing.
 - **Raw keys.** Commands come first for raw-key pages too: `raw` gets only
   the keys no live command took.

@@ -147,7 +147,8 @@ impl Settings {
             .to_string();
         Settings {
             font: s.get_str(key::FONT).unwrap_or("terminus").to_string(),
-            zoom: s.get_int(key::ZOOM).unwrap_or(0).max(0) as usize,
+            // 8x14 Terminus: 6x12 is hard to read on the panel.
+            zoom: s.get_int(key::ZOOM).unwrap_or(1).max(0) as usize,
             mode: s
                 .get_str(key::MODE)
                 .filter(|m| MODES.contains(m))

@@ -10,10 +10,9 @@ screen at each size.
 
 | Face | Cells | Fits, top bar on | Fits, top bar off |
 |---|---|---|---|
-| Terminus 12 (default) | 6x12 | 53x12 | 53x14 |
-| Terminus 14 | 8x14 | 40x10 | 40x12 |
+| Terminus 12 | 6x12 | 53x12 | 53x14 |
+| Terminus 14 (default) | 8x14 | 40x10 | 40x12 |
 | Terminus 16 | 8x16 | 40x9 | 40x10 |
-| JetBrains Mono 8 | 5x11 | 64x13 | 64x15 |
 | JetBrains Mono 10 | 6x14 | 53x10 | 53x12 |
 | JetBrains Mono 12 | 7x16 | 45x9 | 45x10 |
 | JetBrains Mono 13 | 8x18 | 40x8 | 40x9 |
@@ -41,6 +40,9 @@ Delete. Not measured on the device yet; the same source disagrees with
 `hardware-facts.md` on two keys.
 
 - Fn+K is the switcher, not Home. In scroll mode, `k` sends Home.
+- **Fn+Space enters scroll mode, and leaves it.** Fn is sticky, so that is
+  two taps. No program reads Fn.
+- Fn+R and Fn+T make the text smaller and larger while typing.
 - Shift+Fn+L (Shift+PgUp) enters scroll mode a page back. Shift+Fn+M pages
   forward.
 - Holding Esc for 3 s closes the terminal, as it closes any app.
@@ -49,7 +51,7 @@ Delete. Not measured on the device yet; the same source disagrees with
 
 | Group | Row | Key |
 |---|---|---|
-| View | Scroll mode (Back to typing while in it) | |
+| View | Scroll mode, a switch | Fn+Space |
 | | Text size `‹ 6x12 ›` | `r` `t` |
 | | Grid `‹ Magnify 80x24 ›` | `m` |
 | | Find, Copy lines, Paste | `n` `v` `p` |
@@ -62,8 +64,9 @@ Enter steps forward, and the menu stays open. The other rows close it and
 act. Close tab and Close app need Enter twice. A row's key picks it while
 the menu is open.
 
-**Scroll mode.** Typing stops, the hint bar shows the main keys, and `h`
-shows them all. The menu's rows work by their keys here too:
+**Scroll mode.** Typing stops and letters become shortcuts. The hint bar
+shows the main keys, and `h` shows them all. The menu's rows work by their
+keys here too:
 
 | Key | Does |
 |---|---|
@@ -80,7 +83,7 @@ shows them all. The menu's rows work by their keys here too:
 | s | More settings |
 | k | Send Home |
 | h | Every key on one screen |
-| Esc q | Back to typing |
+| Esc q, Fn+Space | Back to typing |
 
 Prompt jumps need the shell to mark its prompt with OSC 133. For bash:
 

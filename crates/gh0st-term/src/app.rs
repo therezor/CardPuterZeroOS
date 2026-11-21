@@ -122,6 +122,7 @@ mod cmd {
     pub const KEYS: u32 = 26;
     pub const DONE: u32 = 27;
     pub const HISTORY: u32 = 30;
+    pub const TYPED_SIZE: u32 = 31;
     pub const OLDER: u32 = 40;
     pub const NEWER: u32 = 41;
     pub const FIND_DONE: u32 = 42;
@@ -197,6 +198,8 @@ pub struct Term {
     settle: Option<Timer>,
     /// The hint bar's height, from the theme.
     hint_h: i32,
+    /// Scroll mode has said once that its letters are shortcuts.
+    told_keys: bool,
     scratch: RefCell<(Vec<Cell>, Clusters)>,
 }
 
@@ -216,7 +219,7 @@ impl Term {
             out: Vec::new(),
             title: "Terminal".into(),
             family: Family::Terminus,
-            zoom: 0,
+            zoom: 1,
             layout: Layout::Magnify,
             window_size: (80, 24),
             bar: true,
@@ -232,6 +235,7 @@ impl Term {
             noticed: None,
             settle: None,
             hint_h: 18,
+            told_keys: false,
             scratch: RefCell::new((Vec::new(), Clusters::default())),
         }
     }
@@ -602,10 +606,16 @@ impl Term {
         let back = step == Step::Prev;
         let page = self.vis().1.saturating_sub(1).max(1);
         match id {
-            cmd::SCROLL_MODE if self.mode == Mode::Typing => self.mode = Mode::View,
+            cmd::SCROLL_MODE if self.mode == Mode::Typing => {
+                self.mode = Mode::View;
+                if !self.told_keys {
+                    self.told_keys = true;
+                    cx.toast("Scroll mode: letters are shortcuts, h lists them");
+                }
+            }
             cmd::SCROLL_MODE | cmd::DONE => self.leave_view(cx),
-            cmd::SIZE if back => self.zoom_to(self.zoom.saturating_sub(1), cx),
-            cmd::SIZE => self.zoom_to(self.zoom + 1, cx),
+            cmd::SIZE | cmd::TYPED_SIZE if back => self.zoom_to(self.zoom.saturating_sub(1), cx),
+            cmd::SIZE | cmd::TYPED_SIZE => self.zoom_to(self.zoom + 1, cx),
             cmd::LAYOUT => self.next_layout(cx),
             cmd::FIND => self.mode = Mode::Find(self.query.clone()),
             cmd::COPY => self.start_select(cx),
@@ -1054,9 +1064,20 @@ impl Page for Term {
                 .keys("Shift+PgUp Shift+PgDn")
                 .mode(TYPING, (typing || scroll) && !self.waiting),
         );
+        // Fn+Space: two taps, as Fn is sticky, and no program reads Fn.
+        let idle = !self.waiting;
+        c.add(
+            moves(Command::choice(cmd::TYPED_SIZE, "Text size", ""))
+                .keys("Fn+r Fn+t")
+                .mode(TYPING, typing && idle),
+        );
         c.group("View");
-        let label = if typing { "Scroll mode" } else { "Back to typing" };
-        c.add(Command::action(cmd::SCROLL_MODE, label));
+        c.add(
+            Command::toggle(cmd::SCROLL_MODE, "Scroll mode", !typing)
+                .keys("Fn+Space")
+                .closes()
+                .mode(TYPING, (typing || scroll) && idle),
+        );
         let size = format!("{}x{}", look.cw, look.ch);
         c.add(on(Command::choice(cmd::SIZE, "Text size", size).keys("r t").repeats()));
         let grid = format!("{} {gc}x{gr}", self.layout.name());

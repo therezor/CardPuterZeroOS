@@ -286,9 +286,9 @@ pub const TERM_TERMINUS: &[TermFace] = &[
     term_face(&font::TERMINUS_16, Some(&font::TERMINUS_16_BOLD)),
 ];
 
-/// JetBrains Mono, anti-aliased. Cells 5x11, 6x14, 7x16, 8x18.
+/// JetBrains Mono, anti-aliased. Cells 6x14, 7x16, 8x18. Smaller cells
+/// were too small to read on the panel.
 pub const TERM_JETBRAINS: &[TermFace] = &[
-    term_face(&font::MONO_8, None),
     term_face(&font::MONO_10, Some(&font::MONO_10_BOLD)),
     term_face(&font::MONO_12, None),
     term_face(&font::MONO_13, None),

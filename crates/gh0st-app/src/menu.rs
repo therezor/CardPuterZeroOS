@@ -193,6 +193,7 @@ impl Menu {
             return Out::Nothing;
         }
         let id = c.id;
+        let close = !c.stays();
         match c.kind {
             Kind::Action => {
                 if c.confirms() && !self.armed {
@@ -210,15 +211,11 @@ impl Menu {
                     },
                 }
             }
-            Kind::Toggle(_) => Out::Run {
-                id,
-                step,
-                close: false,
-            },
+            Kind::Toggle(_) => Out::Run { id, step, close },
             Kind::Choice(_) => Out::Run {
                 id,
                 step: if step == Step::Run { Step::Next } else { step },
-                close: false,
+                close,
             },
         }
     }

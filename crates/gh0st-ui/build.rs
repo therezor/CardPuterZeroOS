@@ -94,15 +94,7 @@ const FACES: &[Face] = &[
         false,
     ),
     // Terminal zoom levels. JetBrains Mono advances 0.6 em, so these ems
-    // give whole 5, 7 and 8 px cells.
-    face(
-        "MONO_8",
-        "JetBrainsMono.ttf",
-        25.0 / 3.0,
-        400.0,
-        TERM,
-        false,
-    ),
+    // give whole 7 and 8 px cells.
     face(
         "MONO_12",
         "JetBrainsMono.ttf",

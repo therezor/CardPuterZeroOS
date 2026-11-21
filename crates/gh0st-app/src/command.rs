@@ -31,6 +31,7 @@ const REPEAT: u8 = 2;
 const CONFIRM: u8 = 4;
 const OPENS: u8 = 8;
 const OFF: u8 = 16;
+const CLOSES: u8 = 32;
 
 /// One thing the user can do: a menu row, its keys, a line on the Keys
 /// screen and maybe a hint.
@@ -152,6 +153,13 @@ impl Command {
         self
     }
 
+    /// A toggle that closes the menu once flipped, for one that switches
+    /// the page into a mode the user wants to use at once.
+    pub fn closes(mut self) -> Command {
+        self.flags |= CLOSES;
+        self
+    }
+
     /// Opens a page or a screen: the menu row gets a chevron.
     pub fn opens(mut self) -> Command {
         self.flags |= OPENS;
@@ -194,7 +202,12 @@ impl Command {
 
     /// Changes in place in the menu, rather than closing it.
     pub(crate) fn stays(&self) -> bool {
-        !matches!(self.kind, Kind::Action)
+        !matches!(self.kind, Kind::Action) && self.flags & CLOSES == 0
+    }
+
+    /// A choice whose two keys step back and forward.
+    fn pair(&self) -> bool {
+        matches!(self.kind, Kind::Choice(_)) && self.chords().filter(|c| !c.is_range()).count() == 2
     }
 
     fn chords(&self) -> impl Iterator<Item = Chord> + '_ {
@@ -203,8 +216,7 @@ impl Command {
 
     /// The step a key gives, if it is one of this command's.
     fn step_for(&self, k: &RawKey, typing: bool) -> Option<Step> {
-        let pair = matches!(self.kind, Kind::Choice(_))
-            && self.chords().filter(|c| !c.is_range()).count() == 2;
+        let pair = self.pair();
         let mut plain = 0;
         for c in self.chords() {
             let hit = c.matches(k, typing);
@@ -228,8 +240,17 @@ impl Command {
 
     /// The keys as the device shows them: `"f x"`, `"Shift+Fn+L"`.
     pub fn keys_text(&self) -> String {
+        self.keys_shown(usize::MAX)
+    }
+
+    /// The key a hint shows: the first, or both of a choice's pair.
+    pub(crate) fn hint_keys(&self) -> String {
+        self.keys_shown(if self.pair() { 2 } else { 1 })
+    }
+
+    fn keys_shown(&self, n: usize) -> String {
         let mut out = String::new();
-        for c in self.chords() {
+        for c in self.chords().take(n) {
             if !out.is_empty() {
                 out.push(' ');
             }
@@ -307,12 +328,13 @@ impl Commands {
         })
     }
 
-    /// Key and word for each live command with a hint, for a hint bar.
+    /// Key and word for each live command with a hint, for a hint bar. A
+    /// hint shows a command's first key, or both keys of a choice's pair.
     pub fn hints(&self) -> Vec<(String, &'static str)> {
         self.list
             .iter()
             .filter(|c| c.live && !c.hint.is_empty())
-            .map(|c| (c.keys_text(), c.hint))
+            .map(|c| (c.hint_keys(), c.hint))
             .collect()
     }
 }
@@ -583,6 +605,20 @@ mod tests {
     }
 
     #[test]
+    fn fn_with_a_key_it_does_not_change_is_its_own_chord() {
+        let mut cs = Commands::new();
+        cs.add(Command::action(1, "Scroll mode").keys("Fn+Space"));
+        cs.add(Command::choice(2, "Size", "").keys("Fn+r Fn+t"));
+        assert!(cs.lookup(&key(&[], code::SPACE), true).is_none());
+        let k = key(&[code::FN_M5], code::SPACE);
+        assert_eq!(cs.lookup(&k, true).unwrap().id, 1, "fires while typing");
+        let t = key(&[code::FN_M5], T);
+        assert_eq!(cs.lookup(&t, true).unwrap().step, Step::Next);
+        assert!(cs.lookup(&key(&[], T), false).is_none(), "plain t is not Fn+t");
+        assert_eq!(cs.list[0].keys_text(), "Fn+Space");
+    }
+
+    #[test]
     fn ranges_give_the_place() {
         let mut cs = Commands::new();
         cs.add(Command::action(1, "Tab").keys("1-9"));
@@ -612,8 +648,11 @@ mod tests {
     #[test]
     fn hints_come_from_live_commands() {
         let mut cs = Commands::new();
-        cs.add(Command::action(1, "Up").keys("f x").hint("scroll"));
+        cs.add(Command::choice(1, "Scroll", "").keys("f x").hint("scroll"));
         cs.add(Command::action(2, "Find").keys("n").hint("find").mode("x", false));
-        assert_eq!(cs.hints(), [("f x".to_string(), "scroll")]);
+        cs.add(Command::action(3, "Done").keys("Esc q").hint("done"));
+        let hints = cs.hints();
+        assert_eq!(hints[0], ("f x".to_string(), "scroll"));
+        assert_eq!(hints[1], ("Esc".to_string(), "done"), "the first key only");
     }
 }
