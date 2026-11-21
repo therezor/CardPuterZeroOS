@@ -621,8 +621,12 @@ pub fn search_bar(c: &mut Canvas, t: &Theme, query: &str) {
     c.fill(r, t.c.surface);
     c.hline(0, r.w, r.y, t.c.accent);
     let x = t.m.pad - 1;
-    icon::draw(c, "search", IconSize::Small, x, r.y + 1, t.c.accent);
-    let tx = x + IconSize::Small as i32 + 6;
+    // Centred on the query's capitals, as a chip's icon is on its word.
+    let s = IconSize::Small as i32;
+    let cap_top = r.y + 1 + (r.h - 1 - t.f.body.cap()) / 2;
+    let iy = cap_top + t.f.body.cap() / 2 - s / 2 + 1;
+    icon::draw(c, "search", IconSize::Small, x, iy, t.c.accent);
+    let tx = x + s + 6;
     let right = r.right() - t.m.pad;
     let cancel = Rect::new(0, r.y + 1, 0, r.h - 1);
     let lx = text_right(c, t.f.small, right, cancel, "cancel", t.c.muted);
