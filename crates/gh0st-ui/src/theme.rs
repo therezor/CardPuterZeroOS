@@ -21,6 +21,9 @@ pub struct Palette {
     pub border: Color,
     /// Badge tints for built-in apps, so the grid is not one colour.
     pub tints: [Color; 6],
+    /// The terminal's 16 ANSI colours: black, red, green, yellow, blue,
+    /// magenta, cyan, white, then the bright eight.
+    pub ansi: [Color; 16],
 }
 
 #[derive(Clone, Copy)]
@@ -108,6 +111,24 @@ pub const MINT: Palette = Palette {
         hex("#b48ef0"),
         hex("#f0a35e"),
     ],
+    ansi: [
+        hex("#1f2b26"),
+        hex("#ef6b73"),
+        hex("#3ddc97"),
+        hex("#e8c468"),
+        hex("#5fa8e8"),
+        hex("#b48ef0"),
+        hex("#5fd0e8"),
+        hex("#c8d8cf"),
+        hex("#4f665a"),
+        hex("#ff8f96"),
+        hex("#72f0b8"),
+        hex("#f5d88a"),
+        hex("#8cc4f5"),
+        hex("#cdb0f7"),
+        hex("#8ce2f2"),
+        hex("#f2fbf6"),
+    ],
 };
 
 pub const NORD: Palette = Palette {
@@ -130,6 +151,24 @@ pub const NORD: Palette = Palette {
         hex("#b48ead"),
         hex("#d08770"),
     ],
+    ansi: [
+        hex("#3b4252"),
+        hex("#bf616a"),
+        hex("#a3be8c"),
+        hex("#ebcb8b"),
+        hex("#81a1c1"),
+        hex("#b48ead"),
+        hex("#88c0d0"),
+        hex("#e5e9f0"),
+        hex("#7b88a1"),
+        hex("#d08770"),
+        hex("#b9d2a2"),
+        hex("#f0d9a8"),
+        hex("#9cb7d3"),
+        hex("#c7a5c0"),
+        hex("#8fbcbb"),
+        hex("#eceff4"),
+    ],
 };
 
 pub const PAPER: Palette = Palette {
@@ -151,6 +190,24 @@ pub const PAPER: Palette = Palette {
         hex("#b3363f"),
         hex("#6b4fa0"),
         hex("#b0582a"),
+    ],
+    ansi: [
+        hex("#1f2421"),
+        hex("#b3363f"),
+        hex("#1f7a55"),
+        hex("#8a5f00"),
+        hex("#1d5f9a"),
+        hex("#6b4fa0"),
+        hex("#1d6f8a"),
+        hex("#8f8a7f"),
+        hex("#5e665f"),
+        hex("#d0454f"),
+        hex("#2a9a6b"),
+        hex("#a87400"),
+        hex("#2b74b8"),
+        hex("#8463bd"),
+        hex("#2a8aa8"),
+        hex("#6f6a60"),
     ],
 };
 
@@ -237,6 +294,10 @@ mod tests {
                 "{} accent text",
                 p.name
             );
+            // Black is a background colour in the terminal; the rest is text.
+            for (i, &c) in p.ansi.iter().enumerate().filter(|&(i, _)| i != 0) {
+                assert!(contrast(c, p.bg) >= 3.0, "{} ansi {i}", p.name);
+            }
         }
     }
 }

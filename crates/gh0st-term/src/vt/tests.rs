@@ -101,7 +101,10 @@ fn insert_and_delete() {
 #[test]
 fn sgr_colours() {
     let mut v = vt(10, 1);
-    feed(&mut v, "\x1b[1;31ma\x1b[38;5;196mb\x1b[38;2;255;0;0mc\x1b[48:2::0:0:255md\x1b[0me");
+    feed(
+        &mut v,
+        "\x1b[1;31ma\x1b[38;5;196mb\x1b[38;2;255;0;0mc\x1b[48:2::0:0:255md\x1b[0me",
+    );
     let c = &v.t.grid().rows[0].cells;
     assert_eq!(c[0].fg(), Color::Index(1));
     assert_eq!(c[0].attrs(), attr::BOLD);
@@ -182,7 +185,10 @@ fn rep_repeats_the_last_char() {
 #[test]
 fn title_and_cwd() {
     let mut v = vt(10, 1);
-    feed(&mut v, "\x1b]2;vim notes.md\x07\x1b]7;file://host/home/a%20b\x1b\\");
+    feed(
+        &mut v,
+        "\x1b]2;vim notes.md\x07\x1b]7;file://host/home/a%20b\x1b\\",
+    );
     assert_eq!(v.t.title, "vim notes.md");
     assert_eq!(v.t.cwd.as_deref(), Some("/home/a b"));
     assert_eq!(v.t.events, event::TITLE | event::CWD);

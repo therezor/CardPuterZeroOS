@@ -177,7 +177,11 @@ impl Terminal {
 
     /// The screen in use: the alternate one while a full-screen program runs.
     pub fn grid(&self) -> &Grid {
-        if self.alt_active { &self.alt } else { &self.main }
+        if self.alt_active {
+            &self.alt
+        } else {
+            &self.main
+        }
     }
 
     pub fn grid_mut(&mut self) -> &mut Grid {
@@ -427,7 +431,9 @@ impl Terminal {
                 for c in r.cells.iter_mut().filter(|c| c.is_cluster()) {
                     *c = match self.clusters.intern(old.get(c.code())) {
                         Some(id) => c.with_cluster(id),
-                        None => Cell::new(old.get(c.code()).chars().next().unwrap_or(' '), &c.pen()),
+                        None => {
+                            Cell::new(old.get(c.code()).chars().next().unwrap_or(' '), &c.pen())
+                        }
                     };
                 }
             }
@@ -692,7 +698,11 @@ impl Terminal {
         match cmd {
             b"0" | b"2" => {
                 let t = String::from_utf8_lossy(&rest()).into_owned();
-                self.title = t.chars().filter(|c| !c.is_control()).take(TITLE_MAX).collect();
+                self.title = t
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(TITLE_MAX)
+                    .collect();
                 self.events |= event::TITLE;
             }
             b"7" => {
@@ -951,5 +961,9 @@ impl Perform for Terminal {
 }
 
 fn charset(b: u8) -> Charset {
-    if b == b'0' { Charset::Line } else { Charset::Ascii }
+    if b == b'0' {
+        Charset::Line
+    } else {
+        Charset::Ascii
+    }
 }

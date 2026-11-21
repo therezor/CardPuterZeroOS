@@ -13,11 +13,11 @@ mod ui;
 
 pub use bars::{Bars, SoftKey};
 pub use field::{Edit, TextField};
+/// A key event as [`Page::raw`] gets it.
+pub use gh0st_core::keys::{Key as RawKey, State as KeyState};
 pub use key::{Key, codes};
 pub use list::{Action, List, Row};
 pub use page::{Cx, Job, JobEvent, Page, Settings, Timer, Watch};
-/// A key event as [`Page::raw`] gets it.
-pub use gh0st_core::keys::{Key as RawKey, State as KeyState};
 pub use run::run;
 pub use ui::Ui;
 

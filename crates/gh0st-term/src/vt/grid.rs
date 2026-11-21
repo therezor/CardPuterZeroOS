@@ -212,9 +212,15 @@ mod tests {
     fn scroll_inside_a_region() {
         let mut g = grid(&["a", "b", "c", "d"]);
         g.scroll_up(1, 2, 1, &Pen::DEFAULT);
-        assert_eq!((0..4).map(|y| g.text(y)).collect::<Vec<_>>(), ["a", "c", "", "d"]);
+        assert_eq!(
+            (0..4).map(|y| g.text(y)).collect::<Vec<_>>(),
+            ["a", "c", "", "d"]
+        );
         g.scroll_down(0, 3, 2, &Pen::DEFAULT);
-        assert_eq!((0..4).map(|y| g.text(y)).collect::<Vec<_>>(), ["", "", "a", "c"]);
+        assert_eq!(
+            (0..4).map(|y| g.text(y)).collect::<Vec<_>>(),
+            ["", "", "a", "c"]
+        );
     }
 
     #[test]
