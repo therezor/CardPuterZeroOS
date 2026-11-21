@@ -50,9 +50,9 @@ use this page directly.
 
 ## Shell link
 
-Status: specified, not built yet (roadmap A1). Until it lands the shell never
-sets `GH0ST_SHELL_FD`, and apps draw their own bars. The SDK already does that
-for Rust apps.
+Status: the transport and `hello`, `pause`, `paused`, `resume`, `redraw`
+and `toast` are built. The bars are not yet (roadmap A1): apps still draw
+their own, as the SDK does for Rust apps.
 
 An app can ask the shell to draw the OS top bar (title, network, battery and
 clock) and an OS bottom bar (soft keys or key hints). The app then draws only
@@ -70,6 +70,8 @@ always did.
 - Set `FD_CLOEXEC` on the fd once you have it, so your children don't inherit
   it.
 - The socket has no path and no listener. Only the app holds its end.
+- It is `SOCK_SEQPACKET` on Linux. A host without it gets datagrams, which keep
+  message bounds too.
 - Nothing privileged goes over it. Root actions belong to the root helper.
 
 ### Messages
@@ -81,6 +83,8 @@ App to shell:
 
 | Message | Meaning |
 |---|---|
+| `hello` `1` | The app speaks the link. Without it the shell treats the app as stock |
+| `paused` | The answer to `pause`: the app draws nothing and reads no keys now |
 | `bars` `top`, `bottom`, `both` or `none` | Which OS bars to draw |
 | `title` text | The top bar's title. The default is the app's `Name` |
 | `softkeys` slot4 ... slot8 | Five soft keys, each `icon:label`. Either part may be empty. An empty slot is `:` |
@@ -99,7 +103,8 @@ Shell to app:
 | `content` x y w h | The rect the app may draw in, sent at start and after every `bars` change |
 | `theme` name | The palette changed. Redraw with it |
 | `redraw` | The shell drew over the content. Redraw all of it |
-| `pause`, `resume` | Reserved for background apps |
+| `pause` | The app runs behind now. Stop drawing, close the keyboard, answer `paused` |
+| `resume` | The app is in front again. Open the keyboard and draw all of the screen |
 
 ### Rules
 
@@ -149,11 +154,17 @@ other key.
   the switcher shows, with its CPU share. The first CPU figure comes 250 ms
   after opening. Nothing is read while the switcher is closed.
 - An app allowed to run in the background (Settings > Apps) is not stopped.
+  `X-Gh0st-Background=true` in its `.desktop` file makes that the default for
+  an app that answered `hello`.
+- An app on the link gets `pause` when it leaves the front. The shell waits up
+  to 100 ms for `paused`. The app then draws nothing and reads no keys, so
+  the shell keeps no copy of its frame and doesn't guard the panel. On return
+  the shell sends `resume` and the app draws all of its screen.
+- An app off the link, or one that doesn't answer, is guarded as before.
   While the shell is in front it gets no keys (the shell holds the grab),
   and the shell repaints over anything it draws, keeping its pixels for its
   return. While another app is in front it reads that app's keys and its
-  drawing shows over it: the keyboard and panel are shared and nothing
-  stands between two running apps.
+  drawing shows over it.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
   and leaves them in front.
 
@@ -170,10 +181,16 @@ other key.
 ## Terminal
 
 - The terminal command comes from `gh0st.terminal` in config.json. The default
-  is `/usr/bin/gh0st-term -e`.
+  is `/usr/bin/gh0st-term -e`, built from `crates/gh0st-term`.
 - The shell runs a `Terminal=true` entry as `<terminal> /bin/sh -c "<Exec>"`.
-- With `GH0ST_SYSPLAUSE=1`, the terminal waits for a key after the command
-  exits, then exits.
+- With `GH0ST_SYSPLAUSE=1`, the terminal waits for a key press after the
+  command exits, then exits.
+- Programs in it see `TERM=xterm-256color` and `COLORTERM=truecolor`. Each
+  runs in its own session, so pausing the terminal's group never stops them,
+  and closing the terminal hangs them up. A program that ignores SIGHUP
+  outlives the terminal and is not counted in the switcher's memory figure.
+- The terminal runs in the background by default and reads its programs'
+  output there, so a build doesn't stall while another app is in front.
 
 ## Config
 

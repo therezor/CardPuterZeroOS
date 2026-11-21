@@ -156,6 +156,15 @@ The OS acts on the brightness, volume, mute and screenshot keys itself. They
 still reach the page as `Key::Other`, so a page that shows those values can
 read them again.
 
+### Raw keys
+
+A terminal needs every key as it is. A page whose `raw_keys` returns true gets
+each press, repeat and release in `Page::raw`, as a `RawKey` with its code, its
+text and Shift, Ctrl, Alt and Fn. Esc comes there too, not to `back`. Every
+key but Esc and the modifiers repeats. `RawKey::text` keeps the character
+under Ctrl and Alt, so Ctrl+[ can become ESC. Nothing is drawn after a raw key
+unless the page calls `cx.redraw()`.
+
 ## Soft keys
 
 The screen sits right above the number keys 4 to 8. The soft-key bar puts one
@@ -385,6 +394,72 @@ impl Page for Volume {
 `cx.after(ms)` fires `timer` once. `cx.every(ms)` fires it until
 `cx.cancel(timer)`. Each firing wakes the CPU, so keep timers for things on
 screen. Closing a page stops its timers and kills its jobs.
+
+### Your own fds and children
+
+A job hands out whole lines and closes stdin. When an app needs more, a PTY
+or a socket, it joins its own fd to the loop:
+
+- `cx.watch(fd)` returns a `Watch`. `Page::ready` runs when the fd is
+  readable or its other end closed. Read until it would block. Make the fd
+  non-blocking.
+- `cx.write(watch, bytes)` writes without blocking. What doesn't fit waits in
+  order and goes out when the fd has room.
+- `cx.unwatch(watch)` takes the fd out. The page still owns it and closes it.
+- `cx.adopt(pid)` takes a child the page started itself. Its exit comes to
+  `Page::exited`. The SDK reaps every child, so never call `waitpid`.
+
+`ready` and `exited` draw only when the page calls `cx.redraw()`, so output
+that changes nothing on screen costs no frame. A page that changes faster
+than the panel shows returns its least gap from `Page::frame_ms`; the SDK
+then draws the latest state at most that often.
+
+```rust,no_run
+use gh0st_app::prelude::*;
+use std::os::fd::RawFd;
+
+struct Tail {
+    fd: RawFd,
+    lines: usize,
+}
+
+impl Page for Tail {
+    fn title(&self) -> &str {
+        "Tail"
+    }
+
+    fn start(&mut self, cx: &mut Cx) {
+        cx.watch(self.fd);
+    }
+
+    fn ready(&mut self, _: Watch, cx: &mut Cx) {
+        let mut buf = [0u8; 4096];
+        // SAFETY: reads into a stack buffer of its own length.
+        let n = unsafe { libc::read(self.fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if n > 0 {
+            self.lines += buf[..n as usize].iter().filter(|&&b| b == b'\n').count();
+            cx.redraw();
+        }
+    }
+
+    fn frame_ms(&self) -> u64 {
+        20
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.big(&self.lines.to_string());
+    }
+}
+```
+
+### Running behind
+
+When the user allows it (Settings > Apps, or `X-Gh0st-Background=true` in the
+`.desktop` file), an app keeps running while another is in front. The shell
+tells the SDK over the shell link, and the SDK stops drawing and reading keys
+until the app is back. Timers, jobs and watched fds go on. `cx.in_front()`
+says which. `cx.notify(text)` reaches the user either way: a toast in the
+app, or one the shell draws over whatever is in front.
 
 ## Settings and files
 

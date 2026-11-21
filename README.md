@@ -95,6 +95,8 @@ as PNGs.
 - `crates/gh0st-shell`: the home screen and the shell process.
 - `crates/gh0st-app`: the app SDK. The guide is `docs/sdk.md`.
 - `crates/gh0st-settings`: Settings, an app built on the SDK.
+- `crates/gh0st-term`: the terminal, an app built on the SDK. The guide is
+  `docs/terminal.md`.
 - `crates/gh0st`: the `gh0st` binary.
 - `os/kernel/panel-mipi-dbi-m`: the patched panel driver and its overlay.
 - `docs/`: hardware facts, the panel driver, the app contract, the distro plan.
@@ -102,13 +104,14 @@ as PNGs.
 ## Status
 
 The shell and the switcher run on the device. Settings as a separate app is
-built and runs in the sim; it is not yet tested on the device. An app can be
-allowed to keep running in the background; while another app is in front it
-still shares that app's keyboard and panel. Still to build: the terminal,
-which lives in its own repository.
+built and runs in the sim; it is not yet tested on the device. So is the
+terminal: tabs, zoom, a window over a larger grid, history with search and
+copy. An app can be allowed to keep running in the background. One on the
+shell link stops drawing and reading keys while another is in front; one off
+it still shares that app's keyboard and panel.
 
 ## Licenses
 
 The Rust code is MIT, see [LICENSE](LICENSE). The panel driver is GPL-2.0, from M5Stack and Noralf
-Trønnes. Inter and JetBrains Mono are under the SIL Open Font License, and
+Trønnes. Inter, JetBrains Mono and Terminus are under the SIL Open Font License, and
 the Lucide icons under ISC. The mark is the Tabler "components" icon, MIT.

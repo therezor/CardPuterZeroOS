@@ -180,10 +180,12 @@ problems early.
 - Done when it boots to gh0st and stock apps run.
 
 **A1. App SDK v0.** `crates/gh0st-app` with pages, OS bars, soft keys, lists,
-text fields, jobs with stdin, timers, a sim backend and a test driver. Built;
-the guide is `sdk.md`. Still to do: the shell link (`apps.md`), so the shell
-draws the bars instead of each app. Done when an SDK app runs on the device
-and on the Mac, and its soft keys line up with keys 4 to 8.
+text fields, jobs with stdin, timers, watched fds, raw keys, a sim backend
+and a test driver. Built; the guide is `sdk.md`. The shell link carries
+`hello`, `pause`, `resume`, `redraw` and `toast`. Still to do: the bars over
+the link (`apps.md`), so the shell draws them instead of each app. Done when
+an SDK app runs on the device and on the Mac, and its soft keys line up with
+keys 4 to 8.
 
 **A2. Settings as an app.** Done in the sim on 2026-11-21. Every page the
 shell had (Wi-Fi, Network, a connection, Bluetooth, Display, Sound,
@@ -191,6 +193,23 @@ Appearance, Apps, one app, System, time zones, Privacy, About) moved into
 `gh0st-settings` with its tests. The shell lost about 3,000 lines and 86 KB of
 binary. Done when each page works on the device. The next steps are in
 Settings: what comes next.
+
+**A3a. The terminal.** `gh0st-term`, built in the sim on 2026-11-21 (branch
+`terminal`): tabs, fit or a window over a larger grid, Terminus and
+JetBrains Mono at seven sizes, history with search, prompt jumps and line
+copy, and running behind other apps on the shell link. The guide is
+`terminal.md`. Done when its budgets hold on the device:
+- no wakeup at idle with the top bar off, one a minute with it on;
+- PSS at most `gh0st-settings` + 1 MB with one tab and empty history;
+- history at most 80 bytes per line of shell text;
+- a key echoed within one frame, 25 ms;
+- `cat` of 50 MB within 1.5x of the same into a PTY with a reader that
+  discards, with keys still answered;
+- behind another app: no draw, no flush, and the shell's wakeups at home as
+  without it.
+
+Still to come: the kitty keyboard protocol, a visual bell, and a check of
+which Fn combos the keyboard passes clean (`hardware-facts.md`).
 
 **M2. Network and privacy defaults**, in `cpzeroos-base`.
 - nftables drops inbound traffic, except established connections, DHCP and
