@@ -33,30 +33,35 @@ if [ "${1:-}" = rollback ]; then
     exit 0
 fi
 
-cargo build --release --target "$target" -p gh0st -p gh0st-settings --manifest-path "$root/Cargo.toml"
+cargo build --release --target "$target" -p gh0st -p gh0st-settings -p gh0st-term --manifest-path "$root/Cargo.toml"
 out="$root/target/$target/release"
 
-scp -q "$out/gh0st" "$out/gh0st-settings" "$root/packaging/applications/store.desktop" \
+scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" \
+    "$root/packaging/applications/store.desktop" \
     "$root/packaging/applications/settings.desktop" \
+    "$root/packaging/applications/terminal.desktop" \
     "$root/packaging/systemd/APPLaunch.service.d/gh0st.conf" "$host:/tmp/"
 scp -q "$root/packaging/systemd/fb_load.service.d/gh0st.conf" "$host:/tmp/fb_load-gh0st.conf"
 scp -q "$root/packaging/polkit/50-gh0st.rules" "$root/packaging/polkit/org.cpzero.gh0st.policy" "$host:/tmp/"
 remote 'set -e
     sudo install -m 755 /tmp/gh0st /usr/bin/gh0st
     sudo install -m 755 /tmp/gh0st-settings /usr/bin/gh0st-settings
+    sudo install -m 755 /tmp/gh0st-term /usr/bin/gh0st-term
     sudo ln -sf gh0st /usr/bin/gh0st-shell
     # pkexec runs the helper by this path; a hard link, so it is the same
     # root-owned binary and not a symlink pkexec would refuse.
     sudo install -d /usr/libexec
     sudo ln -f /usr/bin/gh0st /usr/libexec/gh0st-helper
     sudo install -d /usr/share/gh0st/applications /etc/systemd/user/APPLaunch.service.d
-    sudo install -m 644 /tmp/store.desktop /tmp/settings.desktop /usr/share/gh0st/applications/
+    sudo install -m 644 /tmp/store.desktop /tmp/settings.desktop /tmp/terminal.desktop \
+        /usr/share/gh0st/applications/
     sudo install -m 644 /tmp/gh0st.conf /etc/systemd/user/APPLaunch.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/fb_load-gh0st.conf /etc/systemd/system/fb_load.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/50-gh0st.rules /etc/polkit-1/rules.d/50-gh0st.rules
     sudo install -D -m 644 /tmp/org.cpzero.gh0st.policy /usr/share/polkit-1/actions/org.cpzero.gh0st.policy
     sudo systemctl daemon-reload
-    rm -f /tmp/gh0st /tmp/gh0st-settings /tmp/store.desktop /tmp/settings.desktop \
+    rm -f /tmp/gh0st /tmp/gh0st-settings /tmp/gh0st-term /tmp/store.desktop /tmp/settings.desktop \
+        /tmp/terminal.desktop \
         /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.cpzero.gh0st.policy'
 restart_launcher
 echo "gh0st $(git -C "$root" rev-parse --short HEAD) running on $host"

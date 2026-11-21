@@ -19,6 +19,9 @@ pub struct DesktopEntry {
     pub terminal: bool,
     /// Stock: after a terminal app exits, wait for a key before leaving.
     pub sysplause: bool,
+    /// `X-Gh0st-Background`: the app runs on behind other apps unless the
+    /// user says otherwise. Honoured only for an app on the shell link.
+    pub background: bool,
 }
 
 fn truthy(v: &str) -> bool {
@@ -67,6 +70,7 @@ pub fn parse(contents: &str) -> Option<DesktopEntry> {
             "TryExec" => e.try_exec = v,
             "Terminal" => e.terminal = truthy(&v),
             "Sysplause" => e.sysplause = truthy(&v),
+            "X-Gh0st-Background" => e.background = truthy(&v),
             "Hidden" | "NoDisplay" => hidden |= truthy(&v),
             "Type" => app_type = v == "Application",
             _ => {}

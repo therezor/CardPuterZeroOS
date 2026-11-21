@@ -17,6 +17,7 @@ use gh0st_core::esc::EscHold;
 use gh0st_core::evdev;
 use gh0st_core::job::{self, Job};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
+use gh0st_core::link::Link;
 use gh0st_core::rt;
 use gh0st_core::script::Script;
 use gh0st_core::status::{self, Net, Watch};
@@ -28,7 +29,7 @@ use gh0st_ui::theme::{self, Theme};
 use gh0st_ui::widgets::{self, Battery, Status, Visual};
 use gh0st_ui::{Canvas, Rect, snapshot};
 use std::collections::HashMap;
-use std::os::fd::RawFd;
+use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Instant, SystemTime};
@@ -547,7 +548,7 @@ impl Shell {
                     && self
                         .tasks
                         .iter()
-                        .any(|t| t.state == tasks::State::Background))
+                        .any(|t| t.state == tasks::State::Background && !t.quiet))
                 .then_some(now + GUARD_MS),
                 (app && (self.banner.is_some() || self.popup.is_some()))
                     .then_some(now + crate::overlay::REFRESH_MS),
@@ -557,6 +558,13 @@ impl Shell {
             fds.extend(self.watches.iter().map(|(_, w)| rt::pollfd(w.fd())));
             let jobs_at = fds.len();
             fds.extend(self.jobs.iter().map(|(_, j)| rt::pollfd(j.fd())));
+            let links: Vec<(i32, i32)> = self
+                .tasks
+                .iter()
+                .filter_map(|t| t.link.as_ref().map(|l| (t.pgid, l.fd())))
+                .collect();
+            let links_at = fds.len();
+            fds.extend(links.iter().map(|&(_, fd)| rt::pollfd(fd)));
             if let Err(e) = rt::wait(&mut fds, deadline) {
                 eprintln!("gh0st shell: poll: {e}");
                 return 1;
@@ -611,6 +619,11 @@ impl Shell {
                 }
             }
             self.finish_jobs();
+            for (i, &(pgid, _)) in links.iter().enumerate() {
+                if rt::readable(&fds[links_at + i]) {
+                    self.read_link(pgid);
+                }
+            }
             keys_buf.clear();
             self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
             for &(c, v) in &keys_buf {
@@ -795,7 +808,7 @@ impl Shell {
             || !self
                 .tasks
                 .iter()
-                .any(|t| t.state == tasks::State::Background)
+                .any(|t| t.state == tasks::State::Background && !t.quiet)
         {
             return;
         }
@@ -868,6 +881,23 @@ impl Shell {
         }
         self.screen = self.woke_to;
         self.refresh_status();
+    }
+
+    /// Messages from the app in group `pgid`.
+    fn read_link(&mut self, pgid: i32) {
+        let mut toasts = Vec::new();
+        if let Some(t) = self.tasks.iter_mut().find(|t| t.pgid == pgid) {
+            while let Some(m) = t.link.as_ref().and_then(|l| l.recv()) {
+                match m.first().map(String::as_str) {
+                    Some("hello") => t.linked = true,
+                    Some("toast") => toasts.extend(m.get(1).cloned()),
+                    _ => {}
+                }
+            }
+        }
+        for text in toasts {
+            self.toast(text);
+        }
     }
 
     fn toast(&mut self, text: impl Into<String>) {
@@ -1192,7 +1222,17 @@ impl Shell {
         let pause = app.entry.terminal && app.entry.sysplause;
         self.input.grab(false);
         self.display.suspend();
-        let pgid = match child::spawn(&argv, &dev, pause) {
+        let (link, app_end) = match Link::pair() {
+            Ok((l, a)) => (Some(l), Some(a)),
+            Err(_) => (None, None),
+        };
+        let spawned = child::spawn(&argv, &dev, pause, app_end.as_ref().map(|f| f.as_raw_fd()));
+        // The app holds its own copy now.
+        drop(app_end);
+        if let Some(l) = &link {
+            l.send(&["hello", "1"]);
+        }
+        let pgid = match spawned {
             Ok(p) => p,
             Err(e) => {
                 self.display.resume();
@@ -1221,6 +1261,10 @@ impl Shell {
             pixels: None,
             used: now,
             mem_kb: None,
+            link,
+            linked: false,
+            background: app.entry.background,
+            quiet: false,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -1241,11 +1285,21 @@ impl Shell {
         let background = self
             .config
             .get_bool(&apps::app_key(&t.id, "background"))
-            .unwrap_or(false);
+            .unwrap_or(t.background && t.linked);
         if background {
-            self.display.read_into(&mut frame);
+            // An app on the link stops drawing and reading keys when told;
+            // one that doesn't answer is guarded as before.
+            t.quiet = t.linked
+                && t.link
+                    .as_ref()
+                    .is_some_and(|l| l.send(&["pause"]) && l.wait_for("paused", STOP_WAIT_MS));
+            if t.quiet {
+                t.pixels = None;
+            } else {
+                self.display.read_into(&mut frame);
+                t.pixels = Some(frame);
+            }
             let id = t.id.clone();
-            t.pixels = Some(frame);
             t.state = tasks::State::Background;
             t.used = now;
             self.take_screen();
@@ -1295,6 +1349,12 @@ impl Shell {
         t.used = now;
         t.mem_kb = None;
         let pgid = t.pgid;
+        // A quiet app redraws all of itself when told to resume.
+        if std::mem::take(&mut t.quiet) {
+            if let Some(l) = &t.link {
+                l.send(&["resume"]);
+            }
+        }
         if self.debug {
             eprintln!("gh0st shell: resumed {} at {}", t.name, now - self.t0);
         }

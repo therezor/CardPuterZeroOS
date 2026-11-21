@@ -5,6 +5,7 @@
 use crate::apps::App;
 use crate::desktop;
 use std::io;
+use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -42,8 +43,10 @@ pub fn argv(app: &App, terminal: &str) -> Vec<String> {
 
 /// `pause` asks a terminal app to wait for a key after its command exits
 /// (stock `Sysplause`). It reaches the terminal as `GH0ST_SYSPLAUSE=1`.
-/// Returns the new process group, whose id is the leader's pid.
-pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<i32> {
+/// `link` is the app's end of the shell link; the app finds its number in
+/// `GH0ST_SHELL_FD`. Returns the new process group, whose id is the
+/// leader's pid.
+pub fn spawn(argv: &[String], dev: &Devices, pause: bool, link: Option<RawFd>) -> io::Result<i32> {
     let (prog, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::other("empty command"))?;
@@ -62,6 +65,19 @@ pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<i32> {
         .env("CAMERA_APP_KEYBOARD_GRAB", "false");
     if Path::new(APP_CWD).is_dir() {
         cmd.current_dir(APP_CWD);
+    }
+    if let Some(fd) = link {
+        cmd.env(crate::link::ENV, fd.to_string());
+        // SAFETY: fcntl is async-signal-safe. It keeps the fd open across
+        // exec in the child alone.
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
     }
     let child = cmd.spawn()?;
     // The Child handle is dropped without waiting: `reap` collects the
@@ -258,7 +274,7 @@ mod tests {
         let _one = CHILD_TESTS.lock().unwrap();
         // The leader exits at once; its background child keeps the group
         // alive for a moment.
-        let pgid = spawn(&sh("sleep 0.3 & exit 0"), &dev(), false).unwrap();
+        let pgid = spawn(&sh("sleep 0.3 & exit 0"), &dev(), false, None).unwrap();
         let start = crate::rt::now_ms();
         let mut leader_done = false;
         while !(leader_done && !group_alive(pgid)) {
@@ -275,7 +291,7 @@ mod tests {
     #[test]
     fn a_paused_group_stops_resumes_and_still_takes_terminate() {
         let _one = CHILD_TESTS.lock().unwrap();
-        let pgid = spawn(&sh("exec sleep 30"), &dev(), false).unwrap();
+        let pgid = spawn(&sh("exec sleep 30"), &dev(), false, None).unwrap();
         assert!(stop(pgid));
         assert_eq!(wait_stopped(pgid, 2000), Stopped::Yes);
         assert!(group_stopped(pgid, 1000));

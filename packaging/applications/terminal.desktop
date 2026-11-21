@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Comment=Shell, tabs, history
+Exec=/usr/bin/gh0st-term
+Icon=gh0st:square-terminal
+Terminal=false
+X-Gh0st-Bars=top
+X-Gh0st-Background=true

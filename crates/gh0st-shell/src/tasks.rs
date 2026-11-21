@@ -7,6 +7,7 @@ use crate::switcher::{self, Card};
 use gh0st_core::child;
 use gh0st_core::esc::KILL_GRACE_MS;
 use gh0st_core::usage::AppUsage;
+use gh0st_core::link::Link;
 use gh0st_ui::Canvas;
 
 /// How often to look for a leftover group member once the leader has gone:
@@ -41,6 +42,15 @@ pub struct Task {
     /// Memory for the switcher, read once per pause: a stopped app's
     /// figure hardly moves. Re-read each sample while it runs behind.
     pub mem_kb: Option<u64>,
+    /// The shell's end of the app's link.
+    pub link: Option<Link>,
+    /// The app answered `hello`: it speaks the link.
+    pub linked: bool,
+    /// `X-Gh0st-Background` in its `.desktop` file.
+    pub background: bool,
+    /// Running behind and told to `pause`: it draws nothing and reads no
+    /// keys, so the shell needs neither its pixels nor a guard.
+    pub quiet: bool,
 }
 
 impl Task {
@@ -63,6 +73,10 @@ impl Tasks {
 
     pub fn iter(&self) -> impl Iterator<Item = &Task> {
         self.list.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Task> {
+        self.list.iter_mut()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -91,10 +105,12 @@ impl Tasks {
 
     /// The background app used last: the one a stray pixel most likely
     /// came from.
+    /// The newest app running behind that may draw over the shell: one
+    /// told to pause on the link draws nothing.
     pub fn background_mut(&mut self) -> Option<&mut Task> {
         self.list
             .iter_mut()
-            .filter(|t| t.state == State::Background)
+            .filter(|t| t.state == State::Background && !t.quiet)
             .max_by_key(|t| t.used)
     }
 
@@ -218,6 +234,10 @@ mod tests {
             pixels: None,
             used,
             mem_kb: None,
+            link: None,
+            linked: false,
+            background: false,
+            quiet: false,
         }
     }
 

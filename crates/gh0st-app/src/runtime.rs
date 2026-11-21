@@ -94,6 +94,9 @@ pub(crate) struct Runtime {
     adopted: Vec<(i32, usize)>,
     /// When the last frame was drawn, for [`Page::frame_ms`].
     pub last_frame: u64,
+    /// The shell has another app or itself in front: draw nothing, and
+    /// keep no deadline that only the screen needs.
+    pub paused: bool,
     toast: Option<(String, u64)>,
     bar: Bar,
     palette: String,
@@ -122,6 +125,7 @@ impl Runtime {
             watches: Vec::new(),
             adopted: Vec::new(),
             last_frame: 0,
+            paused: false,
             toast: None,
             bar: Bar::new(),
             palette,
@@ -356,7 +360,21 @@ impl Runtime {
     /// True when a frame is wanted and the page's least gap since the last
     /// one has passed.
     pub fn frame_due(&self, now: u64) -> bool {
-        self.dirty && !self.quit && now >= self.frame_at()
+        self.dirty && !self.quit && !self.paused && now >= self.frame_at()
+    }
+
+    /// Another app or the shell is in front: no keys, no frames.
+    pub fn pause_input(&mut self) {
+        self.kb.reset();
+        self.paused = true;
+    }
+
+    /// Back in front after a pause: keys held before mean nothing now, and
+    /// the whole screen is drawn again.
+    pub fn resume_input(&mut self) {
+        self.kb.reset();
+        self.paused = false;
+        self.dirty = true;
     }
 
     fn frame_at(&self) -> u64 {
@@ -422,6 +440,10 @@ impl Runtime {
     /// The next time something is due: a timer, a key repeat, the toast's
     /// end, or the clock's minute when the top bar shows.
     pub fn next_at(&self) -> Option<u64> {
+        if self.paused {
+            let pending = (!self.pending.is_empty()).then_some(0);
+            return rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([pending]));
+        }
         let clock = self.top_bars().top.then_some(self.bar.clock_at);
         rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([
             self.kb.repeat_at(),
@@ -452,7 +474,7 @@ impl Runtime {
             self.toast = None;
             self.dirty = true;
         }
-        if now >= self.bar.clock_at && self.top_bars().top {
+        if !self.paused && now >= self.bar.clock_at && self.top_bars().top {
             let h24 = self.h24();
             self.bar.refresh(h24);
             self.dirty = true;
