@@ -44,6 +44,7 @@ enum Ask {
     /// The password for a helper call that asked for one.
     Auth(HelperCall),
     DeviceName,
+    Swap,
 }
 
 /// A root helper run, kept so a password prompt can run it again. It never
@@ -280,7 +281,7 @@ impl Settings {
                 if let PageId::Conn(name) = &id {
                     self.query_conn(cx, name);
                 }
-                if matches!(id, PageId::System | PageId::Advanced) {
+                if matches!(id, PageId::System | PageId::Advanced | PageId::Swap) {
                     self.query_advanced(cx);
                 }
                 self.stack.push((id, Cursor::default()));
@@ -441,6 +442,21 @@ impl Settings {
                     return;
                 }
                 HelperCall::new(&["logs", word], format!("Logs: {}", l.label()))
+            }
+            Choice::Compression => {
+                let now = s.swap_comp.as_deref().or(s.swap_comp_running.as_deref());
+                if !sysconf::COMPRESSIONS.contains(&word) || now == Some(word) {
+                    return;
+                }
+                let mut call = HelperCall::new(&["swap-comp", word], format!("Compression: {word}"));
+                call.restart = true;
+                call
+            }
+            Choice::Swappiness => {
+                if word.parse().ok() == s.swappiness {
+                    return;
+                }
+                HelperCall::new(&["swappiness", word], format!("Swappiness: {word}"))
             }
         };
         self.helper_call(cx, call);
@@ -689,6 +705,16 @@ impl Settings {
                 },
                 Ask::DeviceName,
             ),
+            Command::SwapSize => self.ask(
+                Dialog::Text {
+                    title: "Swap size".into(),
+                    placeholder: "MB, 0 for off",
+                    text: self.state.swap_shown().map_or_else(String::new, |n| n.to_string()),
+                    masked: false,
+                    secret: false,
+                },
+                Ask::Swap,
+            ),
         }
     }
 
@@ -807,6 +833,7 @@ impl Settings {
                     self.helper(cx, &["hostname", &name], &done);
                 }
             }
+            Ask::Swap => self.set_swap(cx, text.trim()),
             Ask::Forget(ssid) => self.forget(cx, &ssid),
             Ask::ConnForget(name) => {
                 let argv = ["nmcli", "connection", "delete", "id", &name];
@@ -823,6 +850,30 @@ impl Settings {
             }
         }
         wipe(&mut text);
+    }
+
+    /// Takes effect at the next boot, so the helper call offers a restart.
+    fn set_swap(&mut self, cx: &mut Cx, text: &str) {
+        let max = sysconf::swap_max(&std::fs::read_to_string("/proc/meminfo").unwrap_or_default());
+        let mb = text
+            .parse::<u32>()
+            .ok()
+            .filter(|&n| n <= max && text.bytes().all(|b| b.is_ascii_digit()));
+        let Some(mb) = mb else {
+            cx.toast(&format!("0 to {max} MB"));
+            return;
+        };
+        if Some(mb) == self.state.swap_shown() {
+            return;
+        }
+        let done = if mb == 0 {
+            "Swap: off".to_string()
+        } else {
+            format!("Swap: {mb} MB")
+        };
+        let mut call = HelperCall::new(&["swap", &mb.to_string()], done);
+        call.restart = true;
+        self.helper_call(cx, call);
     }
 
     fn set_conn_field(&mut self, cx: &mut Cx, name: &str, field: ConnField, text: &str) {
@@ -1040,7 +1091,7 @@ impl Settings {
         );
     }
 
-    /// The boot files, the governor and the hostname, read directly. The
+    /// The boot files, the governor, the hostname and swap, read directly. The
     /// firmware's GPU memory needs vcgencmd, asked once: it holds until a
     /// restart.
     fn query_advanced(&mut self, cx: &mut Cx) {
@@ -1060,6 +1111,17 @@ impl Settings {
             .unwrap_or_default()
             .trim()
             .to_string();
+        s.swap_mb = read(Path::new(sysconf::swap_backend().dropin()))
+            .and_then(|t| sysconf::swap_conf(&t));
+        // No zram0 is no swap.
+        s.swap_running = Some(
+            read(Path::new(sysconf::ZRAM_DISKSIZE)).map_or(0, |t| sysconf::swap_running(&t)),
+        );
+        s.swap_comp =
+            read(Path::new(sysconf::ZRAM_COMP_DROPIN)).and_then(|t| sysconf::comp_from_conf(&t));
+        s.swap_comp_running =
+            read(Path::new(sysconf::ZRAM_COMP)).and_then(|t| sysconf::comp_algorithms(&t).1);
+        s.swappiness = read(Path::new(sysconf::SWAPPINESS_NOW)).and_then(|t| t.trim().parse().ok());
         if !self.gpu_asked {
             self.gpu_asked = true;
             self.run(cx, NetJob::GpuMem, &["vcgencmd", "get_mem", "gpu"]);

@@ -1,6 +1,7 @@
 //! System files the root helper writes and Settings reads: the Pi's boot
-//! files, the CPU governor and the hostname. Pure text in and out, so both
-//! sides use the same parser and the transforms test on any host.
+//! files, the CPU governor, the hostname and the zram swap size. Pure text
+//! in and out, so both sides use the same parser and the transforms test
+//! on any host.
 
 use std::path::PathBuf;
 
@@ -232,9 +233,185 @@ impl CpuMode {
     }
 }
 
+/// Our zram size for systemd-zram-generator. 90 sorts after the image's
+/// `50-cpzeroos.conf` and stock's `20-rpi-swap-zram0-ctrl.conf`, so ours win.
+pub const ZRAM_DROPIN: &str = "/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf";
+/// The compression, on both systems: rpi-swap leaves it to the kernel.
+pub const ZRAM_COMP_DROPIN: &str =
+    "/etc/systemd/zram-generator.conf.d/90-gh0st-swap-compression.conf";
+/// After the image's `50-cpzeroos.conf`, which sets 100.
+pub const SWAPPINESS_DROPIN: &str = "/etc/sysctl.d/90-gh0st-swap.conf";
+/// The same for stock's rpi-swap, which writes zram-generator's file itself
+/// at boot from its own config.
+pub const RPI_SWAP_DROPIN: &str = "/etc/rpi/swap.conf.d/90-gh0st-swap.conf";
+const RPI_SWAP_GENERATOR: &str = "/usr/lib/systemd/system-generators/rpi-swap-generator";
+/// The running zram swap, in bytes. World-readable.
+pub const ZRAM_DISKSIZE: &str = "/sys/block/zram0/disksize";
+/// What the kernel offers, the one in use in brackets: `lz4 [zstd]`.
+pub const ZRAM_COMP: &str = "/sys/block/zram0/comp_algorithm";
+pub const SWAPPINESS_NOW: &str = "/proc/sys/vm/swappiness";
+/// zstd packs the most; lz4 and lzo-rle are faster and pack less.
+pub const COMPRESSIONS: [&str; 3] = ["zstd", "lz4", "lzo-rle"];
+/// The picks Settings offers. The kernel takes 0 to 200: past 100 it
+/// prefers swapping app memory to dropping file cache.
+pub const SWAPPINESS: [u32; 5] = [10, 60, 100, 150, 200];
+pub const SWAPPINESS_MAX: u32 = 200;
+const HEADER: &str = "# Settings > System > Advanced > Swap.\n";
+/// Without a readable `MemTotal`.
+const SWAP_MAX_FALLBACK: u32 = 1024;
+
+/// Who sets up zram swap at boot. Both resize only then.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwapBackend {
+    /// Stock Raspberry Pi OS.
+    RpiSwap,
+    /// Gh0st OS: zram-generator alone.
+    ZramGenerator,
+}
+
+pub fn swap_backend() -> SwapBackend {
+    if std::path::Path::new(RPI_SWAP_GENERATOR).exists() {
+        SwapBackend::RpiSwap
+    } else {
+        SwapBackend::ZramGenerator
+    }
+}
+
+impl SwapBackend {
+    pub fn dropin(self) -> &'static str {
+        match self {
+            SwapBackend::RpiSwap => RPI_SWAP_DROPIN,
+            SwapBackend::ZramGenerator => ZRAM_DROPIN,
+        }
+    }
+
+    /// The whole drop-in for `mb` of swap; 0 is none. zram-generator drops
+    /// a device of size 0. rpi-swap needs `Mechanism=none`, or its swap unit
+    /// fails on an empty device.
+    pub fn conf(self, mb: u32) -> String {
+        let body = match (self, mb) {
+            (SwapBackend::RpiSwap, 0) => "[Main]\nMechanism=none\n".to_string(),
+            (SwapBackend::RpiSwap, n) => format!("[Zram]\nFixedSizeMiB={n}\n"),
+            (SwapBackend::ZramGenerator, n) => format!("[zram0]\nzram-size = {n}\n"),
+        };
+        format!("{HEADER}{body}")
+    }
+}
+
+pub fn comp_conf(alg: &str) -> String {
+    format!("{HEADER}[zram0]\ncompression-algorithm = {alg}\n")
+}
+
+/// The compression a drop-in sets.
+pub fn comp_from_conf(text: &str) -> Option<String> {
+    text.lines()
+        .filter_map(entry)
+        .filter(|(k, _)| *k == "compression-algorithm")
+        .map(|(_, v)| v.to_string())
+        .next_back()
+}
+
+/// The algorithms in `comp_algorithm`, and the one in use.
+pub fn comp_algorithms(text: &str) -> (Vec<String>, Option<String>) {
+    let mut now = None;
+    let all = text
+        .split_whitespace()
+        .map(|w| match w.strip_prefix('[').and_then(|w| w.strip_suffix(']')) {
+            Some(cur) => {
+                now = Some(cur.to_string());
+                cur.to_string()
+            }
+            None => w.to_string(),
+        })
+        .collect();
+    (all, now)
+}
+
+pub fn swappiness_conf(n: u32) -> String {
+    format!("{HEADER}vm.swappiness = {n}\n")
+}
+
+/// The swap size in MB a drop-in of either kind sets, 0 for none.
+pub fn swap_conf(text: &str) -> Option<u32> {
+    let mut found = None;
+    for line in text.lines() {
+        match entry(line) {
+            Some(("Mechanism", "none")) => return Some(0),
+            Some(("zram-size" | "FixedSizeMiB", v)) if v.bytes().all(|b| b.is_ascii_digit()) => {
+                found = v.parse().ok()
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+/// `/sys/block/zram0/disksize` in MB.
+pub fn swap_running(disksize: &str) -> u32 {
+    (disksize.trim().parse::<u64>().unwrap_or(0) >> 20) as u32
+}
+
+/// The largest swap allowed: twice RAM, past which rpi-swap warns that poor
+/// compression could fill memory.
+pub fn swap_max(meminfo: &str) -> u32 {
+    meminfo
+        .lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u32>().ok())
+        .map_or(SWAP_MAX_FALLBACK, |kb| kb / 1024 * 2)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swap_drop_ins_read_back() {
+        for b in [SwapBackend::RpiSwap, SwapBackend::ZramGenerator] {
+            for mb in [0, 256] {
+                assert_eq!(swap_conf(&b.conf(mb)), Some(mb), "{b:?} {mb}");
+            }
+        }
+        assert!(SwapBackend::RpiSwap.conf(0).contains("Mechanism=none"));
+        assert!(SwapBackend::ZramGenerator.conf(0).contains("zram-size = 0"));
+        assert_eq!(swap_conf("#zram-size=64\n"), None);
+        assert_eq!(swap_conf("[zram0]\nzram-size = ram / 2\n"), None);
+    }
+
+    #[test]
+    fn compression_reads_back_and_from_the_kernel() {
+        for alg in COMPRESSIONS {
+            assert_eq!(comp_from_conf(&comp_conf(alg)).as_deref(), Some(alg));
+        }
+        assert_eq!(comp_from_conf("[zram0]\nzram-size = 64\n"), None);
+        let (all, now) = comp_algorithms("lzo-rle lzo lz4 [zstd] \n");
+        assert_eq!(all, ["lzo-rle", "lzo", "lz4", "zstd"]);
+        assert_eq!(now.as_deref(), Some("zstd"));
+        assert_eq!(comp_algorithms("").1, None);
+    }
+
+    #[test]
+    fn swappiness_is_a_sysctl_line() {
+        assert!(swappiness_conf(150).ends_with("\nvm.swappiness = 150\n"));
+        assert!(SWAPPINESS.iter().all(|&n| n <= SWAPPINESS_MAX));
+    }
+
+    #[test]
+    fn stock_rpi_swap_output_parses() {
+        // /run/systemd/zram-generator.conf.d/20-rpi-swap-zram0-ctrl.conf, 2026-11-21.
+        let run = "[zram0]\nhost-memory-limit=none\nfs-type=swap\nzram-size=414\n\
+                   writeback-device=/dev/disk/by-backingfile/var-swap\n";
+        assert_eq!(swap_conf(run), Some(414));
+    }
+
+    #[test]
+    fn swap_sizes_are_mb() {
+        assert_eq!(swap_running("434110464\n"), 414);
+        assert_eq!(swap_running(""), 0);
+        let meminfo = "MemTotal:         424752 kB\nMemFree:           36000 kB\n";
+        assert_eq!(swap_max(meminfo), 828);
+        assert_eq!(swap_max(""), SWAP_MAX_FALLBACK);
+    }
 
     /// The dev device's file, read 2026-11-21.
     const DEVICE: &str = include_str!("testdata/config.txt");

@@ -55,7 +55,7 @@ These gaps were in no doc before this one:
 8. **Root helper.** `gh0st-helper` exists, run by pkexec. Our polkit rule
    lets anyone in `sudo` or `netdev` run it, and control NetworkManager,
    without a password. The verbs that matter (SSH, logs, GPU memory, Wi-Fi
-   country, CPU mode, hostname) now check the user's password themselves.
+   country, CPU mode, hostname, swap) now check the user's password themselves.
    Still open: power and rfkill need none, NetworkManager and timedate are
    allowed outright, and an app as UID 1000 can ptrace Settings or read the
    keyboard while the password is typed. The try counter lives in `/run`, so
@@ -106,6 +106,9 @@ apply" until the running value matches the file.
 | Wi-Fi country | `cfg80211.ieee80211_regdom` in `cmdline.txt` | `regdom XX` | Restart |
 | CPU mode | The governor: schedutil, powersave or performance, kept by a udev rule after stock's | `cpu balanced`, `power-saver` or `performance` | Now |
 | Device name | The hostname and its `/etc/hosts` line | `hostname NAME` | Now |
+| Swap size | The zram size in MB, typed; 0 is off, at most twice RAM. A zram-generator drop-in (`zram-size`), or on stock an rpi-swap one (`FixedSizeMiB`, `Mechanism=none` for off) | `swap 256` | Restart |
+| Swap compression | `compression-algorithm` in a zram-generator drop-in, on both systems: zstd, lz4 or lzo-rle | `swap-comp lz4` | Restart |
+| Swappiness | `vm.swappiness` in a sysctl.d drop-in, and in `/proc` at once: 10, 60, 100, 150 or 200 | `swappiness 150` | Now |
 
 **Privacy page.** Today it has one row, Logs.
 
@@ -261,7 +264,7 @@ and runs through pkexec today. It runs only when called and exits after.
   check (`hardware-facts.md`): `unix_chkpwd` checks it (yescrypt, which static
   musl can't), three free tries then a wait that doubles to 5 minutes, and a
   correct password holds for 5 minutes in the same calling process.
-- Gated today: SSH, logs, GPU memory, regdomain, CPU mode and hostname. To
+- Gated today: SSH, logs, GPU memory, regdomain, CPU mode, hostname and swap. To
   come, also gated: firewall, DNS, ADB, factory reset, updates and network
   rules.
 - Verbs still to add: ADB, timezone, time, NTP server, password, Wi-Fi and

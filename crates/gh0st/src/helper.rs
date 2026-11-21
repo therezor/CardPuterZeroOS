@@ -8,6 +8,9 @@
 //!     gh0st-helper regdom XX                     password, restart
 //!     gh0st-helper cpu balanced|power-saver|performance   password
 //!     gh0st-helper hostname NAME                 password
+//!     gh0st-helper swap MB                       password, restart
+//!     gh0st-helper swap-comp zstd|lz4|lzo-rle    password, restart
+//!     gh0st-helper swappiness 0..200             password
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper power off|reboot
 //!
@@ -30,6 +33,8 @@ const CPU_RULE: &str = "/etc/udev/rules.d/61-gh0st-cpu.rules";
 const CPUFREQ: &str = "/sys/devices/system/cpu/cpufreq";
 /// A boot file edit changes one value; anything bigger is a bug.
 const MAX_GROWTH: usize = 64;
+/// A sanity bound for parsing; `set_swap` holds it to twice RAM.
+const SWAP_PARSE_MAX: u32 = 4096;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -39,6 +44,9 @@ pub enum Verb {
     Regdom(String),
     Cpu(CpuMode),
     Hostname(String),
+    Swap(u32),
+    SwapComp(&'static str),
+    Swappiness(u32),
     Rfkill(Radio, bool),
     Power(bool),
 }
@@ -53,7 +61,10 @@ impl Verb {
             | Verb::GpuMem(_)
             | Verb::Regdom(_)
             | Verb::Cpu(_)
-            | Verb::Hostname(_) => true,
+            | Verb::Hostname(_)
+            | Verb::Swap(_)
+            | Verb::SwapComp(_)
+            | Verb::Swappiness(_) => true,
             Verb::Rfkill(..) | Verb::Power(_) => false,
         }
     }
@@ -77,12 +88,21 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         }
         ["cpu", m] => Verb::Cpu(CpuMode::from_verb(m)?),
         ["hostname", n] if sysconf::valid_hostname(n) => Verb::Hostname(n.to_string()),
+        ["swap", n] => Verb::Swap(number(n, SWAP_PARSE_MAX)?),
+        ["swap-comp", a] => Verb::SwapComp(sysconf::COMPRESSIONS.into_iter().find(|c| c == a)?),
+        ["swappiness", n] => Verb::Swappiness(number(n, sysconf::SWAPPINESS_MAX)?),
         ["rfkill", "bluetooth", s] => Verb::Rfkill(Radio::Bluetooth, on(s)?),
         ["rfkill", "wlan", s] => Verb::Rfkill(Radio::Wlan, on(s)?),
         ["power", "off"] => Verb::Power(false),
         ["power", "reboot"] => Verb::Power(true),
         _ => return None,
     })
+}
+
+/// Plain digits with no leading zero, up to `max`.
+fn number(s: &str, max: u32) -> Option<u32> {
+    let plain = s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
+    s.parse().ok().filter(|&n| plain && n <= max)
 }
 
 /// The journald drop-in for each logging level.
@@ -202,6 +222,45 @@ fn set_hostname(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Takes effect at the next boot: swapoff of a full zram can run this
+/// device out of memory.
+fn set_swap(mb: u32) -> Result<(), String> {
+    let max = sysconf::swap_max(&std::fs::read_to_string("/proc/meminfo").unwrap_or_default());
+    if mb > max {
+        return Err(format!("swap is at most {max} MB here"));
+    }
+    let backend = sysconf::swap_backend();
+    write_conf(backend.dropin(), &backend.conf(mb))
+}
+
+/// Also at the next boot: zram takes a new algorithm only while empty.
+fn set_swap_comp(alg: &str) -> Result<(), String> {
+    // With swap off there is no device to ask; the list is ours then.
+    if let Ok(text) = std::fs::read_to_string(sysconf::ZRAM_COMP) {
+        if !sysconf::comp_algorithms(&text).0.iter().any(|a| a == alg) {
+            return Err(format!("the kernel has no {alg}"));
+        }
+    }
+    write_conf(sysconf::ZRAM_COMP_DROPIN, &sysconf::comp_conf(alg))
+}
+
+/// Now and at every boot.
+fn set_swappiness(n: u32) -> Result<(), String> {
+    write_conf(sysconf::SWAPPINESS_DROPIN, &sysconf::swappiness_conf(n))?;
+    std::fs::write(sysconf::SWAPPINESS_NOW, n.to_string())
+        .map_err(|e| format!("{}: {e}", sysconf::SWAPPINESS_NOW))
+}
+
+/// A whole drop-in of ours, its directory made if missing.
+fn write_conf(path: &str, text: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    gh0st_core::config::write_atomic(path, text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
 fn act(v: Verb) -> Result<(), String> {
     match v {
         Verb::Logs(level) => {
@@ -237,6 +296,9 @@ fn act(v: Verb) -> Result<(), String> {
         }
         Verb::Cpu(mode) => set_cpu(mode),
         Verb::Hostname(name) => set_hostname(&name),
+        Verb::Swap(mb) => set_swap(mb),
+        Verb::SwapComp(alg) => set_swap_comp(alg),
+        Verb::Swappiness(n) => set_swappiness(n),
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
         Verb::Power(reboot) => run(&["systemctl", if reboot { "reboot" } else { "poweroff" }]),
     }
@@ -246,7 +308,8 @@ pub fn main(args: &[String]) -> i32 {
     let Some(v) = parse(args) else {
         eprintln!(
             "usage: gh0st-helper logs off|ram|persistent | ssh on|off | gpu-mem 16..256 | \
-             regdom XX | cpu balanced|power-saver|performance | hostname NAME | \
+             regdom XX | cpu balanced|power-saver|performance | hostname NAME | swap MB | \
+             swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | \
              rfkill bluetooth|wlan on|off | power off|reboot"
         );
         return 2;
@@ -305,6 +368,11 @@ mod tests {
             parse(&args("hostname RZR-ZERO")),
             Some(Verb::Hostname("RZR-ZERO".into()))
         );
+        assert_eq!(parse(&args("swap 0")), Some(Verb::Swap(0)));
+        assert_eq!(parse(&args("swap 256")), Some(Verb::Swap(256)));
+        assert_eq!(parse(&args("swap-comp lz4")), Some(Verb::SwapComp("lz4")));
+        assert_eq!(parse(&args("swappiness 0")), Some(Verb::Swappiness(0)));
+        assert_eq!(parse(&args("swappiness 200")), Some(Verb::Swappiness(200)));
         for bad in [
             "",
             "logs",
@@ -325,6 +393,18 @@ mod tests {
             "hostname -x",
             "hostname a.b",
             "hostname",
+            "swap",
+            "swap 064",
+            "swap -1",
+            "swap +1",
+            "swap 256MB",
+            "swap 99999",
+            "swap-comp",
+            "swap-comp lzo",
+            "swap-comp ZSTD",
+            "swappiness 201",
+            "swappiness 060",
+            "swappiness -1",
         ] {
             assert_eq!(parse(&args(bad)), None, "{bad:?}");
         }
@@ -339,6 +419,9 @@ mod tests {
             ("regdom UA", true),
             ("cpu performance", true),
             ("hostname cardputer", true),
+            ("swap 256", true),
+            ("swap-comp zstd", true),
+            ("swappiness 100", true),
             ("rfkill wlan on", false),
             ("power off", false),
         ] {

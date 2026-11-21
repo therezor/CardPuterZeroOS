@@ -135,6 +135,11 @@ fn sample_state() -> State {
         ),
         governor: "schedutil".into(),
         hostname: "RZR-ZERO".into(),
+        swap_mb: None,
+        swap_running: Some(207),
+        swap_comp: None,
+        swap_comp_running: Some("zstd".into()),
+        swappiness: Some(100),
         moving: None,
         about: [
             ("Version", "Gh0stdeck 0.1.0"),
@@ -190,6 +195,10 @@ fn main() {
         let st = sample_state();
         let pending = State {
             gpu_mem: GpuMem::Set(64),
+            ..sample_state()
+        };
+        let swap_pending = State {
+            swap_comp: Some("lz4".into()),
             ..sample_state()
         };
         let password = |title: &str| Dialog::Text {
@@ -258,13 +267,32 @@ fn main() {
                     "auth-wrong",
                     scene(&t, &st, PageId::Advanced, 0, Some(password("Wrong password"))),
                 ),
+                ("swap", s(PageId::Swap, 0)),
+                ("compression", s(PageId::Choose(Choice::Compression), 0)),
+                ("swappiness", s(PageId::Choose(Choice::Swappiness), 2)),
+                (
+                    "swap-size",
+                    scene(
+                        &t,
+                        &st,
+                        PageId::Swap,
+                        0,
+                        Some(Dialog::Text {
+                            title: "Swap size".into(),
+                            placeholder: "MB, 0 for off",
+                            text: "207".into(),
+                            masked: false,
+                            secret: false,
+                        }),
+                    ),
+                ),
                 (
                     "device-name",
                     scene(
                         &t,
                         &st,
                         PageId::Advanced,
-                        3,
+                        4,
                         Some(Dialog::Text {
                             title: "Device name".into(),
                             placeholder: "Letters, digits and hyphens",
@@ -289,7 +317,8 @@ fn main() {
                         }),
                     ),
                 ),
-                ("advanced-restart", scene(&t, &pending, PageId::Advanced, 4, None)),
+                ("advanced-restart", scene(&t, &pending, PageId::Advanced, 5, None)),
+                ("swap-restart", scene(&t, &swap_pending, PageId::Swap, 3, None)),
                 ("system-restart", scene(&t, &pending, PageId::System, 4, None)),
                 ("timezone", s(PageId::TimeZone(Some("Europe".into())), 2)),
                 ("privacy", s(PageId::Privacy, 0)),

@@ -183,6 +183,14 @@ pub struct State {
     pub countries: Vec<(String, String)>,
     pub governor: String,
     pub hostname: String,
+    /// Swap in MB from our drop-in (`None` with none), and the zram swap
+    /// running now. 0 is off.
+    pub swap_mb: Option<u32>,
+    pub swap_running: Option<u32>,
+    /// The compression in our drop-in, and the one zram runs with.
+    pub swap_comp: Option<String>,
+    pub swap_comp_running: Option<String>,
+    pub swappiness: Option<u32>,
     /// The pinned app being moved on the Apps page.
     pub moving: Option<String>,
     pub about: Vec<(String, String)>,
@@ -206,7 +214,26 @@ impl State {
             (Some(file), Some(now)) => file != now,
             _ => false,
         };
-        gpu || country
+        gpu || country || self.swap_restart_needed()
+    }
+
+    /// A swap size or compression waits for a restart. The compression
+    /// matters only while swap runs.
+    pub fn swap_restart_needed(&self) -> bool {
+        let size = match (self.swap_mb, self.swap_running) {
+            (Some(file), Some(now)) => file != now,
+            _ => false,
+        };
+        let comp = match (&self.swap_comp, &self.swap_comp_running, self.swap_running) {
+            (Some(file), Some(now), Some(mb)) => mb > 0 && file != now,
+            _ => false,
+        };
+        size || comp
+    }
+
+    /// The swap size Settings shows: what boots next, else what runs.
+    pub fn swap_shown(&self) -> Option<u32> {
+        self.swap_mb.or(self.swap_running)
     }
 
     fn country_name(&self, cc: &str) -> String {
@@ -399,11 +426,14 @@ pub fn build(id: &PageId, s: &State) -> Page {
         PageId::System => ("System", Body::List(system(s)), vec![]),
         PageId::TimeZone(region) => ("Time zone", Body::List(zones(s, region.as_deref())), vec![]),
         PageId::Advanced => ("Advanced", Body::List(advanced(s)), vec![]),
+        PageId::Swap => ("Swap", Body::List(swap(s)), vec![]),
         PageId::Choose(c) => (
             match c {
                 Choice::GpuMem => "GPU memory",
                 Choice::CpuMode => "CPU mode",
                 Choice::Logs => "Logs",
+                Choice::Compression => "Compression",
+                Choice::Swappiness => "Swappiness",
             },
             Body::List(options(s, *c)),
             vec![],
@@ -773,6 +803,12 @@ fn advanced(s: &State) -> Vec<Item> {
     let mut out = vec![
         gpu,
         Item::new(
+            "arrow-up-down",
+            "Swap",
+            Value::TextChevron(swap_size(s)),
+            Act::Open(PageId::Swap),
+        ),
+        Item::new(
             "flag",
             "Wi-Fi country",
             Value::TextChevron(s.country.as_deref().map_or_else(String::new, |c| s.country_name(c))),
@@ -796,6 +832,67 @@ fn advanced(s: &State) -> Vec<Item> {
         ));
     }
     out
+}
+
+fn swap_size(s: &State) -> String {
+    match s.swap_shown() {
+        Some(0) => "Off".into(),
+        Some(n) => format!("{n} MB"),
+        None => "\u{2026}".into(),
+    }
+}
+
+fn swap(s: &State) -> Vec<Item> {
+    let known = |v: Option<String>| v.unwrap_or_else(|| "\u{2026}".into());
+    let mut out = vec![
+        Item::new(
+            "memory-stick",
+            "Size",
+            Value::TextChevron(swap_size(s)),
+            Act::Run(Command::SwapSize),
+        ),
+        Item::new(
+            "zoom-out",
+            "Compression",
+            Value::TextChevron(known(s.swap_comp.clone().or_else(|| s.swap_comp_running.clone()))),
+            Act::Open(PageId::Choose(Choice::Compression)),
+        ),
+        Item::new(
+            "arrow-left-right",
+            "Swappiness",
+            Value::TextChevron(known(s.swappiness.map(|n| n.to_string()))),
+            Act::Open(PageId::Choose(Choice::Swappiness)),
+        ),
+    ];
+    if s.swap_restart_needed() {
+        out.push(Item::new(
+            "rotate-cw",
+            "Restart to apply",
+            Value::None,
+            Act::Run(Command::Restart),
+        ));
+    }
+    out
+}
+
+fn comp_note(alg: &str) -> &'static str {
+    match alg {
+        "zstd" => "Default, packs the most",
+        "lz4" => "Fastest, packs less",
+        "lzo-rle" => "Fast, packs less",
+        _ => "",
+    }
+}
+
+fn swappiness_note(n: u32) -> &'static str {
+    match n {
+        10 => "Drops file cache first",
+        60 => "Kernel default",
+        100 => "Gh0st OS default",
+        150 => "Swaps apps sooner",
+        200 => "Swaps apps first",
+        _ => "",
+    }
 }
 
 fn gpu_note(mb: u32) -> &'static str {
@@ -841,6 +938,17 @@ fn options(s: &State, c: Choice) -> Vec<Item> {
         Choice::Logs => Logs::ALL
             .iter()
             .map(|&l| row(l.label().into(), l.note(), l.verb().into(), s.logs == l))
+            .collect(),
+        Choice::Compression => {
+            let now = s.swap_comp.as_deref().or(s.swap_comp_running.as_deref());
+            sysconf::COMPRESSIONS
+                .iter()
+                .map(|&a| row(a.into(), comp_note(a), a.into(), now == Some(a)))
+                .collect()
+        }
+        Choice::Swappiness => sysconf::SWAPPINESS
+            .iter()
+            .map(|&n| row(n.to_string(), swappiness_note(n), n.to_string(), s.swappiness == Some(n)))
             .collect(),
     }
 }
@@ -974,14 +1082,14 @@ mod tests {
         s.gpu_running = Some(128);
         s.country = Some("AE".into());
         s.country_running = Some("AE".into());
-        assert_eq!(build(&PageId::Advanced, &s).len(), 4);
+        assert_eq!(build(&PageId::Advanced, &s).len(), 5);
         let link = |s: &State| build(&PageId::System, s).item(4).unwrap().value.clone();
         assert_eq!(link(&s), Value::TextChevron(String::new()));
         s.gpu_mem = GpuMem::Set(64);
         assert_eq!(link(&s), Value::TextChevron("Restart needed".into()));
         let p = build(&PageId::Advanced, &s);
-        assert_eq!(p.len(), 5);
-        assert_eq!(p.item(4).unwrap().act, Act::Run(Command::Restart));
+        assert_eq!(p.len(), 6);
+        assert_eq!(p.item(5).unwrap().act, Act::Run(Command::Restart));
         s.gpu_mem = GpuMem::Set(128);
         s.country = Some("GB".into());
         assert!(s.restart_needed());
@@ -1031,7 +1139,70 @@ mod tests {
         let cpu = build(&PageId::Choose(Choice::CpuMode), &s);
         assert!((0..3).all(|i| cpu.item(i).unwrap().icon == Some("")), "ondemand is none of them");
         let adv = build(&PageId::Advanced, &s);
-        assert_eq!(adv.item(2).unwrap().value, Value::TextChevron("ondemand".into()));
+        assert_eq!(adv.item(3).unwrap().value, Value::TextChevron("ondemand".into()));
+    }
+
+    #[test]
+    fn swap_shows_what_boots_next() {
+        let mut s = State {
+            swap_running: Some(414),
+            ..state()
+        };
+        let row = |s: &State| build(&PageId::Advanced, s).item(1).unwrap().value.clone();
+        assert_eq!(row(&s), Value::TextChevron("414 MB".into()));
+        assert_eq!(build(&PageId::Advanced, &s).item(1).unwrap().act, Act::Open(PageId::Swap));
+        assert!(!s.restart_needed(), "no drop-in, nothing pending");
+        s.swap_mb = Some(0);
+        assert_eq!(row(&s), Value::TextChevron("Off".into()));
+        assert!(s.restart_needed());
+        let p = build(&PageId::Swap, &s);
+        assert_eq!(p.item(0).unwrap().act, Act::Run(Command::SwapSize));
+        assert_eq!(p.item(3).unwrap().act, Act::Run(Command::Restart));
+        s.swap_mb = Some(414);
+        assert!(!s.restart_needed());
+        assert_eq!(build(&PageId::Swap, &s).len(), 3);
+    }
+
+    #[test]
+    fn compression_waits_for_a_restart_only_while_swap_runs() {
+        let mut s = State {
+            swap_running: Some(414),
+            swap_comp_running: Some("zstd".into()),
+            ..state()
+        };
+        let comp = |s: &State| build(&PageId::Swap, s).item(1).unwrap().value.clone();
+        assert_eq!(comp(&s), Value::TextChevron("zstd".into()));
+        s.swap_comp = Some("lz4".into());
+        assert_eq!(comp(&s), Value::TextChevron("lz4".into()));
+        assert!(s.restart_needed());
+        s.swap_running = Some(0);
+        assert!(!s.restart_needed());
+        let pick = build(&PageId::Choose(Choice::Compression), &s);
+        assert_eq!(pick.len(), sysconf::COMPRESSIONS.len());
+        assert_eq!(pick.item(1).unwrap().icon, Some("check"));
+        assert_eq!(
+            pick.item(1).unwrap().act,
+            Act::Run(Command::Choose(Choice::Compression, "lz4".into()))
+        );
+    }
+
+    #[test]
+    fn swappiness_checks_a_listed_value_only() {
+        let mut s = State {
+            swappiness: Some(60),
+            ..state()
+        };
+        let checked = |s: &State| {
+            let p = build(&PageId::Choose(Choice::Swappiness), s);
+            (0..p.len()).filter(|&i| p.item(i).unwrap().icon == Some("check")).collect::<Vec<_>>()
+        };
+        assert_eq!(checked(&s), [1]);
+        s.swappiness = Some(80);
+        assert!(checked(&s).is_empty());
+        assert_eq!(
+            build(&PageId::Swap, &s).item(2).unwrap().value,
+            Value::TextChevron("80".into())
+        );
     }
 
     #[test]

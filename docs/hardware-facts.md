@@ -226,6 +226,17 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
   fourth wrong try exits 12 (`locked 5`). Measured 2026-11-21.
 - `/etc/hosts` has two `127.0.1.1` lines, `cardputerzero` and `RZR-ZERO`.
   `iw` is not installed. `/usr/share/zoneinfo/iso3166.tab` is.
+- Swap on stock, the helper run as root over SSH (not yet through pkexec
+  from Settings): `gh0st-helper swap 256` writes `FixedSizeMiB=256` to
+  `/etc/rpi/swap.conf.d/90-gh0st-swap.conf`. After a restart zram0 is
+  268435456 bytes. `swap 0` (`Mechanism=none`) boots with no swap and
+  deletes `/var/swap`; `swap 256` after it brings both back. No failed units
+  at any step; 900 is refused (cap 828 with 414 MB RAM). Measured 2026-11-21.
+- Stock runs zstd (the kernel's default; rpi-swap sets none) and swappiness 60
+  (rpi-swap sets only `vm.page-cluster=0`, in `/run/sysctl.d/70-rpi-swap.conf`).
+  `swap-comp lz4` boots zram0 with `[lz4]`, rpi-swap's size kept.
+  `swappiness 150` applies at once and holds after a restart. Same root run
+  over SSH. Measured 2026-11-21.
 
 ## Still to check
 
@@ -249,6 +260,8 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
 | Grace window | the helper's parent under pkexec is Settings, so a second change within 5 minutes skips the prompt | helper auth |
 | `gpu_mem=64` | `vcgencmd` reads `gpu=64M` after a restart; camera and splash still work | Advanced |
 | `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |
+| Swap on the image | `zram-size` in `/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf` beats `50-cpzeroos.conf`; 0 leaves no zram0 | Advanced |
+| Swap compression and swappiness on the image | the same drop-ins work without rpi-swap | Advanced |
 
 ## Baseline (stock APPLaunch)
 

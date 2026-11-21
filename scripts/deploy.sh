@@ -28,6 +28,9 @@ if [ "${1:-}" = rollback ]; then
         /etc/polkit-1/rules.d/50-gh0st.rules \
         /usr/share/polkit-1/actions/org.cpzero.gh0st.policy \
         /usr/libexec/gh0st-helper /etc/udev/rules.d/61-gh0st-cpu.rules \
+        /etc/rpi/swap.conf.d/90-gh0st-swap.conf /etc/sysctl.d/90-gh0st-swap.conf \
+        /etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf \
+        /etc/systemd/zram-generator.conf.d/90-gh0st-swap-compression.conf \
         && sudo systemctl daemon-reload'
     restart_launcher
     echo "stock launcher restored on $host"

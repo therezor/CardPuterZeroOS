@@ -28,8 +28,10 @@ pub enum PageId {
     TimeZone(Option<String>),
     /// A saved connection's settings, by profile name.
     Conn(String),
-    /// Boot, CPU and identity settings that need the password.
+    /// Boot, memory, CPU and identity settings that need the password.
     Advanced,
+    /// The zram swap: size, compression and swappiness.
+    Swap,
     /// Initials, then the countries under one.
     Country(Option<char>),
     Choose(Choice),
@@ -69,6 +71,8 @@ pub enum Choice {
     GpuMem,
     CpuMode,
     Logs,
+    Compression,
+    Swappiness,
 }
 
 /// Something Enter starts that is not a value.
@@ -91,6 +95,8 @@ pub enum Command {
     /// An option of a choice, in the helper's word: "64", "power-saver".
     Choose(Choice, String),
     DeviceName,
+    /// Type the zram swap size in MB.
+    SwapSize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,7 +323,7 @@ pub fn hints(page: &Page, item: Option<&Item>) -> Vec<(&'static str, &'static st
                 Command::Device(_) => "connect",
                 Command::BtScan => "scan",
                 Command::SetZone(_) | Command::SetCountry(_) | Command::Choose(..) => "set",
-                Command::DeviceName => "edit",
+                Command::DeviceName | Command::SwapSize => "edit",
                 Command::Restart => "restart",
                 Command::ConnEdit(_) => "edit",
                 Command::ConnUp => "reconnect",
