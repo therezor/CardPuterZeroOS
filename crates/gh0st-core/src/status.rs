@@ -13,6 +13,55 @@ pub enum Net {
     Ethernet,
 }
 
+/// Bluetooth is on while the first controller is up, which is what BlueZ
+/// powering it means. sysfs has no file for that; HCIGETDEVINFO asks the
+/// kernel and needs no privilege.
+#[cfg(target_os = "linux")]
+pub fn bluetooth() -> bool {
+    const AF_BLUETOOTH: libc::c_int = 31;
+    const BTPROTO_HCI: libc::c_int = 1;
+    /// `_IOR('H', 211, int)`.
+    const HCIGETDEVINFO: u32 = 0x8004_48d3;
+    const HCI_UP: u32 = 1;
+    /// `struct hci_dev_info`: 92 bytes, `flags` at 16.
+    #[repr(C)]
+    struct DevInfo {
+        dev_id: u16,
+        name: [u8; 8],
+        bdaddr: [u8; 6],
+        flags: u32,
+        rest: [u8; 80],
+    }
+    // SAFETY: a plain socket call; the fd is closed below.
+    let fd = unsafe {
+        libc::socket(
+            AF_BLUETOOTH,
+            libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+            BTPROTO_HCI,
+        )
+    };
+    if fd < 0 {
+        return false;
+    }
+    let mut info = DevInfo {
+        dev_id: 0,
+        name: [0; 8],
+        bdaddr: [0; 6],
+        flags: 0,
+        rest: [0; 80],
+    };
+    // SAFETY: info is larger than the kernel's struct, which it fills.
+    let ok = unsafe { libc::ioctl(fd, HCIGETDEVINFO as _, &mut info) } == 0;
+    // SAFETY: fd is ours and open.
+    unsafe { libc::close(fd) };
+    ok && info.flags & HCI_UP != 0
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn bluetooth() -> bool {
+    false
+}
+
 /// A cable with link wins over Wi-Fi, as on pt35.
 pub fn network(sys_net: &Path, proc_wireless: &Path) -> Net {
     let Ok(rd) = std::fs::read_dir(sys_net) else {

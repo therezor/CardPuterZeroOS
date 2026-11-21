@@ -28,6 +28,11 @@ pub enum PageId {
     TimeZone(Option<String>),
     /// A saved connection's settings, by profile name.
     Conn(String),
+    /// Boot, CPU and identity settings that need the password.
+    Advanced,
+    /// Initials, then the countries under one.
+    Country(Option<char>),
+    Choose(Choice),
     Privacy,
     About,
 }
@@ -55,6 +60,14 @@ pub enum Setting {
     ConnMethod,
     ConnMac,
     Ssh,
+}
+
+/// A value picked on its own page, each option with a note. The gated
+/// settings work this way, so the password comes after the pick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choice {
+    GpuMem,
+    CpuMode,
     Logs,
 }
 
@@ -73,6 +86,11 @@ pub enum Command {
     Password,
     Restart,
     PowerOff,
+    /// Wi-Fi country, by ISO code.
+    SetCountry(String),
+    /// An option of a choice, in the helper's word: "64", "battery".
+    Choose(Choice, String),
+    DeviceName,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -211,6 +229,8 @@ pub enum Dialog {
         title: String,
         line: String,
         yes: &'static str,
+        /// What Esc says: "cancel", or "later" for a restart.
+        no: &'static str,
     },
 }
 
@@ -296,7 +316,9 @@ pub fn hints(page: &Page, item: Option<&Item>) -> Vec<(&'static str, &'static st
                 Command::Join(_) | Command::JoinHidden => "join",
                 Command::Device(_) => "connect",
                 Command::BtScan => "scan",
-                Command::SetZone(_) => "set",
+                Command::SetZone(_) | Command::SetCountry(_) | Command::Choose(..) => "set",
+                Command::DeviceName => "edit",
+                Command::Restart => "restart",
                 Command::ConnEdit(_) => "edit",
                 Command::ConnUp => "reconnect",
                 Command::ConnForget => "forget",
@@ -335,11 +357,16 @@ fn draw_dialog(c: &mut Canvas, t: &Theme, d: &Dialog) {
                 keys,
             );
         }
-        Dialog::Confirm { title, line, yes } => {
+        Dialog::Confirm {
+            title,
+            line,
+            yes,
+            no,
+        } => {
             let inner = widgets::dialog(c, t, r, title, t.c.critical);
             let l = Rect::new(inner.x, inner.y + 2, inner.w, 22);
             widgets::text_in(c, t.f.body, l, line, t.c.fg);
-            let keys = [("Enter", *yes), ("Esc", "cancel")];
+            let keys = [("Enter", *yes), ("Esc", *no)];
             dialog_keys(
                 c,
                 t,

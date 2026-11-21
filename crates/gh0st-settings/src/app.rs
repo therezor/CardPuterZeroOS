@@ -5,7 +5,8 @@
 
 use crate::model::pages::{self, APP_ICONS, AppRow, DARK_TIMES, Logs, State as PageState};
 use crate::model::{
-    self, Act, Body, Command, ConnField, Cursor, Dialog, Page as View, PageId, Setting, Value,
+    self, Act, Body, Choice, Command, ConnField, Cursor, Dialog, Page as View, PageId, Setting,
+    Value,
 };
 use crate::model::{bt, net};
 use gh0st_app::gfx::theme::{self, Theme};
@@ -14,6 +15,7 @@ use gh0st_app::{codes, system};
 use gh0st_core::apps::{self, Dirs, Layout};
 use gh0st_core::backlight::Backlight;
 use gh0st_core::config::{self, Config};
+use gh0st_core::sysconf::{self, CpuMode, GpuMem};
 use gh0st_core::{desktop, rfkill};
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,6 +23,7 @@ use std::path::Path;
 /// pkexec runs the root helper by this path (see packaging/polkit).
 const HELPER: &str = "/usr/libexec/gh0st-helper";
 const LOGGING_DIR: &str = "/etc/systemd/journald.conf.d";
+const GOVERNOR: &str = "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor";
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 const DEFAULT_DARK_SECS: i64 = 30;
 const VOLUME_STEP: i32 = 10;
@@ -38,6 +41,56 @@ enum Ask {
     /// A new value for a field of connection `.0`.
     ConnField(String, ConnField),
     ConnForget(String),
+    /// The password for a helper call that asked for one.
+    Auth(HelperCall),
+    DeviceName,
+}
+
+/// A root helper run, kept so a password prompt can run it again. It never
+/// holds the password.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HelperCall {
+    args: Vec<String>,
+    /// What to say when it works.
+    done: String,
+    /// The change waits for a restart, so offer one.
+    restart: bool,
+}
+
+impl HelperCall {
+    fn new(args: &[&str], done: impl Into<String>) -> HelperCall {
+        HelperCall {
+            args: args.iter().map(|a| a.to_string()).collect(),
+            done: done.into(),
+            restart: false,
+        }
+    }
+}
+
+/// What a finished helper run means for the user.
+#[derive(Debug, PartialEq, Eq)]
+enum Step {
+    Done,
+    /// Ask for the password, with this title.
+    Ask(&'static str),
+    Locked(u64),
+    Failed(String),
+}
+
+/// Reads the helper's exit codes (see `gh0st/src/helper.rs`).
+fn auth_step(code: Option<i32>, out: &str) -> Step {
+    match code {
+        Some(0) => Step::Done,
+        Some(10) => Step::Ask("Password"),
+        Some(11) => Step::Ask("Wrong password"),
+        Some(12) => Step::Locked(
+            out.lines()
+                .find_map(|l| l.trim().strip_prefix("gh0st-helper: locked "))
+                .and_then(|n| n.trim().parse().ok())
+                .unwrap_or(0),
+        ),
+        _ => Step::Failed(helper_failure(out)),
+    }
 }
 
 /// A helper run whose answer Settings waits on.
@@ -65,8 +118,9 @@ enum NetJob {
     Zones,
     /// A time zone change, or network time when `None`.
     TimeSet(Option<String>),
-    /// The root helper; what to say when it works.
-    Helper(String),
+    Helper(HelperCall),
+    /// `vcgencmd get_mem gpu`: what the firmware runs with.
+    GpuMem,
     /// After the helper unblocks the radio, power it on.
     BtUnblock,
     Password,
@@ -91,6 +145,8 @@ pub struct Settings {
     /// Running helpers, with what each is for and its output so far.
     jobs: HashMap<Job, (NetJob, String)>,
     backlight: Option<Backlight>,
+    /// vcgencmd was asked once; the running value holds until a restart.
+    gpu_asked: bool,
 }
 
 impl Settings {
@@ -103,6 +159,7 @@ impl Settings {
             dialog: None,
             jobs: HashMap::new(),
             backlight: Backlight::find(Path::new("/sys/class/backlight")),
+            gpu_asked: false,
         }
     }
 
@@ -137,7 +194,12 @@ impl Settings {
             .get_str("gh0st.home_layout")
             .and_then(Layout::from_config)
             .unwrap_or_default();
-        s.palette = cx.theme().c.name;
+        // The SDK switches the theme only after this key is handled, so the
+        // file, not the theme, has the palette just picked.
+        s.palette = config
+            .get_str("gh0st.palette")
+            .and_then(theme::palette)
+            .map_or(cx.theme().c.name, |p| p.name);
         s.animations = config.get_bool("gh0st.animations").unwrap_or(true);
         s.clock_24h = config.get_str("gh0st.clock") != Some("12h");
         let pins = apps::load_pins();
@@ -159,7 +221,11 @@ impl Settings {
                     shown: a.shown,
                 })
                 .collect();
-        rows.sort_by_key(|a| a.name.to_lowercase());
+        // Pins first in their order, as home shows them.
+        rows.sort_by_key(|a| {
+            let pin = pins.iter().position(|p| *p == a.file);
+            (pin.unwrap_or(usize::MAX), a.name.to_lowercase())
+        });
         s.apps = rows;
         s.about = about();
         s.logs = logs_level();
@@ -214,8 +280,20 @@ impl Settings {
                 if let PageId::Conn(name) = &id {
                     self.query_conn(cx, name);
                 }
+                if matches!(id, PageId::System | PageId::Advanced) {
+                    self.query_advanced(cx);
+                }
                 self.stack.push((id, Cursor::default()));
                 self.refresh(cx);
+                // A picker opens on the option in use.
+                let here = match &self.view.body {
+                    Body::List(items) => items.iter().position(|i| i.icon == Some("check")),
+                    Body::Info(_) => None,
+                };
+                if let Some(i) = here {
+                    self.cursor_mut().selected = i;
+                    self.refresh(cx);
+                }
             }
             Act::Set(s) => match value {
                 Value::Toggle(_) => self.apply(&s, 0, cx),
@@ -336,6 +414,59 @@ impl Settings {
         self.refresh(cx);
     }
 
+    /// Runs a picked option through the helper, unless it is the one set.
+    fn choose(&mut self, cx: &mut Cx, c: Choice, word: &str) {
+        let s = &self.state;
+        let call = match c {
+            Choice::GpuMem => {
+                if word.parse().ok().map(GpuMem::Set) == Some(s.gpu_mem) {
+                    return;
+                }
+                let mut call = HelperCall::new(&["gpu-mem", word], format!("GPU memory: {word} MB"));
+                call.restart = true;
+                call
+            }
+            Choice::CpuMode => {
+                let Some(m) = CpuMode::from_verb(word) else { return };
+                if CpuMode::from_governor(&s.governor) == Some(m) {
+                    return;
+                }
+                HelperCall::new(&["cpu", word], format!("CPU mode: {}", m.label()))
+            }
+            Choice::Logs => {
+                let Some(l) = Logs::ALL.into_iter().find(|l| l.verb() == word) else {
+                    return;
+                };
+                if l == s.logs {
+                    return;
+                }
+                HelperCall::new(&["logs", word], format!("Logs: {}", l.label()))
+            }
+        };
+        self.helper_call(cx, call);
+    }
+
+    /// The app under the cursor on the Apps page.
+    fn selected_app(&self) -> Option<&AppRow> {
+        self.state.apps.get(self.top().1.selected)
+    }
+
+    /// Moves the pin being moved one place, saves, and keeps the cursor on it.
+    fn move_pin(&mut self, d: i32, cx: &mut Cx) {
+        let Some(file) = self.state.moving.clone() else {
+            return;
+        };
+        let visible: Vec<String> = self.state.apps.iter().map(|a| a.file.clone()).collect();
+        if let Some(pins) = apps::move_pin(&apps::load_pins(), &visible, &file, d) {
+            let _ = apps::save_pins(&pins);
+            self.refresh(cx);
+            if let Some(i) = self.state.apps.iter().position(|a| a.file == file) {
+                self.cursor_mut().selected = i;
+                self.refresh(cx);
+            }
+        }
+    }
+
     fn app(&self, file: &str) -> Option<&AppRow> {
         self.state.apps.iter().find(|a| a.file == file)
     }
@@ -439,15 +570,6 @@ impl Settings {
                 };
                 self.helper(cx, &["ssh", arg], done);
             }
-            Setting::Logs => {
-                let i = Logs::ALL
-                    .iter()
-                    .position(|&l| l == self.state.logs)
-                    .unwrap_or(0);
-                let next = Logs::ALL[cycle(i, d, Logs::ALL.len())];
-                let done = format!("Logs: {}", next.label());
-                self.helper(cx, &["logs", next.verb()], &done);
-            }
             _ => cx.toast("Not available yet"),
         }
     }
@@ -459,6 +581,7 @@ impl Settings {
                     title: "Restart?".into(),
                     line: "Open apps close first.".into(),
                     yes: "restart",
+                    no: "cancel",
                 },
                 Ask::Confirm(c),
             ),
@@ -467,6 +590,7 @@ impl Settings {
                     title: "Power off?".into(),
                     line: "Open apps close first.".into(),
                     yes: "power off",
+                    no: "cancel",
                 },
                 Ask::Confirm(c),
             ),
@@ -509,6 +633,7 @@ impl Settings {
                             title: format!("Forget \u{201c}{}\u{201d}?", c.name),
                             line: "Its password and settings go.".into(),
                             yes: "forget",
+                            no: "cancel",
                         },
                         Ask::ConnForget(c.name),
                     );
@@ -533,6 +658,36 @@ impl Settings {
                     secret: true,
                 },
                 Ask::PasswordCurrent,
+            ),
+            Command::SetCountry(cc) => {
+                if self.state.country.as_deref() != Some(cc.as_str()) {
+                    let name = self
+                        .state
+                        .countries
+                        .iter()
+                        .find(|(c, _)| *c == cc)
+                        .map_or_else(|| cc.clone(), |(_, n)| n.clone());
+                    let mut call = HelperCall::new(&["regdom", &cc], format!("Wi-Fi country: {name}"));
+                    call.restart = true;
+                    self.helper_call(cx, call);
+                }
+                self.stack.retain(|(p, _)| !matches!(p, PageId::Country(_)));
+                self.refresh(cx);
+            }
+            Command::Choose(c, word) => {
+                self.stack.retain(|(p, _)| !matches!(p, PageId::Choose(_)));
+                self.choose(cx, c, &word);
+                self.refresh(cx);
+            }
+            Command::DeviceName => self.ask(
+                Dialog::Text {
+                    title: "Device name".into(),
+                    placeholder: "Letters, digits and hyphens",
+                    text: self.state.hostname.clone(),
+                    masked: false,
+                    secret: false,
+                },
+                Ask::DeviceName,
             ),
         }
     }
@@ -638,6 +793,20 @@ impl Settings {
                 wipe(&mut cur);
                 wipe(&mut new);
             }
+            Ask::Auth(call) => {
+                if !text.is_empty() {
+                    self.helper_with_password(cx, call, &mut text);
+                }
+            }
+            Ask::DeviceName => {
+                let name = text.trim().to_string();
+                if !sysconf::valid_hostname(&name) {
+                    cx.toast("Letters, digits and hyphens only");
+                } else if name != self.state.hostname {
+                    let done = format!("Device name: {name}");
+                    self.helper(cx, &["hostname", &name], &done);
+                }
+            }
             Ask::Forget(ssid) => self.forget(cx, &ssid),
             Ask::ConnForget(name) => {
                 let argv = ["nmcli", "connection", "delete", "id", &name];
@@ -714,6 +883,29 @@ impl Settings {
     fn page_key(&mut self, k: Key, cx: &mut Cx) -> bool {
         let id = self.top().0.clone();
         match id {
+            PageId::Apps if self.state.moving.is_some() => match k {
+                Key::Up | Key::Down => {
+                    self.move_pin(if k == Key::Up { -1 } else { 1 }, cx);
+                    true
+                }
+                Key::Enter | Key::Char('m') => {
+                    self.state.moving = None;
+                    self.refresh(cx);
+                    true
+                }
+                // A digit would open another app's page mid-move.
+                _ => true,
+            },
+            PageId::Apps if k == Key::Char('m') => {
+                match self.selected_app().filter(|a| a.pinned) {
+                    Some(a) => {
+                        self.state.moving = Some(a.file.clone());
+                        self.refresh(cx);
+                    }
+                    None => cx.toast("Pin an app to move it"),
+                }
+                true
+            }
             PageId::Wifi if k == Key::Right => {
                 let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() else {
                     return false;
@@ -749,6 +941,7 @@ impl Settings {
                                 title: format!("Forget \u{201c}{ssid}\u{201d}?"),
                                 line: "You are on it now; it drops.".into(),
                                 yes: "forget",
+                                no: "cancel",
                             },
                             Ask::Forget(ssid),
                         );
@@ -757,6 +950,25 @@ impl Settings {
                     } else {
                         cx.toast(&format!("{ssid} is not saved"));
                     }
+                }
+                true
+            }
+            PageId::Country(None) => {
+                let Key::Char(c) = k else { return false };
+                if !c.is_ascii_alphabetic() {
+                    return false;
+                }
+                let label = c.to_ascii_uppercase().to_string();
+                let found = match &self.view.body {
+                    Body::List(items) => items.iter().position(|i| i.label == label),
+                    Body::Info(_) => None,
+                };
+                if let Some(i) = found {
+                    let per = page_rows(cx.theme(), &self.view);
+                    let len = self.view.len();
+                    let cur = self.cursor_mut();
+                    cur.selected = i;
+                    cur.fit(len, per);
                 }
                 true
             }
@@ -788,9 +1000,87 @@ impl Settings {
 
     /// Runs the root helper through pkexec.
     fn helper(&mut self, cx: &mut Cx, args: &[&str], done: &str) {
+        self.helper_call(cx, HelperCall::new(args, done));
+    }
+
+    /// First without a password: within 5 minutes of the last one, or for
+    /// an open verb, none is needed. The helper says when it is.
+    fn helper_call(&mut self, cx: &mut Cx, call: HelperCall) {
         let mut argv = vec!["pkexec", HELPER];
-        argv.extend_from_slice(args);
-        self.run(cx, NetJob::Helper(done.to_string()), &argv);
+        argv.extend(call.args.iter().map(String::as_str));
+        let job = cx.spawn(&argv);
+        self.jobs.insert(job, (NetJob::Helper(call), String::new()));
+    }
+
+    /// The same call again, with the password on stdin.
+    fn helper_with_password(&mut self, cx: &mut Cx, call: HelperCall, password: &mut String) {
+        let mut argv = vec!["pkexec", HELPER];
+        argv.extend(call.args.iter().map(String::as_str));
+        let mut input = format!("{password}\n");
+        let job = cx.spawn_with_input(&argv, input.as_bytes());
+        self.jobs.insert(job, (NetJob::Helper(call), String::new()));
+        wipe(&mut input);
+        wipe(password);
+    }
+
+    fn ask_password(&mut self, cx: &mut Cx, call: HelperCall, title: &'static str) {
+        if self.dialog.is_some() {
+            cx.toast("A password is needed");
+            return;
+        }
+        self.ask(
+            Dialog::Text {
+                title: title.into(),
+                placeholder: "Your password",
+                text: String::new(),
+                masked: true,
+                secret: true,
+            },
+            Ask::Auth(call),
+        );
+    }
+
+    /// The boot files, the governor and the hostname, read directly. The
+    /// firmware's GPU memory needs vcgencmd, asked once: it holds until a
+    /// restart.
+    fn query_advanced(&mut self, cx: &mut Cx) {
+        let boot = sysconf::boot_dir();
+        let read = |p: &Path| std::fs::read_to_string(p).ok();
+        let s = &mut self.state;
+        s.gpu_mem = read(&boot.join(sysconf::CONFIG))
+            .map_or(GpuMem::Unsupported, |t| sysconf::gpu_mem(&t));
+        s.country = read(&boot.join(sysconf::CMDLINE)).and_then(|t| sysconf::regdom(&t));
+        s.country_running =
+            read(Path::new("/proc/cmdline")).map(|t| sysconf::regdom(&t).unwrap_or_default());
+        if s.countries.is_empty() {
+            s.countries = sysconf::countries(&read(Path::new(sysconf::COUNTRIES)).unwrap_or_default());
+        }
+        s.governor = read(Path::new(GOVERNOR)).unwrap_or_default().trim().to_string();
+        s.hostname = read(Path::new("/proc/sys/kernel/hostname"))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if !self.gpu_asked {
+            self.gpu_asked = true;
+            self.run(cx, NetJob::GpuMem, &["vcgencmd", "get_mem", "gpu"]);
+        }
+    }
+
+    /// After a change that waits for a restart, offer one, unless the
+    /// change put things back as they run.
+    fn offer_restart(&mut self, cx: &mut Cx) {
+        self.query_advanced(cx);
+        if self.state.restart_needed() && self.dialog.is_none() {
+            self.ask(
+                Dialog::Confirm {
+                    title: "Restart to apply?".into(),
+                    line: "Open apps close first.".into(),
+                    yes: "restart",
+                    no: "later",
+                },
+                Ask::Confirm(Command::Restart),
+            );
+        }
     }
 
     fn query_conn(&mut self, cx: &mut Cx, name: &str) {
@@ -986,7 +1276,8 @@ impl Settings {
         self.refresh(cx);
     }
 
-    fn job_done(&mut self, kind: NetJob, out: String, ok: bool, cx: &mut Cx) {
+    fn job_done(&mut self, kind: NetJob, out: String, code: Option<i32>, cx: &mut Cx) {
+        let ok = code == Some(0);
         let mut requery = false;
         match &kind {
             NetJob::Join {
@@ -1047,13 +1338,20 @@ impl Settings {
                 }
                 self.query_sys(cx);
             }
-            NetJob::Helper(done) => {
-                cx.toast(&if ok {
-                    done.clone()
-                } else {
-                    helper_failure(&out)
-                });
+            NetJob::Helper(call) => {
+                match auth_step(code, &out) {
+                    Step::Done => {
+                        cx.toast(&call.done);
+                        if call.restart {
+                            self.offer_restart(cx);
+                        }
+                    }
+                    Step::Ask(title) => self.ask_password(cx, call.clone(), title),
+                    Step::Locked(secs) => cx.toast(&format!("Too many tries. Wait {secs} s")),
+                    Step::Failed(why) => cx.toast(&why),
+                }
                 self.query_sys(cx);
+                self.query_advanced(cx);
             }
             NetJob::ConnModify { name, reconnect } => {
                 if !ok {
@@ -1135,6 +1433,13 @@ impl Settings {
                     .filter(|z| z.contains('/'))
                     .collect();
             }
+            NetJob::GpuMem if ok => {
+                st.gpu_running = out
+                    .trim()
+                    .strip_prefix("gpu=")
+                    .and_then(|v| v.strip_suffix('M'))
+                    .and_then(|v| v.parse().ok());
+            }
             NetJob::Volume => {
                 if let Some((v, muted)) = parse_volume(&out) {
                     st.volume = Some(v);
@@ -1209,6 +1514,10 @@ impl Page for Settings {
             }
             return false;
         }
+        if self.state.moving.take().is_some() {
+            self.refresh(cx);
+            return false;
+        }
         if self.stack.len() > 1 {
             self.stack.pop();
             self.refresh(cx);
@@ -1227,7 +1536,7 @@ impl Page for Settings {
             }
             JobEvent::Done(code) => {
                 if let Some((kind, out)) = self.jobs.remove(&job) {
-                    self.job_done(kind, out, code == Some(0), cx);
+                    self.job_done(kind, out, code, cx);
                 }
             }
         }
@@ -1381,6 +1690,26 @@ fn size(b: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helper_codes_become_steps() {
+        assert_eq!(auth_step(Some(0), ""), Step::Done);
+        assert_eq!(auth_step(Some(10), ""), Step::Ask("Password"));
+        assert_eq!(auth_step(Some(11), ""), Step::Ask("Wrong password"));
+        assert_eq!(
+            auth_step(Some(12), "gh0st-helper: locked 40\n"),
+            Step::Locked(40)
+        );
+        assert_eq!(
+            auth_step(Some(1), "gh0st-helper: the kernel has no powersave governor\n"),
+            Step::Failed("the kernel has no powersave governor".into())
+        );
+        assert_eq!(
+            auth_step(Some(126), "Error executing command as another user: Not authorized\n"),
+            Step::Failed("Not allowed: polkit rule missing".into())
+        );
+        assert_eq!(auth_step(None, ""), Step::Failed("Failed".into()));
+    }
 
     #[test]
     fn choices_wrap_both_ways() {

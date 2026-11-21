@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+mod auth;
 mod helper;
 
 fn main() {

@@ -16,4 +16,5 @@ pub mod rfkill;
 pub mod rt;
 pub mod script;
 pub mod status;
+pub mod sysconf;
 pub mod usage;

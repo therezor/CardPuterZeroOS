@@ -94,6 +94,7 @@ fn status<'a>(dock: &'a [Visual<'a>], front: Option<usize>, title: &'a str) -> S
             charging: false,
         }),
         net: Net::Wifi(3),
+        bluetooth: true,
     }
 }
 

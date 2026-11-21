@@ -8,8 +8,9 @@ use gh0st_app::gfx::snapshot::write_png;
 use gh0st_app::gfx::theme::{self, Theme};
 use gh0st_app::gfx::widgets::{self, Battery, Hint, Net, Status};
 use gh0st_core::apps::Layout;
+use gh0st_core::sysconf::{self, GpuMem};
 use gh0st_settings::model::pages::{self, AppRow, Conn, Device, Iface, Logs, Network, State};
-use gh0st_settings::model::{self, Cursor, Dialog, PageId};
+use gh0st_settings::model::{self, Choice, Cursor, Dialog, PageId};
 use std::path::PathBuf;
 
 fn sample_state() -> State {
@@ -27,7 +28,7 @@ fn sample_state() -> State {
         shown,
         icon: String::new(),
         background: file == "music.desktop",
-        pinned: false,
+        pinned: matches!(file, "files.desktop" | "camera.desktop"),
     };
     State {
         brightness: Some(80),
@@ -39,12 +40,12 @@ fn sample_state() -> State {
         animations: true,
         clock_24h: true,
         apps: vec![
-            app("store.desktop", "Store", true),
             app("files.desktop", "Files", true),
             app("camera.desktop", "Camera", true),
             app("music.desktop", "Music", true),
-            app("zclaw.desktop", "ZClaw", false),
             app("piano.desktop", "Piano", true),
+            app("store.desktop", "Store", true),
+            app("zclaw.desktop", "ZClaw", false),
         ],
         wifi_on: true,
         wifi_busy: None,
@@ -124,6 +125,17 @@ fn sample_state() -> State {
         network_time: true,
         ssh: false,
         logs: Logs::Off,
+        gpu_mem: GpuMem::Set(128),
+        gpu_running: Some(128),
+        country: Some("AE".into()),
+        country_running: Some("AE".into()),
+        countries: sysconf::countries(
+            "AE\tUnited Arab Emirates\nDE\tGermany\nGB\tBritain (UK)\nUA\tUkraine\n\
+             UG\tUganda\nUS\tUnited States\nUY\tUruguay\nUZ\tUzbekistan\nAD\tAndorra\n",
+        ),
+        governor: "schedutil".into(),
+        hostname: "RZR-ZERO".into(),
+        moving: None,
         about: [
             ("Version", "Gh0stdeck 0.1.0"),
             ("OS", "Debian 13 (trixie)"),
@@ -141,9 +153,8 @@ fn sample_state() -> State {
 
 /// One page as the device shows it: the OS top bar and hints the SDK draws,
 /// the page body and any dialog.
-fn scene(t: &Theme, id: PageId, selected: usize, dialog: Option<Dialog>) -> Canvas {
-    let st = sample_state();
-    let page = pages::build(&id, &st);
+fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dialog>) -> Canvas {
+    let page = pages::build(&id, st);
     let mut cur = Cursor { selected, top: 0 };
     cur.fit(page.len(), model::rows(t).1);
     let mut c = Canvas::new(t.m.width, t.m.height);
@@ -158,6 +169,7 @@ fn scene(t: &Theme, id: PageId, selected: usize, dialog: Option<Dialog>) -> Canv
             charging: false,
         }),
         net: Net::Wifi(3),
+        bluetooth: st.bt_on,
     };
     widgets::status_bar(&mut c, t, &status);
     let hints: Vec<Hint> = model::hints(&page, page.item(cur.selected))
@@ -175,21 +187,48 @@ fn main() {
     std::fs::create_dir_all(&out).unwrap();
     for palette in [theme::MINT, theme::NORD, theme::PAPER] {
         let t = Theme::new(palette);
-        let mut scenes: Vec<(&str, Canvas)> = vec![("root", scene(&t, PageId::Root, 0, None))];
+        let st = sample_state();
+        let pending = State {
+            gpu_mem: GpuMem::Set(64),
+            ..sample_state()
+        };
+        let password = |title: &str| Dialog::Text {
+            title: title.into(),
+            placeholder: "Your password",
+            text: "hunter22".into(),
+            masked: true,
+            secret: true,
+        };
+        let mut scenes: Vec<(&str, Canvas)> =
+            vec![("root", scene(&t, &st, PageId::Root, 0, None))];
         if palette.name == "Mint" {
-            let s = |id, sel| scene(&t, id, sel, None);
+            let s = |id, sel| scene(&t, &st, id, sel, None);
             scenes.extend([
                 ("root-scrolled", s(PageId::Root, 8)),
                 ("display", s(PageId::Display, 0)),
                 ("sound", s(PageId::Sound, 0)),
                 ("appearance", s(PageId::Appearance, 1)),
-                ("apps", s(PageId::Apps, 4)),
+                ("apps", s(PageId::Apps, 0)),
+                (
+                    "apps-move",
+                    scene(
+                        &t,
+                        &State {
+                            moving: Some("camera.desktop".into()),
+                            ..sample_state()
+                        },
+                        PageId::Apps,
+                        1,
+                        None,
+                    ),
+                ),
                 ("app", s(PageId::App("music.desktop".into()), 2)),
                 ("wifi", s(PageId::Wifi, 2)),
                 (
                     "wifi-password",
                     scene(
                         &t,
+                        &st,
                         PageId::Wifi,
                         2,
                         Some(Dialog::Text {
@@ -204,7 +243,54 @@ fn main() {
                 ("network", s(PageId::Network, 0)),
                 ("connection", s(PageId::Conn("HomeNet".into()), 1)),
                 ("bluetooth", s(PageId::Bluetooth, 1)),
-                ("system", s(PageId::System, 2)),
+                ("system", s(PageId::System, 4)),
+                ("advanced", s(PageId::Advanced, 0)),
+                ("gpu-memory", s(PageId::Choose(Choice::GpuMem), 4)),
+                ("cpu-mode", s(PageId::Choose(Choice::CpuMode), 0)),
+                ("logs", s(PageId::Choose(Choice::Logs), 0)),
+                ("country", s(PageId::Country(None), 1)),
+                ("country-u", s(PageId::Country(Some('U')), 1)),
+                (
+                    "auth",
+                    scene(&t, &st, PageId::Advanced, 0, Some(password("Password"))),
+                ),
+                (
+                    "auth-wrong",
+                    scene(&t, &st, PageId::Advanced, 0, Some(password("Wrong password"))),
+                ),
+                (
+                    "device-name",
+                    scene(
+                        &t,
+                        &st,
+                        PageId::Advanced,
+                        3,
+                        Some(Dialog::Text {
+                            title: "Device name".into(),
+                            placeholder: "Letters, digits and hyphens",
+                            text: "RZR-ZERO".into(),
+                            masked: false,
+                            secret: false,
+                        }),
+                    ),
+                ),
+                (
+                    "restart-now",
+                    scene(
+                        &t,
+                        &pending,
+                        PageId::Advanced,
+                        0,
+                        Some(Dialog::Confirm {
+                            title: "Restart to apply?".into(),
+                            line: "Open apps close first.".into(),
+                            yes: "restart",
+                            no: "later",
+                        }),
+                    ),
+                ),
+                ("advanced-restart", scene(&t, &pending, PageId::Advanced, 4, None)),
+                ("system-restart", scene(&t, &pending, PageId::System, 4, None)),
                 ("timezone", s(PageId::TimeZone(Some("Europe".into())), 2)),
                 ("privacy", s(PageId::Privacy, 0)),
                 ("about", s(PageId::About, 0)),
@@ -212,12 +298,14 @@ fn main() {
                     "power-off",
                     scene(
                         &t,
+                        &st,
                         PageId::System,
-                        5,
+                        6,
                         Some(Dialog::Confirm {
                             title: "Power off?".into(),
                             line: "Open apps close first.".into(),
                             yes: "power off",
+                            no: "cancel",
                         }),
                     ),
                 ),

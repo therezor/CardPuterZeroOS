@@ -212,6 +212,7 @@ struct Shell {
     battery: Option<Reading>,
     low: LowBattery,
     net: Net,
+    bluetooth: bool,
     clock: String,
     clock_at: u64,
     screen: Screen,
@@ -326,6 +327,7 @@ impl Shell {
             battery: None,
             low: LowBattery::default(),
             net: Net::None,
+            bluetooth: false,
             clock: "--:--".into(),
             clock_at: 0,
             screen: Screen::Home,
@@ -496,6 +498,7 @@ impl Shell {
         self.clock_at = at;
         self.battery = self.battery_dir.as_deref().and_then(battery::sample);
         self.net = status::network(Path::new("/sys/class/net"), Path::new("/proc/net/wireless"));
+        self.bluetooth = status::bluetooth();
         let before = self.low.warning();
         let w = self.low.update(self.battery, rt::now_ms());
         if w != before {
@@ -1491,7 +1494,8 @@ impl Shell {
             Screen::Switcher => Some(self.switcher.selected()),
             _ => Some(0),
         };
-        let status = status_of(&clock, self.battery, self.net, &dock, front);
+        let mut status = status_of(&clock, self.battery, self.net, &dock, front);
+        status.bluetooth = self.bluetooth;
         match self.screen {
             Screen::Locked => widgets::lock_screen(&mut self.canvas, &t, &clock, &status),
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
@@ -1696,6 +1700,7 @@ fn status_of<'a>(
             Net::Wifi(l) => widgets::Net::Wifi(l),
             Net::Ethernet => widgets::Net::Ethernet,
         },
+        bluetooth: false,
     }
 }
 

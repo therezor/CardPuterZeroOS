@@ -9,3 +9,4 @@ description.workspace = true
 [dependencies]
 gh0st-core.workspace = true
 gh0st-shell.workspace = true
+libc.workspace = true

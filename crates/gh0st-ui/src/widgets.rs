@@ -34,6 +34,8 @@ pub struct Status<'a> {
     pub clock: &'a str,
     pub battery: Option<Battery>,
     pub net: Net,
+    /// The controller is up.
+    pub bluetooth: bool,
 }
 
 /// The shell's mark, where pt35 has its skull.
@@ -116,6 +118,11 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
             x -= 8;
         }
         Net::None => {}
+    }
+    if s.bluetooth {
+        x -= 12;
+        icon::draw(c, "bluetooth", IconSize::Tiny, x, inner.y + 2, t.c.fg);
+        x -= 7;
     }
     let end = x;
 

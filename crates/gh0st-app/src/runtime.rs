@@ -36,6 +36,7 @@ struct Bar {
     battery_dir: Option<PathBuf>,
     battery: Option<Battery>,
     net: Net,
+    bluetooth: bool,
 }
 
 impl Bar {
@@ -46,6 +47,7 @@ impl Bar {
             battery_dir: battery::find(std::path::Path::new("/sys/class/power_supply")),
             battery: None,
             net: Net::None,
+            bluetooth: false,
         }
     }
 
@@ -61,6 +63,13 @@ impl Bar {
                 percent: r.percent,
                 charging: r.charging,
             });
+        self.links();
+    }
+
+    /// Network and Bluetooth, which a finished job (nmcli, bluetoothctl)
+    /// may have changed.
+    fn links(&mut self) {
+        self.bluetooth = status::bluetooth();
         self.net = match status::network(
             std::path::Path::new("/sys/class/net"),
             std::path::Path::new("/proc/net/wireless"),
@@ -328,6 +337,9 @@ impl Runtime {
                 true
             }
         });
+        if !done.is_empty() {
+            self.bar.links();
+        }
         for (id, owner, code) in done {
             self.call(owner, now, |p, cx| p.job(Job(id), JobEvent::Done(code), cx));
         }
@@ -400,6 +412,7 @@ impl Runtime {
                 clock: &self.bar.clock,
                 battery: self.bar.battery,
                 net: self.bar.net,
+                bluetooth: self.bar.bluetooth,
             };
             widgets::status_bar(c, &t, &s);
         }

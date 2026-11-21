@@ -413,7 +413,8 @@ root:
 | `kernel()`, `version()` | The kernel release and the gh0st version |
 
 Wi-Fi, Bluetooth, time and the other root jobs come with the root helper
-(roadmap M3).
+(roadmap M3). Its sensitive verbs ask for the user's password on stdin, so an
+app can't flip them unseen.
 
 ## Tests
 

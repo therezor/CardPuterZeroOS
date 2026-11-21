@@ -119,6 +119,19 @@ pub fn save_pins(pins: &[String]) -> std::io::Result<()> {
     crate::config::write_atomic(&path, (pins.join("\n") + "\n").as_bytes())
 }
 
+/// Swaps `file` with the next pin in direction `d` that `visible` holds.
+/// Pins nobody sees (an uninstalled app, Settings itself) keep their places.
+pub fn move_pin(pins: &[String], visible: &[String], file: &str, d: i32) -> Option<Vec<String>> {
+    let shown: Vec<&String> = pins.iter().filter(|p| visible.contains(p)).collect();
+    let i = shown.iter().position(|p| *p == file)?;
+    let other = shown.get(i.checked_add_signed(d as isize)?)?;
+    let a = pins.iter().position(|p| p == file)?;
+    let b = pins.iter().position(|p| p == *other)?;
+    let mut out = pins.to_vec();
+    out.swap(a, b);
+    Some(out)
+}
+
 #[derive(Clone, Debug)]
 pub struct App {
     /// File name of the `.desktop`, unique across both folders.
@@ -378,6 +391,18 @@ mod tests {
 
     fn names(apps: &[App]) -> Vec<&str> {
         apps.iter().map(|a| a.entry.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_pin_moves_past_its_visible_neighbour() {
+        let v = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+        let pins = v("a gone b c");
+        let shown = v("a b c");
+        assert_eq!(move_pin(&pins, &shown, "b", -1), Some(v("b gone a c")));
+        assert_eq!(move_pin(&pins, &shown, "b", 1), Some(v("a gone c b")));
+        assert_eq!(move_pin(&pins, &shown, "a", -1), None, "already first");
+        assert_eq!(move_pin(&pins, &shown, "c", 1), None, "already last");
+        assert_eq!(move_pin(&pins, &shown, "x", 1), None, "not pinned");
     }
 
     #[test]

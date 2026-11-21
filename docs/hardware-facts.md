@@ -196,6 +196,27 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
   the user while a session is open. `pkexec` is installed.
 - `/etc/systemd/journald.conf.d/persist.conf` sets `Storage=persistent`.
 
+## Boot files and root checks, read 2026-11-21
+
+- `/boot/firmware` is vfat (`fmask=0022`), so UID 1000 can read `config.txt`
+  and `cmdline.txt`. A copy of `config.txt` is the test fixture in
+  `gh0st-core/src/testdata`. Its `gpu_mem=128` sits at the top, before any
+  section. The `[cm4]` and `[cm5]` sections don't apply to the CM0.
+- `vcgencmd get_mem gpu` works as UID 1000 and prints `gpu=128M`.
+  `/proc/cmdline` carries `cmdline.txt` after the firmware's own arguments.
+- Password hashes are yescrypt (`$y$`). `/usr/sbin/unix_chkpwd` (libpam
+  1.7.0, setgid shadow) exits 7 on a wrong password, with the password
+  NUL-terminated or not.
+- cpufreq: one `policy0` for all four cores, driver `cpufreq-dt`, 600 to
+  1000 MHz, governors conservative, ondemand, userspace, powersave,
+  performance and schedutil. Stock's udev rule `60-ondemand-governor.rules`
+  (raspberrypi-sys-mods) sets ondemand when the CPUs appear.
+- pkexec passes stdin through: a wrong password piped to
+  `pkexec gh0st-helper gpu-mem 64` exits 11, no stdin exits 10, and the
+  fourth wrong try exits 12 (`locked 5`). Measured 2026-11-21.
+- `/etc/hosts` has two `127.0.1.1` lines, `cardputerzero` and `RZR-ZERO`.
+  `iw` is not installed. `/usr/share/zoneinfo/iso3166.tab` is.
+
 ## Still to check
 
 
@@ -214,6 +235,10 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
 | Battery uevents | sent on capacity change? if not, add a slow timer | idle wakeups |
 | `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |
 | Root actions | time and ADB need root; reboot, power off, 5V rails do not | Settings |
+| `unix_chkpwd` right password | exits 0 with `password\0` on stdin, run by root | helper auth |
+| Grace window | the helper's parent under pkexec is Settings, so a second change within 5 minutes skips the prompt | helper auth |
+| `gpu_mem=64` | `vcgencmd` reads `gpu=64M` after a restart; camera and splash still work | Advanced |
+| `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |
 
 ## Baseline (stock APPLaunch)
 

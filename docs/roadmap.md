@@ -52,11 +52,14 @@ These gaps were in no doc before this one:
    must be made at first boot, not baked into the image.
 7. **Updates and packaging.** There are no `.deb`s and no signed repo, and
    nothing checks the Store catalogs.
-8. **Root helper.** `gh0st-helper` exists, run by pkexec, with four fixed
-   verbs: logs, SSH, rfkill and power. Our polkit rule lets anyone in `sudo`
-   or `netdev` run it, and control NetworkManager, without a password. So any
-   app the user runs can call every verb. M3 closes that before more verbs
-   arrive.
+8. **Root helper.** `gh0st-helper` exists, run by pkexec. Our polkit rule
+   lets anyone in `sudo` or `netdev` run it, and control NetworkManager,
+   without a password. The verbs that matter (SSH, logs, GPU memory, Wi-Fi
+   country, CPU mode, hostname) now check the user's password themselves.
+   Still open: power and rfkill need none, NetworkManager and timedate are
+   allowed outright, and an app as UID 1000 can ptrace Settings or read the
+   keyboard while the password is typed. The try counter lives in `/run`, so
+   a reboot resets it.
 9. **Panel driver delivery.** `install.sh` builds the driver on the device, and
    the image drops the compilers.
 10. **Deep idle and power loss.** The kernel has no suspend. Nothing shuts down
@@ -87,8 +90,22 @@ habit. It doesn't stop hostile ones.
 ## Settings: what comes next
 
 In order. Each row names what it changes and whether it works on today's
-stock image. Rows marked M3 wait for the password check in the helper,
-because without it any app could call them.
+stock image. Rows marked "after M3" need the helper's password check, so
+their new verbs must be gated (`Verb::gated` in `helper.rs`).
+
+**Advanced page** (System > Advanced). Built 2026-11-21; the device checks
+still open are in `hardware-facts.md`. A value is picked on its own page,
+each option with a note. Only then does it ask for the user's password,
+which holds for 5 minutes in the same Settings process.
+A change that needs a restart offers one, and the page shows "Restart to
+apply" until the running value matches the file.
+
+| Setting | What it changes | Helper verb | Applies |
+|---|---|---|---|
+| GPU memory | `gpu_mem` in `config.txt`: 16, 32, 64, 96, 128, 192 or 256 MB | `gpu-mem 64` | Restart |
+| Wi-Fi country | `cfg80211.ieee80211_regdom` in `cmdline.txt` | `regdom XX` | Restart |
+| CPU mode | The governor: schedutil, powersave or performance, kept by a udev rule after stock's | `cpu balanced`, `battery` or `performance` | Now |
+| Device name | The hostname and its `/etc/hosts` line | `hostname NAME` | Now |
 
 **Privacy page.** Today it has one row, Logs.
 
@@ -149,7 +166,8 @@ packages.
 conf.d drop-ins, next to a `gh0st` package.
 - Turn off LightDM, labwc, avahi, rpcbind, nfs, udisks2, accounts-daemon, cron
   and the timers.
-- Set `gpu_mem=64`. Stock `rpi-swap` already runs zram, plus a writeback file
+- Set `gpu_mem=64` (Settings > System > Advanced can switch it back to 128).
+  Stock `rpi-swap` already runs zram, plus a writeback file
   on the SD card and a timer. Keep the zram and drop the writeback, which wakes
   the CPU and wears the card. Tune the zram size and `swappiness`.
 - Cap the `/tmp` tmpfs at 32M, set journald to `Storage=none`, and add the USB
@@ -216,15 +234,19 @@ Settings: what comes next.
 **M3. Root helper, locked down.** `gh0st-helper` lives in the gh0st binary
 and runs through pkexec today. It runs only when called and exits after.
 - It takes fixed verbs with checked arguments and never runs a shell.
-- Today our polkit rule says YES, without a password, to anyone in `sudo` or
+- Our polkit rule says YES, without a password, to anyone in `sudo` or
   `netdev`. pkexec can't ask for a password here, since no polkit agent runs.
-  So the helper must check the password itself, read from stdin.
-- Verbs: logging mode, SSH, ADB, hostname, timezone, time, NTP server,
-  regdomain, password, rfkill, Wi-Fi and network, reboot, power off, updates,
-  factory reset, and per-app network rules.
-- Any app can run the helper as UID 1000. So the sensitive verbs (SSH,
-  firewall, DNS, ADB, factory reset, updates and network rules) carry the
-  user's password, which the helper checks and rate limits.
+  So the helper checks the password itself, read from stdin. Built
+  2026-11-21 with the Advanced page; wrong, missing and locked passwords are
+  measured on the device, a right one and the grace window are still to
+  check (`hardware-facts.md`): `unix_chkpwd` checks it (yescrypt, which static
+  musl can't), three free tries then a wait that doubles to 5 minutes, and a
+  correct password holds for 5 minutes in the same calling process.
+- Gated today: SSH, logs, GPU memory, regdomain, CPU mode and hostname. To
+  come, also gated: firewall, DNS, ADB, factory reset, updates and network
+  rules.
+- Verbs still to add: ADB, timezone, time, NTP server, password, Wi-Fi and
+  network, updates, factory reset, and per-app network rules.
 - Done when the verb parser has unit tests and no helper process runs while
   idle.
 

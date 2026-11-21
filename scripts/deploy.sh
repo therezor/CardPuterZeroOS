@@ -27,7 +27,8 @@ if [ "${1:-}" = rollback ]; then
         /etc/systemd/system/fb_load.service.d/gh0st.conf \
         /etc/polkit-1/rules.d/50-gh0st.rules \
         /usr/share/polkit-1/actions/org.cpzero.gh0st.policy \
-        /usr/libexec/gh0st-helper && sudo systemctl daemon-reload'
+        /usr/libexec/gh0st-helper /etc/udev/rules.d/61-gh0st-cpu.rules \
+        && sudo systemctl daemon-reload'
     restart_launcher
     echo "stock launcher restored on $host"
     exit 0
