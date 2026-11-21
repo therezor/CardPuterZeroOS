@@ -26,6 +26,13 @@ impl Family {
         }
     }
 
+    pub fn name(self) -> &'static str {
+        match self {
+            Family::Terminus => "Terminus",
+            Family::JetBrains => "JetBrains Mono",
+        }
+    }
+
     pub fn from_key(s: &str) -> Family {
         if s == "jetbrains" {
             Family::JetBrains

@@ -27,6 +27,11 @@ pub mod code {
     pub const RIGHT: u16 = 106;
     pub const DOWN: u16 = 108;
     pub const DELETE: u16 = 111;
+    /// Fn+L and Fn+M, Fn+N and Fn+B, per the driver source.
+    pub const PAGEUP: u16 = 104;
+    pub const PAGEDOWN: u16 = 109;
+    pub const END: u16 = 107;
+    pub const INSERT: u16 = 110;
     pub const MUTE: u16 = 113;
     pub const VOLUMEDOWN: u16 = 114;
     pub const VOLUMEUP: u16 = 115;

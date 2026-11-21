@@ -58,6 +58,12 @@ pub struct Metrics {
     pub row_h: i32,
     /// A readout line on Network and About.
     pub line_h: i32,
+    /// An app menu row, and a section heading in it.
+    pub menu_row_h: i32,
+    pub menu_head_h: i32,
+    /// A line of the Keys screen, and the widest its key column grows.
+    pub keys_line_h: i32,
+    pub keys_col_max: i32,
     /// Top-bar slots: the mark, then one per open app.
     pub slot_w: i32,
     pub slot_h: i32,
@@ -243,6 +249,10 @@ pub const CARDPUTER: Metrics = Metrics {
     app_row_h: 33,
     row_h: 26,
     line_h: 15,
+    menu_row_h: 22,
+    menu_head_h: 15,
+    keys_line_h: 17,
+    keys_col_max: 92,
     slot_w: 14,
     slot_h: 14,
     slot_gap: 4,
@@ -256,9 +266,6 @@ pub const TERM_DIM: u8 = 140;
 /// The terminal's underline and bar cursors, and its scroll mark, in px.
 pub const TERM_CURSOR_W: i32 = 2;
 pub const TERM_MARK_W: i32 = 2;
-/// The terminal's help screen: the key column's width and the top inset.
-pub const TERM_HELP_KEY_W: i32 = 58;
-pub const TERM_HELP_TOP: i32 = 4;
 
 /// A terminal zoom level: a face and its bold, if baked. Without one the
 /// terminal draws bold by striking the glyph twice.

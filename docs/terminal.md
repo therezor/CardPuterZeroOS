@@ -5,7 +5,7 @@ CLI page and runs `Terminal=true` apps (`apps.md`).
 
 ## On the screen
 
-Two layouts; `m` in view mode switches. The table gives what fits on the
+Two layouts; the menu's Grid row, or `m` in scroll mode, switches. The table gives what fits on the
 screen at each size.
 
 | Face | Cells | Fits, top bar on | Fits, top bar off |
@@ -40,35 +40,46 @@ and F12, Fn+N End, Fn+L and Fn+M PgUp and PgDn, Fn+B Insert, Fn+Backspace
 Delete. Not measured on the device yet; the same source disagrees with
 `hardware-facts.md` on two keys.
 
-- Fn+K is the switcher, not Home. In view mode, `k` sends Home.
-- Shift+PgUp and Shift+PgDn scroll the history.
+- Fn+K is the switcher, not Home. In scroll mode, `k` sends Home.
+- Shift+PgUp and Shift+PgDn scroll the history while typing.
 - Holding Esc for 3 s closes the terminal, as it closes any app.
 
-**Fn+Esc or Fn+H opens the menu**: scroll and pan, zoom, grid, find, copy, paste,
-tabs, top bar, settings, keys, close. Each item shows its key; the same keys
-work in view mode.
+**Fn+Esc or Fn+H opens the menu.** Rows, most used first:
 
-**View mode** is the menu's first item, Scroll and pan. Typing stops and keys
-do this:
+| Group | Row | Key |
+|---|---|---|
+| View | Scroll mode (Back to typing while in it) | |
+| | Text size `‹ 6x12 ›` | `r` `t` |
+| | Grid `‹ Magnify 80x24 ›` | `m` |
+| | Find, Copy lines, Paste | `n` `v` `p` |
+| Tabs | New tab, Tab `‹ 1 of 2 ›`, Close tab | `o` `Tab` `w` |
+| Settings | Top bar, Font `‹ Terminus ›`, More settings | `b`, none, `s` |
+| App | Keys, Close app | `h` |
+
+Text size, Grid, Tab, Top bar and Font change in place: Z and C step them,
+Enter steps forward, and the menu stays open. The other rows close it and
+act. Close tab and Close app need Enter twice. A row's key picks it while
+the menu is open.
+
+**Scroll mode.** Typing stops, the hint bar shows the main keys, and `h`
+shows them all. The menu's rows work by their keys here too:
 
 | Key | Does |
 |---|---|
-| ↑ ↓, F X | Scroll |
-| ← →, Z C | Pan, in magnify |
-| PgUp PgDn | Page |
-| g, G | Oldest line, back to the cursor |
-| r, t | Zoom out, in (- and = too) |
-| m | Magnify or fit |
-| b | Top bar on or off |
-| n | Find: type, then Enter or ↑ for older, ↓ for newer, Esc when done |
-| u, i | Previous, next shell prompt |
-| v, then ↑ ↓ and y | Copy whole lines |
+| f x | Scroll (Fn+F and Fn+X too) |
+| z c | Pan, in magnify |
+| Fn+L Fn+M | Page |
+| g G | Oldest line, back to the cursor |
+| u i | Previous, next shell prompt |
+| r t, m, b | Text size, grid, top bar |
+| n | Find: type, then Enter or Fn+F for older, Fn+X for newer, Esc when done |
+| v | Copy whole lines: f x extend, y or Enter copies |
 | p | Paste |
-| o, w | New tab, close tab |
-| 1 to 9, Tab | Go to a tab |
-| s | Settings |
-| h | All of these on one screen |
-| q, Esc, Enter | Back to typing |
+| o w, Tab 1-9 | New tab, close tab, go to a tab |
+| s | More settings |
+| k | Send Home |
+| h | Every key on one screen |
+| Esc q | Back to typing |
 
 Prompt jumps need the shell to mark its prompt with OSC 133. For bash:
 
@@ -78,7 +89,7 @@ PS1='\[\e]133;A\a\]'"$PS1"
 
 ## Settings
 
-View mode `s`, saved in `~/.config/cardputerzero/config.json`:
+The menu's More settings, or `s` in scroll mode. Saved in `~/.config/cardputerzero/config.json`:
 
 | Key | Values | Default |
 |---|---|---|

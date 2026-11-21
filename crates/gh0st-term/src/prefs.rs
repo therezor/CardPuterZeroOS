@@ -1,4 +1,4 @@
-//! The terminal's settings page, opened with `s` in view mode. Every
+//! The terminal's settings page, opened from the menu or `s` in scroll mode. Every
 //! change saves at once; the terminal reads them back when the page closes.
 
 use crate::view::Family;

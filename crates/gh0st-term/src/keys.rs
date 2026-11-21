@@ -14,7 +14,7 @@ const INSERT: u16 = 110;
 pub const HELP: u16 = 138;
 
 /// Keys the OS acts on. A program never sees them: Fn+K opens the
-/// switcher, Help opens view mode, the rest are volume, brightness, media
+/// switcher, Help opens the app menu, the rest are volume, brightness, media
 /// and screenshots.
 fn os_key(c: u16) -> bool {
     matches!(

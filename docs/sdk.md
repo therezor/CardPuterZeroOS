@@ -152,7 +152,7 @@ calls `stop` on every page, top first, and exits.
 | `Key::Ctrl(c)`, `Key::Alt(c)` | Ctrl or Alt with a letter or digit |
 | `Key::Other(code)` | Anything else, by Linux input code (`gh0st_app::codes`) |
 
-Fn+Esc and Fn+H never reach a page: they open the app menu.
+Fn+Esc and Fn+H never reach a page: they open the app menu (see Commands).
 
 The OS acts on the brightness, volume, mute and screenshot keys itself. They
 still reach the page as `Key::Other`, so a page that shows those values can
@@ -167,49 +167,124 @@ key but Esc and the modifiers repeats. `RawKey::text` keeps the character
 under Ctrl and Alt, so Ctrl+[ can become ESC. Nothing is drawn after a raw key
 unless the page calls `cx.redraw()`.
 
-## The app menu
+## Commands
 
-Fn+Esc or Fn+H opens the app menu in every app (the rules are in `apps.md`,
-The app menu). The page in front lists its items; the SDK draws the list, handles
-the keys and adds Close app last. A pick comes back to `menu_pick` with the
-item's id after the menu has closed. Pages with raw keys get the menu too:
-the SDK takes those keys before `raw` sees them.
+A page lists what the user can do once, in `commands`. The SDK builds four
+things from that list, so they never disagree:
+
+- **The app menu.** Fn+Esc or Fn+H opens it in every app. Rows come in the
+  order the page adds them, under the group headings it sets. The SDK adds
+  Keys and Close app last.
+- **The Keys screen.** Every command with keys, under the mode it works in,
+  then the keys that work everywhere. The menu's Keys row opens it, and so
+  does `cx.show_keys()`.
+- **The keys.** A command's keys run it while its mode is on. They also pick
+  its row while the menu is open.
+- **Hints.** `Bars::command_hints()` shows a hint bar of the live commands
+  that have a `hint`. It follows the page's mode by itself.
+
+Three kinds of command:
+
+| Kind | Menu row | Keys and Enter |
+|---|---|---|
+| `Command::action` | Label, keys on the right. A chevron with `.opens()` | Run it. From the menu, the menu closes first |
+| `Command::toggle` | A switch | Flip it in place: the menu stays open |
+| `Command::choice` | `‹ value ›` | Left and Right step it in place. Enter steps forward |
+
+The page hears each one in `command(id, step, cx)`. `step` is `Run` for an
+action, `Prev` or `Next` for a toggle or a choice, and `Nth(n)` for a key
+from a range such as `1-9`. A toggle flips on any step.
 
 ```rust
 use gh0st_app::prelude::*;
 
-struct Reader {
-    large: bool,
-}
+const SIZE: u32 = 1;
+const NIGHT: u32 = 2;
+const FIND: u32 = 3;
+const DOWN: u32 = 4;
 
-const LARGER: u32 = 1;
-const FIND: u32 = 2;
+const SIZES: &[&str] = &["Small", "Medium", "Large"];
+
+struct Reader {
+    size: usize,
+    night: bool,
+}
 
 impl Page for Reader {
     fn title(&self) -> &str {
         "Reader"
     }
 
-    fn menu(&self) -> Vec<MenuItem> {
-        vec![
-            MenuItem::new(LARGER, "Large text")
-                .key('t')
-                .value(if self.large { "On" } else { "Off" }),
-            MenuItem::new(FIND, "Find").key('n'),
-        ]
+    fn bars(&self) -> Bars {
+        Bars::top().command_hints()
     }
 
-    fn menu_pick(&mut self, id: u32, _: &mut Cx) {
-        if id == LARGER {
-            self.large = !self.large;
+    fn commands(&self, c: &mut Commands) {
+        c.group("View");
+        // One row, two keys: r steps back, t forward.
+        c.add(Command::choice(SIZE, "Text size", SIZES[self.size]).keys("r t"));
+        c.add(Command::toggle(NIGHT, "Night", self.night).keys("b"));
+        c.add(Command::action(FIND, "Find").keys("n").opens());
+        // Keys only: on the Keys screen and the hint bar, not in the menu.
+        c.add(
+            Command::action(DOWN, "Scroll down")
+                .keys("x")
+                .keys_only()
+                .repeats()
+                .hint("scroll"),
+        );
+    }
+
+    fn command(&mut self, id: u32, step: Step, _: &mut Cx) {
+        match (id, step) {
+            (SIZE, Step::Prev) => self.size = self.size.saturating_sub(1),
+            (SIZE, _) => self.size = (self.size + 1).min(SIZES.len() - 1),
+            (NIGHT, _) => self.night = !self.night,
+            _ => {}
         }
     }
 
     fn draw(&self, ui: &mut Ui) {
-        ui.text(if self.large { "LARGE" } else { "small" });
+        ui.text(SIZES[self.size]);
     }
 }
 ```
+
+### Keys
+
+`keys` takes the keys as the keyboard shows them, split by spaces:
+
+| Spec | Key |
+|---|---|
+| `n` | N, without Shift |
+| `G` | Shift+G |
+| `f x z c` | F, X, Z and C, or Fn with them (the arrows) |
+| `Esc`, `Enter`, `Tab`, `Space`, `Bksp` | The key of that name |
+| `PgUp`, `PgDn`, `Up`, `Del` ... | Keys of the Fn layer. They show as the device's keys: `Fn+L`, `Fn+M`, `Fn+F`, `Fn+Bksp` |
+| `Shift+PgUp`, `Ctrl+s`, `Alt+x` | With modifiers |
+| `1-9` | Digits 1 to 9: `Step::Nth(0)` to `Nth(8)` |
+
+A choice with two keys steps back on the first and forward on the second.
+
+- **Modes.** `.mode("Scroll mode", on)` names the mode a command's keys work
+  in, for the Keys screen, and says whether it is on now. Its keys do
+  nothing while it is off, but its menu row and the menu's letter for it
+  still work.
+- **Typing.** While `typing()` is true, letters, digits and symbols type, so
+  commands bound to them don't run. Named keys still do.
+- **Repeat.** A command runs once per press. With `.repeats()`, a held key
+  runs it again and again. Once a press has run a command, that key's
+  repeats and release never reach the page, even when the command changed
+  the mode.
+- **Asking first.** With `.confirm()`, a menu row needs Enter twice. Close app
+  always does.
+- **Disabled.** `.enabled(false)` dims the row and its keys do nothing.
+- **Raw keys.** Commands come first for raw-key pages too: `raw` gets only
+  the keys no live command took.
+- **Ids.** Keep yours below `0xffff_fff0`. The SDK's rows use the top ones.
+
+Fn+Esc and Fn+H never reach a page. The rules for every app's menu are in
+`apps.md`, The app menu.
 
 ## Soft keys
 

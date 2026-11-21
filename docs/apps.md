@@ -170,32 +170,48 @@ other key.
 
 ## The app menu
 
-Every app has one menu. Fn+Esc opens it, and so does Fn+H, which sends
+Every app has one menu, and every SDK app gets it built from its commands
+(`sdk.md`, Commands). Fn+Esc opens it, and so does Fn+H, which sends
 `KEY_HELP` (138). The OS acts on neither and no terminal program reads them,
-so they mean the same thing in every app. SDK apps get the menu drawn for them (`sdk.md`, The
-app menu); other apps should draw one that behaves the same.
+so they mean the same thing in every app. Apps off the SDK should draw one
+that behaves the same.
 
 **Opening and closing**
 - Fn+Esc or Fn+H opens the menu over the app and closes it again.
 - Esc closes it without acting. Never open a menu with plain Esc: Esc is
   back, and terminal programs need it.
-- Up and Down move the selection, wrapping at the ends. Enter picks it. An
-  item's key picks it at once.
-- Picking closes the menu first, then acts.
+- It opens on the row picked last time.
+- F and X (or Fn with them) move, wrapping at the ends.
+
+**Rows**
+- An action closes the menu, then acts. A row that opens a page shows a
+  chevron.
+- A toggle flips in place on Enter, Z or C. A choice shows `‹ value ›` and
+  steps in place on Z and C; Enter steps forward. The menu stays open and
+  shows the new value, so a setting can be tried and tried again.
+- A row's key shows in a pill on the right. Pressing it while the menu is
+  open picks the row.
+- A row that loses work asks first: the first Enter shows "Enter again".
+  Close app always asks.
+- A dimmed row can't be used now, as Paste with nothing copied.
 
 **What goes in it**
-- The app's actions and settings that have no key of their own, most used
-  first.
-- An item that changes a setting shows its current value on the right:
-  `Grid  Magnify`, `Top bar  On`.
-- Settings near the end, if the app has its own settings page.
-- Close app last. SDK apps get it from the SDK.
-- About 8 items fit; past that the list scrolls. Move rarely used items to
-  the app's settings page.
-- Items that lose work or data ask before they act.
+- The app's actions and settings, most used first: about five show without
+  scrolling. Group them under short headings.
+- Settings the user changes often go in the menu as toggles and choices.
+  The rest stay on the app's settings page, opened from the menu.
+- The SDK adds Keys and Close app last.
 
-**Keys for items**
-- Letters and digits only. Symbols need an extra press of Sym.
+**The Keys screen**
+- Keys opens a screen with every key of the page in front, grouped by the
+  mode it works in, and the keys that work in every app. F and X scroll it,
+  and Esc goes back to the menu.
+- It comes from the same list as the menu and the hint bar, so they never
+  disagree. An app with modes names each one: Typing, Scroll mode, Find.
+
+**Keys**
+- Letters and digits. Symbols need an extra press of Sym.
+- Lowercase in pills; an uppercase letter means Shift with it.
 - Not F, X, Z or C: those are the arrows on a page that isn't typing.
 - The same letter for the same thing in every app:
 
@@ -203,10 +219,11 @@ app menu); other apps should draw one that behaves the same.
 |---|---|
 | `s` | Settings |
 | `n` | Find |
-| `h` | Keys, a list of the app's shortcuts |
-| `r`, `t` | Zoom out, in |
+| `h` | Keys |
+| `r`, `t` | Smaller, larger (text size) |
 | `v`, `p` | Copy, paste |
 | `o`, `w` | New, close (tab, document) |
+| `b` | Top bar |
 
 ## Leaving
 

@@ -50,6 +50,8 @@ impl SoftKey {
 pub(crate) enum Bottom {
     None,
     Hints(Vec<(String, String)>),
+    /// Hints from the page's live commands that have one.
+    Commands,
     Soft(Box<[SoftKey; 5]>),
 }
 
@@ -102,6 +104,14 @@ impl Bars {
                 .map(|(k, l)| (k.to_string(), l.to_string()))
                 .collect(),
         );
+        self
+    }
+
+    /// Adds a bottom bar of key hints taken from the page's commands: each
+    /// live command with a [`hint`](crate::Command::hint), in order. The
+    /// hints follow the page's mode by themselves.
+    pub fn command_hints(mut self) -> Bars {
+        self.bottom = Bottom::Commands;
         self
     }
 

@@ -1,5 +1,7 @@
-//! The terminal page: tabs of PTYs, keys in, cells out, and view mode for
+//! The terminal page: tabs of PTYs, keys in, cells out, and scroll mode for
 //! everything that isn't typing: scroll, pan, zoom, search, copy, tabs.
+//! Every key outside typing is a command, so the app menu, the Keys screen
+//! and the hint bar come from one list.
 
 use crate::keys;
 use crate::prefs::{self, Prefs, key};
@@ -31,8 +33,6 @@ const SETTLE_MS: u64 = 5;
 const NOTICE_GAP_MS: u128 = 3000;
 /// Synchronized output may hold the screen this long at most.
 const SYNC_MS: u64 = 150;
-const PAGEUP: u16 = 104;
-const PAGEDOWN: u16 = 109;
 
 /// What `gh0st-term` was started with.
 pub struct Options {
@@ -99,40 +99,42 @@ impl Layout {
     }
 }
 
-/// What the app menu and view mode's letters do. The menu id is the
-/// variant's number.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Act {
-    View,
-    ZoomIn,
-    ZoomOut,
-    Layout,
-    Find,
-    Copy,
-    Paste,
-    NewTab,
-    CloseTab,
-    NextTab,
-    Bar,
-    Settings,
-    Keys,
+/// Command ids.
+mod cmd {
+    pub const SCROLL_MODE: u32 = 1;
+    pub const SIZE: u32 = 2;
+    pub const LAYOUT: u32 = 3;
+    pub const FIND: u32 = 4;
+    pub const COPY: u32 = 5;
+    pub const PASTE: u32 = 6;
+    pub const NEW_TAB: u32 = 7;
+    pub const CLOSE_TAB: u32 = 8;
+    pub const TAB: u32 = 9;
+    pub const BAR: u32 = 10;
+    pub const FONT: u32 = 11;
+    pub const SETTINGS: u32 = 12;
+    pub const SCROLL: u32 = 20;
+    pub const PAN: u32 = 21;
+    pub const PAGE: u32 = 22;
+    pub const ENDS: u32 = 23;
+    pub const PROMPT: u32 = 24;
+    pub const HOME: u32 = 25;
+    pub const KEYS: u32 = 26;
+    pub const DONE: u32 = 27;
+    pub const HISTORY: u32 = 30;
+    pub const OLDER: u32 = 40;
+    pub const NEWER: u32 = 41;
+    pub const FIND_DONE: u32 = 42;
+    pub const EXTEND: u32 = 50;
+    pub const YANK: u32 = 51;
+    pub const CANCEL: u32 = 52;
 }
 
-const ACTS: &[Act] = &[
-    Act::View,
-    Act::ZoomIn,
-    Act::ZoomOut,
-    Act::Layout,
-    Act::Find,
-    Act::Copy,
-    Act::Paste,
-    Act::NewTab,
-    Act::CloseTab,
-    Act::NextTab,
-    Act::Bar,
-    Act::Settings,
-    Act::Keys,
-];
+/// Names of the modes on the Keys screen.
+const TYPING: &str = "Typing";
+const SCROLLING: &str = "Scroll mode";
+const FINDING: &str = "Find";
+const COPYING: &str = "Copy lines";
 
 struct Tab {
     vt: Box<Vt>,
@@ -147,7 +149,7 @@ struct Tab {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Mode {
     Typing,
-    /// Keys scroll, pan, zoom and manage tabs.
+    /// Scroll mode: keys scroll, pan, zoom and manage tabs.
     View,
     /// Typing a search.
     Find(String),
@@ -156,29 +158,7 @@ enum Mode {
         anchor: Pos,
         head: Pos,
     },
-    /// Every view-mode key, on one screen.
-    Help,
 }
-
-/// View mode's keys, for the help screen.
-const HELP_KEYS: &[(&str, &str)] = &[
-    ("↑↓ F X", "scroll"),
-    ("←→ Z C", "pan"),
-    ("PgUp/Dn", "page"),
-    ("g G", "top, end"),
-    ("r t", "zoom out, in"),
-    ("m", "magnify, fit"),
-    ("n", "find"),
-    ("v", "copy lines"),
-    ("u i", "prev, next prompt"),
-    ("p", "paste"),
-    ("o w", "new, close tab"),
-    ("1-9 Tab", "go to tab"),
-    ("k", "Home key"),
-    ("Fn+Esc", "menu"),
-    ("s", "settings"),
-    ("q Esc", "typing"),
-];
 
 /// A search match: the row and its columns.
 #[derive(Clone, Copy)]
@@ -592,102 +572,93 @@ impl Term {
         }
     }
 
-    fn view_key(&mut self, k: &RawKey, cx: &mut Cx) {
+    fn pan(&mut self, left: bool, cx: &mut Cx) {
         let vis = self.vis();
-        let page = vis.1.saturating_sub(1).max(1);
-        let ch = k.text.map(|c| c.to_ascii_lowercase());
-        // A held key repeats scrolling, panning and zoom, never an action
-        // such as closing a tab.
-        let moves = matches!(
-            k.code,
-            code::UP
-                | code::DOWN
-                | code::LEFT
-                | code::RIGHT
-                | code::F
-                | code::X
-                | code::Z
-                | code::C
-                | PAGEUP
-                | PAGEDOWN
-        ) || matches!(ch, Some('r' | 't' | '-' | '=' | '+' | 'u' | 'i'));
-        if k.state == KeyState::Repeat && !moves {
-            return;
-        }
-        match (k.code, ch) {
-            (code::UP, _) | (code::F, _) => self.scroll(true, 1, cx),
-            (code::DOWN, _) | (code::X, _) => self.scroll(false, 1, cx),
-            (PAGEUP, _) => self.scroll(true, page, cx),
-            (PAGEDOWN, _) => self.scroll(false, page, cx),
-            (code::LEFT, _) | (code::Z, _) | (code::RIGHT, _) | (code::C, _) => {
-                let left = matches!(k.code, code::LEFT | code::Z);
-                let step = (vis.0 / 2).max(1) as isize;
-                let cols = self.grid_size().0;
-                if let Some(tab) = self.tabs.get_mut(self.cur) {
-                    tab.view.pan(if left { -step } else { step }, cols, vis.0);
-                    cx.redraw();
-                }
-            }
-            // Letters, so nothing here needs the Sym key; - = / [ ] too.
-            (_, Some('r' | '-')) => self.act(Act::ZoomOut, cx),
-            (_, Some('t' | '=' | '+')) => self.act(Act::ZoomIn, cx),
-            (_, Some('m')) => self.act(Act::Layout, cx),
-            (_, Some('b')) => self.act(Act::Bar, cx),
-            (_, Some('o')) => self.act(Act::NewTab, cx),
-            (_, Some('w')) => self.act(Act::CloseTab, cx),
-            (code::TAB, _) => self.act(Act::NextTab, cx),
-            (_, Some(d @ '1'..='9')) => self.switch(d as usize - '1' as usize, cx),
-            (_, Some('g')) if k.shift => self.scroll(false, usize::MAX / 2, cx),
-            (_, Some('g')) => self.scroll(true, usize::MAX / 2, cx),
-            (_, Some('n' | '/')) => self.act(Act::Find, cx),
-            (_, Some('v')) => self.act(Act::Copy, cx),
-            (_, Some('u' | '[')) => self.jump_prompt(true, cx),
-            (_, Some('i' | ']')) => self.jump_prompt(false, cx),
-            (_, Some('s')) => self.act(Act::Settings, cx),
-            (_, Some('p')) => self.act(Act::Paste, cx),
-            (_, Some('h')) => self.act(Act::Keys, cx),
-            (_, Some('k')) => {
-                let app = self.tab().is_some_and(|t| t.vt.t.modes.app_cursor);
-                self.mode = Mode::Typing;
-                self.send(if app { b"\x1bOH" } else { b"\x1b[H" }, cx);
-            }
-            (code::ESC | code::ENTER, _) | (_, Some('q')) => self.leave_view(cx),
-            _ => {}
+        let step = (vis.0 / 2).max(1) as isize;
+        let cols = self.grid_size().0;
+        if let Some(tab) = self.tabs.get_mut(self.cur) {
+            tab.view.pan(if left { -step } else { step }, cols, vis.0);
+            cx.redraw();
         }
     }
 
-    /// One action, from the menu or a view-mode letter.
-    fn act(&mut self, a: Act, cx: &mut Cx) {
-        match a {
-            Act::View => self.mode = Mode::View,
-            Act::ZoomIn => self.zoom_to(self.zoom + 1, cx),
-            Act::ZoomOut => self.zoom_to(self.zoom.saturating_sub(1), cx),
-            Act::Layout => self.next_layout(cx),
-            Act::Find => self.mode = Mode::Find(self.query.clone()),
-            Act::Copy => self.start_select(cx),
-            Act::Paste => {
+    fn set_font(&mut self, family: Family, cx: &mut Cx) {
+        // Keep about the same cell height in the other face.
+        let h = self.look().ch;
+        let faces = family.faces();
+        let zoom = (0..faces.len())
+            .min_by_key(|&i| (Look::of(&faces[i]).ch - h).abs())
+            .unwrap_or(0);
+        self.family = family;
+        self.zoom = zoom;
+        self.relayout(cx);
+        let s = cx.settings();
+        s.set_str(key::FONT, family.key());
+        s.set_int(key::ZOOM, zoom as i64);
+    }
+
+    /// One command, from its key or the app menu.
+    fn run(&mut self, id: u32, step: Step, cx: &mut Cx) {
+        let back = step == Step::Prev;
+        let page = self.vis().1.saturating_sub(1).max(1);
+        match id {
+            cmd::SCROLL_MODE if self.mode == Mode::Typing => self.mode = Mode::View,
+            cmd::SCROLL_MODE | cmd::DONE => self.leave_view(cx),
+            cmd::SIZE if back => self.zoom_to(self.zoom.saturating_sub(1), cx),
+            cmd::SIZE => self.zoom_to(self.zoom + 1, cx),
+            cmd::LAYOUT => self.next_layout(cx),
+            cmd::FIND => self.mode = Mode::Find(self.query.clone()),
+            cmd::COPY => self.start_select(cx),
+            cmd::PASTE => {
                 self.mode = Mode::Typing;
                 self.paste(cx);
             }
-            Act::NewTab => match self.open_tab(cx) {
+            cmd::NEW_TAB => match self.open_tab(cx) {
                 Ok(()) => self.mode = Mode::Typing,
                 Err(e) => cx.toast(&format!("No new tab: {e}")),
             },
-            Act::CloseTab => {
+            cmd::CLOSE_TAB => {
                 let i = self.cur;
                 self.close_tab(i, cx);
             }
-            Act::NextTab => {
-                let next = (self.cur + 1) % self.tabs.len().max(1);
-                self.switch(next, cx);
+            cmd::TAB => {
+                let n = self.tabs.len().max(1);
+                let to = match step {
+                    Step::Nth(i) => i,
+                    Step::Prev => (self.cur + n - 1) % n,
+                    _ => (self.cur + 1) % n,
+                };
+                self.switch(to, cx);
             }
-            Act::Bar => {
+            cmd::BAR => {
                 self.bar = !self.bar;
                 self.relayout(cx);
                 cx.settings().set_bool(key::BAR, self.bar);
             }
-            Act::Settings => cx.push(Prefs::new()),
-            Act::Keys => self.mode = Mode::Help,
+            cmd::FONT => {
+                let next = match self.family {
+                    Family::Terminus => Family::JetBrains,
+                    Family::JetBrains => Family::Terminus,
+                };
+                self.set_font(next, cx);
+            }
+            cmd::SETTINGS => cx.push(Prefs::new()),
+            cmd::SCROLL => self.scroll(back, 1, cx),
+            cmd::PAN => self.pan(back, cx),
+            cmd::PAGE | cmd::HISTORY => self.scroll(back, page, cx),
+            cmd::ENDS => self.scroll(back, usize::MAX / 2, cx),
+            cmd::PROMPT => self.jump_prompt(back, cx),
+            cmd::HOME => {
+                let app = self.tab().is_some_and(|t| t.vt.t.modes.app_cursor);
+                self.mode = Mode::Typing;
+                self.send(if app { b"\x1bOH" } else { b"\x1b[H" }, cx);
+            }
+            cmd::KEYS => cx.show_keys(),
+            cmd::OLDER | cmd::NEWER => self.find_step(id == cmd::OLDER, cx),
+            cmd::FIND_DONE | cmd::CANCEL => self.mode = Mode::View,
+            cmd::EXTEND => self.extend(back, cx),
+            cmd::YANK => self.yank(cx),
+            _ => {}
         }
         cx.redraw();
     }
@@ -737,31 +708,31 @@ impl Term {
         cx.redraw();
     }
 
+    /// A key in find mode: it edits the query. Enter, Fn+F, Fn+X and Esc
+    /// are commands.
     fn find_key(&mut self, k: &RawKey, cx: &mut Cx) {
         let Mode::Find(q) = &mut self.mode else {
             return;
         };
-        // The query stays up: Enter or ↑ finds the next older match, ↓ the
-        // next newer one, until Esc.
-        match k.code {
-            code::ESC => self.mode = Mode::View,
-            code::ENTER | code::UP | code::DOWN => {
-                if *q != self.query {
-                    self.query = q.clone();
-                    self.hit = None;
-                }
-                self.find_next(k.code != code::DOWN, cx);
-            }
-            code::BACKSPACE => {
-                q.pop();
-            }
-            _ => {
-                if let Some(c) = k.text.filter(|c| !c.is_control()) {
-                    q.push(c);
-                }
-            }
+        if k.code == code::BACKSPACE {
+            q.pop();
+        } else if let Some(c) = k.text.filter(|c| !c.is_control()) {
+            q.push(c);
         }
         cx.redraw();
+    }
+
+    /// The next older or newer match of what is typed.
+    fn find_step(&mut self, back: bool, cx: &mut Cx) {
+        let typed = match &self.mode {
+            Mode::Find(q) if *q != self.query => Some(q.clone()),
+            _ => None,
+        };
+        if let Some(q) = typed {
+            self.query = q;
+            self.hit = None;
+        }
+        self.find_next(back, cx);
     }
 
     /// Finds the query in an older (`back`) or newer row than the last
@@ -808,8 +779,15 @@ impl Term {
         match found {
             Some(h) => {
                 self.hit = Some(h);
+                let cols = self.grid_size().0;
                 let tab = &mut self.tabs[self.cur];
                 tab.view.reveal(h.pos, &tab.vt.t, vis.1);
+                // Pan to the match too, if it is off to the side.
+                let v = &mut tab.view;
+                if h.cols.0 < v.pan_x || h.cols.1 > v.pan_x + vis.0 {
+                    let want = h.cols.0.saturating_sub(vis.0 / 4) as isize;
+                    v.pan(want - v.pan_x as isize, cols, vis.0);
+                }
             }
             None => cx.toast(&format!("No more \"{}\"", self.query)),
         }
@@ -833,7 +811,8 @@ impl Term {
         cx.redraw();
     }
 
-    fn select_key(&mut self, k: &RawKey, cx: &mut Cx) {
+    /// Moves the selection's head a row up or down.
+    fn extend(&mut self, up: bool, cx: &mut Cx) {
         let Mode::Select { anchor, head } = self.mode.clone() else {
             return;
         };
@@ -842,28 +821,25 @@ impl Term {
             return;
         };
         let t = &tab.vt.t;
-        let ch = k.text.map(|c| c.to_ascii_lowercase());
-        let head = match (k.code, ch) {
-            (code::UP, _) | (code::F, _) => head.up(t),
-            (code::DOWN, _) | (code::X, _) => head.down(t),
-            (code::ESC, _) => {
-                self.mode = Mode::View;
-                cx.redraw();
-                return;
-            }
-            (code::ENTER, _) | (_, Some('y')) => {
-                let text = selected_text(t, anchor, head, &mut self.scratch.borrow_mut());
-                let lines = text.lines().count().max(1);
-                self.clipboard = text;
-                self.mode = Mode::View;
-                cx.toast(&format!("Copied {lines} lines"));
-                cx.redraw();
-                return;
-            }
-            _ => return,
-        };
+        let head = if up { head.up(t) } else { head.down(t) };
         tab.view.reveal(head, t, vis.1);
         self.mode = Mode::Select { anchor, head };
+        cx.redraw();
+    }
+
+    /// Copies the selected lines and goes back to scroll mode.
+    fn yank(&mut self, cx: &mut Cx) {
+        let Mode::Select { anchor, head } = self.mode.clone() else {
+            return;
+        };
+        let Some(tab) = self.tab() else {
+            return;
+        };
+        let text = selected_text(&tab.vt.t, anchor, head, &mut self.scratch.borrow_mut());
+        let lines = text.lines().count().max(1);
+        self.clipboard = text;
+        self.mode = Mode::View;
+        cx.toast(&format!("Copied {lines} lines"));
         cx.redraw();
     }
 
@@ -880,7 +856,7 @@ impl Term {
         self.send(&out, cx);
     }
 
-    /// One key, by mode. Releases do nothing.
+    /// A key no command took, by mode. Releases do nothing.
     fn raw_key(&mut self, k: &RawKey, cx: &mut Cx) {
         if k.state == KeyState::Release {
             return;
@@ -892,21 +868,9 @@ impl Term {
             return;
         }
         match self.mode {
-            Mode::Help => {
-                if k.state == KeyState::Press {
-                    self.mode = Mode::View;
-                    cx.redraw();
-                }
-            }
-            Mode::View => self.view_key(k, cx),
+            Mode::View | Mode::Select { .. } => {}
             Mode::Find(_) => self.find_key(k, cx),
-            Mode::Select { .. } => self.select_key(k, cx),
             Mode::Typing => {
-                if k.shift && matches!(k.code, PAGEUP | PAGEDOWN) {
-                    let page = self.vis().1.saturating_sub(1).max(1);
-                    self.scroll(k.code == PAGEUP, page, cx);
-                    return;
-                }
                 let Some(modes) = self.tab().map(|t| t.vt.t.modes) else {
                     return;
                 };
@@ -927,21 +891,6 @@ impl Term {
         if self.reserve() != before {
             self.track();
             cx.redraw();
-        }
-    }
-
-    fn hints(&self) -> Vec<(&'static str, &'static str)> {
-        match &self.mode {
-            Mode::Typing => Vec::new(),
-            Mode::View => vec![
-                ("F X", "scroll"),
-                ("Z C", "pan"),
-                ("r t", "zoom"),
-                ("Esc", "done"),
-            ],
-            Mode::Help => vec![("any key", "back")],
-            Mode::Find(_) => vec![("Enter", "older"), ("Fn+X", "newer"), ("Esc", "done")],
-            Mode::Select { .. } => vec![("F X", "extend"), ("y", "copy"), ("Esc", "cancel")],
         }
     }
 }
@@ -1080,41 +1029,74 @@ impl Page for Term {
         true
     }
 
-    fn menu(&self) -> Vec<MenuItem> {
-        let look = self.look();
-        ACTS.iter()
-            .enumerate()
-            .filter(|&(_, &a)| a != Act::NextTab || self.tabs.len() > 1)
-            .map(|(i, &a)| {
-                let item = |label: &str, key: char| MenuItem::new(i as u32, label).key(key);
-                match a {
-                    Act::View => MenuItem::new(i as u32, "Scroll and pan").value("F X Z C"),
-                    Act::ZoomIn => item("Zoom in", 't').value(format!("{}x{}", look.cw, look.ch)),
-                    Act::ZoomOut => item("Zoom out", 'r'),
-                    Act::Layout => item("Grid", 'm').value(self.layout.name()),
-                    Act::Find => item("Find", 'n'),
-                    Act::Copy => item("Copy lines", 'v'),
-                    Act::Paste => item("Paste", 'p'),
-                    Act::NewTab => item("New tab", 'o'),
-                    Act::CloseTab => item("Close tab", 'w'),
-                    Act::NextTab => MenuItem::new(i as u32, "Next tab").value(format!(
-                        "{}/{}",
-                        self.cur + 1,
-                        self.tabs.len()
-                    )),
-                    Act::Bar => item("Top bar", 'b').value(if self.bar { "On" } else { "Off" }),
-                    Act::Settings => item("Settings", 's'),
-                    Act::Keys => item("View mode keys", 'h'),
-                }
-            })
-            .collect()
+    /// Typing goes to the program; find mode types its query.
+    fn typing(&self) -> bool {
+        matches!(self.mode, Mode::Typing | Mode::Find(_))
     }
 
-    fn menu_pick(&mut self, id: u32, cx: &mut Cx) {
-        let before = self.reserve();
-        if let Some(&a) = ACTS.get(id as usize) {
-            self.act(a, cx);
+    fn commands(&self, c: &mut Commands) {
+        let typing = self.mode == Mode::Typing;
+        let scroll = self.mode == Mode::View;
+        let find = matches!(self.mode, Mode::Find(_));
+        let select = matches!(self.mode, Mode::Select { .. });
+        let look = self.look();
+        let (gc, gr) = self.grid_size();
+        let on = |c: Command| c.mode(SCROLLING, scroll);
+        let moves = |c: Command| c.keys_only().repeats();
+
+        c.add(
+            moves(Command::choice(cmd::HISTORY, "Scroll back, forward", ""))
+                .keys("Shift+PgUp Shift+PgDn")
+                .mode(TYPING, typing && !self.waiting),
+        );
+        c.group("View");
+        let label = if typing { "Scroll mode" } else { "Back to typing" };
+        c.add(Command::action(cmd::SCROLL_MODE, label));
+        let size = format!("{}x{}", look.cw, look.ch);
+        c.add(on(Command::choice(cmd::SIZE, "Text size", size).keys("r t").repeats()));
+        let grid = format!("{} {gc}x{gr}", self.layout.name());
+        c.add(on(Command::choice(cmd::LAYOUT, "Grid", grid).keys("m")));
+        c.add(on(Command::action(cmd::FIND, "Find").keys("n")));
+        c.add(on(Command::action(cmd::COPY, "Copy lines").keys("v")));
+        let pasteable = !self.clipboard.is_empty();
+        c.add(on(Command::action(cmd::PASTE, "Paste").keys("p").enabled(pasteable)));
+        c.group("Tabs");
+        c.add(on(Command::action(cmd::NEW_TAB, "New tab").keys("o")));
+        if self.tabs.len() > 1 {
+            let at = format!("{} of {}", self.cur + 1, self.tabs.len());
+            c.add(on(Command::choice(cmd::TAB, "Tab", at).keys("Tab 1-9")));
         }
+        c.add(on(Command::action(cmd::CLOSE_TAB, "Close tab").keys("w").confirm()));
+        c.group("Settings");
+        c.add(on(Command::toggle(cmd::BAR, "Top bar", self.bar).keys("b")));
+        c.add(Command::choice(cmd::FONT, "Font", self.family.name()));
+        c.add(on(Command::action(cmd::SETTINGS, "More settings").keys("s").opens()));
+
+        // Scroll mode's moves have keys but no menu rows.
+        let up_down = |id, label| on(moves(Command::choice(id, label, "")));
+        c.add(up_down(cmd::SCROLL, "Scroll up, down").keys("f x").hint("scroll"));
+        c.add(up_down(cmd::PAN, "Pan left, right").keys("z c").hint("pan"));
+        c.add(up_down(cmd::PAGE, "Page up, down").keys("PgUp PgDn"));
+        c.add(up_down(cmd::PROMPT, "Previous, next prompt").keys("u i"));
+        c.add(on(Command::choice(cmd::ENDS, "Oldest line, live", "").keys("g G").keys_only()));
+        c.add(on(Command::action(cmd::HOME, "Send Home").keys("k").keys_only()));
+        c.add(on(Command::action(cmd::KEYS, "Keys").keys("h").keys_only().hint("keys")));
+        c.add(on(Command::action(cmd::DONE, "Back to typing").keys("Esc q").keys_only().hint("done")));
+
+        let f = |c: Command| c.keys_only().mode(FINDING, find);
+        c.add(f(Command::action(cmd::OLDER, "Older match").keys("Enter Up").repeats().hint("older")));
+        c.add(f(Command::action(cmd::NEWER, "Newer match").keys("Down").repeats().hint("newer")));
+        c.add(f(Command::action(cmd::FIND_DONE, "Done").keys("Esc").hint("done")));
+
+        let s = |c: Command| c.keys_only().mode(COPYING, select);
+        c.add(s(Command::choice(cmd::EXTEND, "Extend up, down", "").keys("f x").repeats().hint("extend")));
+        c.add(s(Command::action(cmd::YANK, "Copy").keys("y Enter").hint("copy")));
+        c.add(s(Command::action(cmd::CANCEL, "Cancel").keys("Esc").hint("cancel")));
+    }
+
+    fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
+        let before = self.reserve();
+        self.run(id, step, cx);
         self.after_mode(before, cx);
     }
 
@@ -1247,16 +1229,15 @@ impl Page for Term {
             }
         }
         if !typing {
-            let hints = self.hints();
+            let mut cmds = Commands::new();
+            self.commands(&mut cmds);
+            let hints = cmds.hints();
             let hints: Vec<Hint> = hints
                 .iter()
-                .map(|&(key, label)| Hint { key, label })
+                .map(|(key, label)| Hint { key, label })
                 .collect();
             let pages = (self.tabs.len() > 1).then_some((self.cur, self.tabs.len()));
             widgets::hint_bar(c, &th, &hints, pages);
-            if self.mode == Mode::Help {
-                help(c, &th, area);
-            }
             if let Mode::Find(q) = &self.mode {
                 let r = Rect::new(0, th.m.height - 2 * th.m.hint_h, th.m.width, th.m.hint_h);
                 c.fill(r, th.c.surface);
@@ -1265,24 +1246,6 @@ impl Page for Term {
                 widgets::text_in(c, th.f.small, line, &text, th.c.fg);
             }
         }
-    }
-}
-
-/// The help screen: view mode's keys in two columns over the content.
-fn help(c: &mut gh0st_app::gfx::Canvas, th: &Theme, area: Rect) {
-    let r = Rect::new(area.x, area.y, area.w, area.h - th.m.hint_h);
-    c.fill(r, th.c.surface);
-    let per = HELP_KEYS.len().div_ceil(2);
-    let line = th.m.line_h;
-    let col_w = r.w / 2;
-    for (i, (keys, what)) in HELP_KEYS.iter().enumerate() {
-        let x = r.x + th.m.pad + (i / per) as i32 * col_w;
-        let y = r.y + theme::TERM_HELP_TOP + (i % per) as i32 * line;
-        let kw = theme::TERM_HELP_KEY_W;
-        let k = Rect::new(x, y, kw, line);
-        widgets::text_in(c, th.f.small_bold, k, keys, th.c.accent);
-        let w = Rect::new(x + kw + 2, y, col_w - th.m.pad - kw - 2, line);
-        widgets::text_in(c, th.f.small, w, what, th.c.fg);
     }
 }
 

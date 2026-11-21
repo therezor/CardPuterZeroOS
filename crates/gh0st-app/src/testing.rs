@@ -65,6 +65,11 @@ impl Driver {
         while let Some(at) = self.rt.next_at().filter(|&at| at <= end) {
             self.now = self.now.max(at);
             self.rt.tick(self.now);
+            // As the real loop does: a due frame clears its deadline.
+            if self.rt.frame_due(self.now) {
+                self.rt.render();
+                self.rt.last_frame = self.now;
+            }
         }
         self.now = end;
         self

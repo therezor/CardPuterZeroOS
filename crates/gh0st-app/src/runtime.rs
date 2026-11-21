@@ -3,10 +3,11 @@
 
 use crate::bars::{Bars, Bottom};
 use crate::key::{self, Key};
-use crate::menu::{CLOSE_APP, Menu};
+use crate::command::Commands;
+use crate::menu::{Menu, Out, Sheet, SheetOut};
 use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer, Watch};
 use crate::ui::Ui;
-use gh0st_core::keys::Keyboard;
+use gh0st_core::keys::{Keyboard, State};
 use gh0st_core::keys::code as keys_code;
 use gh0st_core::{battery, child, job, rt, status};
 use gh0st_ui::widgets::{self, Battery, Hint, Net, SoftKey as Slot, Status};
@@ -82,6 +83,12 @@ impl Bar {
     }
 }
 
+enum Overlay {
+    None,
+    Menu(Menu),
+    Keys(Sheet),
+}
+
 pub(crate) struct Runtime {
     stack: Vec<Box<dyn Page>>,
     pub s: Shared,
@@ -101,8 +108,13 @@ pub(crate) struct Runtime {
     pub paused: bool,
     /// The shell link, when the shell started the app.
     pub link: Option<gh0st_core::link::Link>,
-    /// The app menu, while open.
-    menu: Option<Menu>,
+    /// The app menu or the Keys screen, while one is open.
+    overlay: Overlay,
+    /// Keys whose press the menu or a command took: their repeats and
+    /// releases don't reach the page.
+    taken: Vec<u16>,
+    /// The menu row last picked, and the depth of the page it was on.
+    menu_last: Option<(usize, u32)>,
     toast: Option<(String, u64)>,
     bar: Bar,
     palette: String,
@@ -133,7 +145,9 @@ impl Runtime {
             last_frame: 0,
             paused: false,
             link: None,
-            menu: None,
+            overlay: Overlay::None,
+            taken: Vec::new(),
+            menu_last: None,
             toast: None,
             bar: Bar::new(),
             palette,
@@ -227,6 +241,11 @@ impl Runtime {
                     }
                     _ => self.toast = Some((text, now + TOAST_MS)),
                 },
+                Request::ShowKeys => {
+                    let cmds = self.commands_of(owner);
+                    self.overlay = Overlay::Keys(Sheet::new(cmds.iter(), None));
+                    self.dirty = true;
+                }
             }
         }
         self.retheme();
@@ -243,7 +262,8 @@ impl Runtime {
     }
 
     fn pop(&mut self, now: u64) {
-        self.menu = None;
+        self.overlay = Overlay::None;
+        self.menu_last = None;
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
@@ -304,22 +324,52 @@ impl Runtime {
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
+        let taken = self.taken.iter().position(|&c| c == raw.code);
+        if let (State::Release, Some(i)) = (raw.state, taken) {
+            self.taken.swap_remove(i);
+            return;
+        }
         // Fn+Esc and Help (Fn+H) are the menu key in every app, raw-key
         // pages too. Plain Esc stays the page's.
         let menu_key = raw.code == keys_code::HELP || (raw.code == keys_code::ESC && raw.fn_);
         if menu_key {
-            if raw.state == gh0st_core::keys::State::Press {
-                self.menu = match self.menu.take() {
-                    Some(_) => None,
-                    None => Some(Menu::new(top, self.stack[top].menu())),
-                };
+            if raw.state == State::Press {
+                self.take(raw.code);
+                if let Overlay::None = self.overlay {
+                    let select = self.menu_last.filter(|l| l.0 == top).map(|l| l.1);
+                    self.overlay = Overlay::Menu(Menu::new(top, self.commands_of(top), select));
+                } else {
+                    self.close_overlay();
+                }
                 self.dirty = true;
             }
             return;
         }
-        if self.menu.is_some() {
-            self.menu_key(raw, now);
+        if !matches!(self.overlay, Overlay::None) {
+            if raw.state == State::Press {
+                self.take(raw.code);
+            }
+            self.overlay_key(raw, now);
             return;
+        }
+        if raw.state != State::Release {
+            let typing = self.stack[top].typing();
+            let held = self.taken.contains(&raw.code);
+            match self.commands_of(top).lookup(raw, typing) {
+                Some(hit) => {
+                    if raw.state == State::Press {
+                        self.take(raw.code);
+                    }
+                    if raw.state == State::Press || hit.repeats {
+                        self.call(top, now, |p, cx| p.command(hit.id, hit.step, cx));
+                    }
+                    return;
+                }
+                // Held from a command that has gone, as one that changed
+                // the mode: its repeats mean nothing now.
+                None if held => return,
+                None => {}
+            }
         }
         if self.stack[top].raw_keys() {
             self.call_quiet(top, now, |p, cx| p.raw(raw, cx));
@@ -342,38 +392,86 @@ impl Runtime {
         }
     }
 
-    fn menu_key(&mut self, raw: &gh0st_core::keys::Key, now: u64) {
-        let Some(k) = key::map(raw, false, [false; 5]) else {
-            return;
+    fn take(&mut self, code: u16) {
+        // Releases can go missing (a pause drops them): keep this small.
+        if self.taken.len() >= 8 {
+            self.taken.remove(0);
+        }
+        self.taken.push(code);
+    }
+
+    fn commands_of(&self, i: usize) -> Commands {
+        let mut c = Commands::new();
+        if let Some(p) = self.stack.get(i) {
+            p.commands(&mut c);
+        }
+        c
+    }
+
+    fn close_overlay(&mut self) {
+        let overlay = std::mem::replace(&mut self.overlay, Overlay::None);
+        let menu = match overlay {
+            Overlay::Menu(m) => Some(m),
+            Overlay::Keys(s) => s.menu,
+            Overlay::None => None,
         };
-        let Some(m) = self.menu.as_mut() else {
-            return;
-        };
-        let pick = match k {
-            Key::Up | Key::Down => {
-                m.list.key(k);
-                None
-            }
-            Key::Enter => Some(m.list.selected()),
-            Key::Back => {
-                self.menu = None;
-                None
-            }
-            Key::Char(c) => {
-                let c = c.to_ascii_lowercase();
-                m.items.iter().position(|i| i.key == Some(c))
-            }
-            _ => None,
-        };
+        if let Some(m) = menu {
+            self.menu_last = m.selected_id().map(|id| (m.owner, id));
+        }
         self.dirty = true;
-        if let Some(i) = pick {
-            let Some(m) = self.menu.take() else {
-                return;
-            };
-            match m.items.get(i).map(|i| i.id) {
-                Some(CLOSE_APP) => self.quit_all(),
-                Some(id) => self.call(m.owner, now, |p, cx| p.menu_pick(id, cx)),
-                None => {}
+    }
+
+    fn overlay_key(&mut self, raw: &gh0st_core::keys::Key, now: u64) {
+        if raw.state != State::Release {
+            self.dirty = true;
+        }
+        match &mut self.overlay {
+            Overlay::None => {}
+            Overlay::Keys(s) => {
+                if s.key(raw) == SheetOut::Back {
+                    let menu = match std::mem::replace(&mut self.overlay, Overlay::None) {
+                        Overlay::Keys(s) => s.menu,
+                        _ => None,
+                    };
+                    if let Some(m) = menu {
+                        self.overlay = Overlay::Menu(m);
+                    }
+                }
+            }
+            Overlay::Menu(m) => {
+                let owner = m.owner;
+                match m.key(raw) {
+                    Out::Nothing => {}
+                    Out::Close => self.close_overlay(),
+                    Out::Quit => {
+                        self.close_overlay();
+                        self.quit_all();
+                    }
+                    Out::Keys => {
+                        if let Overlay::Menu(m) = std::mem::replace(&mut self.overlay, Overlay::None) {
+                            let mut sheet = Sheet::new(m.page_commands(), None);
+                            sheet.menu = Some(m);
+                            self.overlay = Overlay::Keys(sheet);
+                        }
+                    }
+                    Out::Run { id, step, close } => {
+                        if close {
+                            self.close_overlay();
+                        }
+                        let depth = self.stack.len();
+                        self.call(owner, now, |p, cx| p.command(id, step, cx));
+                        if !close {
+                            let fresh = self.commands_of(owner);
+                            match &mut self.overlay {
+                                // The command opened or closed a page: the
+                                // menu belonged to the old one.
+                                _ if self.stack.len() != depth => self.close_overlay(),
+                                Overlay::Menu(m) => m.refresh(fresh),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -433,7 +531,8 @@ impl Runtime {
 
     /// Another app or the shell is in front: no keys, no frames.
     pub fn pause_input(&mut self, now: u64) {
-        self.menu = None;
+        self.overlay = Overlay::None;
+        self.taken.clear();
         self.kb.reset();
         self.paused = true;
         self.s.paused = true;
@@ -573,19 +672,20 @@ impl Runtime {
             let mut ui = Ui::new(&mut self.canvas, &t, area);
             page.draw(&mut ui);
         }
-        if let Some(m) = &self.menu {
-            let trails = m.trails();
-            let rows: Vec<crate::list::Row> = m
-                .items
-                .iter()
-                .zip(&trails)
-                .map(|(i, t)| crate::list::Row::info(&i.label, t))
-                .collect();
-            // Above the hint bar the menu draws.
-            let h = (t.m.height - t.m.hint_h - area.y).min(area.h);
-            let mut ui = Ui::new(&mut self.canvas, &t, Rect::new(area.x, area.y, area.w, h));
-            ui.list(&m.list, &rows);
-        }
+        // Above the hint bar the menu and the Keys screen draw.
+        let panel_h = (t.m.height - t.m.hint_h - area.y).min(area.h);
+        let panel = Rect::new(area.x, area.y, area.w, panel_h);
+        let overlay_hints: Option<Vec<(&str, &str)>> = match &self.overlay {
+            Overlay::None => None,
+            Overlay::Menu(m) => {
+                m.draw(&mut self.canvas, &t, panel);
+                Some(m.hints().to_vec())
+            }
+            Overlay::Keys(s) => {
+                s.draw(&mut self.canvas, &t, panel);
+                Some(s.hints().to_vec())
+            }
+        };
         let full = self.canvas.bounds();
         self.canvas.set_clip(full);
         let c = &mut self.canvas;
@@ -601,22 +701,21 @@ impl Runtime {
             };
             widgets::status_bar(c, &t, &s);
         }
-        if self.menu.is_some() {
-            let hints = [
-                Hint {
-                    key: "Enter",
-                    label: "pick",
-                },
-                Hint {
-                    key: "Esc",
-                    label: "close",
-                },
-            ];
+        if let Some(h) = &overlay_hints {
+            let hints: Vec<Hint> = h.iter().map(|&(key, label)| Hint { key, label }).collect();
             widgets::hint_bar(c, &t, &hints, None);
         } else {
             match &bars.bottom {
                 Bottom::None => {}
                 Bottom::Hints(h) => {
+                    let hints: Vec<Hint> =
+                        h.iter().map(|(key, label)| Hint { key, label }).collect();
+                    widgets::hint_bar(c, &t, &hints, None);
+                }
+                Bottom::Commands => {
+                    let mut cmds = Commands::new();
+                    page.commands(&mut cmds);
+                    let h = cmds.hints();
                     let hints: Vec<Hint> =
                         h.iter().map(|(key, label)| Hint { key, label }).collect();
                     widgets::hint_bar(c, &t, &hints, None);

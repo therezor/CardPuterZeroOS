@@ -2,7 +2,7 @@
 
 use crate::bars::Bars;
 use crate::key::Key;
-use crate::menu::MenuItem;
+use crate::command::{Commands, Step};
 use crate::ui::Ui;
 use gh0st_core::config::{self, Config};
 use gh0st_core::keys::Key as RawKey;
@@ -100,16 +100,19 @@ pub trait Page {
         let _ = (key, cx);
     }
 
-    /// The app menu's items while this page is in front: Fn+H opens it.
-    /// The SDK adds Close app at the end, so an empty list still gives a
-    /// menu. See "The app menu" in the guide.
-    fn menu(&self) -> Vec<MenuItem> {
-        Vec::new()
+    /// What the user can do on this page. The app menu (Fn+Esc), the Keys
+    /// screen, command hints and the keys themselves all come from this
+    /// list, so they never disagree. Asked again on every key and every
+    /// time the menu changes. See "Commands" in the guide.
+    fn commands(&self, c: &mut Commands) {
+        let _ = c;
     }
 
-    /// An item from [`menu`](Page::menu) was picked. The menu has closed.
-    fn menu_pick(&mut self, id: u32, cx: &mut Cx) {
-        let _ = (id, cx);
+    /// A command ran, by its key or its menu row. An action's menu has
+    /// closed by now; a toggle's or a choice's stays open and shows the new
+    /// value.
+    fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
+        let _ = (id, step, cx);
     }
 
     /// The app came to the front (true) or went behind another (false),
@@ -177,6 +180,7 @@ pub(crate) enum Request {
     Adopt(i32),
     Redraw,
     Notify(String),
+    ShowKeys,
 }
 
 /// The app's settings in the shared device config,
@@ -403,6 +407,12 @@ impl Cx<'_> {
     /// asked.
     pub fn redraw(&mut self) {
         self.s.requests.push(Request::Redraw);
+    }
+
+    /// Opens the Keys screen: every key of this page's commands, as the
+    /// menu's Keys row does. For a page's own help key.
+    pub fn show_keys(&mut self) {
+        self.s.requests.push(Request::ShowKeys);
     }
 
     /// The shared device settings.
