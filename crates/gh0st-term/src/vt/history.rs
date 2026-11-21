@@ -230,6 +230,9 @@ impl History {
     /// A row leaves the top of the screen.
     pub fn push(&mut self, row: &Row, clusters: &Clusters) {
         self.open.active = true;
+        if row.prompt {
+            self.open.flags |= flag::PROMPT;
+        }
         let used = if row.wrapped {
             row.cells.len()
         } else {

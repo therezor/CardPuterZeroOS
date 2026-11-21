@@ -97,6 +97,8 @@ pub(crate) struct Runtime {
     /// The shell has another app or itself in front: draw nothing, and
     /// keep no deadline that only the screen needs.
     pub paused: bool,
+    /// The shell link, when the shell started the app.
+    pub link: Option<gh0st_core::link::Link>,
     toast: Option<(String, u64)>,
     bar: Bar,
     palette: String,
@@ -126,6 +128,7 @@ impl Runtime {
             adopted: Vec::new(),
             last_frame: 0,
             paused: false,
+            link: None,
             toast: None,
             bar: Bar::new(),
             palette,
@@ -213,6 +216,12 @@ impl Runtime {
                 }
                 Request::Adopt(pid) => self.adopted.push((pid, owner)),
                 Request::Redraw => self.dirty = true,
+                Request::Notify(text) => match &self.link {
+                    Some(l) if self.paused => {
+                        l.send(&["toast", &text]);
+                    }
+                    _ => self.toast = Some((text, now + TOAST_MS)),
+                },
             }
         }
         self.retheme();
@@ -367,6 +376,7 @@ impl Runtime {
     pub fn pause_input(&mut self) {
         self.kb.reset();
         self.paused = true;
+        self.s.paused = true;
     }
 
     /// Back in front after a pause: keys held before mean nothing now, and
@@ -374,6 +384,7 @@ impl Runtime {
     pub fn resume_input(&mut self) {
         self.kb.reset();
         self.paused = false;
+        self.s.paused = false;
         self.dirty = true;
     }
 

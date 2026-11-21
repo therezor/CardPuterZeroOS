@@ -7,6 +7,7 @@ use crate::pty::{self, Pty};
 use crate::render::{self, Colors, Cursor, Look, Span};
 use crate::view::{Family, Pos, Src, View};
 use crate::vt::cell::{Cell, Clusters};
+use crate::vt::history::flag::PROMPT;
 use crate::vt::{CursorShape, Terminal, Vt, event};
 use gh0st_app::gfx::widgets::{self, Hint};
 use gh0st_app::gfx::{Rect, Theme};
@@ -96,6 +97,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("b", "top bar"),
     ("/ n N", "find"),
     ("v", "copy lines"),
+    ("[ ]", "prompts"),
     ("p", "paste"),
     ("t w", "new, close tab"),
     ("1-9 Tab", "go to tab"),
@@ -387,7 +389,14 @@ impl Term {
             self.clipboard = text;
             cx.toast("Copied");
         }
+        if let Some(n) = t.notice.take() {
+            cx.notify(&n);
+        }
         let events = std::mem::take(&mut t.events);
+        // A bell matters when its tab can't be seen.
+        if events & event::BELL != 0 && (i != self.cur || !cx.in_front()) {
+            cx.notify(&format!("Bell in terminal tab {}", i + 1));
+        }
         // Synchronized output: draw when it ends, or after SYNC_MS.
         match (t.modes.sync, tab.sync) {
             (true, None) => tab.sync = Some(cx.after(SYNC_MS)),
@@ -513,6 +522,8 @@ impl Term {
             }
             (_, Some('n')) => self.find_next(!k.shift, cx),
             (_, Some('v')) => self.start_select(cx),
+            (_, Some('[')) => self.jump_prompt(true, cx),
+            (_, Some(']')) => self.jump_prompt(false, cx),
             (_, Some('s')) => cx.push(Prefs::new()),
             (_, Some('p')) => {
                 self.mode = Mode::Typing;
@@ -530,6 +541,41 @@ impl Term {
             (code::ESC | code::ENTER, _) | (_, Some('q')) => self.leave_view(cx),
             _ => {}
         }
+    }
+
+    /// Moves the view to the previous or next shell prompt (OSC 133).
+    fn jump_prompt(&mut self, up: bool, cx: &mut Cx) {
+        let vis = self.vis();
+        let fit = self.window.is_none();
+        let Some(tab) = self.tabs.get_mut(self.cur) else {
+            return;
+        };
+        let t = &tab.vt.t;
+        let is_prompt = |p: Pos| match p.src(t) {
+            Src::Grid(y) => !t.alt_active && t.grid().rows[y].prompt,
+            Src::Hist(i, sub) => sub == 0 && t.history.line(i).flags & PROMPT != 0,
+        };
+        let mut p = tab.view.top;
+        let found = loop {
+            let next = if up { p.up(t) } else { p.down(t) };
+            if next == p {
+                break None;
+            }
+            p = next;
+            if is_prompt(p) {
+                break Some(p);
+            }
+        };
+        match found {
+            Some(Pos::Grid(_)) if fit => tab.view.snap(),
+            Some(Pos::Grid(y)) => tab.view.reveal(Pos::Grid(y), t, vis.1),
+            Some(p) => {
+                tab.view.top = p;
+                tab.view.follow = false;
+            }
+            None => cx.toast("No more prompts"),
+        }
+        cx.redraw();
     }
 
     fn leave_view(&mut self, cx: &mut Cx) {

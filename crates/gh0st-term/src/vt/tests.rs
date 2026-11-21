@@ -248,3 +248,20 @@ fn osc_52_copies_but_never_answers_a_read() {
     feed(&mut v, "\x1b]52;c;?\x07");
     assert!(v.t.replies.is_empty());
 }
+
+#[test]
+fn prompt_marks_follow_their_line_into_history() {
+    let mut v = vt(10, 2);
+    feed(&mut v, "\x1b]133;A\x07$ ls\r\nout\r\n\x1b]133;A\x07$ ");
+    assert!(v.t.history.line(0).flags & history::flag::PROMPT != 0);
+    assert!(v.t.grid().rows[1].prompt);
+}
+
+#[test]
+fn notifications() {
+    let mut v = vt(10, 2);
+    feed(&mut v, "\x1b]777;notify;make;done\x07");
+    assert_eq!(v.t.notice.as_deref(), Some("make: done"));
+    feed(&mut v, "\x1b]9;build ok\x07");
+    assert_eq!(v.t.notice.as_deref(), Some("build ok"));
+}

@@ -157,6 +157,7 @@ pub(crate) enum Request {
     },
     Adopt(i32),
     Redraw,
+    Notify(String),
 }
 
 /// The app's settings in the shared device config,
@@ -220,6 +221,8 @@ pub(crate) struct Shared {
     pub requests: Vec<Request>,
     pub next_id: u64,
     pub app_id: String,
+    /// The shell has paused the app: something else is in front.
+    pub paused: bool,
 }
 
 impl Shared {
@@ -231,6 +234,7 @@ impl Shared {
             requests: Vec::new(),
             next_id: 1,
             app_id: app_id(),
+            paused: false,
         }
     }
 
@@ -361,6 +365,18 @@ impl Cx<'_> {
     /// never call `waitpid`.
     pub fn adopt(&mut self, pid: i32) {
         self.s.requests.push(Request::Adopt(pid));
+    }
+
+    /// Tells the user something even while the app runs behind another:
+    /// the shell shows it over whatever is in front then. In front it is
+    /// a [`toast`](Cx::toast).
+    pub fn notify(&mut self, text: &str) {
+        self.s.requests.push(Request::Notify(text.to_string()));
+    }
+
+    /// False while the shell has another app, or itself, in front.
+    pub fn in_front(&self) -> bool {
+        !self.s.paused
     }
 
     /// Draws again after this callback. Keys, timers and jobs always draw;

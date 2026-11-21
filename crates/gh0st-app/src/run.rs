@@ -58,8 +58,8 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
     };
     let signals = Signals::install(&[libc::SIGTERM, libc::SIGINT, libc::SIGCHLD])
         .map_err(|e| format!("signals: {e}"))?;
-    let link = sim.is_none().then(Link::from_env).flatten();
-    if let Some(l) = &link {
+    rt_.link = sim.is_none().then(Link::from_env).flatten();
+    if let Some(l) = &rt_.link {
         l.send(&["hello", "1"]);
     }
 
@@ -78,7 +78,7 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
             Input::Script(s) => Some(s.fd()),
         };
         let mut fds = vec![rt::pollfd(signals.fd())];
-        let link_at = link.as_ref().map(|l| {
+        let link_at = rt_.link.as_ref().map(|l| {
             fds.push(rt::pollfd(l.fd()));
             fds.len() - 1
         });
@@ -112,30 +112,30 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
         }
         // The shell's word comes before keys: after a pause, keys belong
         // to whatever is in front now.
-        if let (Some(l), Some(i)) = (&link, link_at) {
-            if rt::readable(&fds[i]) {
-                while let Some(m) = l.recv() {
-                    match m.first().map(String::as_str) {
-                        Some("pause") => {
-                            if let Input::Keyboard(dev, _) = &mut input {
-                                *dev = None;
-                            }
-                            rt_.pause_input();
+        if link_at.is_some_and(|i| rt::readable(&fds[i])) {
+            while let Some(m) = rt_.link.as_ref().and_then(|l| l.recv()) {
+                match m.first().map(String::as_str) {
+                    Some("pause") => {
+                        if let Input::Keyboard(dev, _) = &mut input {
+                            *dev = None;
+                        }
+                        rt_.pause_input();
+                        if let Some(l) = &rt_.link {
                             l.send(&["paused"]);
                         }
-                        Some("resume") => {
-                            if let Input::Keyboard(dev, path) = &mut input {
-                                *dev = evdev::Device::open(path).ok();
-                            }
-                            rt_.resume_input();
-                            full = true;
-                        }
-                        Some("redraw") => {
-                            rt_.dirty = true;
-                            full = true;
-                        }
-                        _ => {}
                     }
+                    Some("resume") => {
+                        if let Input::Keyboard(dev, path) = &mut input {
+                            *dev = evdev::Device::open(path).ok();
+                        }
+                        rt_.resume_input();
+                        full = true;
+                    }
+                    Some("redraw") => {
+                        rt_.dirty = true;
+                        full = true;
+                    }
+                    _ => {}
                 }
             }
         }

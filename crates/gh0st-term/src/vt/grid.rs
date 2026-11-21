@@ -8,6 +8,8 @@ pub struct Row {
     pub cells: Vec<Cell>,
     /// The line goes on in the next row: autowrap put it there.
     pub wrapped: bool,
+    /// A shell prompt starts here (OSC 133).
+    pub prompt: bool,
 }
 
 impl Row {
@@ -15,12 +17,14 @@ impl Row {
         Row {
             cells: vec![fill; cols],
             wrapped: false,
+            prompt: false,
         }
     }
 
     pub fn reset(&mut self, fill: Cell) {
         self.cells.fill(fill);
         self.wrapped = false;
+        self.prompt = false;
     }
 
     /// Cells up to the last one that shows something.
@@ -198,23 +202,28 @@ impl Grid {
 /// and wrap at the new width. Returns the rows and where the cursor lands.
 pub fn reflow(rows: &[Row], cols: usize, cursor: (usize, usize)) -> (Vec<Row>, (usize, usize)) {
     // Logical lines, each with the cursor's offset if it is on it.
-    let mut lines: Vec<(Vec<Cell>, Option<usize>)> = Vec::new();
+    let mut lines: Vec<(Vec<Cell>, Option<usize>, bool)> = Vec::new();
     let mut line = Vec::new();
     let mut at = None;
+    let mut prompt = false;
     for (y, r) in rows.iter().enumerate() {
+        if line.is_empty() {
+            prompt = r.prompt;
+        }
         if y == cursor.1 {
             at = Some(line.len() + cursor.0);
         }
         let n = if r.wrapped { r.cells.len() } else { r.used() };
         line.extend_from_slice(&r.cells[..n]);
         if !r.wrapped || y + 1 == rows.len() {
-            lines.push((std::mem::take(&mut line), at.take()));
+            lines.push((std::mem::take(&mut line), at.take(), prompt));
         }
     }
     let mut out: Vec<Row> = Vec::new();
     let mut cur = (0, 0);
-    for (cells, at) in lines {
+    for (cells, at, prompt) in lines {
         let mut row = Row::new(0, Cell::BLANK);
+        row.prompt = prompt;
         let mut i = 0;
         while i < cells.len() {
             let w = if cells[i].is_wide() { 2 } else { 1 };

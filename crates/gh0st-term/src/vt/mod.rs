@@ -113,6 +113,7 @@ pub mod event {
     pub const BELL: u8 = 2;
     pub const CWD: u8 = 4;
     pub const CLIPBOARD: u8 = 8;
+    pub const NOTICE: u8 = 16;
 }
 
 pub struct Terminal {
@@ -135,6 +136,8 @@ pub struct Terminal {
     pub cwd: Option<String>,
     /// Text a program copied (OSC 52), for the app to take.
     pub clipboard: Option<String>,
+    /// A notification a program sent (OSC 9 or 777), for the app to show.
+    pub notice: Option<String>,
     pub history: History,
     pub clusters: Clusters,
     /// Bytes for the PTY: answers to device queries.
@@ -172,6 +175,7 @@ impl Terminal {
             title: String::new(),
             cwd: None,
             clipboard: None,
+            notice: None,
             history: History::new(history),
             clusters: Clusters::default(),
             replies: Vec::new(),
@@ -738,6 +742,34 @@ impl Terminal {
                     self.cwd = Some(path);
                     self.events |= event::CWD;
                 }
+            }
+            // Shell integration: a prompt starts on this row.
+            b"133" => {
+                if params.get(1).is_some_and(|p| p.first() == Some(&b'A')) && !self.alt_active {
+                    let y = self.cur.y;
+                    self.main.rows[y].prompt = true;
+                }
+            }
+            b"9" | b"777" => {
+                // 777 is `notify;title;body`; 9 is the text alone.
+                let parts: Vec<String> = params[1..]
+                    .iter()
+                    .map(|p| String::from_utf8_lossy(p).into_owned())
+                    .collect();
+                let text = match (cmd, parts.as_slice()) {
+                    (b"777", [kind, title, body, ..]) if kind == "notify" => {
+                        format!("{title}: {body}")
+                    }
+                    (b"777", _) => return,
+                    _ => parts.join(";"),
+                };
+                self.notice = Some(
+                    text.chars()
+                        .filter(|c| !c.is_control())
+                        .take(TITLE_MAX)
+                        .collect(),
+                );
+                self.events |= event::NOTICE;
             }
             // Copy only. A read ("?") gets no answer: a remote host must
             // never see the local clipboard.
