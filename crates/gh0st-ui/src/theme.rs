@@ -166,7 +166,7 @@ pub fn palette(name: &str) -> Option<Palette> {
 
 /// 320x170: an 18 px bar on top, an 18 px hint bar below, 134 px between. The
 /// grid inside that is 4x2 tiles of 74x60 with 4 px gaps and a 6/5 px margin.
-/// Bar slots are 20x14, so a 12 px icon keeps a 4 px side and 1 px top pad.
+/// Bar slots are 14x14, so a 12 px icon keeps a 1 px side and top pad.
 pub const CARDPUTER: Metrics = Metrics {
     width: 320,
     height: 170,
@@ -186,9 +186,9 @@ pub const CARDPUTER: Metrics = Metrics {
     app_row_h: 33,
     row_h: 26,
     line_h: 15,
-    slot_w: 20,
+    slot_w: 14,
     slot_h: 14,
-    slot_gap: 3,
+    slot_gap: 4,
     slot_icon: 12,
     cards: 3,
     softkey_x: [49, 105, 161, 217, 273],

@@ -122,14 +122,11 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     // Rounded down, so slot ink shares rows with the clock's digits.
     let y = (inner.h - t.m.slot_h) / 2;
     let step = t.m.slot_w + t.m.slot_gap;
-    // The mark has no box: it is accent while home is in front. It is the
-    // size of the icons in the slots.
+    // The mark is the size of the icons in the slots, and accent while home
+    // is in front.
     let logo = t.m.slot_icon;
-    let ink = if s.front == Some(0) {
-        t.c.accent
-    } else {
-        t.c.muted
-    };
+    let home = s.front == Some(0);
+    let ink = if home { t.c.accent } else { t.c.muted };
     icon::draw(
         c,
         LOGO,
@@ -138,7 +135,12 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
         y + (t.m.slot_h - logo) / 2,
         ink,
     );
-    let mut sx = t.m.pad + logo + 2 * t.m.slot_gap;
+    let side = (t.m.slot_w - logo) / 2;
+    if home {
+        front_mark(c, t, t.m.pad - side, t.m.slot_w);
+    }
+    // Ink to ink, the mark and every icon are the same distance apart.
+    let mut sx = t.m.pad + logo + t.m.slot_gap + side;
 
     // Every app gets a slot while they fit; past that the last one counts
     // the rest.
@@ -147,18 +149,21 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     let shown = if n <= fit { n } else { fit.saturating_sub(1) };
     for (i, v) in s.dock.iter().take(shown).enumerate() {
         let r = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
-        let front = s.front == Some(i + 1);
-        let ink = slot(c, t, r, front);
-        slot_visual(c, t, r, v, front, ink);
+        slot_visual(c, t, r, v);
+        if s.front == Some(i + 1) {
+            front_mark(c, t, r.x, r.w);
+        } else {
+            // Behind: the same picture, faded into the bar.
+            c.fill_alpha(r, t.c.bg, 110);
+        }
         sx += step;
     }
     if shown < n {
         let r = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
-        let ink = slot(c, t, r, false);
         let mut buf = String::with_capacity(4);
         buf.push('+');
         buf.push_str(&(n - shown).min(99).to_string());
-        text_centre(c, t.f.small_bold, r, &buf, ink);
+        text_centre(c, t.f.small_bold, r, &buf, t.c.muted);
         sx += step;
     }
     if !s.title.is_empty() {
@@ -168,35 +173,26 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     }
 }
 
-/// A bar slot: filled when its app is in front, outlined when not. Returns
-/// the ink for what goes inside.
-fn slot(c: &mut Canvas, t: &Theme, r: Rect, front: bool) -> Color {
-    if front {
-        c.round_rect(r, t.m.radius, t.c.accent);
-        t.c.accent_fg
-    } else {
-        c.stroke_round_rect(r, t.m.radius, t.c.border);
-        t.c.muted
-    }
+/// What is in front: an accent line on the bar's bottom edge, under it.
+fn front_mark(c: &mut Canvas, t: &Theme, x: i32, w: i32) {
+    c.fill(Rect::new(x, t.m.bar_h - 2, w, 2), t.c.accent);
 }
 
-fn slot_visual(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, front: bool, ink: Color) {
+fn slot_visual(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual) {
     let s = t.m.slot_icon;
     let (x, y) = r.centre(s, s);
     match v {
         Visual::Badge { icon: name, tint } => {
-            let col = if front { ink } else { *tint };
-            icon::draw(c, name, IconSize::Tiny, x, y, col);
+            icon::draw(c, name, IconSize::Tiny, x, y, *tint);
         }
         Visual::Image(img) => {
             let (x, y) = r.centre(img.w, img.h);
             c.image(x, y, img);
         }
         Visual::Letter { ch, tint } => {
-            let col = if front { ink } else { *tint };
             let mut buf = [0u8; 4];
             let up = ch.to_uppercase().next().unwrap_or(*ch);
-            text_centre(c, t.f.small_bold, r, up.encode_utf8(&mut buf), col);
+            text_centre(c, t.f.small_bold, r, up.encode_utf8(&mut buf), *tint);
         }
     }
 }
@@ -532,11 +528,17 @@ pub fn app_row_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selec
     }
 }
 
-/// A switcher card: a large badge, the name and a short state line.
+/// A switcher card: a large badge, the name, and one short line under it.
 pub struct Card<'a> {
     pub label: &'a str,
+    /// A state worth words, such as closing. Drawn instead of `stats`.
     pub note: &'a str,
+    /// Memory and CPU, in small mono figures. `Some("")` keeps the line's
+    /// room, so the card does not move when they arrive.
+    pub stats: Option<&'a str>,
     pub visual: Visual<'a>,
+    /// A pause mark on the badge's corner.
+    pub paused: bool,
 }
 
 /// A card without its selection frame: a thin edge so it reads as a card,
@@ -546,16 +548,58 @@ pub fn card_content(c: &mut Canvas, t: &Theme, r: Rect, card: &Card, selected: b
         c.stroke_round_rect(r, t.m.radius_large, t.c.border);
     }
     let b = t.m.badge;
-    // Badge, name and state as one block, centred in the card.
-    let block = b + 6 + 18 + if card.note.is_empty() { 0 } else { 15 };
+    // Badge, name and line as one block, centred in the card.
+    let has_line = !card.note.is_empty() || card.stats.is_some();
+    let line_h = if has_line { 14 } else { 0 };
+    let block = b + 6 + 18 + line_h;
     let br = Rect::new(r.x + (r.w - b) / 2, r.y + (r.h - block) / 2, b, b);
     badge(c, t, br, &card.visual, selected);
+    if card.paused {
+        let (under, ink) = if selected {
+            (t.c.surface, t.c.fg)
+        } else {
+            (t.c.bg, soft(t))
+        };
+        pause_mark(c, t, br, under, ink);
+    }
     let f = if selected { t.f.body_bold } else { t.f.body };
     let col = if selected { t.c.fg } else { soft(t) };
     let lr = Rect::new(r.x + 4, br.bottom() + 6, r.w - 8, 18);
     text_centre(c, f, lr, card.label, col);
-    let nr = Rect::new(r.x + 4, lr.bottom(), r.w - 8, 15);
-    text_centre(c, t.f.small, nr, card.note, t.c.muted);
+    let nr = Rect::new(r.x + 4, lr.bottom(), r.w - 8, line_h);
+    if !card.note.is_empty() {
+        text_centre(c, t.f.small, nr, card.note, t.c.muted);
+    } else if let Some(stats) = card.stats {
+        text_centre(c, t.f.mono, nr, stats, t.c.muted);
+    }
+}
+
+/// Two bars over the badge's bottom-right corner, outlined in `under` so
+/// they read over any badge. Drawn, not baked: no icon to keep in memory.
+fn pause_mark(c: &mut Canvas, t: &Theme, badge: Rect, under: Color, ink: Color) {
+    let (w, h, gap) = (3, 10, 2);
+    let pair = Rect::new(badge.right() - 6, badge.bottom() - 8, 2 * w + gap, h);
+    c.round_rect(pair.inset(-2), t.m.radius_small, under);
+    for dx in [0, w + gap] {
+        c.round_rect(Rect::new(pair.x + dx, pair.y, w, h), 1, ink);
+    }
+}
+
+/// A share of something, such as CPU or memory: the label and value on one
+/// line in mono, a thin bar under them. `share` runs from 0 to 1. Keep the
+/// text ASCII: mono is not otherwise drawn by the shell, and ASCII touches
+/// the fewest pages of its tables.
+pub fn meter(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: &str, share: f32) {
+    let f = t.f.mono;
+    let bar = Rect::new(r.x, r.bottom() - 3, r.w, 3);
+    let line = Rect::new(r.x, r.y, r.w, bar.y - 2 - r.y);
+    text_in(c, f, line, label, t.c.muted);
+    text_right(c, f, r.right(), line, value, soft(t));
+    c.round_rect(bar, 1, t.c.border);
+    let fill = (bar.w as f32 * share.clamp(0.0, 1.0)).round() as i32;
+    if fill > 0 {
+        c.round_rect(Rect::new(bar.x, bar.y, fill, bar.h), 1, t.c.accent);
+    }
 }
 
 pub enum Trailing<'a> {

@@ -6,6 +6,7 @@ use crate::home::Icon;
 use crate::switcher::{self, Card};
 use gh0st_core::child;
 use gh0st_core::esc::KILL_GRACE_MS;
+use gh0st_core::usage::AppUsage;
 use gh0st_ui::Canvas;
 
 /// How often to look for a leftover group member once the leader has gone:
@@ -37,6 +38,9 @@ pub struct Task {
     pub pixels: Option<Canvas>,
     /// When it was last in front, for the switcher's starting card.
     pub used: u64,
+    /// Memory for the switcher, read once per pause: a stopped app's
+    /// figure hardly moves. Re-read each sample while it runs behind.
+    pub mem_kb: Option<u64>,
 }
 
 impl Task {
@@ -166,6 +170,21 @@ impl Tasks {
         gh0st_core::rt::earliest([recheck, kill])
     }
 
+    /// What the switcher shows per app: memory as last read, with CPU from
+    /// `cpu_of` for an app running behind.
+    pub fn usage(&self, cpu_of: impl Fn(&str) -> Option<f32>) -> Vec<(&str, AppUsage)> {
+        self.list
+            .iter()
+            .filter_map(|t| {
+                // Zero means no member could be read (run through sudo):
+                // no figure beats a wrong one.
+                let mem_kb = t.mem_kb.filter(|&m| m > 0)?;
+                let cpu = cpu_of(&t.id);
+                Some((t.id.as_str(), AppUsage { mem_kb, cpu }))
+            })
+            .collect()
+    }
+
     /// The switcher's cards, in the same order.
     pub fn cards(&self) -> Vec<Card> {
         self.list
@@ -198,6 +217,7 @@ mod tests {
             leader_done: false,
             pixels: None,
             used,
+            mem_kb: None,
         }
     }
 

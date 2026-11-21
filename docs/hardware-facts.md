@@ -62,6 +62,9 @@ Read without changing anything, on the stock M5 image with gh0st installed.
   `NFT_SOCKET`, WireGuard. Built in: fscrypt, seccomp.
 - Missing: Landlock and Yama (the LSM list is `capability` only), suspend
   (`PM_SLEEP` is off), and a PSCI CPU idle driver.
+- `/proc/PID/task/TID/children` is there (`CONFIG_PROC_CHILDREN`), so the
+  switcher's figures walk the shell's own tree instead of all 167 processes.
+  `CLK_TCK` is 100. Read 2026-11-21.
 
 ## Idle, 60 s on home (`scripts/measure.sh`)
 

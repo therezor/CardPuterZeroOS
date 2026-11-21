@@ -1,16 +1,21 @@
 //! The app switcher: Home, then every open app in the order they opened, as cards across the body. No snapshots: a card is the app's
-//! badge, name and state.
+//! badge, with a pause mark while paused, its name, and its memory, plus CPU
+//! for an app running behind. Under the cards, the whole system's CPU and
+//! memory as two meters.
 //! The bar's dock is the same list in the same order, and its fill follows
 //! the cursor.
 
 use crate::home::{self, Icon, Size};
 use crate::motion::{self, lerp, lerp_rect};
+use gh0st_core::usage::{AppUsage, SystemUsage};
 use gh0st_ui::Canvas;
 use gh0st_ui::geom::Rect;
 use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, Card as CardView, Hint, Status, Visual};
 
 const GLIDE_MS: u64 = 80;
+/// Room under the cards for the meters.
+const STRIP_H: i32 = 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -63,7 +68,7 @@ impl Geo {
         Geo {
             area: Rect::new(x, area.y + 1, area.w, area.h),
             card_w,
-            card_h: area.h - 16,
+            card_h: area.h - STRIP_H,
             gap,
             per: per as usize,
         }
@@ -89,6 +94,18 @@ pub struct Switcher {
     geo: Geo,
     animations: bool,
     anim: Option<Anim>,
+    /// The stats line per app id, formatted once per sample.
+    stats: Vec<(String, String)>,
+    meters: Option<Meters>,
+}
+
+/// The system's figures under the cards.
+#[derive(Clone)]
+struct Meters {
+    /// Text and share. Memory shows at once; CPU needs a second sample.
+    cpu: Option<(String, f32)>,
+    ram: String,
+    ram_share: f32,
 }
 
 impl Switcher {
@@ -100,7 +117,67 @@ impl Switcher {
             geo: Geo::new(t),
             animations: true,
             anim: None,
+            stats: Vec::new(),
+            meters: None,
         }
+    }
+
+    /// New figures. Leaves the cursor and any motion alone. A paused app
+    /// shows memory only: it uses no CPU. A figure that needs CPU waits for
+    /// it, so a line appears whole. True if any text changed.
+    pub fn set_usage(&mut self, apps: &[(&str, AppUsage)], system: SystemUsage) -> bool {
+        let stats: Vec<(String, String)> = apps
+            .iter()
+            .filter_map(|(id, u)| {
+                let card = self.apps.iter().find(|c| c.id == *id)?;
+                let text = match (card.state, u.cpu) {
+                    (State::Paused, _) => mb(u.mem_kb),
+                    // ASCII only: the figures are mono, and its ASCII glyphs are
+                    // indexed directly, so no other page of the table is read.
+                    (State::Running, Some(cpu)) => format!("{}  {}", mb(u.mem_kb), pct(cpu)),
+                    // No CPU yet after a gap: keep the last line.
+                    _ => self.stats.iter().find(|(i, _)| i == id)?.1.clone(),
+                };
+                Some((id.to_string(), text))
+            })
+            .collect();
+        let cpu = match system.cpu {
+            Some(cpu) => Some((pct(cpu), cpu / 100.0)),
+            // No CPU after a gap: keep the last figure.
+            None => self.meters.as_ref().and_then(|m| m.cpu.clone()),
+        };
+        let meters = Some(Meters {
+            cpu,
+            ram: format!(
+                "{}/{} MB",
+                mb_round(system.used_kb),
+                mb_round(system.total_kb)
+            ),
+            ram_share: system.used_kb as f32 / system.total_kb.max(1) as f32,
+        });
+        // Only the text decides a redraw: a bar moves less than a pixel
+        // between two values that print the same.
+        let text = |m: &Option<Meters>| {
+            m.as_ref()
+                .map(|m| (m.cpu.as_ref().map(|c| c.0.clone()), m.ram.clone()))
+        };
+        let changed = stats != self.stats || text(&meters) != text(&self.meters);
+        self.stats = stats;
+        self.meters = meters;
+        changed
+    }
+
+    /// Drops every figure, for a switcher about to open.
+    pub fn clear_usage(&mut self) {
+        self.stats.clear();
+        self.meters = None;
+    }
+
+    fn stats_of(&self, id: &str) -> &str {
+        self.stats
+            .iter()
+            .find(|(i, _)| i == id)
+            .map_or("", |(_, s)| s.as_str())
     }
 
     pub fn set_animations(&mut self, on: bool) {
@@ -242,6 +319,9 @@ impl Switcher {
                 None => CardView {
                     label: "Home",
                     note: "",
+                    // An empty line, so every badge sits on one row.
+                    stats: Some(""),
+                    paused: false,
                     visual: Visual::Badge {
                         icon: widgets::LOGO,
                         tint: t.c.accent,
@@ -250,10 +330,11 @@ impl Switcher {
                 Some(app) => CardView {
                     label: &app.name,
                     note: match app.state {
-                        State::Paused => "Paused",
-                        State::Running => "Running",
                         State::Closing => "Closing\u{2026}",
+                        _ => "",
                     },
+                    stats: Some(self.stats_of(&app.id)),
+                    paused: app.state == State::Paused,
                     visual: home::visual(t, &app.icon, &app.name, Size::Large),
                 },
             };
@@ -261,7 +342,7 @@ impl Switcher {
         }
         widgets::selection_ring(c, t, frame);
         c.set_clip(old);
-        self.dots(c, t);
+        self.meters(c, t);
         let mut hints = Vec::new();
         if self.selected > 0 {
             hints.push(Hint {
@@ -281,24 +362,40 @@ impl Switcher {
         widgets::hint_bar(c, t, &hints, None);
     }
 
-    /// One dot per card, centred under the strip, when they do not all fit.
-    fn dots(&self, c: &mut Canvas, t: &Theme) {
-        let n = self.count();
-        if n <= self.geo.per {
+    /// CPU and memory, side by side across the cards' width. The top bar's
+    /// dock marks the selected app, so no dots are needed here.
+    fn meters(&self, c: &mut Canvas, t: &Theme) {
+        let Some(m) = &self.meters else {
             return;
-        }
-        let w = (n as i32 - 1) * 8;
-        let x0 = self.geo.area.x + (self.geo.area.w - w) / 2;
-        let cy = self.geo.area.y + self.geo.card_h + 8;
-        for i in 0..n {
-            let col = if i == self.selected {
-                t.c.accent
-            } else {
-                t.c.border
-            };
-            c.circle((x0 + i as i32 * 8) as f32, cy as f32, 2.0, col);
-        }
+        };
+        let (first, last) = (self.geo.card(0), self.geo.card(self.geo.per as i32 - 1));
+        let y = first.bottom() + 3;
+        let h = self.geo.area.bottom() - 1 - y;
+        let w = (last.right() - first.x - self.geo.gap) / 2;
+        let left = Rect::new(first.x, y, w, h);
+        let right = Rect::new(last.right() - w, y, w, h);
+        // Before its first figure, the CPU meter is an empty track.
+        let (cpu, share) = m.cpu.as_ref().map_or(("", 0.0), |(s, f)| (s.as_str(), *f));
+        widgets::meter(c, t, left, "CPU", cpu, share);
+        widgets::meter(c, t, right, "RAM", &m.ram, m.ram_share);
     }
+}
+
+fn mb_round(kb: u64) -> u64 {
+    (kb + 512) / 1024
+}
+
+fn mb(kb: u64) -> String {
+    if kb < 10 * 1024 {
+        format!("{:.1} MB", kb as f32 / 1024.0)
+    } else {
+        format!("{} MB", mb_round(kb))
+    }
+}
+
+/// Whole percents: tenths would change, and redraw, on every sample.
+fn pct(p: f32) -> String {
+    format!("{p:.0}%")
 }
 
 #[cfg(test)]
@@ -341,6 +438,37 @@ mod tests {
         s.move_by(1, 0);
         assert_eq!((s.selected, s.top), (3, 1));
         assert!(matches!(s.anim.unwrap().motion, Motion::Scroll { .. }));
+    }
+
+    #[test]
+    fn figures_show_memory_and_cpu_only_for_an_app_running_behind() {
+        let mut s = switcher(&["a", "b", "c"]);
+        let mut apps: Vec<Card> = s.apps().to_vec();
+        apps[1].state = State::Running;
+        apps[2].state = State::Closing;
+        s.set_apps(apps);
+        let mem = |mem_kb, cpu| AppUsage { mem_kb, cpu };
+        let system = |cpu| SystemUsage {
+            used_kb: 200 * 1024,
+            total_kb: 352 * 1024,
+            cpu,
+        };
+        let first = [("a", mem(40_000, None)), ("b", mem(5_000, None))];
+        assert!(s.set_usage(&first, system(None)));
+        // A running app and the system wait for their CPU.
+        assert_eq!(s.stats_of("a"), "39 MB");
+        assert_eq!(s.stats_of("b"), "");
+        let m = s.meters.as_ref().unwrap();
+        assert_eq!((m.cpu.is_none(), m.ram.as_str()), (true, "200/352 MB"));
+        let next = [("a", mem(40_000, Some(0.0))), ("b", mem(5_000, Some(12.4)))];
+        assert!(s.set_usage(&next, system(Some(6.6))));
+        assert_eq!(s.stats_of("a"), "39 MB");
+        assert_eq!(s.stats_of("b"), "4.9 MB  12%");
+        let m = s.meters.as_ref().unwrap();
+        assert_eq!(m.cpu.as_ref().unwrap().0, "7%");
+        // Same text, no redraw. A gap with no CPU keeps the last lines.
+        assert!(!s.set_usage(&next, system(Some(6.7))));
+        assert!(!s.set_usage(&first, system(None)));
     }
 
     #[test]

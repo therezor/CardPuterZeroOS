@@ -142,6 +142,12 @@ other key.
   app reads `SYN_DROPPED` instead of keys typed elsewhere. Ignore `EV_MSC`.
 - Closing a paused app from the switcher sends SIGTERM and SIGCONT together,
   then SIGKILL 3 s later. So does a stopping shell.
+- The switcher shows each app's memory: PSS plus swapped PSS, summed over
+  its group and every descendant, so a terminal's inner shell counts. A
+  paused app is read once per pause, and the figure shows at once on the
+  next open. An app running in the background is read every second while
+  the switcher shows, with its CPU share. The first CPU figure comes 250 ms
+  after opening. Nothing is read while the switcher is closed.
 - An app allowed to run in the background (Settings > Apps) is not stopped.
   While the shell is in front it gets no keys (the shell holds the grab),
   and the shell repaints over anything it draws, keeping its pixels for its

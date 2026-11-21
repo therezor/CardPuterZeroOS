@@ -111,36 +111,7 @@ pub fn group_stopped(pgid: i32, ms: u64) -> bool {
 /// Any member of the group still running, from `/proc`. Without `/proc` (a
 /// host run) the stop is trusted.
 fn group_has_running(pgid: i32) -> bool {
-    let Ok(rd) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    rd.flatten().any(|e| {
-        let name = e.file_name();
-        let Some(pid) = name
-            .to_str()
-            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
-        else {
-            return false;
-        };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-            return false;
-        };
-        match stat_state_pgrp(&stat) {
-            Some((state, pgrp)) => pgrp == pgid && !matches!(state, 'T' | 't' | 'Z' | 'X'),
-            None => false,
-        }
-    })
-}
-
-/// State and process group from a `/proc/PID/stat` line. The name field can
-/// hold spaces and brackets, so parsing starts after its last `)`.
-fn stat_state_pgrp(stat: &str) -> Option<(char, i32)> {
-    let rest = &stat[stat.rfind(')')? + 1..];
-    let mut f = rest.split_whitespace();
-    let state = f.next()?.chars().next()?;
-    let _ppid = f.next()?;
-    let pgrp = f.next()?.parse().ok()?;
-    Some((state, pgrp))
+    crate::procfs::processes().any(|p| p.pgrp == pgid && !matches!(p.state, 'T' | 't' | 'Z' | 'X'))
 }
 
 pub fn cont(pgid: i32) {
@@ -280,15 +251,6 @@ mod tests {
 
     fn sh(cmd: &str) -> Vec<String> {
         ["/bin/sh", "-c", cmd].map(String::from).to_vec()
-    }
-
-    #[test]
-    fn stat_lines_read_past_odd_names() {
-        assert_eq!(
-            stat_state_pgrp("123 (we (ird) x) T 1 120 120 0"),
-            Some(('T', 120))
-        );
-        assert_eq!(stat_state_pgrp("garbage"), None);
     }
 
     #[test]

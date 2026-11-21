@@ -8,6 +8,7 @@
 //!
 //! Both env vars are optional.
 
+use gh0st_core::usage::{AppUsage, SystemUsage};
 use gh0st_shell::home::{self, Entry, Home, Icon, Layout, Size};
 use gh0st_shell::switcher::{self, Card, Switcher};
 use gh0st_ui::Canvas;
@@ -146,7 +147,27 @@ fn switcher_scene(t: &Theme, stock: Option<&Path>, n: usize, at: usize) -> Canva
     if n > 3 {
         apps[2].state = switcher::State::Closing;
     }
-    s.set_apps(apps);
+    // The terminal runs behind, so it has a CPU figure.
+    apps[1].state = switcher::State::Running;
+    let figures = [
+        (38_400, None),
+        (11_900, Some(2.4)),
+        (0, None),
+        (61_700, None),
+        (6_100, None),
+    ];
+    let usage: Vec<(&str, AppUsage)> = apps
+        .iter()
+        .zip(figures)
+        .map(|(a, (mem_kb, cpu))| (a.id.as_str(), AppUsage { mem_kb, cpu }))
+        .collect();
+    let system = SystemUsage {
+        used_kb: 221_000,
+        total_kb: 360_448,
+        cpu: Some(if at == 0 { 100.0 } else { 6.8 }),
+    };
+    s.set_apps(apps.clone());
+    s.set_usage(&usage, system);
     s.select(at);
     let d = s.dock(t);
     let mut c = new_canvas(t);

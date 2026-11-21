@@ -20,6 +20,7 @@ use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::rt;
 use gh0st_core::script::Script;
 use gh0st_core::status::{self, Net, Watch};
+use gh0st_core::usage::{self, Sampler};
 use gh0st_ui::display::{Display, Frames};
 use gh0st_ui::drm;
 use gh0st_ui::fb::{self, Framebuffer};
@@ -41,6 +42,11 @@ const TOAST_MS: u64 = 1500;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
 const VOLUME_STEP: i32 = 10;
+/// The switcher's figures: the first CPU reading after this, then one every
+/// `STATS_MS`. Read only while the switcher shows. 250 ms is 100 ticks over
+/// four cores at `CLK_TCK` 100: whole percents, as shown.
+const STATS_FIRST_MS: u64 = 250;
+const STATS_MS: u64 = 1000;
 
 /// `gh0st shell`, or `gh0st shell --sim DIR` on a host: keys from a script on
 /// stdin (see `gh0st_core::script`), frames saved as PNGs in DIR.
@@ -219,6 +225,9 @@ struct Shell {
     home_armed: bool,
     swallow_release: Option<u16>,
     rescan_at: Option<u64>,
+    sampler: Sampler,
+    /// Next read of the switcher's figures.
+    stats_at: Option<u64>,
     debug: bool,
     t0: u64,
     /// When the loop last woke, for the debug log.
@@ -330,6 +339,8 @@ impl Shell {
             home_armed: false,
             swallow_release: None,
             rescan_at: None,
+            sampler: Sampler::default(),
+            stats_at: None,
             debug: std::env::var("GH0ST_LOG").is_ok_and(|v| v == "debug"),
             t0,
             wake_at: Instant::now(),
@@ -519,6 +530,9 @@ impl Shell {
                     .then_some(self.tab_down.map(|t| t + LOCK_HOLD_MS))
                     .flatten(),
                 self.rescan_at,
+                (shell && self.screen == Screen::Switcher && self.next_frame(now).is_none())
+                    .then_some(self.stats_at)
+                    .flatten(),
                 self.dark_ms.filter(|_| shell).map(|d| self.last_input + d),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
@@ -710,6 +724,8 @@ impl Shell {
         // Any wake while something moves draws the next frame.
         if self.next_frame(now).is_some() {
             self.dirty = true;
+        } else if self.screen == Screen::Switcher && self.stats_at.is_some_and(|t| now >= t) {
+            self.sample_usage(now);
         }
         if now >= self.clock_at {
             self.refresh_status();
@@ -1204,6 +1220,7 @@ impl Shell {
             leader_done: false,
             pixels: None,
             used: now,
+            mem_kb: None,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -1276,6 +1293,7 @@ impl Shell {
         self.display.suspend();
         t.state = tasks::State::Front;
         t.used = now;
+        t.mem_kb = None;
         let pgid = t.pgid;
         if self.debug {
             eprintln!("gh0st shell: resumed {} at {}", t.name, now - self.t0);
@@ -1324,6 +1342,53 @@ impl Shell {
         self.switcher.select(at);
         self.screen = Screen::Switcher;
         self.dirty = true;
+        self.sampler.reset();
+        self.switcher.clear_usage();
+        // The first frame shows what costs nothing to know: memory of the
+        // system and of apps already read. The walk waits for the frame:
+        // the loop draws before it polls.
+        if let Some(system) = usage::memory() {
+            let usage = self.tasks.usage(|_| None);
+            self.switcher.set_usage(&usage, system);
+        }
+        self.stats_at = Some(rt::now_ms());
+    }
+
+    /// Reads the switcher's figures. Only the trees of apps that need a
+    /// read are walked: those running behind, and paused ones not yet read.
+    fn sample_usage(&mut self, now: u64) {
+        let read: Vec<(String, i32)> = self
+            .tasks
+            .iter()
+            .filter(|t| match t.state {
+                tasks::State::Background => true,
+                tasks::State::Paused => t.mem_kb.is_none(),
+                _ => false,
+            })
+            .map(|t| (t.id.clone(), t.pgid))
+            .collect();
+        let groups: Vec<i32> = read.iter().map(|r| r.1).collect();
+        let Some(sample) = self.sampler.sample(now, &groups) else {
+            self.stats_at = None;
+            return;
+        };
+        for ((id, _), u) in read.iter().zip(&sample.apps) {
+            if let Some(t) = self.tasks.get_mut(id) {
+                t.mem_kb = Some(u.mem_kb);
+            }
+        }
+        let usage = self.tasks.usage(|id| {
+            let i = read.iter().position(|r| r.0 == id)?;
+            sample.apps[i].cpu
+        });
+        if self.switcher.set_usage(&usage, sample.system) {
+            self.dirty = true;
+        }
+        let wait = match sample.system.cpu {
+            Some(_) => STATS_MS,
+            None => STATS_FIRST_MS,
+        };
+        self.stats_at = Some(now + wait);
     }
 
     /// The dock and the switcher: open apps, in the order they opened.
