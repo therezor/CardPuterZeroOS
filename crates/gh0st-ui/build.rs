@@ -158,32 +158,48 @@ fn main() {
     bake_icons(&root.join("icons"), &out);
 }
 
-/// Where to place a mono face's glyphs within a pixel so the most stems
-/// and bars land on whole pixels: the offset, in eighths, that leaves the
-/// least half-covered pixels over ASCII. Hinting does this in a font
-/// renderer; ab_glyph has none.
+/// How much of a glyph sits on half-covered pixels: what blurs it.
+fn blur(font: &FontRef, scale: PxScale, id: ab_glyph::GlyphId, at: ab_glyph::Point) -> f32 {
+    let mut sum = 0.0;
+    if let Some(o) = font.outline_glyph(id.with_scale_and_position(scale, at)) {
+        o.draw(|_, _, c| {
+            let c = c.clamp(0.0, 1.0);
+            sum += c * (1.0 - c);
+        });
+    }
+    sum
+}
+
+/// Where a mono face sits within a pixel so the most bars land on whole
+/// pixels: the offset, in eighths, with the least blur over ASCII. Hinting
+/// does this in a font renderer; ab_glyph has none.
 fn grid_fit(font: &FontRef, scale: PxScale) -> ab_glyph::Point {
-    let blur = |dx: f32, dy: f32| -> f32 {
-        let mut sum = 0.0;
-        for ch in '!'..='~' {
-            let glyph = font.glyph_id(ch).with_scale_and_position(scale, point(dx, dy));
-            if let Some(o) = font.outline_glyph(glyph) {
-                o.draw(|_, _, c| {
-                    let c = c.clamp(0.0, 1.0);
-                    sum += c * (1.0 - c);
-                });
-            }
-        }
-        sum
-    };
     let mut best = (f32::MAX, point(0.0, 0.0));
     for i in 0..8 {
         for j in 0..8 {
-            let (dx, dy) = (i as f32 / 8.0, j as f32 / 8.0);
-            let b = blur(dx, dy);
+            let at = point(i as f32 / 8.0, j as f32 / 8.0);
+            let b: f32 = ('!'..='~')
+                .map(|ch| blur(font, scale, font.glyph_id(ch), at))
+                .sum();
             if b < best.0 {
-                best = (b, point(dx, dy));
+                best = (b, at);
             }
+        }
+    }
+    best.1
+}
+
+/// Each glyph then moves sideways, up to half a pixel, to put its own
+/// stems on pixels: m's three stems can't all fit the face's offset. The
+/// cell stays put; only the ink inside it moves.
+fn glyph_fit(font: &FontRef, scale: PxScale, id: ab_glyph::GlyphId, face: ab_glyph::Point) -> ab_glyph::Point {
+    let mut best = (f32::MAX, face);
+    for i in -4..4 {
+        let at = point(face.x + i as f32 / 8.0, face.y);
+        let b = blur(font, scale, id, at);
+        // Ties keep the face's offset, so glyphs don't drift for nothing.
+        if b < best.0 - 1e-3 || (b - best.0).abs() <= 1e-3 && i == 0 {
+            best = (b, at);
         }
     }
     best.1
@@ -226,6 +242,11 @@ fn bake_fonts(dir: &Path, out: &Path) {
                     continue;
                 }
                 let adv = (scaled.h_advance(id) * 64.0).round() as u32;
+                let at = if f.snap_x_height {
+                    at
+                } else {
+                    glyph_fit(&font, scale, id, at)
+                };
                 let glyph = id.with_scale_and_position(scale, at);
                 let (w, h, left, top, off) = match font.outline_glyph(glyph) {
                     Some(outline) => {

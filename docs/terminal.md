@@ -19,7 +19,9 @@ screen at each size.
 
 Terminus is a bitmap face and stays crisp at every size. JetBrains Mono is
 anti-aliased; the bake places each face where most stems land on whole
-pixels and sharpens the edges, as hinting would. Below 6x14 it still blurred
+pixels, nudges each glyph up to half a pixel to fit its own stems (m has
+three in six pixels), and sharpens the edges, as hinting would. With
+anti-aliasing off, m came out crisp but r, h, b and o broke at 6x14. Below 6x14 it still blurred
 past reading, so it starts there. Box drawing, blocks, braille and powerline arrows are drawn per
 cell, so lines join at any size.
 
