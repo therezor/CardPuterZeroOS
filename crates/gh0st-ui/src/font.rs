@@ -50,8 +50,8 @@ impl BakedFont {
     fn find(&self, cp: u32) -> Option<&Glyph> {
         // ASCII is baked first and complete, so it indexes directly.
         if (0x20..0x7f).contains(&cp) {
-            let g = &self.glyphs[(cp - 0x20) as usize];
-            if g.cp == cp {
+            // A face without ASCII, like the icons, falls through.
+            if let Some(g) = self.glyphs.get((cp - 0x20) as usize).filter(|g| g.cp == cp) {
                 return Some(g);
             }
         }
@@ -59,6 +59,11 @@ impl BakedFont {
             .binary_search_by_key(&cp, |g| g.cp)
             .ok()
             .map(|i| &self.glyphs[i])
+    }
+
+    /// Whether the face has `ch` baked, so drawing it needs no fallback.
+    pub fn has(&self, ch: char) -> bool {
+        self.find(ch as u32).is_some()
     }
 
     /// Advance of one char in 1/64 px.

@@ -1,6 +1,7 @@
 //! Cells to pixels. Each cell clips its own glyph, so a glyph wider than
 //! its cell never spills into the next one. Box drawing, blocks and
-//! braille are drawn, not taken from the font.
+//! braille are drawn, not taken from the font. A Nerd Font icon is the one
+//! exception: it takes the blank after it too, as in kitty and WezTerm.
 
 use crate::boxes;
 use crate::vt::CursorShape;
@@ -18,6 +19,8 @@ pub struct Look {
     pub font: Font,
     /// None: bold strikes the regular glyph twice, a pixel apart.
     pub bold: Option<Font>,
+    /// Nerd Font icons, two cells wide.
+    pub icons: Font,
     pub cw: i32,
     pub ch: i32,
     /// Baseline from the cell top.
@@ -31,6 +34,7 @@ impl Look {
         Look {
             font,
             bold: face.bold,
+            icons: face.icons,
             cw: font.measure("M").max(1),
             ch,
             base: font.ascent + (ch - font.ascent + font.descent) / 2,
@@ -109,9 +113,15 @@ pub fn row(
 ) {
     let end = (span.first + span.n).min(cells.len());
     let mut buf = [0u8; 4];
+    let mut taken = false;
     for (col, cell) in cells.iter().enumerate().take(end).skip(span.first) {
+        if std::mem::take(&mut taken) {
+            continue;
+        }
         let cx = span.x + (col - span.first) as i32 * look.cw;
-        let wide = cell.is_wide() && col + 1 < end;
+        let icon = !cell.is_cluster() && private_use(cell.code()) && look.icons.has(cell.ch());
+        taken = icon && col + 1 < end && spills(pal, cell, &cells[col + 1], col, cursor, marked);
+        let wide = (cell.is_wide() && col + 1 < end) || taken;
         let w = if wide { look.cw * 2 } else { look.cw };
         let rect = Rect::new(cx, span.y, w, look.ch).intersect(&area);
         // A spacer in the first column is the half of a char we can't see.
@@ -134,7 +144,19 @@ pub fn row(
         }
         if !cell.is_spacer() && (cell.is_cluster() || cell.code() != ' ' as u32) {
             let drawn = !cell.is_cluster() && boxes::draw(c, rect, cell.code(), fg, bg);
-            if !drawn {
+            if icon {
+                // Without the blank after it, the middle of the icon shows.
+                let x = if taken { cx } else { cx - look.cw / 2 };
+                let old = c.set_clip(rect);
+                look.icons.draw(
+                    c,
+                    x,
+                    span.y + look.base,
+                    cell.ch().encode_utf8(&mut buf),
+                    fg,
+                );
+                c.set_clip(old);
+            } else if !drawn {
                 glyph(c, look, rect, cx, span.y, cell, clusters, fg, &mut buf);
             }
         }
@@ -169,6 +191,34 @@ pub fn row(
     }
 }
 
+/// Nerd Fonts puts its icons in the Private Use Areas. Powerline's are
+/// drawn by `boxes`.
+fn private_use(cp: u32) -> bool {
+    matches!(cp, 0xe000..=0xe09f | 0xe0d8..=0xf8ff | 0xf0000..=0x10fffd)
+}
+
+/// Whether an icon at `col` may draw over `next`: a plain blank that looks
+/// the same, with no cursor on it and no mark that starts or ends between.
+fn spills(
+    pal: &Colors,
+    cell: &Cell,
+    next: &Cell,
+    col: usize,
+    cursor: Option<Cursor>,
+    marked: Option<(usize, usize)>,
+) -> bool {
+    const LINES: u32 = attr::UNDERLINE | attr::STRIKE;
+    let in_mark = |x: usize| marked.is_some_and(|(a, b)| x >= a && x < b);
+    !next.is_cluster()
+        && !next.is_spacer()
+        && !next.is_wide()
+        && next.code() == ' ' as u32
+        && pal.pair(next).1 == pal.pair(cell).1
+        && next.attrs() & LINES == cell.attrs() & LINES
+        && cursor.is_none_or(|k| k.col != col + 1)
+        && in_mark(col) == in_mark(col + 1)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn glyph(
     c: &mut Canvas,
@@ -197,4 +247,67 @@ fn glyph(
         font.draw(c, x + 1, y + look.base, text, fg);
     }
     c.set_clip(old);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vt::cell::Pen;
+
+    // Yazi's folder.
+    const FOLDER: char = '\u{e5ff}';
+
+    /// Draws `text` in one row at text size `zoom` and returns which cells
+    /// got ink.
+    fn inked(zoom: usize, text: &str) -> Vec<bool> {
+        let th = Theme::default();
+        let pal = Colors::of(&th);
+        let look = Look::of(&theme::TERM_TERMINUS[zoom]);
+        let pen = Pen::default();
+        let cells: Vec<Cell> = text.chars().map(|c| Cell::new(c, &pen)).collect();
+        let n = cells.len();
+        let mut c = Canvas::new(n as i32 * look.cw, look.ch);
+        c.fill(c.bounds(), pal.bg);
+        let span = Span {
+            x: 0,
+            y: 0,
+            first: 0,
+            n,
+        };
+        let area = c.bounds();
+        row(
+            &mut c,
+            area,
+            &look,
+            &pal,
+            &span,
+            &cells,
+            &Clusters::default(),
+            None,
+            None,
+        );
+        (0..n as i32)
+            .map(|i| {
+                (i * look.cw..(i + 1) * look.cw)
+                    .any(|x| (0..look.ch).any(|y| c.get(x, y) != pal.bg))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_icon_takes_the_blank_after_it() {
+        for z in 0..theme::TERM_TERMINUS.len() {
+            assert_eq!(inked(z, &format!("{FOLDER}  ")), [true, true, false]);
+            assert_eq!(inked(z, &format!(" {FOLDER} a")), [false, true, true, true]);
+        }
+    }
+
+    #[test]
+    fn an_icon_stays_in_its_cell_when_text_follows() {
+        for z in 0..theme::TERM_TERMINUS.len() {
+            assert_eq!(inked(z, &format!("{FOLDER}a ")), [true, true, false]);
+            // The last column has no blank after it on screen.
+            assert_eq!(inked(z, &format!(" {FOLDER}")), [false, true]);
+        }
+    }
 }

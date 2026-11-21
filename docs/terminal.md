@@ -19,7 +19,14 @@ screen at each size.
 Terminus is a bitmap face: every pixel is on or off, so text stays sharp.
 Anti-aliased faces blurred on the panel, as nothing hints them; JetBrains
 Mono and Fixed were tried and dropped on 2026-11-21. Box drawing, blocks,
-braille and powerline arrows are drawn per cell, so lines join at any size.
+braille and powerline arrows and rounded caps are drawn per cell, so lines
+join at any size.
+
+Nerd Font icons are baked for the set yazi's theme uses (285 of them, list
+and licences in `assets/fonts/nerd`). They are anti-aliased: at 6x12, 1-bit
+icons fall apart. An icon draws across its cell and the blank after it, as
+in kitty and WezTerm. With no blank after it, the middle of the icon shows
+in one cell. Icons outside the set draw as boxes.
 
 - **Magnify** (default). Programs see a fixed grid, 80x24 by default
   (Settings: Magnify grid). The screen shows part of it, follows the cursor,

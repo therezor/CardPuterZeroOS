@@ -267,29 +267,54 @@ pub const TERM_DIM: u8 = 140;
 pub const TERM_CURSOR_W: i32 = 2;
 pub const TERM_MARK_W: i32 = 2;
 
-/// A terminal zoom level: a face and its bold, if baked. Without one the
-/// terminal draws bold by striking the glyph twice.
+/// A terminal zoom level: a face, its bold if baked, and Nerd Font icons
+/// sized two cells wide. Without a bold the terminal draws bold by striking
+/// the glyph twice.
 #[derive(Clone, Copy)]
 pub struct TermFace {
     pub regular: Font,
     pub bold: Option<Font>,
+    pub icons: Font,
 }
 
-const fn term_face(regular: Font, bold: Option<Font>) -> TermFace {
-    TermFace { regular, bold }
+const fn term_face(regular: Font, bold: Option<Font>, icons: Font) -> TermFace {
+    TermFace {
+        regular,
+        bold,
+        icons,
+    }
 }
 
 /// Terminus, the terminal's face. A bitmap face, so crisp at every size:
 /// anti-aliased faces blurred on the panel, as nothing hints them. Cells
 /// 6x12, 8x14, 8x16, 10x18, 10x20.
 pub const TERM_TERMINUS: &[TermFace] = &[
-    term_face(&font::TERMINUS_12, Some(&font::TERMINUS_12_BOLD)),
-    term_face(&font::TERMINUS_14, Some(&font::TERMINUS_14_BOLD)),
-    term_face(&font::TERMINUS_16, Some(&font::TERMINUS_16_BOLD)),
-    term_face(&font::TERMINUS_18, Some(&font::TERMINUS_18_BOLD)),
-    term_face(&font::TERMINUS_20, Some(&font::TERMINUS_20_BOLD)),
+    term_face(
+        &font::TERMINUS_12,
+        Some(&font::TERMINUS_12_BOLD),
+        &font::TERMINUS_12_ICONS,
+    ),
+    term_face(
+        &font::TERMINUS_14,
+        Some(&font::TERMINUS_14_BOLD),
+        &font::TERMINUS_14_ICONS,
+    ),
+    term_face(
+        &font::TERMINUS_16,
+        Some(&font::TERMINUS_16_BOLD),
+        &font::TERMINUS_16_ICONS,
+    ),
+    term_face(
+        &font::TERMINUS_18,
+        Some(&font::TERMINUS_18_BOLD),
+        &font::TERMINUS_18_ICONS,
+    ),
+    term_face(
+        &font::TERMINUS_20,
+        Some(&font::TERMINUS_20_BOLD),
+        &font::TERMINUS_20_ICONS,
+    ),
 ];
-
 
 pub const FONTS: Fonts = Fonts {
     small: &font::SANS_13,
