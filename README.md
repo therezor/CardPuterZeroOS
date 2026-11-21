@@ -43,7 +43,7 @@ The binary is about 1 MB, static, with its fonts and icons built in.
   back, so home follows what Settings changed.
 - Brightness, volume, mute and screenshot keys work everywhere and show a
   toast, over apps too.
-- Turns the screen off after the stock `dark_time` and locks when Tab is held
+- Tab opens the task manager from home. Turns the screen off after the stock `dark_time` and locks when Tab is held
   for 3 seconds.
 - Counts down and powers off at 3% battery, even over a running app.
 

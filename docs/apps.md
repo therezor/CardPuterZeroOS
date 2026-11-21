@@ -135,7 +135,8 @@ other key.
 
 ## Pausing
 
-- Fn+K (`KEY_HOME`) pauses the app in front and opens the switcher. The app
+- Fn+K (`KEY_HOME`) pauses the app in front and opens the switcher. On the
+  home screen a tap of Tab opens it too, and closes it; Tab held locks. The app
   sees Fn and Home pressed and released; the shell waits until every key is
   up, then sends SIGSTOP to the group.
 - The shell keeps the app's last frame. Before it sends SIGCONT, it puts that

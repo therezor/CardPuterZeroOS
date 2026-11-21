@@ -964,8 +964,17 @@ impl Shell {
         if k.is(code::TAB) {
             match k.state {
                 State::Press => self.tab_down = Some(now),
-                State::Release => self.tab_down = None,
-                State::Repeat => {}
+                // A tap opens the task manager from home and closes it
+                // again. A hold locks the screen instead (see tick).
+                State::Release if self.tab_down.take().is_some() => match self.screen {
+                    Screen::Switcher => self.switcher_back(),
+                    Screen::Home => {
+                        let at = self.last_used_card();
+                        self.open_switcher(Back::Home, at);
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
             return;
         }
