@@ -6,8 +6,7 @@
 
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::overlay::Overlay;
-use crate::sim::Script;
-use crate::switcher::{self, Card, Switcher};
+use crate::switcher::{Card, Switcher};
 use crate::tasks::{self, Task, Tasks};
 use gh0st_core::apps::{self, App, Dirs, IconRef};
 use gh0st_core::backlight::Backlight;
@@ -19,6 +18,7 @@ use gh0st_core::evdev;
 use gh0st_core::job::{self, Job};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::rt;
+use gh0st_core::script::Script;
 use gh0st_core::status::{self, Net, Watch};
 use gh0st_ui::display::{Display, Frames};
 use gh0st_ui::drm;
@@ -32,22 +32,18 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Instant, SystemTime};
 
-const DEFAULT_DARK_SECS: i64 = 30;
-const TOAST_MS: u64 = 1500;
-const LOCK_HOLD_MS: u64 = 3000;
-const RESCAN_DEBOUNCE_MS: u64 = 300;
-const STATE_DIR: &str = ".local/state/gh0st";
 /// How long a paused app may take to stop before its frame is read anyway.
 const STOP_WAIT_MS: u64 = 100;
 /// How often the shell looks for rows a background app drew over it.
 const GUARD_MS: u64 = 500;
+const DEFAULT_DARK_SECS: i64 = 30;
+const TOAST_MS: u64 = 1500;
+const LOCK_HOLD_MS: u64 = 3000;
+const RESCAN_DEBOUNCE_MS: u64 = 300;
 const VOLUME_STEP: i32 = 10;
 
-mod settings_ui;
-use settings_ui::SettingsUi;
-
 /// `gh0st shell`, or `gh0st shell --sim DIR` on a host: keys from a script on
-/// stdin (see `sim.rs`), frames saved as PNGs in DIR.
+/// stdin (see `gh0st_core::script`), frames saved as PNGs in DIR.
 pub fn main(args: &[String]) -> i32 {
     let t0 = rt::now_ms();
     let sim = match args {
@@ -83,7 +79,6 @@ pub fn main(args: &[String]) -> i32 {
 enum Screen {
     Home,
     Switcher,
-    Settings,
     Locked,
     /// Backlight off after `dark_time`. The next key only wakes it.
     Off,
@@ -93,7 +88,6 @@ enum Screen {
 #[derive(Clone, PartialEq, Eq)]
 enum Back {
     Home,
-    Settings,
     App(String),
 }
 
@@ -109,7 +103,6 @@ enum Pending {
 #[derive(Clone, PartialEq, Eq)]
 enum JobKind {
     Volume,
-    Net(settings_ui::NetJob),
 }
 
 /// Where keys come from: the keyboard, or a script in `--sim`.
@@ -189,7 +182,6 @@ struct Shell {
     apps: Vec<App>,
     home: Home,
     switcher: Switcher,
-    settings: Option<SettingsUi>,
     tasks: Tasks,
     back: Back,
     pending: Option<Pending>,
@@ -243,20 +235,9 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| "/".into())
 }
 
-fn pins_path() -> PathBuf {
-    home_dir().join(STATE_DIR).join("pinned")
-}
-
-fn load_pins() -> Vec<String> {
-    std::fs::read_to_string(pins_path())
-        .map(|s| {
-            s.lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default()
+/// `gh0st.clock`: `12h`, or a 24-hour clock.
+fn clock_24h(c: &Config) -> bool {
+    c.get_str("gh0st.clock") != Some("12h")
 }
 
 impl Shell {
@@ -301,7 +282,6 @@ impl Shell {
             canvas: Canvas::new(t.m.width, t.m.height),
             home: Home::new(Vec::new(), layout, &t),
             switcher: Switcher::new(&t),
-            settings: None,
             tasks: Tasks::default(),
             back: Back::Home,
             pending: None,
@@ -325,7 +305,7 @@ impl Shell {
             full_flush: true,
             dirs,
             apps: Vec::new(),
-            pins: load_pins(),
+            pins: apps::load_pins(),
             terminal,
             backlight: on_device
                 .then(|| Backlight::find(Path::new("/sys/class/backlight")))
@@ -397,7 +377,6 @@ impl Shell {
                     self.muted = Some(muted);
                 }
             }
-            JobKind::Net(n) => self.net_job_done(n, j),
         }
     }
 
@@ -501,7 +480,7 @@ impl Shell {
     }
 
     fn refresh_status(&mut self) {
-        let (clock, at) = rt::clock_text(settings_ui::clock_24h(&self.config));
+        let (clock, at) = rt::clock_text(clock_24h(&self.config));
         self.clock = clock;
         self.clock_at = at;
         self.battery = self.battery_dir.as_deref().and_then(battery::sample);
@@ -549,9 +528,7 @@ impl Shell {
                         false => self.next_frame(now),
                     })
                     .flatten(),
-                (app || self.screen == Screen::Settings)
-                    .then(|| self.esc.next_at())
-                    .flatten(),
+                app.then(|| self.esc.next_at()).flatten(),
                 (shell
                     && self
                         .tasks
@@ -739,9 +716,6 @@ impl Shell {
         }
         if self.screen != Screen::Off {
             self.guard_background();
-        }
-        if self.screen == Screen::Settings {
-            self.settings_esc_hold(now);
         }
         if self.tab_down.is_some_and(|t| now >= t + LOCK_HOLD_MS) {
             self.tab_down = None;
@@ -941,13 +915,6 @@ impl Shell {
             }
             return;
         }
-        // A dialog takes every key, Tab (show password) included.
-        if self.screen == Screen::Settings
-            && self.settings.as_ref().is_some_and(|u| u.dialog.is_some())
-        {
-            self.settings_key(k, now);
-            return;
-        }
         if k.is(code::TAB) {
             match k.state {
                 State::Press => self.tab_down = Some(now),
@@ -958,10 +925,6 @@ impl Shell {
         }
         if self.screen == Screen::Switcher {
             self.switcher_key(k, now);
-            return;
-        }
-        if self.screen == Screen::Settings {
-            self.settings_key(k, now);
             return;
         }
         if k.is(code::HOME) {
@@ -1176,11 +1139,7 @@ impl Shell {
             self.pins.push(id);
             self.toast(format!("Pinned {name}"));
         }
-        let path = pins_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = config::write_atomic(&path, (self.pins.join("\n") + "\n").as_bytes());
+        let _ = apps::save_pins(&self.pins);
         self.rescan();
     }
 
@@ -1193,10 +1152,6 @@ impl Shell {
         };
         if self.home.mode() == Mode::Search {
             self.home.cancel_search();
-        }
-        if app.builtin == Some(apps::Builtin::Settings) {
-            self.open_settings();
-            return;
         }
         match self.tasks.get(&id).map(|t| t.state) {
             Some(tasks::State::Closing { .. }) => {
@@ -1249,7 +1204,6 @@ impl Shell {
             leader_done: false,
             pixels: None,
             used: now,
-            opened: now,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -1344,14 +1298,14 @@ impl Shell {
         self.esc = EscHold::default();
         self.last_input = rt::now_ms();
         self.full_flush = true;
-        // Stock apps may have changed config.json, and the app may have
-        // installed or removed apps (the Store does).
+        // Settings and stock apps may have changed config.json and the pins,
+        // and the app may have installed or removed apps (the Store does).
         self.reload_config();
+        self.pins = apps::load_pins();
         self.refresh_status();
         self.rescan();
         let cards = self.cards();
         self.switcher.set_apps(cards);
-        self.refresh_settings();
         self.sync_grab();
         self.dirty = true;
     }
@@ -1372,45 +1326,14 @@ impl Shell {
         self.dirty = true;
     }
 
-    /// The dock and the switcher: open apps and Settings, in the order they
-    /// opened.
-    fn cards(&mut self) -> Vec<Card> {
-        let mut cards = self.tasks.cards();
-        if let Some(at) = self.settings_slot() {
-            let settings = self
-                .apps
-                .iter()
-                .find(|a| a.builtin == Some(apps::Builtin::Settings))
-                .cloned();
-            let icon = match settings {
-                Some(a) => self.entry_for(&a).icon,
-                None => Icon::Letter { tint: 0 },
-            };
-            cards.insert(
-                at,
-                Card {
-                    id: apps::SETTINGS_ID.into(),
-                    name: "Settings".into(),
-                    icon,
-                    state: switcher::State::Open,
-                },
-            );
-        }
-        cards
-    }
-
-    /// Where Settings sits among the cards, while it is open.
-    fn settings_slot(&self) -> Option<usize> {
-        let opened = self.settings.as_ref()?.opened;
-        Some(self.tasks.iter().filter(|t| t.opened <= opened).count())
+    /// The dock and the switcher: open apps, in the order they opened.
+    fn cards(&self) -> Vec<Card> {
+        self.tasks.cards()
     }
 
     /// The card used last, for the switcher's cursor. 0 is Home.
     fn last_used_card(&self) -> usize {
-        let mut used: Vec<u64> = self.tasks.iter().map(|t| t.used).collect();
-        if let (Some(at), Some(ui)) = (self.settings_slot(), self.settings.as_ref()) {
-            used.insert(at, ui.used);
-        }
+        let used: Vec<u64> = self.tasks.iter().map(|t| t.used).collect();
         (0..used.len())
             .max_by_key(|&i| used[i])
             .map_or(0, |i| i + 1)
@@ -1422,7 +1345,6 @@ impl Shell {
             Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.resumable()) => {
                 self.pending = Some(Pending::Resume(id));
             }
-            Back::Settings if self.settings.is_some() => self.open_settings(),
             _ => {
                 self.screen = Screen::Home;
                 self.dirty = true;
@@ -1449,7 +1371,6 @@ impl Shell {
                         self.screen = Screen::Home;
                         self.dirty = true;
                     }
-                    Some(id) if id == apps::SETTINGS_ID => self.open_settings(),
                     Some(id) => {
                         if self.tasks.get(&id).is_some_and(|t| t.resumable()) {
                             self.pending = Some(Pending::Resume(id));
@@ -1480,12 +1401,8 @@ impl Shell {
             _ if k.is(code::BACKSPACE) && k.state == State::Press => {
                 // Del on an app closes it; on Home, every app.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
-                    Some(id) if id == apps::SETTINGS_ID => self.settings = None,
                     Some(id) => self.tasks.close(&id, now),
-                    None => {
-                        self.tasks.close_all(now);
-                        self.settings = None;
-                    }
+                    None => self.tasks.close_all(now),
                 }
                 let cards = self.cards();
                 self.switcher.set_apps(cards);
@@ -1507,32 +1424,17 @@ impl Shell {
             .collect();
         let front = match self.screen {
             Screen::Switcher => Some(self.switcher.selected()),
-            Screen::Settings => self.settings_slot().map(|i| i + 1),
             _ => Some(0),
         };
         let status = status_of(&clock, self.battery, self.net, &dock, front);
         match self.screen {
             Screen::Locked => widgets::lock_screen(&mut self.canvas, &t, &clock, &status),
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
-            Screen::Settings => {
-                settings_ui::draw(&mut self.canvas, &t, &status, self.settings.as_ref());
-                if self.esc.hint_visible() {
-                    widgets::banner(
-                        &mut self.canvas,
-                        &t,
-                        "Hold ESC to close Settings",
-                        t.c.warning,
-                    );
-                }
-            }
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
         drop(dock);
         drop(cards);
-        if matches!(
-            self.screen,
-            Screen::Home | Screen::Switcher | Screen::Settings
-        ) {
+        if matches!(self.screen, Screen::Home | Screen::Switcher) {
             self.draw_low_battery();
             if let Some((text, _)) = &self.toast {
                 widgets::toast(&mut self.canvas, &t, text);
@@ -1686,12 +1588,7 @@ fn is_screenshot(k: &Key) -> bool {
 
 fn palette_of(c: &Config) -> theme::Palette {
     c.get_str("gh0st.palette")
-        .and_then(|n| {
-            theme::PALETTES
-                .iter()
-                .find(|p| p.name.eq_ignore_ascii_case(n))
-        })
-        .copied()
+        .and_then(theme::palette)
         .unwrap_or(theme::MINT)
 }
 

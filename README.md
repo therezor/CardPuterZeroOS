@@ -33,11 +33,12 @@ The binary is about 1 MB, static, with its fonts and icons built in.
 - Shows the skull, a slot for each open app, the network, battery and clock
   in the top bar. It reads them from sysfs when the kernel reports a change,
   so nothing polls.
-- Settings is part of the shell: Wi-Fi, network, Bluetooth, display, sound,
-  look, which apps show, time zone, SSH, password, logs, about. Root actions
-  go through a small helper that takes four fixed verbs. It acts like an
-  app: it has a slot and a switcher card while open, Esc on its first page
-  goes home and leaves it open, and holding Esc closes it.
+- Settings is an app, `gh0st-settings`, built on the app SDK: Wi-Fi,
+  network, Bluetooth, display, sound, look, which apps show, time zone, SSH,
+  password, logs, about. Root actions go through a small helper that takes
+  four fixed verbs. Fn+K pauses it like any app, and Esc on its first page
+  closes it. The shell reads config.json again whenever it takes the screen
+  back, so home follows what Settings changed.
 - Brightness, volume, mute and screenshot keys work everywhere and show a
   toast, over apps too.
 - Turns the screen off after the stock `dark_time` and locks when Tab is held
@@ -90,13 +91,16 @@ as PNGs.
 - `crates/gh0st-core`: config, `.desktop` parsing, keyboard map, the event
   loop and child processes.
 - `crates/gh0st-shell`: the home screen and the shell process.
+- `crates/gh0st-app`: the app SDK. The guide is `docs/sdk.md`.
+- `crates/gh0st-settings`: Settings, an app built on the SDK.
 - `crates/gh0st`: the `gh0st` binary.
 - `os/kernel/panel-mipi-dbi-m`: the patched panel driver and its overlay.
 - `docs/`: hardware facts, the panel driver, the app contract, the distro plan.
 
 ## Status
 
-The shell, the switcher and Settings run on the device. An app can be
+The shell and the switcher run on the device. Settings as a separate app is
+built and runs in the sim; it is not yet tested on the device. An app can be
 allowed to keep running in the background; while another app is in front it
 still shares that app's keyboard and panel. Still to build: the terminal,
 which lives in its own repository.

@@ -1,0 +1,17 @@
+[package]
+name = "gh0st-settings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Settings for the CardputerZero, a gh0st app"
+
+[[bin]]
+name = "gh0st-settings"
+path = "src/main.rs"
+
+[dependencies]
+gh0st-app.workspace = true
+# The app list, pins, rfkill and the backlight are the device's, shared with
+# the shell.
+gh0st-core.workspace = true

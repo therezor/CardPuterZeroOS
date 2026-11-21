@@ -37,8 +37,6 @@ pub struct Task {
     pub pixels: Option<Canvas>,
     /// When it was last in front, for the switcher's starting card.
     pub used: u64,
-    /// When it started: Settings takes its place in the dock by this.
-    pub opened: u64,
 }
 
 impl Task {
@@ -200,7 +198,6 @@ mod tests {
             leader_done: false,
             pixels: None,
             used,
-            opened: used,
         }
     }
 

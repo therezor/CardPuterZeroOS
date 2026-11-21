@@ -5,7 +5,5 @@ pub mod motion;
 pub mod overlay;
 pub mod run;
 pub mod search;
-pub mod settings;
-pub mod sim;
 pub mod switcher;
 pub mod tasks;

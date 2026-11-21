@@ -13,4 +13,5 @@ pub mod job;
 pub mod keys;
 pub mod rfkill;
 pub mod rt;
+pub mod script;
 pub mod status;

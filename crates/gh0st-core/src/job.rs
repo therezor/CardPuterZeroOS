@@ -94,6 +94,19 @@ impl Job {
             .is_some_and(|s| libc::WIFEXITED(s) && libc::WEXITSTATUS(s) == 0)
     }
 
+    /// The exit code, once it exited normally. `None` before that, or if a
+    /// signal ended it.
+    pub fn code(&self) -> Option<i32> {
+        self.status
+            .filter(|&s| libc::WIFEXITED(s))
+            .map(|s| libc::WEXITSTATUS(s))
+    }
+
+    /// What it printed so far, stdout and stderr together.
+    pub fn bytes(&self) -> &[u8] {
+        &self.out
+    }
+
     pub fn output(&self) -> String {
         String::from_utf8_lossy(&self.out).into_owned()
     }

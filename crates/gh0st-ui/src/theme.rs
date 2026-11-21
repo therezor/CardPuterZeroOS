@@ -63,6 +63,9 @@ pub struct Metrics {
     pub slot_icon: i32,
     /// Switcher cards across the body.
     pub cards: i32,
+    /// Centres of the five bottom slots. The screen sits over the number keys
+    /// 4 to 8, so each slot is above its key. Stock's guide gives these.
+    pub softkey_x: [i32; 5],
 }
 
 #[derive(Clone, Copy)]
@@ -153,6 +156,14 @@ pub const PAPER: Palette = Palette {
 
 pub const PALETTES: &[Palette] = &[MINT, NORD, PAPER];
 
+/// A palette by its name, any case: the value of `gh0st.palette`.
+pub fn palette(name: &str) -> Option<Palette> {
+    PALETTES
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(name))
+        .copied()
+}
+
 /// 320x170: an 18 px bar on top, an 18 px hint bar below, 134 px between. The
 /// grid inside that is 4x2 tiles of 74x60 with 4 px gaps and a 6/5 px margin.
 /// Bar slots are 20x14, so a 12 px icon keeps a 4 px side and 1 px top pad.
@@ -180,6 +191,7 @@ pub const CARDPUTER: Metrics = Metrics {
     slot_gap: 3,
     slot_icon: 12,
     cards: 3,
+    softkey_x: [49, 105, 161, 217, 273],
 };
 
 pub const FONTS: Fonts = Fonts {

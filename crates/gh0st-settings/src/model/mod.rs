@@ -1,15 +1,15 @@
-//! Settings, a screen of the shell. Pages are built from a snapshot of the
-//! system (`pages::State`) each time it changes, and drawn with the shared
-//! rows, so this file holds only the model and its drawing.
+//! The Settings model: pages built from a snapshot of the system
+//! (`pages::State`) each time it changes, and drawn with the shared rows.
+//! The SDK draws the OS bars; this draws the body and dialogs.
 
 pub mod bt;
 pub mod net;
 pub mod pages;
 
-use gh0st_ui::Canvas;
-use gh0st_ui::geom::Rect;
-use gh0st_ui::theme::Theme;
-use gh0st_ui::widgets::{self, Hint, Row, Status, Trailing};
+use gh0st_app::gfx::Canvas;
+use gh0st_app::gfx::geom::Rect;
+use gh0st_app::gfx::theme::Theme;
+use gh0st_app::gfx::widgets::{self, Row, Trailing};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageId {
@@ -126,7 +126,6 @@ impl Item {
 }
 
 pub enum Line {
-    Section(String),
     Readout(String, String),
 }
 
@@ -137,7 +136,6 @@ pub enum Body {
 }
 
 pub struct Page {
-    pub id: PageId,
     pub title: String,
     pub body: Body,
     /// Extra keys this page takes, shown before Esc.
@@ -226,16 +224,9 @@ pub fn lines(t: &Theme) -> (Rect, usize) {
     widgets::rows_area(t, t.m.line_h)
 }
 
-pub fn draw(
-    c: &mut Canvas,
-    t: &Theme,
-    status: &Status,
-    page: &Page,
-    cur: Cursor,
-    dialog: Option<&Dialog>,
-) {
-    c.fill(widgets::body(t), t.c.bg);
-    widgets::status_bar(c, t, status);
+/// The page body and any dialog. The SDK has cleared the body and draws
+/// the bars.
+pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor, dialog: Option<&Dialog>) {
     match &page.body {
         Body::List(items) => {
             let (area, n) = rows(t);
@@ -257,7 +248,6 @@ pub fn draw(
             for (slot, line) in lines_.iter().skip(cur.top).take(n).enumerate() {
                 let r = Rect::new(area.x, area.y + slot as i32 * t.m.line_h, w, t.m.line_h);
                 match line {
-                    Line::Section(s) => widgets::section(c, t, r, s),
                     Line::Readout(k, v) => widgets::readout(c, t, r, k, v),
                 }
             }
@@ -265,8 +255,6 @@ pub fn draw(
             widgets::scrollbar(c, t, track, cur.top, n, lines_.len());
         }
     }
-    let item = page.item(cur.selected);
-    widgets::hint_bar(c, t, &hints(page, item), None);
     if let Some(d) = dialog {
         draw_dialog(c, t, d);
     }
@@ -295,7 +283,7 @@ fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
 }
 
 /// What the keys do on this row, then the page's own keys, then Esc.
-fn hints<'a>(page: &'a Page, item: Option<&Item>) -> Vec<Hint<'a>> {
+pub fn hints(page: &Page, item: Option<&Item>) -> Vec<(&'static str, &'static str)> {
     let mut out = Vec::new();
     let what = item.map(|i| (&i.act, &i.value));
     match what {
@@ -319,9 +307,7 @@ fn hints<'a>(page: &'a Page, item: Option<&Item>) -> Vec<Hint<'a>> {
     }
     out.extend(page.keys.iter().copied());
     out.push(("Esc", "back"));
-    out.into_iter()
-        .map(|(key, label)| Hint { key, label })
-        .collect()
+    out
 }
 
 fn draw_dialog(c: &mut Canvas, t: &Theme, d: &Dialog) {

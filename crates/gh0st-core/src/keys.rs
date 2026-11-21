@@ -196,6 +196,11 @@ const US_ROWS: &[(u16, &str)] = &[
 ];
 
 /// The code that types `c` without Shift. For key scripts and tests.
+/// The letter or digit a key types without Shift: Ctrl+S reads as `s`.
+pub fn base_char(code: u16) -> Option<char> {
+    us(code, false)
+}
+
 pub fn code_for_char(c: char) -> Option<u16> {
     if c == ' ' {
         return Some(code::SPACE);

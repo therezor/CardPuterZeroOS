@@ -16,43 +16,7 @@ use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, AppItem, Hint, Status, Visual};
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Layout {
-    #[default]
-    Grid,
-    List,
-}
-
-impl Layout {
-    pub fn from_config(s: &str) -> Option<Layout> {
-        match s {
-            "grid" => Some(Layout::Grid),
-            "list" => Some(Layout::List),
-            _ => None,
-        }
-    }
-
-    pub fn config_name(self) -> &'static str {
-        match self {
-            Layout::Grid => "grid",
-            Layout::List => "list",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Layout::Grid => "Grid",
-            Layout::List => "List",
-        }
-    }
-
-    pub fn toggled(self) -> Layout {
-        match self {
-            Layout::Grid => Layout::List,
-            Layout::List => Layout::Grid,
-        }
-    }
-}
+pub use gh0st_core::apps::Layout;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {

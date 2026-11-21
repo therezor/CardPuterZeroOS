@@ -3,7 +3,7 @@
 //! becomes rows.
 
 use super::{Act, Body, Command, ConnField, Item, Line, Page, PageId, Setting, Value};
-use crate::home::Layout;
+use gh0st_core::apps::Layout;
 
 /// Screen-off choices, in seconds. 0 is never.
 pub const DARK_TIMES: &[i64] = &[15, 30, 60, 120, 300, 0];
@@ -368,12 +368,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
         PageId::Conn(name) => name.clone(),
         _ => title.into(),
     };
-    Page {
-        id: id.clone(),
-        title,
-        body,
-        keys,
-    }
+    Page { title, body, keys }
 }
 
 fn root(s: &State) -> Vec<Item> {

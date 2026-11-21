@@ -88,6 +88,10 @@ impl Config {
         self.map.insert(key.to_string(), Value::Str(v.to_string()));
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn remove(&mut self, key: &str) {
         self.map.remove(key);
     }
