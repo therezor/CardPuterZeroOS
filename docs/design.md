@@ -167,21 +167,21 @@ needs saying, a dialog or message names them in key pills.
 
 **What a chip is.** A keycap standing on the screen's bottom edge: 19 px
 tall and as wide as its key (54 px), so the bar reads as a row of keys over
-the real ones. Its top corners are rounded 3 px; it is edged on its top and
-sides, with a lighter row under the top edge, and square and open at the
-foot. A short tick at its foot sits over the centre of its key. Inside: a
-12 px icon in the accent colour and one word in Label style, centred. A word
-is never cut: with less than 3 px each side, a chip drops its icon. Four
-letters or so keep it.
+the real ones. No outline: its fill is its shape, with a lighter row along
+its top and its top corners rounded 3 px. At its foot, square on the screen's
+edge, a small notch points down at its key. Inside: a 12 px icon in the
+accent colour and one word in Label style, centred. A word is never cut:
+with less than 3 px each side, a chip drops its icon.
 
 | State | Looks | For |
 |---|---|---|
-| normal | `surface` with a `border` edge, accent icon | most actions |
-| on | a pale accent fill | a toggle that is on: Flash |
-| danger | a `critical` edge and word | Forget, Stop, Close |
+| normal | a `surface` cap, accent icon, plain word | most actions |
+| on | a pale accent cap | a toggle that is on: Flash |
+| danger | the word alone, in `critical`; no icon | Forget, Stop, Close |
 | danger, held | fills `critical` left to right | Erase: hold it 0.7 s |
-| main | `accent` fill | an action that is the page's main one but not on Enter |
-| disabled | no fill, `disabled` word | can't be used now; the key does nothing |
+| armed | a `critical` cap | pressed once, press again |
+| main | an `accent` cap | an action that is the page's main one but not on Enter |
+| disabled | faint cap and word | can't be used now; the key does nothing |
 | pressed | sinks a row, darker, no lit top | while its key is down |
 | busy | the word and "…" | working: no second press |
 

@@ -528,13 +528,16 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
 }
 
 /// One chip: a keycap centred on `cx`, its top at `top`, `w` wide, open at
-/// the foot. In the action bar the foot is the screen's edge, right over the
-/// key. Pressed, it sinks a row and darkens, as a key does.
+/// the foot, with a notch there pointing at the key. In the action bar the
+/// foot is the screen's edge, right over the key. Pressed, it sinks a row
+/// and darkens, as a key does.
 pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
-    // A word is never cut: short of room, a chip drops its icon first.
+    let red = matches!(ch.look, Look::Danger | Look::DangerMain | Look::Hold(_));
+    // A word is never cut: short of room, a chip drops its icon first. A
+    // red chip says it in its word alone.
     let tight = chip_ink_w(t, ch) + 2 * t.m.chip_pad_min > w;
     let bare;
-    let ch = if tight && !ch.icon.is_empty() && !ch.word.is_empty() {
+    let ch = if (tight || red) && !ch.icon.is_empty() && !ch.word.is_empty() {
         bare = Chip { icon: "", ..*ch };
         &bare
     } else {
@@ -545,63 +548,60 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     let sink = i32::from(pressed);
     let r = Rect::new(cx - w / 2, top + sink, w, t.m.chip_h - sink);
     let k = &t.c;
-    // Fill, word, icon, edge, tick. The icon carries the colour; the word
-    // stays plain, so a row of chips reads at a glance.
-    let (fill, ink, icon_ink, edge, tick) = match ch.look {
-        Look::Normal => (k.surface, k.fg, k.accent, Some(k.border), k.muted),
-        Look::Main => (k.accent, k.accent_fg, k.accent_fg, None, k.accent_fg),
-        Look::On => (mix(k.bg, k.accent, 80), k.accent, k.accent, None, k.accent),
-        Look::Danger | Look::Hold(_) => {
-            (k.surface, k.critical, k.critical, Some(k.critical), k.critical)
-        }
-        Look::DangerMain => (k.critical, k.bg, k.bg, None, k.bg),
-        Look::Disabled => (k.bg, k.disabled(), k.disabled(), Some(k.border), k.border),
-        Look::Pressed => {
-            // Darker than at rest on any palette.
-            let down = if light { mix(k.surface, k.fg, 25) } else { mix(k.surface, k.bg, 150) };
-            (down, k.fg, k.accent, Some(k.border), k.muted)
-        }
-        Look::Busy => (k.surface, k.muted, k.muted, Some(k.border), k.muted),
+    // No outline: the fill is the shape. On a light palette `surface` is
+    // too near `bg`, so the cap takes a step toward `border`.
+    let cap = if light { mix(k.surface, k.border, 110) } else { k.surface };
+    let down = if light { mix(cap, k.fg, 25) } else { mix(k.surface, k.bg, 150) };
+    // Fill, word, icon, notch. The icon carries the colour; the word stays
+    // plain, but for red chips, whose word alone is red.
+    let (fill, ink, icon_ink, notch) = match ch.look {
+        Look::Normal => (cap, k.fg, k.accent, k.muted),
+        Look::Main => (k.accent, k.accent_fg, k.accent_fg, k.accent_fg),
+        Look::On => (mix(k.bg, k.accent, 80), k.accent, k.accent, k.accent),
+        Look::Danger | Look::Hold(_) => (cap, k.critical, k.critical, k.critical),
+        Look::DangerMain => (k.critical, k.bg, k.bg, k.bg),
+        Look::Disabled => (mix(k.bg, cap, 120), k.disabled(), k.disabled(), k.disabled()),
+        Look::Pressed => (down, k.fg, k.accent, k.muted),
+        Look::Busy => (cap, k.muted, k.muted, k.muted),
     };
     // Round on top, square at the foot: the shape runs on past the foot and
-    // the clip cuts it there, edge and all.
+    // the clip cuts it there.
     let old = c.clip();
     c.set_clip(r.intersect(&old));
     let shape = Rect::new(r.x, r.y, r.w, r.h + t.m.chip_r);
     c.round_rect(shape, t.m.chip_r, fill);
-    if let Some(e) = edge {
-        c.stroke_round_rect(shape, t.m.chip_r, e);
-    }
-    // A keycap's lit top: one lighter row under the edge. A pressed key
-    // has none.
+    // A keycap's lit top. A pressed key has none.
     if !pressed && ch.look != Look::Disabled {
-        let y = r.y + i32::from(edge.is_some());
-        // Lighter than the fill on any palette: toward fg on a dark one,
-        // toward white on a light one.
         let lit = if light {
             mix(fill, crate::color::rgb(255, 255, 255), 160)
         } else {
             mix(fill, k.fg, 40)
         };
-        c.hline(r.x + t.m.chip_r, r.right() - t.m.chip_r, y, lit);
+        c.hline(r.x + t.m.chip_r, r.right() - t.m.chip_r, r.y, lit);
     }
     c.set_clip(old);
-    // The tick points at the key: centred on it, at the screen's edge.
-    let tick_r = Rect::new(cx - 1, r.bottom() - TICK_H, 2, TICK_H);
-    c.fill(tick_r, tick);
+    notch_at(c, cx, r.bottom(), notch);
     chip_ink(c, t, r, ch, ink, icon_ink);
     if let Look::Hold(pc) = ch.look {
         let old = c.clip();
         let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
         c.set_clip(part.intersect(&old));
         c.round_rect(shape, t.m.chip_r, k.critical);
-        c.fill(tick_r, k.bg);
+        notch_at(c, cx, r.bottom(), k.bg);
         chip_ink(c, t, r, ch, k.bg, k.bg);
         c.set_clip(old);
     }
 }
 
-/// The tick at a chip's foot, over the centre of its key.
+/// A small triangle at the foot, pointing down at the key's centre.
+fn notch_at(c: &mut Canvas, cx: i32, foot: i32, color: Color) {
+    for i in 0..TICK_H {
+        let w = 2 * (TICK_H - i);
+        c.fill(Rect::new(cx - w / 2, foot - TICK_H + i, w, 1), color);
+    }
+}
+
+/// The notch at a chip's foot, over the centre of its key.
 const TICK_H: i32 = 3;
 
 /// The action bar: a tab over each of keys 4 to 8 that has one, standing on
