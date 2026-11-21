@@ -125,10 +125,11 @@ pub struct Metrics {
     /// Centres of the five bottom slots. The screen sits over the number keys
     /// 4 to 8, so each slot is above its key. Stock's guide gives these.
     pub softkey_x: [i32; 5],
-    /// An action chip, a tab on the screen's bottom edge: its height, the
-    /// space each side of its ink, and the least that may shrink to when
-    /// neighbours crowd it.
+    /// An action chip, a tab on the screen's bottom edge: its height, its
+    /// top corners, the space each side of its ink, and the least that may
+    /// shrink to when neighbours crowd it.
     pub chip_h: i32,
+    pub chip_r: i32,
     pub chip_pad: i32,
     pub chip_pad_min: i32,
     /// A key pill in the hint bar, a card or a message.
@@ -457,6 +458,7 @@ pub const CARDPUTER: Metrics = Metrics {
     // room for descenders and the 3 px tick that points at the key. One row
     // of the 20 px bar stays clear above it.
     chip_h: 19,
+    chip_r: 3,
     chip_pad: 7,
     chip_pad_min: 4,
     pill_h: 15,

@@ -160,8 +160,8 @@ screen's bottom edge, right above its key, and pressing that key runs it.
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
 needs saying, a dialog or message names them in key pills.
 
-**What a chip is.** A 19 px tab with square corners, edged on its top and
-sides and open at the foot, where the screen ends. A short tick at its foot
+**What a chip is.** A 19 px tab, its top corners rounded 3 px, edged on its
+top and sides and square and open at the foot, where the screen ends. A short tick at its foot
 sits over the centre of its key. A 12 px icon and one word in Label style,
 7 px clear on each side. A word is never cut. When two
 neighbours crowd each other they share the squeeze, down to 4 px each side;

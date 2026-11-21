@@ -574,10 +574,16 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
         Look::Pressed => (k.fg, k.bg, None, k.bg),
         Look::Busy => (k.surface, k.muted, Some(k.border), k.muted),
     };
-    c.fill(r, fill);
+    // Round on top, square at the foot: the shape runs on past the foot and
+    // the clip cuts it there, edge and all.
+    let old = c.clip();
+    c.set_clip(r.intersect(&old));
+    let shape = Rect::new(r.x, r.y, r.w, r.h + t.m.chip_r);
+    c.round_rect(shape, t.m.chip_r, fill);
     if let Some(e) = edge {
-        tab_edge(c, r, e);
+        c.stroke_round_rect(shape, t.m.chip_r, e);
     }
+    c.set_clip(old);
     // The tick points at the key: centred on it, at the screen's edge.
     let tick_r = Rect::new(cx - 1, r.bottom() - TICK_H, 2, TICK_H);
     c.fill(tick_r, tick);
@@ -586,7 +592,7 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
         let old = c.clip();
         let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
         c.set_clip(part.intersect(&old));
-        c.fill(r, k.critical);
+        c.round_rect(shape, t.m.chip_r, k.critical);
         c.fill(tick_r, k.bg);
         chip_ink(c, t, r, ch, k.bg);
         c.set_clip(old);
@@ -595,13 +601,6 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
 
 /// The tick at a chip's foot, over the centre of its key.
 const TICK_H: i32 = 3;
-
-/// Top and sides; the foot stays open.
-fn tab_edge(c: &mut Canvas, r: Rect, color: Color) {
-    c.hline(r.x, r.right(), r.y, color);
-    c.vline(r.x, r.y, r.bottom(), color);
-    c.vline(r.right() - 1, r.y, r.bottom(), color);
-}
 
 /// The action bar: a tab over each of keys 4 to 8 that has one, standing on
 /// the screen's bottom edge right above its key. No fill behind them.
