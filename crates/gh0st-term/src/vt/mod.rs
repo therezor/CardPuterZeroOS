@@ -140,6 +140,8 @@ pub struct Terminal {
     /// Bytes for the PTY: answers to device queries.
     pub replies: Vec<u8>,
     pub shape: CursorShape,
+    /// The shape a program gets back with DECSCUSR 0: the user's choice.
+    pub default_shape: CursorShape,
     /// Bits from [`event`], cleared by the app.
     pub events: u8,
     last: Option<char>,
@@ -174,6 +176,7 @@ impl Terminal {
             clusters: Clusters::default(),
             replies: Vec::new(),
             shape: CursorShape::default(),
+            default_shape: CursorShape::default(),
             events: 0,
             last: None,
         }
@@ -576,8 +579,11 @@ impl Terminal {
 
     fn reset(&mut self) {
         let history = std::mem::replace(&mut self.history, History::new(0));
+        let shape = self.default_shape;
         *self = Terminal {
             history,
+            shape,
+            default_shape: shape,
             ..Terminal::new(self.cols, self.rows, 0)
         };
     }
@@ -962,6 +968,7 @@ impl Perform for Terminal {
             ('q', [b' ']) => {
                 let s = arg(params, 0, 0);
                 self.shape = match s {
+                    0 => self.default_shape,
                     3 | 4 => CursorShape::Underline,
                     5 | 6 => CursorShape::Bar,
                     _ => CursorShape::Block,

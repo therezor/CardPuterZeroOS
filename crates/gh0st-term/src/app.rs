@@ -2,11 +2,12 @@
 //! everything that isn't typing: scroll, pan, zoom, search, copy, tabs.
 
 use crate::keys::{self, HELP};
+use crate::prefs::{self, Prefs, key};
 use crate::pty::{self, Pty};
 use crate::render::{self, Colors, Cursor, Look, Span};
 use crate::view::{Family, Pos, Src, View};
 use crate::vt::cell::{Cell, Clusters};
-use crate::vt::{Terminal, Vt, event};
+use crate::vt::{CursorShape, Terminal, Vt, event};
 use gh0st_app::gfx::widgets::{self, Hint};
 use gh0st_app::gfx::{Rect, Theme};
 use gh0st_app::prelude::*;
@@ -26,17 +27,6 @@ const FRAME_MS: u64 = 20;
 const SYNC_MS: u64 = 150;
 const PAGEUP: u16 = 104;
 const PAGEDOWN: u16 = 109;
-
-/// Settings keys, in the shared config.
-mod key {
-    pub const FONT: &str = "gh0st.term.font";
-    pub const ZOOM: &str = "gh0st.term.zoom";
-    pub const MODE: &str = "gh0st.term.mode";
-    pub const WINDOW: &str = "gh0st.term.window";
-    pub const BAR: &str = "gh0st.term.bar";
-    pub const HISTORY: &str = "gh0st.term.history_kb";
-    pub const ALT_ESC: &str = "gh0st.term.alt_esc";
-}
 
 /// What `gh0st-term` was started with.
 pub struct Options {
@@ -110,6 +100,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("t w", "new, close tab"),
     ("1-9 Tab", "go to tab"),
     ("k", "Home key"),
+    ("s", "settings"),
     ("q Esc", "typing"),
 ];
 
@@ -135,6 +126,7 @@ pub struct Term {
     bar: bool,
     alt_esc: bool,
     history: usize,
+    cursor: CursorShape,
     area: Rect,
     mode: Mode,
     query: String,
@@ -167,6 +159,7 @@ impl Term {
             bar: true,
             alt_esc: true,
             history: 1 << 20,
+            cursor: CursorShape::Block,
             area: Rect::new(0, 0, 320, 152),
             mode: Mode::Typing,
             query: String::new(),
@@ -178,19 +171,19 @@ impl Term {
     }
 
     fn load(&mut self, cx: &mut Cx) {
-        let s = cx.settings();
-        self.family = Family::from_key(s.get_str(key::FONT).unwrap_or(""));
-        self.zoom = s.get_int(key::ZOOM).unwrap_or(0).max(0) as usize;
-        self.zoom = self.zoom.min(self.family.faces().len() - 1);
-        if let Some(w) = s.get_str(key::WINDOW).and_then(parse_size) {
-            self.window_size = w;
-        }
-        self.window = (s.get_str(key::MODE) == Some("window")).then_some(self.window_size);
-        self.bar = s.get_bool(key::BAR).unwrap_or(true);
-        self.alt_esc = s.get_bool(key::ALT_ESC).unwrap_or(true);
-        if let Some(kb) = s.get_int(key::HISTORY) {
-            self.history = (kb.clamp(64, 16 * 1024) as usize) << 10;
-        }
+        let s = prefs::Settings::from(cx.settings());
+        self.family = Family::from_key(&s.font);
+        self.zoom = s.zoom.min(self.family.faces().len() - 1);
+        self.window_size = parse_size(&s.window_size).unwrap_or((80, 24));
+        self.window = s.window.then_some(self.window_size);
+        self.bar = s.bar;
+        self.alt_esc = s.alt_esc;
+        self.history = (s.history_kb as usize) << 10;
+        self.cursor = match s.cursor.as_str() {
+            "underline" => CursorShape::Underline,
+            "bar" => CursorShape::Bar,
+            _ => CursorShape::Block,
+        };
     }
 
     fn save(&self, cx: &mut Cx) {
@@ -295,8 +288,11 @@ impl Term {
         for t in &mut self.tabs {
             t.vt.t.history.set_max(budget);
         }
+        let mut vt = Box::new(Vt::new(cols, rows, budget));
+        vt.t.default_shape = self.cursor;
+        vt.t.shape = self.cursor;
         self.tabs.push(Tab {
-            vt: Box::new(Vt::new(cols, rows, budget)),
+            vt,
             pid: pty.pid,
             pty: Some(pty),
             watch: Some(watch),
@@ -517,6 +513,7 @@ impl Term {
             }
             (_, Some('n')) => self.find_next(!k.shift, cx),
             (_, Some('v')) => self.start_select(cx),
+            (_, Some('s')) => cx.push(Prefs::new()),
             (_, Some('p')) => {
                 self.mode = Mode::Typing;
                 self.paste(cx);
@@ -777,6 +774,19 @@ impl Page for Term {
             eprintln!("gh0st-term: {e}");
             cx.quit();
         }
+    }
+
+    /// Back from the settings page: take what changed.
+    fn resume(&mut self, cx: &mut Cx) {
+        self.load(cx);
+        let budget = self.history / self.tabs.len().max(1);
+        for tab in &mut self.tabs {
+            tab.vt.t.history.set_max(budget);
+            tab.vt.t.default_shape = self.cursor;
+            tab.vt.t.shape = self.cursor;
+        }
+        self.mode = Mode::Typing;
+        self.relayout(cx);
     }
 
     fn ready(&mut self, w: Watch, cx: &mut Cx) {
