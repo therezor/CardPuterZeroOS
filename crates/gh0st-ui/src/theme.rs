@@ -285,6 +285,11 @@ const fn term_face(regular: Font, bold: Option<Font>, icons: Font) -> TermFace {
     }
 }
 
+/// The cell size, in px, the terminal tells programs for images: Terminus
+/// 12's. Images draw 1:1 at that size and scale at the others. It stays put
+/// when the text size changes, so magnify sends no SIGWINCH.
+pub const TERM_IMAGE_CELL: (i32, i32) = (6, 12);
+
 /// Terminus, the terminal's face. A bitmap face, so crisp at every size:
 /// anti-aliased faces blurred on the panel, as nothing hints them. Cells
 /// 6x12, 8x14, 8x16, 10x18, 10x20.

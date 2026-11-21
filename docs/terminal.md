@@ -131,6 +131,29 @@ focus reports, synchronized output (mode 2026), DSR, DA and DECRQM.
   goes behind, and when the tab changes.
 - No title reports and no mouse.
 
+### Images
+
+Sixel. DA1 says so (`4`), which is how yazi finds it. Programs size images
+from the cell size: `CSI 16 t` answers 6x12, and so does the PTY's pixel
+size. That is Terminus 12's cell, so at the default text size an image
+draws 1:1. At larger sizes it scales, nearest pixel, by the smaller of the
+two factors: it keeps its shape and stays in its cells. The reported size
+stays put when the text size changes, so magnify sends no SIGWINCH.
+
+- An image lands at the cursor. The cursor ends on the row below it, in
+  the column it started. So an image that ends on the bottom row scrolls
+  the screen one line. With DECSDM (mode 80) it goes at the top left and
+  the cursor stays.
+- It is pinned to the cells it covers and scrolls with them. Text written
+  over a cell hides the image there, which is how yazi erases one. A clear
+  or a resize drops them all.
+- Nothing past the screen is kept: an image is cut to the grid's pixels.
+  The images of one screen hold at most two bytes per screen pixel (276 KB
+  at 80x24); the oldest go first. History keeps text only.
+- XTSMGRAPHICS reads give 256 colours and the grid's pixel size.
+- Kitty's and iTerm2's protocols are not supported. vte drops kitty's APC
+  strings, and an iTerm2 image would not fit its 4 KB OSC buffer.
+
 ## What it costs
 
 - No timer runs while idle. With the top bar on, the clock wakes the app
@@ -142,5 +165,7 @@ focus reports, synchronized output (mode 2026), DSR, DA and DECRQM.
   rows: text plus 8 bytes per colour change, about 60 bytes for a typical
   line. The budget is for all tabs together.
 - Running behind, the terminal reads and parses output and draws nothing.
+- Sixel data skips vte: the decoder takes it in runs up to the ESC that
+  ends it. An image costs 2 bytes and a bit per pixel.
 
 Not measured on the device yet: see `hardware-facts.md`.

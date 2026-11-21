@@ -59,3 +59,22 @@ fn top_draws_its_header_and_gives_the_screen_back() {
     assert!(screen.iter().any(|r| r.starts_with("PID")), "{screen:#?}");
     assert!(!vt.t.alt_active, "q left the alternate screen");
 }
+
+/// Yazi 26.9.1 on a PNG, with this terminal answering its queries: it finds
+/// sixel in the DA1 reply and shows the file in the preview pane.
+#[test]
+fn yazi_previews_an_image_in_sixel_and_erases_it_on_moving_away() {
+    let (screen, vt) = last_alt_screen(include_bytes!("data/yazi-sixel.bin"));
+    assert!(screen[1].contains("a-home.png"), "{screen:#?}");
+    let imgs = &vt.t.grid().images;
+    assert_eq!(imgs.len(), 1);
+    // In the preview pane, on the right, under the title row.
+    assert!(
+        imgs[0].col > 26 && imgs[0].row == 1,
+        "{} {}",
+        imgs[0].col,
+        imgs[0].row
+    );
+    let (_, vt) = last_alt_screen(include_bytes!("data/yazi-sixel-move.bin"));
+    assert!(vt.t.grid().images.is_empty());
+}

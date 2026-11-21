@@ -31,7 +31,7 @@ fn main() {
     // With a second argument, draws the screen there as a PNG.
     if let Some(png) = std::env::args().nth(2) {
         use gh0st_app::gfx::{Canvas, Rect, Theme, theme};
-        use gh0st_term::render::{self, Colors, Look, Span};
+        use gh0st_term::render::{self, Band, Colors, Look, Span};
         let th = Theme::default();
         let look = Look::of(&theme::TERM_TERMINUS[0]);
         let mut c = Canvas::new(320, 12 * 12);
@@ -56,6 +56,15 @@ fn main() {
                 None,
             );
         }
+        let band = Band {
+            x: 0,
+            first: 0,
+            cols: 53,
+            top: 0,
+            bottom: 12,
+            y: 0,
+        };
+        render::images(&mut c, area, &look, th.c.bg, &band, &t.grid().images);
         gh0st_app::gfx::snapshot::write_png(&c, std::path::Path::new(&png), 3).unwrap();
     }
 }

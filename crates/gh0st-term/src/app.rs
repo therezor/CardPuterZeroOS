@@ -1199,6 +1199,22 @@ impl Page for Term {
                 }
             }
         }
+        // Images, over the grid rows on screen.
+        let first_grid = rows.iter().enumerate().find_map(|(v, s)| match s {
+            Src::Grid(y) => Some((v, *y)),
+            Src::Hist(..) => None,
+        });
+        if let Some((v, y)) = first_grid.filter(|_| !t.grid().images.is_empty()) {
+            let band = render::Band {
+                x: x0,
+                first: view.pan_x,
+                cols: vis_cols,
+                top: y,
+                bottom: (y + rows.len() - v).min(t.rows),
+                y: area.y + v as i32 * look.ch,
+            };
+            render::images(c, area, &look, pal.bg, &band, &t.grid().images);
+        }
         // How far back: a mark on the right edge.
         if let Some(d) = view.depth(t) {
             let h = (area.h / 8).max(4);
