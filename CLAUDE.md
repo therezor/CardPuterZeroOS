@@ -45,6 +45,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
   kept as published), Lucide icons (ISC), our mark, and the terminal's Nerd
   Font icons (a subset, `assets/fonts/nerd/README.md`).
+- `docs/design.md`: the design system. Frame, colour roles, type, the top bar,
+  chips over keys 5-8, keys, dialogs, feedback. `crates/gh0st-ui/examples/design.rs`
+  renders its pictures.
 - `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
   home is an app built to it: Settings, the terminal.
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
