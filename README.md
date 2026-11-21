@@ -1,14 +1,14 @@
-# CardPuterZeroOS
+# Gh0st OS
 
 The CardputerZero OS it should have shipped with. Faster, private, a cleaner UI
 and more features. Fully compatible with CardputerZero apps.
 
 <img src="docs/screenshots/home.png" width="640" alt="The home screen on a CardputerZero">
 
-CardPuterZeroOS is Linux, built on Debian, the same base as the stock OS. So
-every CardputerZero app runs as it is, and so does the Store. Today it installs
-on the stock image and replaces its launcher. Its own lean Debian 13 image is
-next.
+Gh0st OS is Linux for the M5Stack CardputerZero, built on Debian like the
+stock OS. So every CardputerZero app runs as it is, and so does the Store.
+Today it installs on the stock image and replaces its launcher. Its own lean
+Debian 13 image is next.
 
 ## Why switch
 
@@ -43,31 +43,33 @@ Hold Esc for 3 seconds to close one that hangs.
 Measured on a CardputerZero. The first four rows are the launcher alone, over
 one minute idle on the home screen. Stock is APPLaunch 0.6.105.
 
-| | Stock OS | CardPuterZeroOS |
+| | Stock OS | Gh0st OS |
 |---|---|---|
-| Launcher memory | 9.6 MB | 1.3 MB |
-| CPU time | 5,430 ms | 10 ms |
-| Wakeups | 35,026 | 24 |
-| Threads | 14 | 1 |
-| Full-screen redraws | 40 fps, tearing | 50.8 fps, no tearing |
-| CardputerZero apps and the Store | Yes | Yes |
+| RAM used by the launcher (lower is better) | ❌ 9.6 MB | ✅ 1.3 MB |
+| CPU time (lower is better) | ❌ 5,430 ms | ✅ 10 ms |
+| Wakeups (lower is better) | ❌ 35,026 | ✅ 24 |
+| Threads (lower is better) | ❌ 14 | ✅ 1 |
+| Full-screen redraws (higher is better) | ❌ 25 fps, tearing | ✅ 50.8 fps, no tearing |
+| CardputerZero apps and the Store | ✅ Yes | ✅ Yes |
 
-## Coming with the CardPuterZeroOS image
+## Coming with the Gh0st OS image
 
 The image is not built yet. Today you get the launcher and the panel driver on
 top of stock, with stock's defaults. These change once the image ships.
 
-| | Stock image | CardPuterZeroOS image |
+| | Stock image | Gh0st OS image |
 |---|---|---|
-| SSH | On by default | Off until you turn it on |
-| Logs | Kept on the SD card | Off unless you turn them on in Settings |
-| Cloud remote access | `rpi-connect` installed | Not installed |
-| Your device on the network | Announced by name over mDNS | Not announced |
-| Joining a network | Sends the name `cardputerzero` | Sends no name |
-| Update checks | Run on timers | Only when you ask |
-| Incoming connections | Accepted | Blocked by a firewall |
+| RAM used at idle | 216 MB, and 93 MB more in swap | ⏳ To be measured |
+| Battery at idle, screen on | About 4.2 hours | ⏳ To be measured |
+| SSH | ❌ On by default | ✅ Off until you turn it on |
+| Logs | ❌ Kept on the SD card | ✅ Off unless you turn them on in Settings |
+| Your device on the network | ❌ Announced by name over mDNS | ✅ Not announced |
+| Joining a network | ❌ Sends the name `cardputerzero` | ✅ Sends no name |
+| Update checks | ❌ Run on timers | ✅ Only when you ask |
+| Incoming connections | ❌ Accepted | ✅ Blocked by a firewall |
 
-The stock column comes from our audit of the stock image, in
+The stock column comes from our dev device and from community measurements, in
+[docs/hardware-facts.md](docs/hardware-facts.md) and
 [docs/distro-plan.md](docs/distro-plan.md).
 
 Also planned: a PIN on the lock screen, per-app limits on network and files,
@@ -133,7 +135,7 @@ shell on any host. Keys come from a script on stdin, and frames land in DIR
 as PNGs. The screenshots above, apart from the home screen, come from the
 simulator.
 
-Apps for CardPuterZeroOS use the app SDK. The guide is [docs/sdk.md](docs/sdk.md),
+Apps for Gh0st OS use the app SDK. The guide is [docs/sdk.md](docs/sdk.md),
 and [docs/apps.md](docs/apps.md) covers what the launcher gives any app.
 
 - `crates/gh0st-ui`: drawing, fonts, icons, widgets, themes.
