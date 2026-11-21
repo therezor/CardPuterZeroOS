@@ -11,8 +11,11 @@ pub enum IconSize {
     /// A top-bar slot.
     Tiny = 12,
     Small = 14,
+    /// On a list-row badge.
     Bar = 16,
-    Medium = 20,
+    /// On a grid badge. Lucide fills more of its box than app PNGs do, so
+    /// this size makes a symbol read as large as their art.
+    Medium = 26,
     Large = 36,
 }
 
