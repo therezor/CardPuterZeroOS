@@ -5,10 +5,10 @@ CLI page and runs `Terminal=true` apps (`apps.md`).
 
 ## On the screen
 
-The grid fits the screen at the chosen cell size, or stays at a fixed size
-with the screen as a window over it.
+Three layouts, `m` in view mode steps through them. The table gives what
+fits at each size.
 
-| Face | Cells | Grid, top bar on | Grid, top bar off |
+| Face | Cells | Fits, top bar on | Fits, top bar off |
 |---|---|---|---|
 | Terminus 12 (default) | 6x12 | 53x12 | 53x14 |
 | Terminus 14 | 8x14 | 40x10 | 40x12 |
@@ -22,12 +22,15 @@ Terminus is a bitmap face and stays crisp at every size. JetBrains Mono is
 anti-aliased. Box drawing, blocks, braille and powerline arrows are drawn per
 cell, so lines join at any size.
 
-- **Fit.** Programs see the screen's grid. A zoom reflows the text: lines that
-  autowrapped join and wrap again at the new width.
-- **Window.** Programs see a fixed grid, 80x24 by default. The screen shows
-  part of it and follows the cursor. A line on an edge says more is beyond
-  it. A zoom changes what shows, never the grid, so full-screen programs
+- **Magnify** (default). Programs see what fits at the face's smallest size,
+  53x12 with Terminus. Zooming in makes the text bigger and the grid stays:
+  the screen shows part of it, follows the cursor, and pans. A line on an
+  edge says more is beyond it. Nothing reflows and full-screen programs
   don't redraw.
+- **Fit.** Programs see what fits at the current size. A zoom reflows the
+  text: lines that autowrapped join and wrap again at the new width.
+- **Window.** Programs see a fixed grid, 80x24 by default (Settings). The
+  screen pans over it as in magnify.
 
 ## Keys
 
@@ -48,11 +51,11 @@ Delete. Not measured on the device yet; the same source disagrees with
 | Key | Does |
 |---|---|
 | ↑ ↓, F X | Scroll |
-| ← →, Z C | Pan, in window mode |
+| ← →, Z C | Pan, in magnify and window |
 | PgUp PgDn | Page |
 | g, G | Oldest line, back to the cursor |
 | r, t | Zoom out, in (- and = too) |
-| m | Fit or window |
+| m | Magnify, fit, window |
 | b | Top bar on or off |
 | n | Find: type, then Enter or ↑ for older, ↓ for newer, Esc when done |
 | u, i | Previous, next shell prompt |
@@ -78,7 +81,7 @@ View mode `s`, saved in `~/.config/cardputerzero/config.json`:
 |---|---|---|
 | `gh0st.term.font` | `terminus`, `jetbrains` | `terminus` |
 | `gh0st.term.zoom` | index into the face's sizes | 0 |
-| `gh0st.term.mode` | `fit`, `window` | `fit` |
+| `gh0st.term.mode` | `magnify`, `fit`, `window` | `magnify` |
 | `gh0st.term.window` | `80x24`, `100x30`, `120x40`, `132x43` | `80x24` |
 | `gh0st.term.bar` | top bar | on |
 | `gh0st.term.history_kb` | history for all tabs together | 1024 |

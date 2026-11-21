@@ -62,6 +62,44 @@ impl Options {
     }
 }
 
+/// How the grid relates to the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layout {
+    /// The grid is what fits at the smallest size of the face. Zoom only
+    /// makes the text bigger; the screen follows the cursor and pans.
+    Magnify,
+    /// The grid is what fits at the current size; zoom reflows it.
+    Fit,
+    /// The grid is a fixed size, 80x24 by default; the screen pans.
+    Window,
+}
+
+impl Layout {
+    fn from_key(s: &str) -> Layout {
+        match s {
+            "fit" => Layout::Fit,
+            "window" => Layout::Window,
+            _ => Layout::Magnify,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Layout::Magnify => "magnify",
+            Layout::Fit => "fit",
+            Layout::Window => "window",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Layout::Magnify => "Magnify",
+            Layout::Fit => "Fit",
+            Layout::Window => "Window",
+        }
+    }
+}
+
 struct Tab {
     vt: Box<Vt>,
     pty: Option<Pty>,
@@ -95,7 +133,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("PgUp/Dn", "page"),
     ("g G", "top, end"),
     ("r t", "zoom out, in"),
-    ("m", "fit, window"),
+    ("m", "magnify, fit, win"),
     ("b", "top bar"),
     ("n", "find"),
     ("v", "copy lines"),
@@ -125,7 +163,7 @@ pub struct Term {
     family: Family,
     zoom: usize,
     /// Window mode's grid; None is fit mode.
-    window: Option<(usize, usize)>,
+    layout: Layout,
     window_size: (usize, usize),
     bar: bool,
     alt_esc: bool,
@@ -160,7 +198,7 @@ impl Term {
             title: "Terminal".into(),
             family: Family::Terminus,
             zoom: 0,
-            window: None,
+            layout: Layout::Magnify,
             window_size: (80, 24),
             bar: true,
             alt_esc: true,
@@ -182,7 +220,7 @@ impl Term {
         self.family = Family::from_key(&s.font);
         self.zoom = s.zoom.min(self.family.faces().len() - 1);
         self.window_size = parse_size(&s.window_size).unwrap_or((80, 24));
-        self.window = s.window.then_some(self.window_size);
+        self.layout = Layout::from_key(&s.mode);
         self.bar = s.bar;
         self.alt_esc = s.alt_esc;
         self.history = (s.history_kb as usize) << 10;
@@ -197,13 +235,24 @@ impl Term {
         Look::of(&self.family.faces()[self.zoom])
     }
 
-    /// The grid size: the window's, or what fits the content area.
+    /// The grid size, by layout.
     fn grid_size(&self) -> (usize, usize) {
-        let look = self.look();
-        self.window.unwrap_or((
-            (self.area.w / look.cw).max(2) as usize,
-            (self.area.h / look.ch).max(1) as usize,
-        ))
+        let fits = |look: Look| {
+            (
+                (self.area.w / look.cw).max(2) as usize,
+                (self.area.h / look.ch).max(1) as usize,
+            )
+        };
+        match self.layout {
+            Layout::Fit => fits(self.look()),
+            Layout::Magnify => fits(Look::of(&self.family.faces()[0])),
+            Layout::Window => self.window_size,
+        }
+    }
+
+    /// The grid, when the screen is a window over it rather than all of it.
+    fn window(&self) -> Option<(usize, usize)> {
+        (self.layout != Layout::Fit).then(|| self.grid_size())
     }
 
     /// Cells on screen.
@@ -231,12 +280,13 @@ impl Term {
         let t = *cx.theme();
         self.area = self.bars().content(&t);
         let (cols, rows) = self.grid_size();
+        let window = self.window();
         for tab in &mut self.tabs {
             tab.vt.t.resize(cols, rows);
             if let Some(p) = &tab.pty {
                 let _ = p.resize(cols as u16, rows as u16);
             }
-            tab.view.window = self.window;
+            tab.view.window = window;
             tab.view.snap();
         }
         self.track();
@@ -294,7 +344,7 @@ impl Term {
             pid: pty.pid,
             pty: Some(pty),
             watch: Some(watch),
-            view: View::new(self.family, self.zoom, self.window),
+            view: View::new(self.family, self.zoom, self.window()),
             sync: None,
         });
         self.cur = self.tabs.len() - 1;
@@ -457,14 +507,17 @@ impl Term {
         cx.toast(&format!("{}x{} cells, {c}x{r}", look.cw, look.ch));
     }
 
-    fn set_window(&mut self, on: bool, cx: &mut Cx) {
-        self.window = on.then_some(self.window_size);
+    /// Magnify, fit, window, and round again.
+    fn next_layout(&mut self, cx: &mut Cx) {
+        self.layout = match self.layout {
+            Layout::Magnify => Layout::Fit,
+            Layout::Fit => Layout::Window,
+            Layout::Window => Layout::Magnify,
+        };
         self.relayout(cx);
-        cx.settings()
-            .set_str(key::MODE, if on { "window" } else { "fit" });
+        cx.settings().set_str(key::MODE, self.layout.key());
         let (c, r) = self.grid_size();
-        let name = if on { "Window" } else { "Fit" };
-        cx.toast(&format!("{name}: {c}x{r}"));
+        cx.toast(&format!("{}: {c}x{r}", self.layout.name()));
     }
 
     /// Writes bytes to the program in front, back at the cursor.
@@ -529,7 +582,7 @@ impl Term {
             // Letters, so zoom needs no Sym key; - and = work too.
             (_, Some('r' | '-')) => self.zoom_to(self.zoom.saturating_sub(1), cx),
             (_, Some('t' | '=' | '+')) => self.zoom_to(self.zoom + 1, cx),
-            (_, Some('m')) => self.set_window(self.window.is_none(), cx),
+            (_, Some('m')) => self.next_layout(cx),
             (_, Some('b')) => {
                 self.bar = !self.bar;
                 self.relayout(cx);
@@ -580,7 +633,7 @@ impl Term {
     /// Moves the view to the previous or next shell prompt (OSC 133).
     fn jump_prompt(&mut self, up: bool, cx: &mut Cx) {
         let vis = self.vis();
-        let fit = self.window.is_none();
+        let fit = self.layout == Layout::Fit;
         let Some(tab) = self.tabs.get_mut(self.cur) else {
             return;
         };
@@ -1062,7 +1115,7 @@ impl Page for Term {
             c.fill(Rect::new(area.right() - w, y, w, h), pal.accent);
         }
         // Window mode: a line on each edge with cells beyond it.
-        if self.window.is_some() {
+        if self.layout != Layout::Fit {
             let (cols, grows) = self.grid_size();
             let top_row = match view.top {
                 Pos::Grid(y) => y,

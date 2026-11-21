@@ -16,6 +16,7 @@ pub mod key {
 }
 
 pub const WINDOWS: &[&str] = &["80x24", "100x30", "120x40", "132x43"];
+pub const MODES: &[&str] = &["magnify", "fit", "window"];
 pub const HISTORY_KB: &[i64] = &[256, 1024, 4096];
 pub const CURSORS: &[&str] = &["block", "underline", "bar"];
 
@@ -77,7 +78,14 @@ impl Page for Prefs {
                 },
             ),
             Row::choice("Cell size", &cell),
-            Row::choice("Fit", if s.window { "Window" } else { "Screen" }),
+            Row::choice(
+                "Grid",
+                match s.mode.as_str() {
+                    "fit" => "Fit",
+                    "window" => "Window",
+                    _ => "Magnify",
+                },
+            ),
             Row::choice("Window", &s.window_size),
             Row::toggle("Top bar", s.bar),
             Row::choice("History", &history),
@@ -112,7 +120,7 @@ impl Page for Prefs {
                 let n = Family::from_key(&cur.font).faces().len() as i64;
                 s.set_int(key::ZOOM, (cur.zoom as i64 + d as i64).rem_euclid(n));
             }
-            2 => s.set_str(key::MODE, if cur.window { "fit" } else { "window" }),
+            2 => s.set_str(key::MODE, step(MODES, cur.mode.as_str(), d)),
             3 => s.set_str(key::WINDOW, step(WINDOWS, cur.window_size.as_str(), d)),
             4 => s.set_bool(key::BAR, !cur.bar),
             5 => s.set_int(key::HISTORY, step(HISTORY_KB, cur.history_kb, d)),
@@ -128,7 +136,8 @@ impl Page for Prefs {
 pub struct Settings {
     pub font: String,
     pub zoom: usize,
-    pub window: bool,
+    /// `magnify`, `fit` or `window`.
+    pub mode: String,
     pub window_size: String,
     pub bar: bool,
     pub history_kb: i64,
@@ -146,7 +155,11 @@ impl Settings {
         Settings {
             font: s.get_str(key::FONT).unwrap_or("terminus").to_string(),
             zoom: s.get_int(key::ZOOM).unwrap_or(0).max(0) as usize,
-            window: s.get_str(key::MODE) == Some("window"),
+            mode: s
+                .get_str(key::MODE)
+                .filter(|m| MODES.contains(m))
+                .unwrap_or(MODES[0])
+                .to_string(),
             window_size,
             bar: s.get_bool(key::BAR).unwrap_or(true),
             history_kb: s.get_int(key::HISTORY).unwrap_or(1024).clamp(64, 16 * 1024),
