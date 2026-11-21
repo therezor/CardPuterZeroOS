@@ -3,9 +3,11 @@
 
 use crate::bars::{Bars, Bottom};
 use crate::key::{self, Key};
+use crate::menu::{CLOSE_APP, Menu};
 use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer, Watch};
 use crate::ui::Ui;
 use gh0st_core::keys::Keyboard;
+use gh0st_core::keys::code as keys_code;
 use gh0st_core::{battery, child, job, rt, status};
 use gh0st_ui::widgets::{self, Battery, Hint, Net, SoftKey as Slot, Status};
 use gh0st_ui::{Canvas, Rect, Theme, theme};
@@ -99,6 +101,8 @@ pub(crate) struct Runtime {
     pub paused: bool,
     /// The shell link, when the shell started the app.
     pub link: Option<gh0st_core::link::Link>,
+    /// The app menu, while open.
+    menu: Option<Menu>,
     toast: Option<(String, u64)>,
     bar: Bar,
     palette: String,
@@ -129,6 +133,7 @@ impl Runtime {
             last_frame: 0,
             paused: false,
             link: None,
+            menu: None,
             toast: None,
             bar: Bar::new(),
             palette,
@@ -238,6 +243,7 @@ impl Runtime {
     }
 
     fn pop(&mut self, now: u64) {
+        self.menu = None;
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
@@ -298,6 +304,23 @@ impl Runtime {
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
+        // Fn+Esc and Help (Fn+H) are the menu key in every app, raw-key
+        // pages too. Plain Esc stays the page's.
+        let menu_key = raw.code == keys_code::HELP || (raw.code == keys_code::ESC && raw.fn_);
+        if menu_key {
+            if raw.state == gh0st_core::keys::State::Press {
+                self.menu = match self.menu.take() {
+                    Some(_) => None,
+                    None => Some(Menu::new(top, self.stack[top].menu())),
+                };
+                self.dirty = true;
+            }
+            return;
+        }
+        if self.menu.is_some() {
+            self.menu_key(raw, now);
+            return;
+        }
         if self.stack[top].raw_keys() {
             self.call_quiet(top, now, |p, cx| p.raw(raw, cx));
             return;
@@ -316,6 +339,42 @@ impl Runtime {
             self.dirty = true;
         } else {
             self.call(top, now, |p, cx| p.key(k, cx));
+        }
+    }
+
+    fn menu_key(&mut self, raw: &gh0st_core::keys::Key, now: u64) {
+        let Some(k) = key::map(raw, false, [false; 5]) else {
+            return;
+        };
+        let Some(m) = self.menu.as_mut() else {
+            return;
+        };
+        let pick = match k {
+            Key::Up | Key::Down => {
+                m.list.key(k);
+                None
+            }
+            Key::Enter => Some(m.list.selected()),
+            Key::Back => {
+                self.menu = None;
+                None
+            }
+            Key::Char(c) => {
+                let c = c.to_ascii_lowercase();
+                m.items.iter().position(|i| i.key == Some(c))
+            }
+            _ => None,
+        };
+        self.dirty = true;
+        if let Some(i) = pick {
+            let Some(m) = self.menu.take() else {
+                return;
+            };
+            match m.items.get(i).map(|i| i.id) {
+                Some(CLOSE_APP) => self.quit_all(),
+                Some(id) => self.call(m.owner, now, |p, cx| p.menu_pick(id, cx)),
+                None => {}
+            }
         }
     }
 
@@ -374,6 +433,7 @@ impl Runtime {
 
     /// Another app or the shell is in front: no keys, no frames.
     pub fn pause_input(&mut self, now: u64) {
+        self.menu = None;
         self.kb.reset();
         self.paused = true;
         self.s.paused = true;
@@ -513,6 +573,19 @@ impl Runtime {
             let mut ui = Ui::new(&mut self.canvas, &t, area);
             page.draw(&mut ui);
         }
+        if let Some(m) = &self.menu {
+            let trails = m.trails();
+            let rows: Vec<crate::list::Row> = m
+                .items
+                .iter()
+                .zip(&trails)
+                .map(|(i, t)| crate::list::Row::info(&i.label, t))
+                .collect();
+            // Above the hint bar the menu draws.
+            let h = (t.m.height - t.m.hint_h - area.y).min(area.h);
+            let mut ui = Ui::new(&mut self.canvas, &t, Rect::new(area.x, area.y, area.w, h));
+            ui.list(&m.list, &rows);
+        }
         let full = self.canvas.bounds();
         self.canvas.set_clip(full);
         let c = &mut self.canvas;
@@ -528,19 +601,34 @@ impl Runtime {
             };
             widgets::status_bar(c, &t, &s);
         }
-        match &bars.bottom {
-            Bottom::None => {}
-            Bottom::Hints(h) => {
-                let hints: Vec<Hint> = h.iter().map(|(key, label)| Hint { key, label }).collect();
-                widgets::hint_bar(c, &t, &hints, None);
-            }
-            Bottom::Soft(keys) => {
-                let slots: [Slot; 5] = std::array::from_fn(|i| Slot {
-                    icon: &keys[i].icon,
-                    label: &keys[i].label,
-                    lit: keys[i].lit,
-                });
-                widgets::softkey_bar(c, &t, &slots);
+        if self.menu.is_some() {
+            let hints = [
+                Hint {
+                    key: "Enter",
+                    label: "pick",
+                },
+                Hint {
+                    key: "Esc",
+                    label: "close",
+                },
+            ];
+            widgets::hint_bar(c, &t, &hints, None);
+        } else {
+            match &bars.bottom {
+                Bottom::None => {}
+                Bottom::Hints(h) => {
+                    let hints: Vec<Hint> =
+                        h.iter().map(|(key, label)| Hint { key, label }).collect();
+                    widgets::hint_bar(c, &t, &hints, None);
+                }
+                Bottom::Soft(keys) => {
+                    let slots: [Slot; 5] = std::array::from_fn(|i| Slot {
+                        icon: &keys[i].icon,
+                        label: &keys[i].label,
+                        lit: keys[i].lit,
+                    });
+                    widgets::softkey_bar(c, &t, &slots);
+                }
             }
         }
         if let Some((text, _)) = &self.toast {

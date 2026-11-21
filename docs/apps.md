@@ -168,6 +168,46 @@ other key.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
   and leaves them in front.
 
+## The app menu
+
+Every app has one menu. Fn+Esc opens it, and so does Fn+H, which sends
+`KEY_HELP` (138). The OS acts on neither and no terminal program reads them,
+so they mean the same thing in every app. SDK apps get the menu drawn for them (`sdk.md`, The
+app menu); other apps should draw one that behaves the same.
+
+**Opening and closing**
+- Fn+Esc or Fn+H opens the menu over the app and closes it again.
+- Esc closes it without acting. Never open a menu with plain Esc: Esc is
+  back, and terminal programs need it.
+- Up and Down move the selection, wrapping at the ends. Enter picks it. An
+  item's key picks it at once.
+- Picking closes the menu first, then acts.
+
+**What goes in it**
+- The app's actions and settings that have no key of their own, most used
+  first.
+- An item that changes a setting shows its current value on the right:
+  `Grid  Magnify`, `Top bar  On`.
+- Settings near the end, if the app has its own settings page.
+- Close app last. SDK apps get it from the SDK.
+- About 8 items fit; past that the list scrolls. Move rarely used items to
+  the app's settings page.
+- Items that lose work or data ask before they act.
+
+**Keys for items**
+- Letters and digits only. Symbols need an extra press of Sym.
+- Not F, X, Z or C: those are the arrows on a page that isn't typing.
+- The same letter for the same thing in every app:
+
+| Key | Item |
+|---|---|
+| `s` | Settings |
+| `n` | Find |
+| `h` | Keys, a list of the app's shortcuts |
+| `r`, `t` | Zoom out, in |
+| `v`, `p` | Copy, paste |
+| `o`, `w` | New, close (tab, document) |
+
 ## Leaving
 
 - Exit normally. The shell returns when the whole process group is gone, so

@@ -44,7 +44,12 @@ Delete. Not measured on the device yet; the same source disagrees with
 - Shift+PgUp and Shift+PgDn scroll the history.
 - Holding Esc for 3 s closes the terminal, as it closes any app.
 
-**View mode** opens with Fn+H. Typing stops and keys do this:
+**Fn+Esc or Fn+H opens the menu**: scroll and pan, zoom, grid, find, copy, paste,
+tabs, top bar, settings, keys, close. Each item shows its key; the same keys
+work in view mode.
+
+**View mode** is the menu's first item, Scroll and pan. Typing stops and keys
+do this:
 
 | Key | Does |
 |---|---|

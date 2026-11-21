@@ -2,6 +2,7 @@
 
 use crate::bars::Bars;
 use crate::key::Key;
+use crate::menu::MenuItem;
 use crate::ui::Ui;
 use gh0st_core::config::{self, Config};
 use gh0st_core::keys::Key as RawKey;
@@ -97,6 +98,18 @@ pub trait Page {
     /// is drawn unless the page calls [`Cx::redraw`].
     fn raw(&mut self, key: &RawKey, cx: &mut Cx) {
         let _ = (key, cx);
+    }
+
+    /// The app menu's items while this page is in front: Fn+H opens it.
+    /// The SDK adds Close app at the end, so an empty list still gives a
+    /// menu. See "The app menu" in the guide.
+    fn menu(&self) -> Vec<MenuItem> {
+        Vec::new()
+    }
+
+    /// An item from [`menu`](Page::menu) was picked. The menu has closed.
+    fn menu_pick(&mut self, id: u32, cx: &mut Cx) {
+        let _ = (id, cx);
     }
 
     /// The app came to the front (true) or went behind another (false),

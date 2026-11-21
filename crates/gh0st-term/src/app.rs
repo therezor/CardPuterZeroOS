@@ -1,7 +1,7 @@
 //! The terminal page: tabs of PTYs, keys in, cells out, and view mode for
 //! everything that isn't typing: scroll, pan, zoom, search, copy, tabs.
 
-use crate::keys::{self, HELP};
+use crate::keys;
 use crate::prefs::{self, Prefs, key};
 use crate::pty::{self, Pty};
 use crate::render::{self, Colors, Cursor, Look, Span};
@@ -96,6 +96,41 @@ impl Layout {
     }
 }
 
+/// What the app menu and view mode's letters do. The menu id is the
+/// variant's number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Act {
+    View,
+    ZoomIn,
+    ZoomOut,
+    Layout,
+    Find,
+    Copy,
+    Paste,
+    NewTab,
+    CloseTab,
+    NextTab,
+    Bar,
+    Settings,
+    Keys,
+}
+
+const ACTS: &[Act] = &[
+    Act::View,
+    Act::ZoomIn,
+    Act::ZoomOut,
+    Act::Layout,
+    Act::Find,
+    Act::Copy,
+    Act::Paste,
+    Act::NewTab,
+    Act::CloseTab,
+    Act::NextTab,
+    Act::Bar,
+    Act::Settings,
+    Act::Keys,
+];
+
 struct Tab {
     vt: Box<Vt>,
     pty: Option<Pty>,
@@ -130,7 +165,6 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("g G", "top, end"),
     ("r t", "zoom out, in"),
     ("m", "magnify, fit"),
-    ("b", "top bar"),
     ("n", "find"),
     ("v", "copy lines"),
     ("u i", "prev, next prompt"),
@@ -138,6 +172,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("o w", "new, close tab"),
     ("1-9 Tab", "go to tab"),
     ("k", "Home key"),
+    ("Fn+Esc", "menu"),
     ("s", "settings"),
     ("q Esc", "typing"),
 ];
@@ -573,47 +608,24 @@ impl Term {
                     cx.redraw();
                 }
             }
-            // Letters, so zoom needs no Sym key; - and = work too.
-            (_, Some('r' | '-')) => self.zoom_to(self.zoom.saturating_sub(1), cx),
-            (_, Some('t' | '=' | '+')) => self.zoom_to(self.zoom + 1, cx),
-            (_, Some('m')) => self.next_layout(cx),
-            (_, Some('b')) => {
-                self.bar = !self.bar;
-                self.relayout(cx);
-                cx.settings().set_bool(key::BAR, self.bar);
-            }
-            (_, Some('o')) => match self.open_tab(cx) {
-                Ok(()) => self.mode = Mode::Typing,
-                Err(e) => cx.toast(&format!("No new tab: {e}")),
-            },
-            (_, Some('w')) => {
-                let i = self.cur;
-                self.close_tab(i, cx);
-            }
-            (code::TAB, _) => {
-                let next = (self.cur + 1) % self.tabs.len().max(1);
-                self.switch(next, cx);
-            }
+            // Letters, so nothing here needs the Sym key; - = / [ ] too.
+            (_, Some('r' | '-')) => self.act(Act::ZoomOut, cx),
+            (_, Some('t' | '=' | '+')) => self.act(Act::ZoomIn, cx),
+            (_, Some('m')) => self.act(Act::Layout, cx),
+            (_, Some('b')) => self.act(Act::Bar, cx),
+            (_, Some('o')) => self.act(Act::NewTab, cx),
+            (_, Some('w')) => self.act(Act::CloseTab, cx),
+            (code::TAB, _) => self.act(Act::NextTab, cx),
             (_, Some(d @ '1'..='9')) => self.switch(d as usize - '1' as usize, cx),
             (_, Some('g')) if k.shift => self.scroll(false, usize::MAX / 2, cx),
             (_, Some('g')) => self.scroll(true, usize::MAX / 2, cx),
-            // Letters, so nothing here needs the Sym key; / [ ] work too.
-            (_, Some('n' | '/')) => {
-                self.mode = Mode::Find(self.query.clone());
-                cx.redraw();
-            }
-            (_, Some('v')) => self.start_select(cx),
+            (_, Some('n' | '/')) => self.act(Act::Find, cx),
+            (_, Some('v')) => self.act(Act::Copy, cx),
             (_, Some('u' | '[')) => self.jump_prompt(true, cx),
             (_, Some('i' | ']')) => self.jump_prompt(false, cx),
-            (_, Some('s')) => cx.push(Prefs::new()),
-            (_, Some('p')) => {
-                self.mode = Mode::Typing;
-                self.paste(cx);
-            }
-            (_, Some('h')) => {
-                self.mode = Mode::Help;
-                cx.redraw();
-            }
+            (_, Some('s')) => self.act(Act::Settings, cx),
+            (_, Some('p')) => self.act(Act::Paste, cx),
+            (_, Some('h')) => self.act(Act::Keys, cx),
             (_, Some('k')) => {
                 let app = self.tab().is_some_and(|t| t.vt.t.modes.app_cursor);
                 self.mode = Mode::Typing;
@@ -622,6 +634,42 @@ impl Term {
             (code::ESC | code::ENTER, _) | (_, Some('q')) => self.leave_view(cx),
             _ => {}
         }
+    }
+
+    /// One action, from the menu or a view-mode letter.
+    fn act(&mut self, a: Act, cx: &mut Cx) {
+        match a {
+            Act::View => self.mode = Mode::View,
+            Act::ZoomIn => self.zoom_to(self.zoom + 1, cx),
+            Act::ZoomOut => self.zoom_to(self.zoom.saturating_sub(1), cx),
+            Act::Layout => self.next_layout(cx),
+            Act::Find => self.mode = Mode::Find(self.query.clone()),
+            Act::Copy => self.start_select(cx),
+            Act::Paste => {
+                self.mode = Mode::Typing;
+                self.paste(cx);
+            }
+            Act::NewTab => match self.open_tab(cx) {
+                Ok(()) => self.mode = Mode::Typing,
+                Err(e) => cx.toast(&format!("No new tab: {e}")),
+            },
+            Act::CloseTab => {
+                let i = self.cur;
+                self.close_tab(i, cx);
+            }
+            Act::NextTab => {
+                let next = (self.cur + 1) % self.tabs.len().max(1);
+                self.switch(next, cx);
+            }
+            Act::Bar => {
+                self.bar = !self.bar;
+                self.relayout(cx);
+                cx.settings().set_bool(key::BAR, self.bar);
+            }
+            Act::Settings => cx.push(Prefs::new()),
+            Act::Keys => self.mode = Mode::Help,
+        }
+        cx.redraw();
     }
 
     /// Moves the view to the previous or next shell prompt (OSC 133).
@@ -956,6 +1004,42 @@ impl Page for Term {
         true
     }
 
+    fn menu(&self) -> Vec<MenuItem> {
+        let look = self.look();
+        ACTS.iter()
+            .enumerate()
+            .filter(|&(_, &a)| a != Act::NextTab || self.tabs.len() > 1)
+            .map(|(i, &a)| {
+                let item = |label: &str, key: char| MenuItem::new(i as u32, label).key(key);
+                match a {
+                    Act::View => MenuItem::new(i as u32, "Scroll and pan"),
+                    Act::ZoomIn => item("Zoom in", 't').value(format!("{}x{}", look.cw, look.ch)),
+                    Act::ZoomOut => item("Zoom out", 'r'),
+                    Act::Layout => item("Grid", 'm').value(self.layout.name()),
+                    Act::Find => item("Find", 'n'),
+                    Act::Copy => item("Copy lines", 'v'),
+                    Act::Paste => item("Paste", 'p'),
+                    Act::NewTab => item("New tab", 'o'),
+                    Act::CloseTab => item("Close tab", 'w'),
+                    Act::NextTab => MenuItem::new(i as u32, "Next tab").value(format!(
+                        "{}/{}",
+                        self.cur + 1,
+                        self.tabs.len()
+                    )),
+                    Act::Bar => item("Top bar", 'b').value(if self.bar { "On" } else { "Off" }),
+                    Act::Settings => item("Settings", 's'),
+                    Act::Keys => item("View mode keys", 'h'),
+                }
+            })
+            .collect()
+    }
+
+    fn menu_pick(&mut self, id: u32, cx: &mut Cx) {
+        if let Some(&a) = ACTS.get(id as usize) {
+            self.act(a, cx);
+        }
+    }
+
     fn raw(&mut self, k: &RawKey, cx: &mut Cx) {
         if k.state == KeyState::Release {
             return;
@@ -963,16 +1047,6 @@ impl Page for Term {
         if self.waiting {
             if k.state == KeyState::Press {
                 cx.quit();
-            }
-            return;
-        }
-        if k.code == HELP {
-            if k.state == KeyState::Press {
-                match self.mode {
-                    Mode::Typing => self.mode = Mode::View,
-                    _ => self.leave_view(cx),
-                }
-                cx.redraw();
             }
             return;
         }

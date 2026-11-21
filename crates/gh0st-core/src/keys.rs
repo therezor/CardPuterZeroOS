@@ -20,6 +20,8 @@ pub mod code {
     pub const RIGHTALT: u16 = 100;
     /// Fn+K. Opens the app switcher.
     pub const HOME: u16 = 102;
+    /// Fn+H. Opens the app's menu.
+    pub const HELP: u16 = 138;
     pub const UP: u16 = 103;
     pub const LEFT: u16 = 105;
     pub const RIGHT: u16 = 106;
@@ -234,7 +236,7 @@ pub fn code_for_name(name: &str) -> Option<u16> {
         "brightup" => code::BRIGHTNESSUP,
         "brightdown" => code::BRIGHTNESSDOWN,
         "print" => code::PRINT,
-        "help" => 138,
+        "help" => code::HELP,
         "pageup" => 104,
         "pagedown" => 109,
         "delete" => code::DELETE,

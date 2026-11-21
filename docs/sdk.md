@@ -152,6 +152,8 @@ calls `stop` on every page, top first, and exits.
 | `Key::Ctrl(c)`, `Key::Alt(c)` | Ctrl or Alt with a letter or digit |
 | `Key::Other(code)` | Anything else, by Linux input code (`gh0st_app::codes`) |
 
+Fn+Esc and Fn+H never reach a page: they open the app menu.
+
 The OS acts on the brightness, volume, mute and screenshot keys itself. They
 still reach the page as `Key::Other`, so a page that shows those values can
 read them again.
@@ -164,6 +166,50 @@ text and Shift, Ctrl, Alt and Fn. Esc comes there too, not to `back`. Every
 key but Esc and the modifiers repeats. `RawKey::text` keeps the character
 under Ctrl and Alt, so Ctrl+[ can become ESC. Nothing is drawn after a raw key
 unless the page calls `cx.redraw()`.
+
+## The app menu
+
+Fn+Esc or Fn+H opens the app menu in every app (the rules are in `apps.md`,
+The app menu). The page in front lists its items; the SDK draws the list, handles
+the keys and adds Close app last. A pick comes back to `menu_pick` with the
+item's id after the menu has closed. Pages with raw keys get the menu too:
+the SDK takes those keys before `raw` sees them.
+
+```rust
+use gh0st_app::prelude::*;
+
+struct Reader {
+    large: bool,
+}
+
+const LARGER: u32 = 1;
+const FIND: u32 = 2;
+
+impl Page for Reader {
+    fn title(&self) -> &str {
+        "Reader"
+    }
+
+    fn menu(&self) -> Vec<MenuItem> {
+        vec![
+            MenuItem::new(LARGER, "Large text")
+                .key('t')
+                .value(if self.large { "On" } else { "Off" }),
+            MenuItem::new(FIND, "Find").key('n'),
+        ]
+    }
+
+    fn menu_pick(&mut self, id: u32, _: &mut Cx) {
+        if id == LARGER {
+            self.large = !self.large;
+        }
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.text(if self.large { "LARGE" } else { "small" });
+    }
+}
+```
 
 ## Soft keys
 
