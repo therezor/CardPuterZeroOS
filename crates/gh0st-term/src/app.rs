@@ -10,7 +10,7 @@ use crate::vt::cell::{Cell, Clusters};
 use crate::vt::history::flag::PROMPT;
 use crate::vt::{CursorShape, Terminal, Vt, event};
 use gh0st_app::gfx::widgets::{self, Hint};
-use gh0st_app::gfx::{Rect, Theme};
+use gh0st_app::gfx::{Rect, Theme, theme};
 use gh0st_app::prelude::*;
 use gh0st_app::{KeyState, RawKey};
 use gh0st_core::keys::code;
@@ -24,6 +24,8 @@ const READ_MAX: usize = 64 * 1024;
 /// About one panel refresh: under a flood the latest state is drawn at most
 /// this often.
 const FRAME_MS: u64 = 20;
+/// Notifications from programs, at most one this often.
+const NOTICE_GAP_MS: u128 = 3000;
 /// Synchronized output may hold the screen this long at most.
 const SYNC_MS: u64 = 150;
 const PAGEUP: u16 = 104;
@@ -136,6 +138,8 @@ pub struct Term {
     clipboard: String,
     /// The command of `-e` ended: the next key quits.
     waiting: bool,
+    /// When the last notification went out.
+    noticed: Option<std::time::Instant>,
     scratch: RefCell<(Vec<Cell>, Clusters)>,
 }
 
@@ -168,6 +172,7 @@ impl Term {
             hit: None,
             clipboard: String::new(),
             waiting: false,
+            noticed: None,
             scratch: RefCell::new((Vec::new(), Clusters::default())),
         }
     }
@@ -186,21 +191,6 @@ impl Term {
             "bar" => CursorShape::Bar,
             _ => CursorShape::Block,
         };
-    }
-
-    fn save(&self, cx: &mut Cx) {
-        let s = cx.settings();
-        s.set_str(key::FONT, self.family.key());
-        s.set_int(key::ZOOM, self.zoom as i64);
-        s.set_str(
-            key::MODE,
-            if self.window.is_some() {
-                "window"
-            } else {
-                "fit"
-            },
-        );
-        s.set_bool(key::BAR, self.bar);
     }
 
     fn look(&self) -> Look {
@@ -232,6 +222,12 @@ impl Term {
 
     /// Size, face or bars changed: every tab takes the new grid.
     fn relayout(&mut self, cx: &mut Cx) {
+        // Rows move on a resize: a found row or a selection would point
+        // at the wrong place, or past the grid.
+        self.hit = None;
+        if matches!(self.mode, Mode::Select { .. } | Mode::Find(_)) {
+            self.mode = Mode::View;
+        }
         let t = *cx.theme();
         self.area = self.bars().content(&t);
         let (cols, rows) = self.grid_size();
@@ -310,6 +306,13 @@ impl Term {
     /// Drops tab `i`: its PTY closes and its session hangs up. A `-e`
     /// command with sysplause stays on screen until a key instead.
     fn close_tab(&mut self, i: usize, cx: &mut Cx) {
+        if self.waiting {
+            return;
+        }
+        self.hit = None;
+        if matches!(self.mode, Mode::Select { .. }) {
+            self.mode = Mode::View;
+        }
         let last = self.tabs.len() == 1;
         let Some(tab) = self.tabs.get_mut(i) else {
             return;
@@ -343,7 +346,9 @@ impl Term {
 
     fn switch(&mut self, i: usize, cx: &mut Cx) {
         if i < self.tabs.len() && i != self.cur {
+            self.front(false, cx);
             self.cur = i;
+            self.front(true, cx);
             self.hit = None;
             self.retitle();
             self.track();
@@ -389,13 +394,22 @@ impl Term {
             self.clipboard = text;
             cx.toast("Copied");
         }
-        if let Some(n) = t.notice.take() {
-            cx.notify(&n);
-        }
+        let notice = t.notice.take();
         let events = std::mem::take(&mut t.events);
         // A bell matters when its tab can't be seen.
-        if events & event::BELL != 0 && (i != self.cur || !cx.in_front()) {
-            cx.notify(&format!("Bell in terminal tab {}", i + 1));
+        let bell = events & event::BELL != 0 && (i != self.cur || !cx.in_front());
+        // The text comes from whatever runs in the tab, perhaps a remote
+        // host: say where it is from, and not more than one a while.
+        let text = notice.or_else(|| bell.then(|| format!("bell in tab {}", i + 1)));
+        if let Some(text) = text {
+            let now = std::time::Instant::now();
+            if self
+                .noticed
+                .is_none_or(|t| now.duration_since(t).as_millis() >= NOTICE_GAP_MS)
+            {
+                self.noticed = Some(now);
+                cx.notify(&format!("Terminal: {text}"));
+            }
         }
         // Synchronized output: draw when it ends, or after SYNC_MS.
         match (t.modes.sync, tab.sync) {
@@ -437,7 +451,7 @@ impl Term {
         }
         self.zoom = zoom;
         self.relayout(cx);
-        self.save(cx);
+        cx.settings().set_int(key::ZOOM, zoom as i64);
         let look = self.look();
         let (c, r) = self.grid_size();
         cx.toast(&format!("{}x{} cells, {c}x{r}", look.cw, look.ch));
@@ -446,7 +460,8 @@ impl Term {
     fn set_window(&mut self, on: bool, cx: &mut Cx) {
         self.window = on.then_some(self.window_size);
         self.relayout(cx);
-        self.save(cx);
+        cx.settings()
+            .set_str(key::MODE, if on { "window" } else { "fit" });
         let (c, r) = self.grid_size();
         let name = if on { "Window" } else { "Fit" };
         cx.toast(&format!("{name}: {c}x{r}"));
@@ -479,6 +494,24 @@ impl Term {
         let vis = self.vis();
         let page = vis.1.saturating_sub(1).max(1);
         let ch = k.text.map(|c| c.to_ascii_lowercase());
+        // A held key repeats scrolling, panning and zoom, never an action
+        // such as closing a tab.
+        let moves = matches!(
+            k.code,
+            code::UP
+                | code::DOWN
+                | code::LEFT
+                | code::RIGHT
+                | code::F
+                | code::X
+                | code::Z
+                | code::C
+                | PAGEUP
+                | PAGEDOWN
+        ) || matches!(ch, Some('-' | '=' | '+'));
+        if k.state == KeyState::Repeat && !moves {
+            return;
+        }
         match (k.code, ch) {
             (code::UP, _) | (code::F, _) => self.scroll(true, 1, cx),
             (code::DOWN, _) | (code::X, _) => self.scroll(false, 1, cx),
@@ -499,7 +532,7 @@ impl Term {
             (_, Some('b')) => {
                 self.bar = !self.bar;
                 self.relayout(cx);
-                self.save(cx);
+                cx.settings().set_bool(key::BAR, self.bar);
             }
             (_, Some('t')) => match self.open_tab(cx) {
                 Ok(()) => self.mode = Mode::Typing,
@@ -552,7 +585,7 @@ impl Term {
         };
         let t = &tab.vt.t;
         let is_prompt = |p: Pos| match p.src(t) {
-            Src::Grid(y) => !t.alt_active && t.grid().rows[y].prompt,
+            Src::Grid(y) => !t.alt_active && t.grid().rows.get(y).is_some_and(|r| r.prompt),
             Src::Hist(i, sub) => sub == 0 && t.history.line(i).flags & PROMPT != 0,
         };
         let mut p = tab.view.top;
@@ -621,7 +654,7 @@ impl Term {
             return;
         }
         let vis = self.vis();
-        let needle = self.query.to_lowercase();
+        let needle = fold(&self.query);
         let Some(tab) = self.tabs.get_mut(self.cur) else {
             return;
         };
@@ -641,8 +674,9 @@ impl Term {
             }
             first = false;
             let (text, cols) = row_text(t, pos.src(t), &mut scratch);
-            if let Some(b) = text.to_lowercase().find(&needle) {
-                let at = text[..b].chars().count();
+            let low = fold(&text);
+            if let Some(b) = low.find(&needle) {
+                let at = low[..b].chars().count();
                 let n = needle.chars().count();
                 let c0 = cols.get(at).copied().unwrap_or(0);
                 let c1 = cols.get(at + n).copied().unwrap_or(t.cols);
@@ -748,7 +782,10 @@ impl Term {
 /// The text of one row on screen, and the column each char starts at.
 fn row_text(t: &Terminal, src: Src, scratch: &mut (Vec<Cell>, Clusters)) -> (String, Vec<usize>) {
     let cells: &[Cell] = match src {
-        Src::Grid(y) => &t.grid().rows[y].cells,
+        Src::Grid(y) => match t.grid().rows.get(y) {
+            Some(r) => &r.cells,
+            None => return (String::new(), Vec::new()),
+        },
         Src::Hist(i, sub) => {
             scratch.1.clear();
             t.history
@@ -785,7 +822,7 @@ fn selected_text(t: &Terminal, a: Pos, b: Pos, scratch: &mut (Vec<Cell>, Cluster
         let (text, _) = row_text(t, src, scratch);
         out.push_str(&text);
         let joined = match src {
-            Src::Grid(y) => t.grid().rows[y].wrapped,
+            Src::Grid(y) => t.grid().rows.get(y).is_some_and(|r| r.wrapped),
             Src::Hist(i, sub) => sub + 1 < t.history.line(i).rows(t.cols),
         };
         if p == end {
@@ -892,8 +929,10 @@ impl Page for Term {
         }
         match self.mode {
             Mode::Help => {
-                self.mode = Mode::View;
-                cx.redraw();
+                if k.state == KeyState::Press {
+                    self.mode = Mode::View;
+                    cx.redraw();
+                }
             }
             Mode::View => self.view_key(k, cx),
             Mode::Find(_) => self.find_key(k, cx),
@@ -925,6 +964,16 @@ impl Page for Term {
                 cx.unwatch(w);
             }
             t.pty = None;
+        }
+    }
+
+    /// Focus reports (mode 1004) for the program in the tab in front.
+    fn front(&mut self, front: bool, cx: &mut Cx) {
+        let Some(tab) = self.tab() else {
+            return;
+        };
+        if let (true, Some(w)) = (tab.vt.t.modes.focus, tab.watch) {
+            cx.write(w, if front { b"\x1b[I" } else { b"\x1b[O" });
         }
     }
 
@@ -980,7 +1029,10 @@ impl Page for Term {
                         col: cx,
                         shape: t.shape,
                     });
-                    let cells = &t.grid().rows[y].cells;
+                    let Some(r) = t.grid().rows.get(y) else {
+                        continue;
+                    };
+                    let cells = &r.cells;
                     render::row(
                         c,
                         area,
@@ -1004,7 +1056,8 @@ impl Page for Term {
         if let Some(d) = view.depth(t) {
             let h = (area.h / 8).max(4);
             let y = area.y + ((area.h - h) as f32 * (1.0 - d)) as i32;
-            c.fill(Rect::new(area.right() - 2, y, 2, h), pal.accent);
+            let w = theme::TERM_MARK_W;
+            c.fill(Rect::new(area.right() - w, y, w, h), pal.accent);
         }
         // Window mode: a line on each edge with cells beyond it.
         if self.window.is_some() {
@@ -1058,10 +1111,19 @@ fn help(c: &mut gh0st_app::gfx::Canvas, th: &Theme, area: Rect) {
     let col_w = r.w / 2;
     for (i, (keys, what)) in HELP_KEYS.iter().enumerate() {
         let x = r.x + th.m.pad + (i / per) as i32 * col_w;
-        let y = r.y + 4 + (i % per) as i32 * line;
-        let k = Rect::new(x, y, 58, line);
+        let y = r.y + theme::TERM_HELP_TOP + (i % per) as i32 * line;
+        let kw = theme::TERM_HELP_KEY_W;
+        let k = Rect::new(x, y, kw, line);
         widgets::text_in(c, th.f.small_bold, k, keys, th.c.accent);
-        let w = Rect::new(x + 60, y, col_w - th.m.pad - 60, line);
+        let w = Rect::new(x + kw + 2, y, col_w - th.m.pad - kw - 2, line);
         widgets::text_in(c, th.f.small, w, what, th.c.fg);
     }
+}
+
+/// Lowercase with one char out for each char in, so a match's char index in
+/// the folded text is its index in the row.
+fn fold(s: &str) -> String {
+    s.chars()
+        .map(|c| c.to_lowercase().next().unwrap_or(c))
+        .collect()
 }

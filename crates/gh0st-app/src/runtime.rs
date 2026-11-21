@@ -373,19 +373,27 @@ impl Runtime {
     }
 
     /// Another app or the shell is in front: no keys, no frames.
-    pub fn pause_input(&mut self) {
+    pub fn pause_input(&mut self, now: u64) {
         self.kb.reset();
         self.paused = true;
         self.s.paused = true;
+        self.tell_front(false, now);
+    }
+
+    fn tell_front(&mut self, front: bool, now: u64) {
+        for i in 0..self.stack.len() {
+            self.call_quiet(i, now, |p, cx| p.front(front, cx));
+        }
     }
 
     /// Back in front after a pause: keys held before mean nothing now, and
     /// the whole screen is drawn again.
-    pub fn resume_input(&mut self) {
+    pub fn resume_input(&mut self, now: u64) {
         self.kb.reset();
         self.paused = false;
         self.s.paused = false;
         self.dirty = true;
+        self.tell_front(true, now);
     }
 
     fn frame_at(&self) -> u64 {

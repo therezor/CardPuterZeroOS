@@ -374,9 +374,14 @@ impl Terminal {
     // Writing.
 
     fn put(&mut self, c: char) {
-        let width = match c.width() {
-            Some(w) => w,
-            None => return,
+        // Most output is ASCII: skip the width table for it.
+        let width = if (' '..='~').contains(&c) {
+            1
+        } else {
+            match c.width() {
+                Some(w) => w,
+                None => return,
+            }
         };
         if width == 0 {
             self.combine(c);
@@ -478,12 +483,18 @@ impl Terminal {
                 g.erase(y, x, cols, &pen);
                 for r in y + 1..rows {
                     g.erase(r, 0, cols, &pen);
+                    g.rows[r].wrapped = false;
+                    g.rows[r].prompt = false;
                 }
                 g.rows[y].wrapped = false;
+                // From the first column the whole row goes, its mark too.
+                g.rows[y].prompt &= x > 0;
             }
             1 => {
                 for r in 0..y {
                     g.erase(r, 0, cols, &pen);
+                    g.rows[r].wrapped = false;
+                    g.rows[r].prompt = false;
                 }
                 g.erase(y, 0, x + 1, &pen);
             }
@@ -506,6 +517,7 @@ impl Terminal {
             2 => {
                 g.erase(y, 0, cols, &pen);
                 g.rows[y].wrapped = false;
+                g.rows[y].prompt = false;
             }
             _ => {}
         }
@@ -881,12 +893,31 @@ fn arg(params: &Params, i: usize, default: usize) -> usize {
 
 impl Perform for Terminal {
     fn print(&mut self, c: char) {
-        let c = if self.charsets[self.gl] == Charset::Line {
-            dec_graphics(c)
-        } else {
-            c
-        };
-        self.put(c);
+        let line = self.charsets[self.gl] == Charset::Line;
+        // The common case, plain ASCII mid-line, without the checks a wide
+        // char, insert mode or a pending wrap need.
+        if !line && (' '..='~').contains(&c) && !self.cur.wrap_next && !self.modes.insert {
+            let (x, y, pen, cols) = (self.cur.x, self.cur.y, self.cur.pen, self.cols);
+            let g = if self.alt_active {
+                &mut self.alt
+            } else {
+                &mut self.main
+            };
+            let old = g.rows[y].cells[x];
+            if old.is_wide() || old.is_spacer() {
+                g.unsplit(y, x);
+            }
+            g.rows[y].cells[x] = Cell::new(c, &pen);
+            g.dirty[y] = true;
+            self.last = Some(c);
+            if x + 1 >= cols {
+                self.cur.wrap_next = true;
+            } else {
+                self.cur.x = x + 1;
+            }
+            return;
+        }
+        self.put(if line { dec_graphics(c) } else { c });
     }
 
     fn execute(&mut self, byte: u8) {

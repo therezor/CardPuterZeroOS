@@ -33,9 +33,11 @@ cell, so lines join at any size.
 
 Typing goes to the program as xterm sends it: Ctrl with letters and symbols
 (Ctrl+[ is Esc), Alt as an Esc prefix, modifiers on arrows, Home, End,
-PgUp, PgDn, Insert, Delete and F1 to F12. The keyboard's Fn layer already
-gives those: Fn+1..0 are F1 to F10, Fn+O and Fn+P F11 and F12, Fn+N End,
-Fn+L and Fn+M PgUp and PgDn, Fn+B Insert, Fn+Backspace Delete.
+PgUp, PgDn, Insert, Delete and F1 to F12. Per M5Stack's driver source the
+keyboard's Fn layer gives those: Fn+1..0 are F1 to F10, Fn+O and Fn+P F11
+and F12, Fn+N End, Fn+L and Fn+M PgUp and PgDn, Fn+B Insert, Fn+Backspace
+Delete. Not measured on the device yet; the same source disagrees with
+`hardware-facts.md` on two keys.
 
 - Fn+K is the switcher, not Home. In view mode, `k` sends Home.
 - Shift+PgUp and Shift+PgDn scroll the history.
@@ -95,7 +97,11 @@ focus reports, synchronized output (mode 2026), DSR, DA and DECRQM.
 - OSC 52 copies to the terminal's clipboard. It never answers a read, so a
   remote host can't see what you copied.
 - OSC 9 and 777 notify. The bell of a tab out of sight does too. While the
-  terminal runs behind another app, the shell shows these as toasts.
+  terminal runs behind another app, the shell shows these as toasts. Each
+  starts with "Terminal:", and at most one goes out every 3 s, since the
+  text may come from a remote host.
+- Focus reports (mode 1004) go out when the terminal comes to the front or
+  goes behind, and when the tab changes.
 - No title reports and no mouse.
 
 ## What it costs

@@ -265,3 +265,10 @@ fn notifications() {
     feed(&mut v, "\x1b]9;build ok\x07");
     assert_eq!(v.t.notice.as_deref(), Some("build ok"));
 }
+
+#[test]
+fn erasing_below_forgets_wraps_and_prompts() {
+    let mut v = vt(4, 3);
+    feed(&mut v, "\x1b]133;A\x07abcdef\x1b[H\x1b[J");
+    assert!(v.t.grid().rows.iter().all(|r| !r.wrapped && !r.prompt));
+}

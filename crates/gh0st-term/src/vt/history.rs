@@ -149,7 +149,10 @@ impl Open {
             self.runs.extend_from_slice(&key.1.to_le_bytes());
             self.runs.extend_from_slice(&key.2.to_le_bytes());
         }
-        clusters.push_text(cell, &mut self.text);
+        match cell.code() {
+            c @ 0x20..=0x7e if !cell.is_cluster() => self.text.push(c as u8 as char),
+            _ => clusters.push_text(cell, &mut self.text),
+        }
         self.units += 1;
     }
 
@@ -257,7 +260,7 @@ impl History {
     }
 
     fn close(&mut self) {
-        let o = std::mem::take(&mut self.open);
+        let o = &mut self.open;
         let need = HEADER + o.text.len() + o.runs.len();
         if self.data.len() + need > self.data.capacity() {
             let room = self.max.saturating_sub(self.data.capacity());
@@ -272,6 +275,13 @@ impl History {
         self.data.push(o.flags);
         self.data.extend_from_slice(o.text.as_bytes());
         self.data.extend_from_slice(&o.runs);
+        // Keep the buffers: the next line reuses them.
+        o.text.clear();
+        o.runs.clear();
+        o.units = 0;
+        o.last = None;
+        o.flags = 0;
+        o.active = false;
         self.trim();
     }
 

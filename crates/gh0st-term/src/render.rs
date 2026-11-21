@@ -7,7 +7,9 @@ use crate::vt::CursorShape;
 use crate::vt::cell::{Cell, Clusters, Color, attr};
 use gh0st_app::gfx::color::mix;
 use gh0st_app::gfx::font::Font;
-use gh0st_app::gfx::theme::TermFace;
+use gh0st_app::gfx::theme::{self, TermFace};
+
+const CW: i32 = theme::TERM_CURSOR_W;
 use gh0st_app::gfx::{Canvas, Rect, Theme};
 
 /// A face and the cell it sets in.
@@ -71,7 +73,7 @@ impl Colors {
             std::mem::swap(&mut fg, &mut bg);
         }
         if cell.attrs() & attr::DIM != 0 {
-            fg = mix(bg, fg, 140);
+            fg = mix(bg, fg, theme::TERM_DIM);
         }
         (fg, bg)
     }
@@ -148,8 +150,8 @@ pub fn row(
         }
         if at_cursor {
             let mark = match shape {
-                Some(CursorShape::Underline) => Rect::new(cx, span.y + look.ch - 2, w, 2),
-                Some(CursorShape::Bar) => Rect::new(cx, span.y, 2, look.ch),
+                Some(CursorShape::Underline) => Rect::new(cx, span.y + look.ch - CW, w, CW),
+                Some(CursorShape::Bar) => Rect::new(cx, span.y, CW, look.ch),
                 _ => continue,
             };
             c.fill(mark.intersect(&area), pal.fg);
@@ -160,8 +162,8 @@ pub fn row(
         let cx = span.x + (k.col - span.first) as i32 * look.cw;
         let r = match k.shape {
             CursorShape::Block => Rect::new(cx, span.y, look.cw, look.ch),
-            CursorShape::Underline => Rect::new(cx, span.y + look.ch - 2, look.cw, 2),
-            CursorShape::Bar => Rect::new(cx, span.y, 2, look.ch),
+            CursorShape::Underline => Rect::new(cx, span.y + look.ch - CW, look.cw, CW),
+            CursorShape::Bar => Rect::new(cx, span.y, CW, look.ch),
         };
         c.fill(r.intersect(&area), pal.fg);
     }

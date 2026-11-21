@@ -99,6 +99,12 @@ pub trait Page {
         let _ = (key, cx);
     }
 
+    /// The app came to the front (true) or went behind another (false),
+    /// while allowed to run in the background. Every open page hears it.
+    fn front(&mut self, front: bool, cx: &mut Cx) {
+        let _ = (front, cx);
+    }
+
     /// The least time between two frames, in ms. A page that changes faster
     /// than the panel can show (a terminal under a flood of output) sets it
     /// near the panel's refresh, and the SDK draws the latest state at most

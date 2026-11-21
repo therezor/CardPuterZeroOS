@@ -58,7 +58,8 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
     };
     let signals = Signals::install(&[libc::SIGTERM, libc::SIGINT, libc::SIGCHLD])
         .map_err(|e| format!("signals: {e}"))?;
-    rt_.link = sim.is_none().then(Link::from_env).flatten();
+    // Under --sim too when a test hands one over.
+    rt_.link = Link::from_env();
     if let Some(l) = &rt_.link {
         l.send(&["hello", "1"]);
     }
@@ -119,7 +120,7 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
                         if let Input::Keyboard(dev, _) = &mut input {
                             *dev = None;
                         }
-                        rt_.pause_input();
+                        rt_.pause_input(now);
                         if let Some(l) = &rt_.link {
                             l.send(&["paused"]);
                         }
@@ -128,7 +129,7 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
                         if let Input::Keyboard(dev, path) = &mut input {
                             *dev = evdev::Device::open(path).ok();
                         }
-                        rt_.resume_input();
+                        rt_.resume_input(now);
                         full = true;
                     }
                     Some("redraw") => {

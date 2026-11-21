@@ -251,6 +251,15 @@ pub const CARDPUTER: Metrics = Metrics {
     softkey_x: [49, 105, 161, 217, 273],
 };
 
+/// How far dim terminal text fades toward its background, of 255.
+pub const TERM_DIM: u8 = 140;
+/// The terminal's underline and bar cursors, and its scroll mark, in px.
+pub const TERM_CURSOR_W: i32 = 2;
+pub const TERM_MARK_W: i32 = 2;
+/// The terminal's help screen: the key column's width and the top inset.
+pub const TERM_HELP_KEY_W: i32 = 58;
+pub const TERM_HELP_TOP: i32 = 4;
+
 /// A terminal zoom level: a face and its bold, if baked. Without one the
 /// terminal draws bold by striking the glyph twice.
 #[derive(Clone, Copy)]
