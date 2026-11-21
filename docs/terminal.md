@@ -51,14 +51,14 @@ Delete. Not measured on the device yet; the same source disagrees with
 | ← →, Z C | Pan, in window mode |
 | PgUp PgDn | Page |
 | g, G | Oldest line, back to the cursor |
-| - = | Zoom out, in |
+| r, t | Zoom out, in (- and = too) |
 | m | Fit or window |
 | b | Top bar on or off |
 | / then n, N | Find, older, newer |
 | [ ] | Previous, next shell prompt |
 | v, then ↑ ↓ and y | Copy whole lines |
 | p | Paste |
-| t, w | New tab, close tab |
+| o, w | New tab, close tab |
 | 1 to 9, Tab | Go to a tab |
 | s | Settings |
 | h | All of these on one screen |

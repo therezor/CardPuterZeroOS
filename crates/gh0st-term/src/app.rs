@@ -94,14 +94,14 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("←→ Z C", "pan"),
     ("PgUp/Dn", "page"),
     ("g G", "top, end"),
-    ("- =", "zoom"),
+    ("r t", "zoom out, in"),
     ("m", "fit, window"),
     ("b", "top bar"),
     ("/ n N", "find"),
     ("v", "copy lines"),
     ("[ ]", "prompts"),
     ("p", "paste"),
-    ("t w", "new, close tab"),
+    ("o w", "new, close tab"),
     ("1-9 Tab", "go to tab"),
     ("k", "Home key"),
     ("s", "settings"),
@@ -508,7 +508,7 @@ impl Term {
                 | code::C
                 | PAGEUP
                 | PAGEDOWN
-        ) || matches!(ch, Some('-' | '=' | '+'));
+        ) || matches!(ch, Some('r' | 't' | '-' | '=' | '+'));
         if k.state == KeyState::Repeat && !moves {
             return;
         }
@@ -526,15 +526,16 @@ impl Term {
                     cx.redraw();
                 }
             }
-            (_, Some('-')) => self.zoom_to(self.zoom.saturating_sub(1), cx),
-            (_, Some('=' | '+')) => self.zoom_to(self.zoom + 1, cx),
+            // Letters, so zoom needs no Sym key; - and = work too.
+            (_, Some('r' | '-')) => self.zoom_to(self.zoom.saturating_sub(1), cx),
+            (_, Some('t' | '=' | '+')) => self.zoom_to(self.zoom + 1, cx),
             (_, Some('m')) => self.set_window(self.window.is_none(), cx),
             (_, Some('b')) => {
                 self.bar = !self.bar;
                 self.relayout(cx);
                 cx.settings().set_bool(key::BAR, self.bar);
             }
-            (_, Some('t')) => match self.open_tab(cx) {
+            (_, Some('o')) => match self.open_tab(cx) {
                 Ok(()) => self.mode = Mode::Typing,
                 Err(e) => cx.toast(&format!("No new tab: {e}")),
             },
@@ -768,7 +769,7 @@ impl Term {
             Mode::Typing => Vec::new(),
             Mode::View => vec![
                 ("↑↓", "scroll"),
-                ("-=", "zoom"),
+                ("r t", "zoom"),
                 ("/", "find"),
                 ("h", "keys"),
             ],
