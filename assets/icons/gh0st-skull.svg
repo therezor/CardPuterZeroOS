@@ -1,2 +1,2 @@
-<!-- Gh0stdeck skull, MIT like the code. Drawn on a 16 px grid (scaled 1.5 to Lucide's 24), so at 16 px every edge lands on a pixel. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="scale(1.5)"><path fill="currentColor" fill-rule="evenodd" d="M2 6.5C2 3 4.7 1 8 1s6 2 6 5.5V9c0 .6-.4 1-1 1h-1v4c0 .6-.4 1-1 1H5c-.6 0-1-.4-1-1v-4H3c-.6 0-1-.4-1-1zM4 6h3v2c0 .6-.4 1-1 1H5c-.6 0-1-.4-1-1zm5 0h3v2c0 .6-.4 1-1 1h-1c-.6 0-1-.4-1-1zM8 9.5l1 2H7zM6 12.5h1V15H6zm3 0h1V15H9z"/></g></svg>
+<!-- Gh0stdeck skull, MIT like the code. Drawn on a 16 px grid (scaled 1.5 to Lucide's 24), so at 16 px the straight edges land on pixels. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="scale(1.5)"><path fill="currentColor" fill-rule="evenodd" d="M6 1H10L14 3V9L12 11V14L11 15H5L4 14V11L2 9V3ZM4 6H5L7 8V9H4ZM12 6H11L9 8V9H12ZM7 10H9L8 11ZM6 12H7V15H6ZM9 12H10V15H9Z"/></g></svg>
