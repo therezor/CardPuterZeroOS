@@ -11,7 +11,7 @@ use gh0st_core::usage::{AppUsage, SystemUsage};
 use gh0st_ui::Canvas;
 use gh0st_ui::geom::Rect;
 use gh0st_ui::theme::Theme;
-use gh0st_ui::widgets::{self, Card as CardView, Hint, Status, Visual};
+use gh0st_ui::widgets::{self, Card as CardView, Status, Visual};
 
 const GLIDE_MS: u64 = 80;
 /// Room under the cards for the meters.
@@ -60,7 +60,7 @@ struct Geo {
 
 impl Geo {
     fn new(t: &Theme) -> Geo {
-        let area = widgets::content(t);
+        let area = widgets::grid(t);
         let gap = 2 * t.m.gap;
         let per = t.m.cards;
         let card_w = (area.w - (per - 1) * gap) / per;
@@ -342,23 +342,18 @@ impl Switcher {
         widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         self.meters(c, t);
-        let mut hints = Vec::new();
-        if self.selected > 0 {
-            hints.push(Hint {
-                key: "Del",
-                label: "close",
-            });
-        } else if !self.apps.is_empty() {
-            hints.push(Hint {
-                key: "Del",
-                label: "close all",
-            });
-        }
-        hints.push(Hint {
-            key: "Esc",
-            label: "back",
-        });
-        widgets::hint_bar(c, t, &hints, None);
+        // 5 closes the app in front of you, at once; 6 closes them all,
+        // after asking.
+        use widgets::{Chip, Look};
+        let none = Chip::default();
+        let danger = |icon, word| Chip {
+            icon,
+            word,
+            look: Look::Danger,
+        };
+        let close = if self.selected > 0 { danger("circle-x", "Close") } else { none };
+        let all = if self.apps.is_empty() { none } else { danger("copy-x", "All") };
+        widgets::action_bar(c, t, &[none, close, all, none, none]);
     }
 
     /// CPU and memory, side by side across the cards' width. The top bar's

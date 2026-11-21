@@ -13,10 +13,31 @@ use gh0st_ui::Canvas;
 use gh0st_ui::geom::Rect;
 use gh0st_ui::image::Image;
 use gh0st_ui::theme::Theme;
-use gh0st_ui::widgets::{self, AppItem, Hint, Status, Visual};
+use gh0st_ui::widgets::{self, AppItem, Status, Visual};
 use std::rc::Rc;
 
 pub use gh0st_core::apps::Layout;
+
+/// Home's chips: 5 Find, 6 Apps, and the menu on 8, lit while it is open.
+pub fn chips(menu_open: bool) -> [widgets::Chip<'static>; 5] {
+    use widgets::{Chip, Look};
+    let none = Chip::default();
+    let chip = |icon, word| Chip {
+        icon,
+        word,
+        look: Look::Normal,
+    };
+    let menu = Chip {
+        icon: "menu",
+        word: "",
+        look: if menu_open { Look::On } else { Look::Normal },
+    };
+    // Under the menu its own chip alone shows, lit, as in every app.
+    if menu_open {
+        return [none, none, none, none, menu];
+    }
+    [none, chip("search", "Find"), chip("arrow-left-right", "Apps"), none, menu]
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -83,7 +104,7 @@ struct Geo {
 
 impl Geo {
     fn new(t: &Theme) -> Geo {
-        let area = widgets::content(t);
+        let area = widgets::grid(t);
         let (cols, rows) = (t.m.cols, t.m.rows);
         let tile_w = (area.w - (cols - 1) * t.m.gap) / cols;
         let tile_h = (area.h - (rows - 1) * t.m.gap) / rows;
@@ -400,29 +421,10 @@ impl Home {
         match self.mode {
             Mode::Search => widgets::search_bar(c, t, &self.query),
             Mode::Nav => {
-                let hints = [
-                    Hint {
-                        key: "S",
-                        label: "search",
-                    },
-                    Hint {
-                        key: "P",
-                        label: "pin",
-                    },
-                    Hint {
-                        key: "Enter",
-                        label: "open",
-                    },
-                ];
-                let pages = match self.layout {
-                    Layout::Grid => {
-                        let per = self.per_screen();
-                        Some((self.top / per, self.shown.len().div_ceil(per)))
-                    }
-                    Layout::List => None,
-                };
-                widgets::hint_bar(c, t, &hints, None);
-                if let Some((page, count)) = pages {
+                widgets::action_bar(c, t, &chips(false));
+                if let Layout::Grid = self.layout {
+                    let per = self.per_screen();
+                    let (page, count) = (self.top / per, self.shown.len().div_ceil(per));
                     let cy = t.m.height - t.m.hint_h / 2;
                     widgets::page_dots(c, t, t.m.width - t.m.pad, cy, page, count);
                 }

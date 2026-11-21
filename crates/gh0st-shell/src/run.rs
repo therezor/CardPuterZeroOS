@@ -227,6 +227,10 @@ struct Shell {
     tab_down: Option<u64>,
     enter_armed: bool,
     esc_armed: bool,
+    /// Home's menu, open on 8: the selected row.
+    home_menu: Option<usize>,
+    /// The switcher asks before closing every app.
+    confirm_all: bool,
     home_armed: bool,
     swallow_release: Option<u16>,
     rescan_at: Option<u64>,
@@ -343,6 +347,8 @@ impl Shell {
             tab_down: None,
             enter_armed: false,
             esc_armed: false,
+            home_menu: None,
+            confirm_all: false,
             home_armed: false,
             swallow_release: None,
             rescan_at: None,
@@ -909,6 +915,78 @@ impl Shell {
         }
     }
 
+    /// Home's menu over the grid: its rows with their keys, and the menu
+    /// chip lit.
+    fn draw_menu(&mut self, sel: usize) {
+        let t = self.t;
+        let rows = self.menu_rows();
+        let has_app = self.home.selected().is_some();
+        let c = &mut self.canvas;
+        let body = widgets::body(&t);
+        c.fill(body, t.c.bg);
+        let (x, w) = (t.m.margin, t.m.width - 2 * t.m.margin);
+        let keys_w = rows
+            .iter()
+            .map(|r| widgets::pills_w(&t, r.3))
+            .max()
+            .unwrap_or(0);
+        let mut y = body.y + 2;
+        widgets::section(c, &t, Rect::new(x, y, w, t.m.menu_head_h), "Home");
+        y += t.m.menu_head_h;
+        for (i, (act, label, value, keys)) in rows.iter().enumerate() {
+            let trailing = match act {
+                MenuAct::Layout => widgets::Trailing::Choice(value),
+                _ => widgets::Trailing::None,
+            };
+            let row = widgets::Row {
+                icon: None,
+                tint: t.c.accent,
+                label,
+                trailing,
+            };
+            let r = Rect::new(x, y, w, t.m.menu_row_h);
+            // Nothing selected, nothing to pin.
+            let dim = *act == MenuAct::Pin && !has_app;
+            widgets::menu_row(c, &t, r, &row, keys, keys_w, i == sel, dim);
+            y += t.m.menu_row_h;
+        }
+        widgets::action_bar(c, &t, &home::chips(true));
+    }
+
+    /// The switcher's Close all window.
+    fn draw_confirm_all(&mut self) {
+        let t = self.t;
+        let c = &mut self.canvas;
+        let body = widgets::body(&t);
+        widgets::scrim(c, &t, body);
+        let n = self.switcher.apps().len();
+        let line = if n == 1 {
+            "The open app closes. Work it hasn't saved is lost.".to_string()
+        } else {
+            format!("{n} apps close. Work they haven't saved is lost.")
+        };
+        let r = Rect::new(22, 30, t.m.width - 44, 92);
+        let inner = widgets::card(c, &t, r, "Close all apps?", t.c.critical);
+        let mut y = inner.y;
+        for l in wrap_words(t.f.body, &line, inner.w) {
+            widgets::text_in(c, t.f.body, Rect::new(inner.x, y, inner.w, 18), &l, t.c.soft());
+            y += 18;
+        }
+        let hints = [
+            widgets::Hint {
+                key: "Esc",
+                label: "cancel",
+            },
+            widgets::Hint {
+                key: "Enter",
+                label: "close all",
+            },
+        ];
+        widgets::key_row(c, &t, inner.x, r.bottom() - 6 - t.m.pill_h, &hints);
+        let none = widgets::Chip::default();
+        widgets::action_bar(c, &t, &[none; 5]);
+    }
+
     fn toast(&mut self, text: impl Into<String>) {
         let text = text.into();
         if self.app_front() {
@@ -988,7 +1066,15 @@ impl Shell {
             return;
         }
         if self.screen == Screen::Switcher {
-            self.switcher_key(k, now);
+            if self.confirm_all {
+                self.confirm_key(k, now);
+            } else {
+                self.switcher_key(k, now);
+            }
+            return;
+        }
+        if self.home_menu.is_some() {
+            self.menu_key(k);
             return;
         }
         if k.is(code::HOME) {
@@ -1128,16 +1214,129 @@ impl Shell {
             return;
         }
         match k.ch {
-            Some('s') => {
+            Some('s' | '5') => {
                 self.home.start_search();
                 self.dirty = true;
             }
+            Some('6') => {
+                let at = self.last_used_card();
+                self.open_switcher(Back::Home, at);
+            }
+            Some('8') => {
+                self.home_menu = Some(0);
+                self.dirty = true;
+            }
             Some('p') => self.toggle_pin(),
-            Some(d @ '1'..='8') if self.home.select_on_screen(d as usize - '1' as usize) => {
+            Some('l') => self.toggle_layout(),
+            // The keys over the chips are theirs; the rest open tiles.
+            Some(d @ '1'..='3') if self.home.select_on_screen(d as usize - '1' as usize) => {
                 self.open_selected();
             }
             _ => {}
         }
+    }
+
+    /// Home's menu rows: what each does, its label, its value, its keys.
+    fn menu_rows(&self) -> [(MenuAct, String, String, &'static str); 4] {
+        let name = self.home.selected().map(|e| e.name.clone()).unwrap_or_default();
+        let pinned = self
+            .home
+            .selected()
+            .is_some_and(|e| self.pins.contains(&e.id));
+        let pin = if pinned { "Unpin" } else { "Pin" };
+        let layout = match self.home.layout() {
+            Layout::Grid => "Grid",
+            Layout::List => "List",
+        };
+        [
+            (MenuAct::Pin, format!("{pin} {name}"), String::new(), "p"),
+            (MenuAct::Layout, "Layout".into(), layout.into(), "l"),
+            (MenuAct::Find, "Find".into(), String::new(), "s"),
+            (MenuAct::Switch, "Switch apps".into(), String::new(), "Fn k"),
+        ]
+    }
+
+    fn menu_key(&mut self, k: Key) {
+        if k.state != State::Press && k.state != State::Repeat {
+            return;
+        }
+        let Some(sel) = self.home_menu else {
+            return;
+        };
+        let n = 4;
+        let act = match k.nav(true) {
+            Some(keys::Nav::Up) => {
+                self.home_menu = Some((sel + n - 1) % n);
+                None
+            }
+            Some(keys::Nav::Down) => {
+                self.home_menu = Some((sel + 1) % n);
+                None
+            }
+            Some(keys::Nav::Left | keys::Nav::Right) if sel == 1 => Some(MenuAct::Layout),
+            Some(_) => None,
+            None if k.state == State::Repeat => None,
+            None if k.is(code::ESC) || k.ch == Some('8') => {
+                self.home_menu = None;
+                None
+            }
+            None if k.is(code::ENTER) => Some(self.menu_rows()[sel].0),
+            None => match k.ch {
+                Some('p') => Some(MenuAct::Pin),
+                Some('l') => Some(MenuAct::Layout),
+                Some('s') => Some(MenuAct::Find),
+                _ => None,
+            },
+        };
+        self.dirty = true;
+        let Some(act) = act else {
+            return;
+        };
+        // A setting changes in place; an action closes the menu first.
+        if act != MenuAct::Layout {
+            self.home_menu = None;
+        }
+        match act {
+            MenuAct::Pin if self.home.selected().is_none() => {}
+            MenuAct::Pin => self.toggle_pin(),
+            MenuAct::Layout => self.toggle_layout(),
+            MenuAct::Find => self.home.start_search(),
+            MenuAct::Switch => {
+                let at = self.last_used_card();
+                self.open_switcher(Back::Home, at);
+            }
+        }
+    }
+
+    fn toggle_layout(&mut self) {
+        let l = self.home.layout().toggled();
+        self.config.set_str("gh0st.home_layout", l.config_name());
+        let _ = self.config.save();
+        self.home.set_layout(l);
+        self.dirty = true;
+    }
+
+    /// The switcher's Close all window: Enter closes every app, Esc keeps
+    /// them.
+    fn confirm_key(&mut self, k: Key, now: u64) {
+        if k.is(code::ENTER) {
+            match k.state {
+                State::Press => self.enter_armed = true,
+                State::Release if self.enter_armed => {
+                    self.enter_armed = false;
+                    self.confirm_all = false;
+                    self.tasks.close_all(now);
+                    let cards = self.cards();
+                    self.switcher.set_apps(cards);
+                }
+                _ => {}
+            }
+        } else if k.is(code::ESC) && k.state == State::Press {
+            self.confirm_all = false;
+        } else {
+            return;
+        }
+        self.dirty = true;
     }
 
     fn search_key(&mut self, k: Key) {
@@ -1541,14 +1740,25 @@ impl Shell {
         match k.nav(true) {
             Some(keys::Nav::Left) => self.switcher.move_by(-1, now),
             Some(keys::Nav::Right) => self.switcher.move_by(1, now),
-            _ if k.is(code::BACKSPACE) && k.state == State::Press => {
-                // Del on an app closes it; on Home, every app.
+            _ if (k.is(code::BACKSPACE) || k.ch == Some('5')) && k.state == State::Press => {
+                // Del or 5 on an app closes it; on Home, Del asks to close
+                // every app, as 6 does.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
-                    Some(id) => self.tasks.close(&id, now),
-                    None => self.tasks.close_all(now),
+                    Some(id) => {
+                        self.tasks.close(&id, now);
+                        let cards = self.cards();
+                        self.switcher.set_apps(cards);
+                    }
+                    None if k.is(code::BACKSPACE) && !self.switcher.apps().is_empty() => {
+                        self.confirm_all = true;
+                    }
+                    None => {}
                 }
-                let cards = self.cards();
-                self.switcher.set_apps(cards);
+            }
+            _ if k.ch == Some('6') && k.state == State::Press => {
+                if !self.switcher.apps().is_empty() {
+                    self.confirm_all = true;
+                }
             }
             _ => return,
         }
@@ -1575,6 +1785,14 @@ impl Shell {
             Screen::Locked => widgets::lock_screen(&mut self.canvas, &t, &clock, &status),
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
+        }
+        if self.screen == Screen::Home {
+            if let Some(sel) = self.home_menu {
+                self.draw_menu(sel);
+            }
+        }
+        if self.screen == Screen::Switcher && self.confirm_all {
+            self.draw_confirm_all();
         }
         drop(dock);
         drop(cards);
@@ -1898,4 +2116,36 @@ mod tests {
         assert_eq!(parse_volume("Volume: 0.65 [MUTED]\n"), Some((65, true)));
         assert_eq!(parse_volume("nope"), None);
     }
+}
+
+/// What a row of home's menu does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuAct {
+    Pin,
+    Layout,
+    Find,
+    Switch,
+}
+
+/// Splits `s` into lines no wider than `w`, at spaces.
+fn wrap_words(f: gh0st_ui::font::Font, s: &str, w: i32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in s.split(' ') {
+        let next = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        if f.measure(&next) > w && !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+            line = word.to_string();
+        } else {
+            line = next;
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
