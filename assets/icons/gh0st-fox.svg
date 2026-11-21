@@ -1,2 +1,2 @@
-<!-- Gh0stdeck fox, MIT like the code. Drawn on a 16 px grid (scaled 1.5 to Lucide's 24), so at 16 px the straight edges land on pixels. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="scale(1.5)"><path fill="currentColor" fill-rule="evenodd" d="M1 1L6 5H10L15 1L14 9L8 15L2 9ZM4 7H7V9H5ZM12 7H9V9H11ZM7 12H9L8 13Z"/></g></svg>
+<!-- Gh0stdeck fox, MIT like the code. Drawn as a line icon like Lucide, so build.rs gives it the same stroke at each size. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.56 4.56L7.44 7.44Q9 9 11.2 9H12.8Q15 9 16.56 7.44L19.44 4.56Q21 3 21 5.2V9.8Q21 12 19.44 13.56L13.56 19.44Q12 21 10.44 19.44L4.56 13.56Q3 12 3 9.8V5.2Q3 3 4.56 4.56Z"/><path d="M7 12L10.5 13.5"/><path d="M17 12L13.5 13.5"/></svg>
