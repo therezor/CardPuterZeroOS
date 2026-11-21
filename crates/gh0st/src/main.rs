@@ -3,6 +3,8 @@
 
 use std::path::Path;
 
+mod helper;
+
 fn main() {
     let mut args = std::env::args();
     let argv0 = args.next().unwrap_or_default();
@@ -20,8 +22,12 @@ fn main() {
             let rest: Vec<String> = args.collect();
             std::process::exit(gh0st_shell::run::main(&rest))
         }
+        "helper" | "gh0st-helper" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(helper::main(&rest))
+        }
         _ => {
-            eprintln!("usage: gh0st <shell|version>");
+            eprintln!("usage: gh0st <shell|helper|version>");
             std::process::exit(2);
         }
     }

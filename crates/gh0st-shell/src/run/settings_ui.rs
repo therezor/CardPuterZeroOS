@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::settings::{bt, net};
-use crate::settings::pages::{self, AppRow, DARK_TIMES, State as PageState};
+use crate::settings::pages::{self, AppRow, DARK_TIMES, Logs, State as PageState};
 use crate::settings::{self, Act, Body, Command, Cursor, Dialog, Page, PageId, Setting, Value};
 use gh0st_core::desktop;
 
@@ -21,7 +21,14 @@ pub(super) enum Ask {
     WifiPassword(String),
     HiddenName,
     HiddenPassword(String),
+    PasswordCurrent,
+    PasswordNew(String),
+    PasswordRepeat(String, String),
 }
+
+/// pkexec runs the root helper by this path (see packaging/polkit).
+const HELPER: &str = "/usr/libexec/gh0st-helper";
+const LOGGING_DIR: &str = "/etc/systemd/journald.conf.d";
 
 /// An nmcli run Settings is waiting on.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +50,15 @@ pub(super) enum NetJob {
     /// What to say when it works.
     BtDevice(String),
     BtRemove(String),
+    /// `timedatectl show` and whether SSH runs.
+    SysQuery,
+    Zones,
+    TimeSet,
+    /// The root helper; what to say when it works.
+    Helper(String),
+    /// After the helper unblocks the radio, power it on.
+    BtUnblock,
+    Password,
 }
 
 impl SettingsUi {
@@ -70,6 +86,7 @@ impl Shell {
         self.dirty = true;
         self.query_net(false);
         self.query_bt();
+        self.query_sys();
     }
 
     fn close_settings(&mut self) {
@@ -107,6 +124,7 @@ impl Shell {
         apps.sort_by_key(|a| a.name.to_lowercase());
         s.apps = apps;
         s.about = about(self.battery);
+        s.logs = logs_level();
     }
 
     /// Rebuilds the page on top from fresh local state.
@@ -232,6 +250,11 @@ impl Shell {
         };
         match act {
             Act::Open(id) => {
+                let zones = matches!(id, PageId::TimeZone(_))
+                    && self.settings.as_ref().is_some_and(|ui| ui.state.zones.is_empty());
+                if zones {
+                    self.start_job(JobKind::Net(NetJob::Zones), &["timedatectl", "list-timezones"]);
+                }
                 if let Some(ui) = self.settings.as_mut() {
                     ui.stack.push((id, Cursor::default()));
                 }
@@ -443,6 +466,43 @@ impl Shell {
                 Ask::HiddenPassword(text.clone()),
             ),
             Ask::HiddenName => {}
+            Ask::PasswordCurrent => self.ask(
+                Dialog::Text {
+                    title: "New password".into(),
+                    placeholder: "Password",
+                    text: String::new(),
+                    masked: true,
+                },
+                Ask::PasswordNew(std::mem::take(&mut text)),
+            ),
+            Ask::PasswordNew(cur) => self.ask(
+                Dialog::Text {
+                    title: "New password again".into(),
+                    placeholder: "Password",
+                    text: String::new(),
+                    masked: true,
+                },
+                Ask::PasswordRepeat(cur, std::mem::take(&mut text)),
+            ),
+            Ask::PasswordRepeat(mut cur, mut new) => {
+                if new != text {
+                    self.toast("The passwords differ");
+                } else if new.is_empty() {
+                    self.toast("The password is empty");
+                } else {
+                    // passwd as the user: it checks the current password
+                    // itself, so no root helper can be asked to set one.
+                    let mut input = format!("{cur}\n{new}\n{new}\n");
+                    self.start_job_with(
+                        JobKind::Net(NetJob::Password),
+                        &["passwd"],
+                        Some(input.as_bytes()),
+                    );
+                    wipe(&mut input);
+                }
+                wipe(&mut cur);
+                wipe(&mut new);
+            }
             Ask::HiddenPassword(ssid) => {
                 let argv = [
                     "nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid, "hidden",
@@ -458,8 +518,13 @@ impl Shell {
     /// Closes every app, then restarts or powers off.
     fn power(&mut self, restart: bool) {
         self.tasks.close_all(rt::now_ms());
-        child::fire(&["systemctl", if restart { "reboot" } else { "poweroff" }]);
-        self.toast(if restart { "Restarting\u{2026}" } else { "Powering off\u{2026}" });
+        let (arg, msg) = if restart {
+            ("reboot", "Restarting\u{2026}")
+        } else {
+            ("off", "Powering off\u{2026}")
+        };
+        self.helper(&["power", arg], msg.into());
+        self.toast(msg);
     }
 
     /// Keys only some pages take. True if the key was used.
@@ -509,6 +574,24 @@ impl Shell {
             }
             _ => false,
         }
+    }
+
+    fn query_sys(&mut self) {
+        self.start_job(
+            JobKind::Net(NetJob::SysQuery),
+            &[
+                "sh",
+                "-c",
+                "timedatectl show -p Timezone -p NTP; echo SSH=$(systemctl is-active ssh)",
+            ],
+        );
+    }
+
+    /// Runs the root helper through pkexec.
+    fn helper(&mut self, args: &[&str], done: String) {
+        let mut argv = vec!["pkexec", HELPER];
+        argv.extend_from_slice(args);
+        self.start_job(JobKind::Net(NetJob::Helper(done)), &argv);
     }
 
     fn query_bt(&mut self) {
@@ -628,6 +711,29 @@ impl Shell {
                 self.query_bt();
             }
             NetJob::BtScan => self.query_bt(),
+            NetJob::BtUnblock => {
+                if j.ok() {
+                    self.start_job(JobKind::Net(NetJob::BtPower), &["bluetoothctl", "power", "on"]);
+                } else {
+                    self.toast(helper_failure(&out));
+                    self.query_bt();
+                }
+            }
+            NetJob::TimeSet => {
+                if !j.ok() {
+                    self.toast(helper_failure(&out));
+                }
+                self.query_sys();
+            }
+            NetJob::Helper(done) => {
+                self.toast(if j.ok() { done.clone() } else { helper_failure(&out) });
+                self.query_sys();
+            }
+            NetJob::Password => self.toast(if j.ok() {
+                "Password changed".to_string()
+            } else {
+                password_failure(&out)
+            }),
             NetJob::BtDevice(done) => {
                 if j.ok() {
                     self.toast(done.clone());
@@ -663,6 +769,19 @@ impl Shell {
                 st.devices = devices;
             }
             NetJob::BtScan => st.bt_scanning = false,
+            NetJob::SysQuery => {
+                for line in out.lines() {
+                    match line.split_once('=') {
+                        Some(("Timezone", z)) => st.zone = z.to_string(),
+                        Some(("NTP", v)) => st.network_time = v == "yes",
+                        Some(("SSH", v)) => st.ssh = v == "active",
+                        _ => {}
+                    }
+                }
+            }
+            NetJob::Zones if j.ok() => {
+                st.zones = out.lines().map(str::to_string).filter(|z| z.contains('/')).collect();
+            }
             _ => {}
         }
         if requery {
@@ -687,18 +806,38 @@ impl Shell {
             }
             Setting::Bluetooth => {
                 let on = self.settings.as_ref().is_some_and(|ui| ui.state.bt_on);
-                if !on {
-                    // Stock boots with the radio blocked. The session ACL
-                    // usually allows this; the helper covers the rest.
-                    let _ = gh0st_core::rfkill::set(gh0st_core::rfkill::Radio::Bluetooth, false);
-                }
                 if let Some(ui) = self.settings.as_mut() {
                     ui.state.bt_on = !on;
                 }
-                self.start_job(
-                    JobKind::Net(NetJob::BtPower),
-                    &["bluetoothctl", "power", if on { "off" } else { "on" }],
-                );
+                // Stock boots with the radio blocked. The session ACL
+                // usually allows the unblock; the helper covers the rest.
+                let blocked = !on
+                    && gh0st_core::rfkill::set(gh0st_core::rfkill::Radio::Bluetooth, false).is_err();
+                if blocked {
+                    let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "on"];
+                    self.start_job(JobKind::Net(NetJob::BtUnblock), &argv);
+                } else {
+                    self.start_job(
+                        JobKind::Net(NetJob::BtPower),
+                        &["bluetoothctl", "power", if on { "off" } else { "on" }],
+                    );
+                }
+            }
+            Setting::NetworkTime => {
+                let on = self.settings.as_ref().is_some_and(|ui| ui.state.network_time);
+                let argv = ["timedatectl", "set-ntp", if on { "false" } else { "true" }];
+                self.start_job(JobKind::Net(NetJob::TimeSet), &argv);
+            }
+            Setting::Ssh => {
+                let on = self.settings.as_ref().is_some_and(|ui| ui.state.ssh);
+                let (arg, done) = if on { ("off", "SSH off") } else { ("on", "SSH on") };
+                self.helper(&["ssh", arg], done.into());
+            }
+            Setting::Logs => {
+                let now = logs_level();
+                let i = Logs::ALL.iter().position(|&l| l == now).unwrap_or(0);
+                let next = Logs::ALL[cycle(i, d, Logs::ALL.len())];
+                self.helper(&["logs", next.verb()], format!("Logs: {}", next.label()));
             }
             _ => self.toast("Not available yet"),
         }
@@ -730,6 +869,31 @@ impl Shell {
                 }
             }
             Command::Device(mac) => self.bt_enter(mac),
+            Command::SetZone(zone) => {
+                let known = self.settings.as_ref().is_some_and(|ui| ui.state.zones.contains(&zone));
+                if known {
+                    self.start_job(JobKind::Net(NetJob::TimeSet), &["timedatectl", "set-timezone", &zone]);
+                    // The C library reads /etc/localtime once; naming the
+                    // zone makes the clock follow at once.
+                    // SAFETY: the shell is single-threaded.
+                    unsafe { std::env::set_var("TZ", &zone) };
+                    self.refresh_status();
+                    if let Some(ui) = self.settings.as_mut() {
+                        ui.state.zone = zone;
+                        ui.stack.retain(|(p, _)| !matches!(p, PageId::TimeZone(_)));
+                    }
+                    self.refresh_settings();
+                }
+            }
+            Command::Password => self.ask(
+                Dialog::Text {
+                    title: "Current password".into(),
+                    placeholder: "Password",
+                    text: String::new(),
+                    masked: true,
+                },
+                Ask::PasswordCurrent,
+            ),
             _ => self.toast("Not available yet"),
         }
     }
@@ -810,6 +974,60 @@ pub(super) fn draw(c: &mut Canvas, t: &Theme, status: &Status, ui: Option<&Setti
     let (_, cur) = ui.top();
     let dialog = ui.dialog.as_ref().map(|(d, _)| d);
     settings::draw(c, t, &status, &ui.page, *cur, dialog);
+}
+
+/// The logging level now: the last `Storage=` journald reads wins, as
+/// journald itself decides.
+fn logs_level() -> Logs {
+    let mut files: Vec<std::path::PathBuf> = vec!["/etc/systemd/journald.conf".into()];
+    if let Ok(rd) = std::fs::read_dir(LOGGING_DIR) {
+        let mut drop_ins: Vec<_> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|x| x == "conf"))
+            .collect();
+        drop_ins.sort();
+        files.extend(drop_ins);
+    }
+    let mut storage = String::from("auto");
+    for f in files {
+        if let Ok(s) = std::fs::read_to_string(f) {
+            for l in s.lines() {
+                if let Some(v) = l.trim().strip_prefix("Storage=") {
+                    storage = v.trim().to_string();
+                }
+            }
+        }
+    }
+    match storage.as_str() {
+        "none" => Logs::Off,
+        "volatile" => Logs::Ram,
+        "persistent" => Logs::Persistent,
+        _ if std::path::Path::new("/var/log/journal").is_dir() => Logs::Persistent,
+        _ => Logs::Ram,
+    }
+}
+
+fn helper_failure(out: &str) -> String {
+    if out.contains("Not authorized") || out.contains("dismissed") || out.contains("polkit") {
+        return "Not allowed: polkit rule missing".into();
+    }
+    out.lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim_start_matches("gh0st-helper: ").to_string())
+        .unwrap_or_else(|| "Failed".into())
+}
+
+fn password_failure(out: &str) -> String {
+    if out.contains("Authentication token manipulation") || out.contains("Authentication failure") {
+        "Wrong current password".into()
+    } else {
+        out.lines()
+            .rev()
+            .find(|l| l.contains("BAD PASSWORD") || l.contains("passwd:"))
+            .map(|l| l.trim().to_string())
+            .unwrap_or_else(|| "Password not changed".into())
+    }
 }
 
 /// Overwrites a secret before its memory is freed.

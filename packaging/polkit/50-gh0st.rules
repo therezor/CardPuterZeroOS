@@ -10,7 +10,11 @@ polkit.addRule(function(action, subject) {
         "org.freedesktop.NetworkManager.settings.modify.own",
         "org.freedesktop.NetworkManager.settings.modify.system",
         "org.freedesktop.NetworkManager.wifi.scan",
-        "org.freedesktop.NetworkManager.enable-disable-wifi"
+        "org.freedesktop.NetworkManager.enable-disable-wifi",
+        "org.freedesktop.timedate1.set-timezone",
+        "org.freedesktop.timedate1.set-ntp",
+        // gh0st-helper: logs, SSH, radio switches, power. Fixed verbs only.
+        "org.cpzero.gh0st.helper"
     ];
     if (allowed.indexOf(action.id) >= 0) {
         return polkit.Result.YES;
