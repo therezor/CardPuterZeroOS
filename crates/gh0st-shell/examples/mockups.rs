@@ -295,14 +295,18 @@ fn settings_scene(
     let apps = open_apps(t, stock, 2);
     let d = dock(t, &apps);
     let title = page.title.clone();
-    let mut cur = Cursor {
-        selected,
-        top: 0,
-    };
+    let mut cur = Cursor { selected, top: 0 };
     let per = settings::rows(t).1;
     cur.fit(page.len(), per);
     let mut c = new_canvas(t);
-    settings::draw(&mut c, t, &status(&d, Some(0), &title), &page, cur, dialog.as_ref());
+    settings::draw(
+        &mut c,
+        t,
+        &status(&d, Some(0), &title),
+        &page,
+        cur,
+        dialog.as_ref(),
+    );
     c
 }
 
@@ -412,8 +416,14 @@ fn main() {
         if palette.name == "Mint" {
             let s = |id, sel| settings_scene(&t, stock, id, sel, None);
             scenes.extend([
-                ("home-grid-search", home(&t, stock, Layout::Grid, Some("re"))),
-                ("home-list-search", home(&t, stock, Layout::List, Some("re"))),
+                (
+                    "home-grid-search",
+                    home(&t, stock, Layout::Grid, Some("re")),
+                ),
+                (
+                    "home-list-search",
+                    home(&t, stock, Layout::List, Some("re")),
+                ),
                 ("switcher-home", switcher_scene(&t, stock, 2, 0)),
                 ("switcher-many", switcher_scene(&t, stock, 5, 4)),
                 ("settings-scrolled", s(PageId::Root, 8)),

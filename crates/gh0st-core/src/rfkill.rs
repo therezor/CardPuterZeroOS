@@ -18,7 +18,9 @@ fn event(radio: Radio, blocked: bool) -> [u8; 8] {
 
 /// Blocks or unblocks every switch of `radio`.
 pub fn set(radio: Radio, blocked: bool) -> std::io::Result<()> {
-    let mut f = std::fs::OpenOptions::new().write(true).open("/dev/rfkill")?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/rfkill")?;
     f.write_all(&event(radio, blocked))
 }
 

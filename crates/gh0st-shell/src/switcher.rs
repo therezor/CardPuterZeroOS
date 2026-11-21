@@ -32,9 +32,14 @@ pub struct Card {
 
 #[derive(Clone, Copy, Debug)]
 enum Motion {
-    Glide { from: Rect },
+    Glide {
+        from: Rect,
+    },
     /// The strip moves a card; cards start `from_px` right of where they end.
-    Scroll { from_px: i32, from: Rect },
+    Scroll {
+        from_px: i32,
+        from: Rect,
+    },
 }
 
 type Anim = motion::Anim<Motion>;

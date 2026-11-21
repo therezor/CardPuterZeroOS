@@ -30,7 +30,8 @@ fn plain(s: &str) -> String {
 pub fn is_mac(s: &str) -> bool {
     s.len() == 17
         && s.split(':').count() == 6
-        && s.split(':').all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit()))
+        && s.split(':')
+            .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 fn device_line(line: &str) -> Option<(String, String)> {

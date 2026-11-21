@@ -286,7 +286,12 @@ pub fn build(id: &PageId, s: &State) -> Page {
             vec![],
         ),
         PageId::App(file) => {
-            let a = s.apps.iter().find(|a| a.file == *file).cloned().unwrap_or_default();
+            let a = s
+                .apps
+                .iter()
+                .find(|a| a.file == *file)
+                .cloned()
+                .unwrap_or_default();
             let f = || a.file.clone();
             (
                 "App",
@@ -309,7 +314,12 @@ pub fn build(id: &PageId, s: &State) -> Page {
                         Value::Toggle(a.background),
                         Act::Set(Setting::AppBackground(f())),
                     ),
-                    Item::new("pin", "Pinned", Value::Toggle(a.pinned), Act::Set(Setting::AppPinned(f()))),
+                    Item::new(
+                        "pin",
+                        "Pinned",
+                        Value::Toggle(a.pinned),
+                        Act::Set(Setting::AppPinned(f())),
+                    ),
                 ]),
                 vec![],
             )
@@ -327,11 +337,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
             vec![("S", "scan"), ("Del", "forget")],
         ),
         PageId::System => ("System", Body::List(system(s)), vec![]),
-        PageId::TimeZone(region) => (
-            "Time zone",
-            Body::List(zones(s, region.as_deref())),
-            vec![],
-        ),
+        PageId::TimeZone(region) => ("Time zone", Body::List(zones(s, region.as_deref())), vec![]),
         PageId::Privacy => (
             "Privacy",
             Body::List(vec![Item::new(
@@ -392,12 +398,7 @@ fn root(s: &State) -> Vec<Item> {
             s.ip().unwrap_or("").into(),
             PageId::Network,
         ),
-        link(
-            "bluetooth",
-            "Bluetooth",
-            on_off(s.bt_on),
-            PageId::Bluetooth,
-        ),
+        link("bluetooth", "Bluetooth", on_off(s.bt_on), PageId::Bluetooth),
         link("sun", "Display", pct(s.brightness), PageId::Display),
         link("volume-2", "Sound", sound, PageId::Sound),
         link(
@@ -512,7 +513,11 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
         }
     };
     let auto_ip = !c.manual;
-    let address = if auto_ip { shown(&c.current, "Automatic") } else { shown(&c.address, "None") };
+    let address = if auto_ip {
+        shown(&c.current, "Automatic")
+    } else {
+        shown(&c.address, "None")
+    };
     vec![
         Item::new(
             "check",
@@ -535,7 +540,10 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
         Item::new(
             "",
             "Gateway",
-            Value::TextChevron(shown(&c.gateway, if auto_ip { "Automatic" } else { "None" })),
+            Value::TextChevron(shown(
+                &c.gateway,
+                if auto_ip { "Automatic" } else { "None" },
+            )),
             Act::Run(Command::ConnEdit(ConnField::Gateway)),
         ),
         Item::new(
@@ -550,10 +558,20 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
             Value::Choice(super::net::mac_label(&c.mac).into()),
             Act::Set(Setting::ConnMac),
         ),
-        Item::new("arrow-left-right", "Reconnect", Value::None, Act::Run(Command::ConnUp)),
+        Item::new(
+            "arrow-left-right",
+            "Reconnect",
+            Value::None,
+            Act::Run(Command::ConnUp),
+        ),
         Item {
             danger: true,
-            ..Item::new("power", "Forget", Value::None, Act::Run(Command::ConnForget))
+            ..Item::new(
+                "power",
+                "Forget",
+                Value::None,
+                Act::Run(Command::ConnForget),
+            )
         },
     ]
 }
@@ -631,7 +649,12 @@ fn system(s: &State) -> Vec<Item> {
         Item::new("power", "Restart", Value::None, Act::Run(Command::Restart)),
         Item {
             danger: true,
-            ..Item::new("power", "Power off", Value::None, Act::Run(Command::PowerOff))
+            ..Item::new(
+                "power",
+                "Power off",
+                Value::None,
+                Act::Run(Command::PowerOff),
+            )
         },
     ]
 }
@@ -704,7 +727,10 @@ mod tests {
     fn root_links_every_page_and_shows_the_network() {
         let p = build(&PageId::Root, &state());
         assert_eq!(p.len(), 10);
-        assert_eq!(p.item(0).unwrap().value, Value::TextChevron("HomeNet".into()));
+        assert_eq!(
+            p.item(0).unwrap().value,
+            Value::TextChevron("HomeNet".into())
+        );
     }
 
     #[test]

@@ -158,7 +158,9 @@ pub const MACS: &[(&str, &str)] = &[
 ];
 
 pub fn mac_label(v: &str) -> &'static str {
-    MACS.iter().find(|(k, _)| *k == v).map_or("Default", |(_, l)| l)
+    MACS.iter()
+        .find(|(k, _)| *k == v)
+        .map_or("Default", |(_, l)| l)
 }
 
 /// Checks a typed IPv4 address with optional prefix, or a list of them.
@@ -311,10 +313,15 @@ mod tests {
         assert_eq!(c.dns, "1.1.1.1,9.9.9.9");
         assert_eq!(mac_label(&c.mac), "Stable");
         assert_eq!(
-            parse_conns("Home:802-11-wireless:wlan0\nlo:loopback:lo\nWired connection 1:802-3-ethernet:\n"),
+            parse_conns(
+                "Home:802-11-wireless:wlan0\nlo:loopback:lo\nWired connection 1:802-3-ethernet:\n"
+            ),
             [
                 ("Home".to_string(), "802-11-wireless".to_string()),
-                ("Wired connection 1".to_string(), "802-3-ethernet".to_string())
+                (
+                    "Wired connection 1".to_string(),
+                    "802-3-ethernet".to_string()
+                )
             ]
         );
     }
@@ -336,11 +343,17 @@ mod tests {
         );
         assert_eq!(parse_radio("enabled\n"), Some(true));
         assert_eq!(
-            failure("Error: Connection activation failed: Secrets were required, but not provided.", true),
+            failure(
+                "Error: Connection activation failed: Secrets were required, but not provided.",
+                true
+            ),
             "Wrong password"
         );
         assert_eq!(
-            failure("Error: Connection activation failed: No network with SSID 'x' found.", false),
+            failure(
+                "Error: Connection activation failed: No network with SSID 'x' found.",
+                false
+            ),
             "No network with SSID 'x' found"
         );
     }

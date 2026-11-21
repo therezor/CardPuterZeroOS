@@ -89,7 +89,9 @@ fn act(v: Verb) -> Result<(), String> {
 
 pub fn main(args: &[String]) -> i32 {
     let Some(v) = parse(args) else {
-        eprintln!("usage: gh0st-helper logs off|ram|persistent | ssh on|off | rfkill bluetooth|wlan on|off | power off|reboot");
+        eprintln!(
+            "usage: gh0st-helper logs off|ram|persistent | ssh on|off | rfkill bluetooth|wlan on|off | power off|reboot"
+        );
         return 2;
     };
     match act(v) {
@@ -118,7 +120,16 @@ mod tests {
             Some(Verb::Rfkill(Radio::Bluetooth, true))
         );
         assert_eq!(parse(&args("power reboot")), Some(Verb::Power(true)));
-        for bad in ["", "logs", "logs /etc/passwd", "ssh maybe", "rfkill nfc on", "power", "ssh on extra", "password"] {
+        for bad in [
+            "",
+            "logs",
+            "logs /etc/passwd",
+            "ssh maybe",
+            "rfkill nfc on",
+            "power",
+            "ssh on extra",
+            "password",
+        ] {
             assert_eq!(parse(&args(bad)), None, "{bad:?}");
         }
     }

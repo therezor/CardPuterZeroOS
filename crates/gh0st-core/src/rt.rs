@@ -156,7 +156,10 @@ pub fn local_hms() -> (u32, u32, u32) {
 /// next minute change. The clock is the only timer an idle home screen keeps.
 pub fn clock_text(h24: bool) -> (String, u64) {
     let (h, m, s) = local_hms();
-    (clock_format(h, m, h24), now_ms() + (60 - s.min(59)) as u64 * 1000)
+    (
+        clock_format(h, m, h24),
+        now_ms() + (60 - s.min(59)) as u64 * 1000,
+    )
 }
 
 pub fn clock_format(h: u32, m: u32, h24: bool) -> String {

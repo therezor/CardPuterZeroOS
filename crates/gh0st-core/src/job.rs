@@ -106,7 +106,15 @@ mod tests {
     #[test]
     fn output_and_status_arrive_through_the_loop_parts() {
         let _one = crate::child::CHILD_TESTS.lock().unwrap();
-        let mut j = spawn(&["/bin/sh", "-c", "read x; echo got $x; echo oops >&2; exit 3"], Some(b"hi\n")).unwrap();
+        let mut j = spawn(
+            &[
+                "/bin/sh",
+                "-c",
+                "read x; echo got $x; echo oops >&2; exit 3",
+            ],
+            Some(b"hi\n"),
+        )
+        .unwrap();
         let start = crate::rt::now_ms();
         while !j.done() {
             let mut fds = [crate::rt::pollfd(j.fd())];

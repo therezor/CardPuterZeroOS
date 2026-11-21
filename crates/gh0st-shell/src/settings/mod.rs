@@ -342,14 +342,24 @@ fn draw_dialog(c: &mut Canvas, t: &Theme, d: &Dialog) {
                 (true, false) => &[("Tab", "hide"), ("Enter", "ok"), ("Esc", "cancel")],
                 _ => &[("Enter", "ok"), ("Esc", "cancel")],
             };
-            dialog_keys(c, t, Rect::new(inner.x, field.bottom() + 8, inner.w, 16), keys);
+            dialog_keys(
+                c,
+                t,
+                Rect::new(inner.x, field.bottom() + 8, inner.w, 16),
+                keys,
+            );
         }
         Dialog::Confirm { title, line, yes } => {
             let inner = widgets::dialog(c, t, r, title, t.c.critical);
             let l = Rect::new(inner.x, inner.y + 2, inner.w, 22);
             widgets::text_in(c, t.f.body, l, line, t.c.fg);
             let keys = [("Enter", *yes), ("Esc", "cancel")];
-            dialog_keys(c, t, Rect::new(inner.x, l.bottom() + 10, inner.w, 16), &keys);
+            dialog_keys(
+                c,
+                t,
+                Rect::new(inner.x, l.bottom() + 10, inner.w, 16),
+                &keys,
+            );
         }
     }
 }

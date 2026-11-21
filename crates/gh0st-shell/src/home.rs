@@ -465,7 +465,12 @@ impl Home {
         AppItem {
             label: &e.name,
             note: &e.note,
-            visual: visual(t, &e.icon, &e.name, if small { Size::Small } else { Size::Large }),
+            visual: visual(
+                t,
+                &e.icon,
+                &e.name,
+                if small { Size::Small } else { Size::Large },
+            ),
             pinned: e.pinned,
         }
     }

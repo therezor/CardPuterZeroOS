@@ -536,11 +536,11 @@ impl Shell {
                 // Over an app no shell key repeats, so no repeat wakeups.
                 (!app).then(|| self.kb.repeat_at()).flatten(),
                 self.toast.as_ref().map(|t| t.1),
-                (!app).then_some(self.tab_down.map(|t| t + LOCK_HOLD_MS)).flatten(),
+                (!app)
+                    .then_some(self.tab_down.map(|t| t + LOCK_HOLD_MS))
+                    .flatten(),
                 self.rescan_at,
-                self.dark_ms
-                    .filter(|_| shell)
-                    .map(|d| self.last_input + d),
+                self.dark_ms.filter(|_| shell).map(|d| self.last_input + d),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
                 shell
@@ -550,8 +550,12 @@ impl Shell {
                     })
                     .flatten(),
                 app.then(|| self.esc.next_at()).flatten(),
-                (shell && self.tasks.iter().any(|t| t.state == tasks::State::Background))
-                    .then_some(now + GUARD_MS),
+                (shell
+                    && self
+                        .tasks
+                        .iter()
+                        .any(|t| t.state == tasks::State::Background))
+                .then_some(now + GUARD_MS),
                 (app && (self.banner.is_some() || self.popup.is_some()))
                     .then_some(now + crate::overlay::REFRESH_MS),
                 self.tasks.next_at(now),
@@ -751,7 +755,10 @@ impl Shell {
 
     /// ESC held over an app, and the battery countdown drawn over it.
     fn app_timers(&mut self, now: u64) {
-        for o in [self.banner.as_mut(), self.popup.as_mut()].into_iter().flatten() {
+        for o in [self.banner.as_mut(), self.popup.as_mut()]
+            .into_iter()
+            .flatten()
+        {
             o.refresh(self.display.as_mut());
         }
         let d = self.esc.update(now, self.esc_down);
@@ -788,7 +795,12 @@ impl Shell {
     /// written again from the shell's frame, and its pixels are kept, so it
     /// shows them when it comes back.
     fn guard_background(&mut self) {
-        if self.dirty || !self.tasks.iter().any(|t| t.state == tasks::State::Background) {
+        if self.dirty
+            || !self
+                .tasks
+                .iter()
+                .any(|t| t.state == tasks::State::Background)
+        {
             return;
         }
         let mut now = self.canvas_for_overlay();
@@ -1020,7 +1032,11 @@ impl Shell {
                 };
                 let v = (self.volume.unwrap_or(50) as i32 + step).clamp(0, 100) as u8;
                 self.apply_volume(v);
-                let suffix = if self.muted == Some(true) { ", muted" } else { "" };
+                let suffix = if self.muted == Some(true) {
+                    ", muted"
+                } else {
+                    ""
+                };
                 self.toast(format!("Volume {v}%{suffix}"));
                 true
             }
@@ -1177,7 +1193,9 @@ impl Shell {
             return;
         }
         match self.tasks.get(&id).map(|t| t.state) {
-            Some(tasks::State::Closing { .. }) => self.toast(format!("{} is closing", app.entry.name)),
+            Some(tasks::State::Closing { .. }) => {
+                self.toast(format!("{} is closing", app.entry.name))
+            }
             Some(_) => self.pending = Some(Pending::Resume(id)),
             None => self.launch(&app),
         }
@@ -1446,7 +1464,10 @@ impl Shell {
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
         drop(dock);
-        if matches!(self.screen, Screen::Home | Screen::Switcher | Screen::Settings) {
+        if matches!(
+            self.screen,
+            Screen::Home | Screen::Switcher | Screen::Settings
+        ) {
             self.draw_low_battery();
             if let Some((text, _)) = &self.toast {
                 widgets::toast(&mut self.canvas, &t, text);
@@ -1684,7 +1705,10 @@ fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
 /// "Volume: 0.40 [MUTED]" from `wpctl get-volume`, as (percent, muted).
 fn parse_volume(s: &str) -> Option<(u8, bool)> {
     let v: f32 = s.split_whitespace().nth(1)?.parse().ok()?;
-    Some(((v * 100.0).round().clamp(0.0, 150.0) as u8, s.contains("[MUTED]")))
+    Some((
+        (v * 100.0).round().clamp(0.0, 150.0) as u8,
+        s.contains("[MUTED]"),
+    ))
 }
 
 #[cfg(test)]

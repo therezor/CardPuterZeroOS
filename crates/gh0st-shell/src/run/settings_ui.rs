@@ -3,11 +3,11 @@
 //! and saves, so stock apps' keys survive, and applies at once.
 
 use super::*;
-use crate::settings::{bt, net};
 use crate::settings::pages::{self, APP_ICONS, AppRow, DARK_TIMES, Logs, State as PageState};
 use crate::settings::{
     self, Act, Body, Command, ConnField, Cursor, Dialog, Page, PageId, Setting, Value,
 };
+use crate::settings::{bt, net};
 use gh0st_core::desktop;
 
 pub(super) struct SettingsUi {
@@ -68,7 +68,10 @@ pub(super) enum NetJob {
     Password,
     ConnQuery,
     /// A profile change; reconnect after it when the profile is in use.
-    ConnModify { name: String, reconnect: bool },
+    ConnModify {
+        name: String,
+        reconnect: bool,
+    },
     ConnUp(String),
     ConnDelete(String),
 }
@@ -273,9 +276,15 @@ impl Shell {
         match act {
             Act::Open(id) => {
                 let zones = matches!(id, PageId::TimeZone(_))
-                    && self.settings.as_ref().is_some_and(|ui| ui.state.zones.is_empty());
+                    && self
+                        .settings
+                        .as_ref()
+                        .is_some_and(|ui| ui.state.zones.is_empty());
                 if zones {
-                    self.start_job(JobKind::Net(NetJob::Zones), &["timedatectl", "list-timezones"]);
+                    self.start_job(
+                        JobKind::Net(NetJob::Zones),
+                        &["timedatectl", "list-timezones"],
+                    );
                 }
                 if let PageId::Conn(name) = &id {
                     self.query_conn(name);
@@ -297,7 +306,11 @@ impl Shell {
     /// Z or C on a row: step a choice or a level, or flip a toggle.
     fn settings_step(&mut self, d: i32) {
         if let Some((Act::Set(s), value)) = self.selected_act() {
-            let d = if matches!(value, Value::Toggle(_)) { 0 } else { d };
+            let d = if matches!(value, Value::Toggle(_)) {
+                0
+            } else {
+                d
+            };
             self.apply(&s, d);
         }
     }
@@ -333,7 +346,10 @@ impl Shell {
                 }
             }
             Setting::DarkTime => {
-                let now = self.config.get_int("dark_time").unwrap_or(DEFAULT_DARK_SECS);
+                let now = self
+                    .config
+                    .get_int("dark_time")
+                    .unwrap_or(DEFAULT_DARK_SECS);
                 let i = DARK_TIMES.iter().position(|&t| t == now).unwrap_or(1);
                 let next = DARK_TIMES[cycle(i, d, DARK_TIMES.len())];
                 self.write_config(|c| c.set_int("dark_time", next));
@@ -382,7 +398,10 @@ impl Shell {
                 let key = apps::app_key(file, "icon");
                 let now = self.config.get_str(&key).unwrap_or("").to_string();
                 // Its own icon first, then the symbols.
-                let pos = APP_ICONS.iter().position(|i| *i == now).map_or(0, |i| i + 1);
+                let pos = APP_ICONS
+                    .iter()
+                    .position(|i| *i == now)
+                    .map_or(0, |i| i + 1);
                 let next = cycle(pos, d, APP_ICONS.len() + 1);
                 let icon = next.checked_sub(1).map_or("", |i| APP_ICONS[i]);
                 self.write_config(|c| {
@@ -508,7 +527,9 @@ impl Shell {
             Ask::Confirm(Command::PowerOff) => self.power(false),
             Ask::Confirm(_) => {}
             Ask::WifiPassword(ssid) => {
-                let argv = ["nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid];
+                let argv = [
+                    "nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid,
+                ];
                 self.connect(&ssid, &argv, false, Some(&mut text));
             }
             Ask::HiddenName if !text.is_empty() => self.ask(
@@ -573,8 +594,16 @@ impl Shell {
                 let v = text.trim().to_string();
                 match field {
                     ConnField::Address if net::valid_ipv4(&v, true) => {
-                        let v = if v.contains('/') { v } else { format!("{v}/24") };
-                        self.modify(&c, &[("ipv4.method", "manual"), ("ipv4.addresses", &v)], true);
+                        let v = if v.contains('/') {
+                            v
+                        } else {
+                            format!("{v}/24")
+                        };
+                        self.modify(
+                            &c,
+                            &[("ipv4.method", "manual"), ("ipv4.addresses", &v)],
+                            true,
+                        );
                     }
                     ConnField::Gateway if v.is_empty() || net::valid_ipv4(&v, false) => {
                         self.modify(&c, &[("ipv4.gateway", &v)], true);
@@ -636,7 +665,10 @@ impl Shell {
                 let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() else {
                     return false;
                 };
-                let known = self.settings.as_ref().is_some_and(|ui| ui.state.profiles.contains(&ssid));
+                let known = self
+                    .settings
+                    .as_ref()
+                    .is_some_and(|ui| ui.state.profiles.contains(&ssid));
                 if known {
                     self.query_conn(&ssid);
                     if let Some(ui) = self.settings.as_mut() {
@@ -717,7 +749,10 @@ impl Shell {
     }
 
     fn query_conn(&mut self, name: &str) {
-        self.start_job(JobKind::Net(NetJob::ConnQuery), &["nmcli", "-t", "connection", "show", name]);
+        self.start_job(
+            JobKind::Net(NetJob::ConnQuery),
+            &["nmcli", "-t", "connection", "show", name],
+        );
     }
 
     /// The connection page on top, if that is where Settings is.
@@ -782,7 +817,11 @@ impl Shell {
         if !bt::is_mac(&mac) {
             return;
         }
-        let name = if d.name.is_empty() { mac.clone() } else { d.name.clone() };
+        let name = if d.name.is_empty() {
+            mac.clone()
+        } else {
+            d.name.clone()
+        };
         let done = if d.connected {
             format!("Disconnected {name}")
         } else if d.paired {
@@ -817,8 +856,15 @@ impl Shell {
         self.start_job(
             net(NetJob::List),
             &[
-                "nmcli", "-t", "-f", "IN-USE,SIGNAL,SECURITY,SSID", "device", "wifi", "list",
-                "--rescan", scan,
+                "nmcli",
+                "-t",
+                "-f",
+                "IN-USE,SIGNAL,SECURITY,SSID",
+                "device",
+                "wifi",
+                "list",
+                "--rescan",
+                scan,
             ],
         );
         self.start_job(
@@ -878,7 +924,10 @@ impl Shell {
             NetJob::BtScan => self.query_bt(),
             NetJob::BtUnblock => {
                 if j.ok() {
-                    self.start_job(JobKind::Net(NetJob::BtPower), &["bluetoothctl", "power", "on"]);
+                    self.start_job(
+                        JobKind::Net(NetJob::BtPower),
+                        &["bluetoothctl", "power", "on"],
+                    );
                 } else {
                     self.toast(helper_failure(&out));
                     self.query_bt();
@@ -897,7 +946,11 @@ impl Shell {
                 self.query_sys();
             }
             NetJob::Helper(done) => {
-                self.toast(if j.ok() { done.clone() } else { helper_failure(&out) });
+                self.toast(if j.ok() {
+                    done.clone()
+                } else {
+                    helper_failure(&out)
+                });
                 self.query_sys();
             }
             NetJob::ConnModify { name, reconnect } => {
@@ -911,12 +964,20 @@ impl Shell {
                 self.query_conn(name);
             }
             NetJob::ConnUp(name) => {
-                self.toast(if j.ok() { format!("{name} is up") } else { net::failure(&out, false) });
+                self.toast(if j.ok() {
+                    format!("{name} is up")
+                } else {
+                    net::failure(&out, false)
+                });
                 self.query_conn(name);
                 requery = true;
             }
             NetJob::ConnDelete(name) => {
-                self.toast(if j.ok() { format!("Forgot {name}") } else { net::failure(&out, false) });
+                self.toast(if j.ok() {
+                    format!("Forgot {name}")
+                } else {
+                    net::failure(&out, false)
+                });
                 if let Some(ui) = self.settings.as_mut() {
                     ui.stack.retain(|(p, _)| !matches!(p, PageId::Conn(_)));
                 }
@@ -975,7 +1036,11 @@ impl Shell {
                 }
             }
             NetJob::Zones if j.ok() => {
-                st.zones = out.lines().map(str::to_string).filter(|z| z.contains('/')).collect();
+                st.zones = out
+                    .lines()
+                    .map(str::to_string)
+                    .filter(|z| z.contains('/'))
+                    .collect();
             }
             _ => {}
         }
@@ -1007,7 +1072,8 @@ impl Shell {
                 // Stock boots with the radio blocked. The session ACL
                 // usually allows the unblock; the helper covers the rest.
                 let blocked = !on
-                    && gh0st_core::rfkill::set(gh0st_core::rfkill::Radio::Bluetooth, false).is_err();
+                    && gh0st_core::rfkill::set(gh0st_core::rfkill::Radio::Bluetooth, false)
+                        .is_err();
                 if blocked {
                     let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "on"];
                     self.start_job(JobKind::Net(NetJob::BtUnblock), &argv);
@@ -1019,7 +1085,10 @@ impl Shell {
                 }
             }
             Setting::NetworkTime => {
-                let on = self.settings.as_ref().is_some_and(|ui| ui.state.network_time);
+                let on = self
+                    .settings
+                    .as_ref()
+                    .is_some_and(|ui| ui.state.network_time);
                 let argv = ["timedatectl", "set-ntp", if on { "false" } else { "true" }];
                 self.start_job(JobKind::Net(NetJob::TimeSet(None)), &argv);
             }
@@ -1033,7 +1102,11 @@ impl Shell {
             Setting::ConnMethod => {
                 if let Some(c) = self.open_conn() {
                     if c.manual {
-                        let props = [("ipv4.method", "auto"), ("ipv4.addresses", ""), ("ipv4.gateway", "")];
+                        let props = [
+                            ("ipv4.method", "auto"),
+                            ("ipv4.addresses", ""),
+                            ("ipv4.gateway", ""),
+                        ];
                         self.modify(&c, &props, true);
                         self.update_conn(|c| {
                             c.manual = false;
@@ -1080,7 +1153,11 @@ impl Shell {
             }
             Setting::Ssh => {
                 let on = self.settings.as_ref().is_some_and(|ui| ui.state.ssh);
-                let (arg, done) = if on { ("off", "SSH off") } else { ("on", "SSH on") };
+                let (arg, done) = if on {
+                    ("off", "SSH off")
+                } else {
+                    ("on", "SSH on")
+                };
                 self.helper(&["ssh", arg], done.into());
             }
             Setting::Logs => {
@@ -1107,7 +1184,10 @@ impl Shell {
                 Ask::HiddenName,
             ),
             Command::BtScan => {
-                let busy = self.settings.as_ref().is_some_and(|ui| ui.state.bt_scanning);
+                let busy = self
+                    .settings
+                    .as_ref()
+                    .is_some_and(|ui| ui.state.bt_scanning);
                 if !busy {
                     if let Some(ui) = self.settings.as_mut() {
                         ui.state.bt_scanning = true;
@@ -1147,7 +1227,10 @@ impl Shell {
                 }
             }
             Command::SetZone(zone) => {
-                let known = self.settings.as_ref().is_some_and(|ui| ui.state.zones.contains(&zone));
+                let known = self
+                    .settings
+                    .as_ref()
+                    .is_some_and(|ui| ui.state.zones.contains(&zone));
                 if known {
                     self.start_job(
                         JobKind::Net(NetJob::TimeSet(Some(zone.clone()))),
@@ -1206,7 +1289,12 @@ impl Shell {
         if n.active {
             self.toast(format!("Connected to {ssid}"));
         } else if n.known {
-            self.connect(&ssid, &["nmcli", "--wait", "30", "connection", "up", "id", &ssid], true, None);
+            self.connect(
+                &ssid,
+                &["nmcli", "--wait", "30", "connection", "up", "id", &ssid],
+                true,
+                None,
+            );
         } else if n.enterprise {
             self.toast("Needs a user name: join it from the terminal");
         } else if n.secure {
@@ -1380,8 +1468,8 @@ fn about(battery: Option<Reading>) -> Vec<(String, String)> {
         let charging = if b.charging { ", charging" } else { "" };
         out.push(("Battery".into(), format!("{}%{charging}", b.percent)));
     }
-    if let Some(up) = read("/proc/uptime")
-        .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+    if let Some(up) =
+        read("/proc/uptime").and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
     {
         let mins = up as u64 / 60;
         let text = match mins / 60 {

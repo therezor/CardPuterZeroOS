@@ -19,7 +19,10 @@ pub enum State {
     /// Left running, as Settings > Apps allows.
     Background,
     /// Sent SIGTERM at this time; SIGKILL follows after the grace.
-    Closing { since: u64, killed: bool },
+    Closing {
+        since: u64,
+        killed: bool,
+    },
 }
 
 pub struct Task {

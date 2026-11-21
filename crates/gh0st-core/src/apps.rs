@@ -122,7 +122,13 @@ pub fn stock_key(file: &str) -> String {
 pub fn app_key(file: &str, leaf: &str) -> String {
     let id: String = file
         .bytes()
-        .map(|b| if b.is_ascii_alphanumeric() { b as char } else { '_' })
+        .map(|b| {
+            if b.is_ascii_alphanumeric() {
+                b as char
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("gh0st.app.{id}.{leaf}")
 }
@@ -355,7 +361,11 @@ mod tests {
         let c = Config::default();
         let apps = scan_with(&t.dirs(), &c, &[], |_| true);
         assert_eq!(names(&apps), ["Settings", "Files", "Music", "Zebra"]);
-        assert_eq!(apps[0].builtin, Some(Builtin::Settings), "built in, not the file");
+        assert_eq!(
+            apps[0].builtin,
+            Some(Builtin::Settings),
+            "built in, not the file"
+        );
         assert_eq!(apps[0].icon, IconRef::Symbol("settings".into()));
         let apps = scan_with(&t.dirs(), &c, &["zz.desktop".into()], |_| true);
         assert_eq!(names(&apps)[0], "Zebra");
@@ -367,10 +377,16 @@ mod tests {
         t.add("stock", "zclaw.desktop", "ZClaw", "/bin/zclaw", "");
         t.add("stock", "music.desktop", "Music", "/bin/music", "");
         let mut c = Config::default();
-        assert_eq!(names(&scan_with(&t.dirs(), &c, &[], |_| true)), ["Settings", "Music"]);
+        assert_eq!(
+            names(&scan_with(&t.dirs(), &c, &[], |_| true)),
+            ["Settings", "Music"]
+        );
         c.set_int(&stock_key("zclaw.desktop"), 1);
         c.set_int(&stock_key("music.desktop"), 0);
-        assert_eq!(names(&scan_with(&t.dirs(), &c, &[], |_| true)), ["Settings", "ZClaw"]);
+        assert_eq!(
+            names(&scan_with(&t.dirs(), &c, &[], |_| true)),
+            ["Settings", "ZClaw"]
+        );
         let all = scan_all(&t.dirs(), &c, &[], |_| true);
         assert_eq!(all.iter().filter(|a| !a.shown).count(), 1, "Music, hidden");
     }
@@ -418,7 +434,10 @@ mod tests {
 
     #[test]
     fn our_app_keys_do_not_nest_on_the_file_name() {
-        assert_eq!(app_key("music.desktop", "icon"), "gh0st.app.music_desktop.icon");
+        assert_eq!(
+            app_key("music.desktop", "icon"),
+            "gh0st.app.music_desktop.icon"
+        );
     }
 
     #[test]

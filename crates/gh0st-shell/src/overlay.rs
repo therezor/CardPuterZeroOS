@@ -21,7 +21,11 @@ pub struct Overlay {
 impl Overlay {
     /// Reads the panel, lets `paint` draw over a copy, and sends the rows
     /// `paint` says it covered.
-    pub fn show(d: &mut dyn Display, under: Canvas, paint: impl FnOnce(&mut Canvas) -> Rect) -> Overlay {
+    pub fn show(
+        d: &mut dyn Display,
+        under: Canvas,
+        paint: impl FnOnce(&mut Canvas) -> Rect,
+    ) -> Overlay {
         let mut under = under;
         d.read_into(&mut under);
         let mut drawn = under.clone();
@@ -77,10 +81,7 @@ impl Overlay {
     /// the app's colour. Returns the canvas for reuse.
     pub fn hide(self, d: &mut dyn Display) -> Canvas {
         let Overlay {
-            area,
-            under,
-            drawn,
-            ..
+            area, under, drawn, ..
         } = self;
         let mut now = drawn.clone();
         d.read_into(&mut now);
@@ -120,7 +121,11 @@ mod tests {
         let mut now = Canvas::new(8, 4);
         d.read_into(&mut now);
         assert_eq!(now.get(1, 0), 0xffff, "the overlay is back on top");
-        assert_eq!(now.get(6, 1), 0x3333, "what it never covered stays the app's");
+        assert_eq!(
+            now.get(6, 1),
+            0x3333,
+            "what it never covered stays the app's"
+        );
         o.hide(&mut d);
         d.read_into(&mut now);
         assert_eq!(now.get(1, 0), 0x3333, "hide restores the newest app pixels");

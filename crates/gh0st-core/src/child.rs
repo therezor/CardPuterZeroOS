@@ -116,7 +116,10 @@ fn group_has_running(pgid: i32) -> bool {
     };
     rd.flatten().any(|e| {
         let name = e.file_name();
-        let Some(pid) = name.to_str().filter(|n| n.bytes().all(|b| b.is_ascii_digit())) else {
+        let Some(pid) = name
+            .to_str()
+            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        else {
             return false;
         };
         let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
@@ -321,7 +324,10 @@ mod tests {
         let start = crate::rt::now_ms();
         while group_alive(pgid) {
             reap();
-            assert!(crate::rt::now_ms() - start < 3000, "a stopped group ignored SIGTERM");
+            assert!(
+                crate::rt::now_ms() - start < 3000,
+                "a stopped group ignored SIGTERM"
+            );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }

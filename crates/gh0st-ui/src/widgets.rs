@@ -123,8 +123,19 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     let step = t.m.slot_w + t.m.slot_gap;
     // The skull has no box: it is accent while home is in front.
     let s16 = IconSize::Bar as i32;
-    let ink = if s.front == Some(0) { t.c.accent } else { t.c.muted };
-    icon::draw(c, SKULL, IconSize::Bar, t.m.pad - 2, (inner.h - s16) / 2, ink);
+    let ink = if s.front == Some(0) {
+        t.c.accent
+    } else {
+        t.c.muted
+    };
+    icon::draw(
+        c,
+        SKULL,
+        IconSize::Bar,
+        t.m.pad - 2,
+        (inner.h - s16) / 2,
+        ink,
+    );
     let mut sx = t.m.pad - 2 + s16 + 2 * t.m.slot_gap;
 
     // Every app gets a slot while they fit; past that the last one counts
