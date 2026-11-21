@@ -24,6 +24,9 @@ const READ_MAX: usize = 64 * 1024;
 /// About one panel refresh: under a flood the latest state is drawn at most
 /// this often.
 const FRAME_MS: u64 = 20;
+/// How long output may keep coming before it is drawn. htop and others
+/// repaint in several writes; drawing between them flashes.
+const SETTLE_MS: u64 = 5;
 /// Notifications from programs, at most one this often.
 const NOTICE_GAP_MS: u128 = 3000;
 /// Synchronized output may hold the screen this long at most.
@@ -209,6 +212,11 @@ pub struct Term {
     waiting: bool,
     /// When the last notification went out.
     noticed: Option<std::time::Instant>,
+    /// Output came in: draw when this fires, so a program's repaint lands
+    /// whole rather than half done.
+    settle: Option<Timer>,
+    /// The hint bar's height, from the theme.
+    hint_h: i32,
     scratch: RefCell<(Vec<Cell>, Clusters)>,
 }
 
@@ -242,6 +250,8 @@ impl Term {
             clipboard: String::new(),
             waiting: false,
             noticed: None,
+            settle: None,
+            hint_h: 18,
             scratch: RefCell::new((Vec::new(), Clusters::default())),
         }
     }
@@ -291,8 +301,18 @@ impl Term {
         let (cols, rows) = self.grid_size();
         (
             ((self.area.w / look.cw).max(1) as usize).min(cols),
-            ((self.area.h / look.ch).max(1) as usize).min(rows),
+            (((self.area.h - self.reserve()) / look.ch).max(1) as usize).min(rows),
         )
+    }
+
+    /// Rows at the bottom that a mode's bars take: the text ends above
+    /// them rather than under them.
+    fn reserve(&self) -> i32 {
+        match self.mode {
+            Mode::Typing => 0,
+            Mode::Find(_) => 2 * self.hint_h,
+            _ => self.hint_h,
+        }
     }
 
     fn tab(&self) -> Option<&Tab> {
@@ -309,6 +329,7 @@ impl Term {
         }
         let t = *cx.theme();
         self.area = self.bars().content(&t);
+        self.hint_h = t.m.hint_h;
         let (cols, rows) = self.grid_size();
         let window = self.window();
         for tab in &mut self.tabs {
@@ -504,9 +525,8 @@ impl Term {
         if events & event::TITLE != 0 && i == self.cur {
             self.retitle();
         }
-        if i == self.cur && (total > 0 || hup) && !held {
-            self.track();
-            cx.redraw();
+        if i == self.cur && (total > 0 || hup) && !held && self.settle.is_none() {
+            self.settle = Some(cx.after(SETTLE_MS));
         }
         hup
     }
@@ -534,7 +554,7 @@ impl Term {
         cx.settings().set_int(key::ZOOM, zoom as i64);
         let look = self.look();
         let (c, r) = self.grid_size();
-        cx.toast(&format!("{}x{} cells, {c}x{r}", look.cw, look.ch));
+        cx.toast(&format!("Text {}x{}, grid {c}x{r}", look.cw, look.ch));
     }
 
     /// Magnify or fit.
@@ -546,7 +566,7 @@ impl Term {
         self.relayout(cx);
         cx.settings().set_str(key::MODE, self.layout.key());
         let (c, r) = self.grid_size();
-        cx.toast(&format!("{}: {c}x{r}", self.layout.name()));
+        cx.toast(&format!("{}, grid {c}x{r}", self.layout.name()));
     }
 
     /// Writes bytes to the program in front, back at the cursor.
@@ -860,18 +880,68 @@ impl Term {
         self.send(&out, cx);
     }
 
+    /// One key, by mode. Releases do nothing.
+    fn raw_key(&mut self, k: &RawKey, cx: &mut Cx) {
+        if k.state == KeyState::Release {
+            return;
+        }
+        if self.waiting {
+            if k.state == KeyState::Press {
+                cx.quit();
+            }
+            return;
+        }
+        match self.mode {
+            Mode::Help => {
+                if k.state == KeyState::Press {
+                    self.mode = Mode::View;
+                    cx.redraw();
+                }
+            }
+            Mode::View => self.view_key(k, cx),
+            Mode::Find(_) => self.find_key(k, cx),
+            Mode::Select { .. } => self.select_key(k, cx),
+            Mode::Typing => {
+                if k.shift && matches!(k.code, PAGEUP | PAGEDOWN) {
+                    let page = self.vis().1.saturating_sub(1).max(1);
+                    self.scroll(k.code == PAGEUP, page, cx);
+                    return;
+                }
+                let Some(modes) = self.tab().map(|t| t.vt.t.modes) else {
+                    return;
+                };
+                self.out.clear();
+                keys::encode(k, &modes, self.alt_esc, &mut self.out);
+                if !self.out.is_empty() {
+                    let out = std::mem::take(&mut self.out);
+                    self.send(&out, cx);
+                    self.out = out;
+                }
+            }
+        }
+    }
+
+    /// A mode with a bar at the bottom shows fewer rows: keep the cursor
+    /// in sight when that changes.
+    fn after_mode(&mut self, before: i32, cx: &mut Cx) {
+        if self.reserve() != before {
+            self.track();
+            cx.redraw();
+        }
+    }
+
     fn hints(&self) -> Vec<(&'static str, &'static str)> {
         match &self.mode {
             Mode::Typing => Vec::new(),
             Mode::View => vec![
-                ("↑↓", "scroll"),
+                ("F X", "scroll"),
+                ("Z C", "pan"),
                 ("r t", "zoom"),
-                ("n", "find"),
-                ("h", "keys"),
+                ("Esc", "done"),
             ],
             Mode::Help => vec![("any key", "back")],
-            Mode::Find(_) => vec![("Enter ↑", "older"), ("↓", "newer"), ("Esc", "done")],
-            Mode::Select { .. } => vec![("↑↓", "extend"), ("y", "copy"), ("Esc", "cancel")],
+            Mode::Find(_) => vec![("Enter", "older"), ("Fn+X", "newer"), ("Esc", "done")],
+            Mode::Select { .. } => vec![("F X", "extend"), ("y", "copy"), ("Esc", "cancel")],
         }
     }
 }
@@ -988,6 +1058,12 @@ impl Page for Term {
     }
 
     fn timer(&mut self, timer: Timer, cx: &mut Cx) {
+        if self.settle == Some(timer) {
+            self.settle = None;
+            self.track();
+            cx.redraw();
+            return;
+        }
         for (i, tab) in self.tabs.iter_mut().enumerate() {
             if tab.sync == Some(timer) {
                 tab.sync = None;
@@ -1012,7 +1088,7 @@ impl Page for Term {
             .map(|(i, &a)| {
                 let item = |label: &str, key: char| MenuItem::new(i as u32, label).key(key);
                 match a {
-                    Act::View => MenuItem::new(i as u32, "Scroll and pan"),
+                    Act::View => MenuItem::new(i as u32, "Scroll and pan").value("F X Z C"),
                     Act::ZoomIn => item("Zoom in", 't').value(format!("{}x{}", look.cw, look.ch)),
                     Act::ZoomOut => item("Zoom out", 'r'),
                     Act::Layout => item("Grid", 'm').value(self.layout.name()),
@@ -1035,51 +1111,18 @@ impl Page for Term {
     }
 
     fn menu_pick(&mut self, id: u32, cx: &mut Cx) {
+        let before = self.reserve();
         if let Some(&a) = ACTS.get(id as usize) {
             self.act(a, cx);
         }
+        self.after_mode(before, cx);
     }
 
     fn raw(&mut self, k: &RawKey, cx: &mut Cx) {
-        if k.state == KeyState::Release {
-            return;
-        }
-        if self.waiting {
-            if k.state == KeyState::Press {
-                cx.quit();
-            }
-            return;
-        }
-        match self.mode {
-            Mode::Help => {
-                if k.state == KeyState::Press {
-                    self.mode = Mode::View;
-                    cx.redraw();
-                }
-            }
-            Mode::View => self.view_key(k, cx),
-            Mode::Find(_) => self.find_key(k, cx),
-            Mode::Select { .. } => self.select_key(k, cx),
-            Mode::Typing => {
-                if k.shift && matches!(k.code, PAGEUP | PAGEDOWN) {
-                    let page = self.vis().1.saturating_sub(1).max(1);
-                    self.scroll(k.code == PAGEUP, page, cx);
-                    return;
-                }
-                let Some(modes) = self.tab().map(|t| t.vt.t.modes) else {
-                    return;
-                };
-                self.out.clear();
-                keys::encode(k, &modes, self.alt_esc, &mut self.out);
-                if !self.out.is_empty() {
-                    let out = std::mem::take(&mut self.out);
-                    self.send(&out, cx);
-                    self.out = out;
-                }
-            }
-        }
+        let before = self.reserve();
+        self.raw_key(k, cx);
+        self.after_mode(before, cx);
     }
-
     fn stop(&mut self, cx: &mut Cx) {
         // Closing each master hangs up its session.
         for t in &mut self.tabs {
