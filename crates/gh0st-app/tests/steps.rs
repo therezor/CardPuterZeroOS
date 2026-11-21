@@ -33,6 +33,11 @@ impl Page for Step {
                 cx.after(500);
             }
             Key::Char('q') => cx.quit(),
+            // Done, then more work: it must die with this step.
+            Key::Char('d') => {
+                cx.done();
+                cx.after(100);
+            }
             _ => {}
         }
     }
@@ -233,5 +238,17 @@ fn each_part_counts_its_own_steps() {
     assert_eq!(
         taken(&log),
         ["", "Tour 1 of 2", "Tour 2 of 2", "Setup 1 of 1"]
+    );
+}
+
+#[test]
+fn what_a_step_asks_after_done_is_dropped() {
+    let log = Log::default();
+    let mut d = Driver::new(three(&log, true));
+    d.keys("type d").wait(300);
+    assert_eq!(
+        taken(&log),
+        ["Setup 1 of 3", "Setup 2 of 3"],
+        "no timer on step 2"
     );
 }

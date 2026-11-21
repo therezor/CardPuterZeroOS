@@ -263,7 +263,30 @@ impl Runtime {
 
     fn apply(&mut self, owner: usize, now: u64) {
         let requests = std::mem::take(&mut self.s.requests);
+        // Once its page has closed, what it asked for after belongs to no
+        // one: Steps may have put the next step at the same index.
+        let mut closed = false;
         for r in requests {
+            if closed {
+                match r {
+                    Request::Spawn { mut input, .. } => {
+                        if let Some(i) = input.as_mut() {
+                            i.fill(0);
+                        }
+                        continue;
+                    }
+                    Request::Push(_)
+                    | Request::Timer { .. }
+                    | Request::Watch { .. }
+                    | Request::Write { .. }
+                    | Request::Adopt(_)
+                    | Request::Ask(..)
+                    | Request::ShowKeys
+                    | Request::Back
+                    | Request::Done => continue,
+                    _ => {}
+                }
+            }
             match r {
                 Request::Push(page) => {
                     if self.quit {
@@ -273,10 +296,14 @@ impl Runtime {
                     let top = self.stack.len() - 1;
                     self.call(top, now, |p, cx| p.start(cx));
                 }
-                Request::Back => self.pop(now),
+                Request::Back => {
+                    let mine = self.stack.len() == owner + 1;
+                    closed = self.pop(now) && mine;
+                }
                 Request::Done => {
+                    let mine = self.stack.len() == owner + 1;
                     self.s.done = true;
-                    self.pop(now);
+                    closed = self.pop(now) && mine;
                 }
                 Request::Quit => self.quit_all(),
                 Request::Toast(text, tone) => self.show_toast(text, tone, now),
@@ -359,15 +386,17 @@ impl Runtime {
         self.dirty = true;
     }
 
-    fn pop(&mut self, now: u64) {
+    /// Closes the top page. False when it stays: the last page of an app
+    /// that can't close.
+    fn pop(&mut self, now: u64) -> bool {
         if self.stack.len() == 1 && !self.s.closable {
             self.s.done = false;
-            return;
+            return false;
         }
         self.overlay = Overlay::None;
         self.menu_last = None;
         let Some(top) = self.stack.len().checked_sub(1) else {
-            return;
+            return false;
         };
         self.stop_page(top);
         self.stack.pop();
@@ -378,6 +407,7 @@ impl Runtime {
         // Heard by the parent's resume, and by no page after it.
         self.s.done = false;
         self.dirty = true;
+        true
     }
 
     fn stop_page(&mut self, i: usize) {
