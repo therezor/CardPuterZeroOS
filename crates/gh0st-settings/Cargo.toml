@@ -12,3 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 gh0st-app.workspace = true
+# The app list, pins, rfkill and the backlight are the device's, shared with
+# the shell.
+gh0st-core.workspace = true

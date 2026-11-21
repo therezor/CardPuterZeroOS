@@ -36,13 +36,17 @@ use this page directly.
   | `LV_LINUX_KEYBOARD_DEVICE`, `APPLAUNCH_LINUX_KEYBOARD_DEVICE` | The keyboard's evdev node |
   | `APPLAUNCH_LINUX_KEYBOARD_MAP` | The symbol-layer map file |
   | `GH0ST_SYSPLAUSE` | `1` when a terminal should wait for a key after its command exits |
+  | `CAMERA_APP_KEYBOARD_GRAB` | `false`: the stock camera grabs the keyboard otherwise |
 
-- The shell never grabs the keyboard. The app reads it directly.
-- The shell draws over an app only when the app asks for OS bars (see Shell
-  link), when ESC is held (a banner across the top), and for the low-battery
-  countdown.
-- The shell acts on the brightness, volume, mute and screenshot keys while an
-  app runs.
+- The shell never grabs the keyboard while the app is in front. The app reads
+  it directly. An app must not grab it either, or Fn+K, ESC held and the
+  volume keys stop working.
+- While an app is in front, the shell draws over it only for a banner across
+  the top (ESC held, or the battery about to run out), a toast for the
+  brightness, volume, mute and screenshot keys, and the OS bars an app asks
+  for (see Shell link). When one goes, the shell puts back the app's pixels,
+  except any the app drew meanwhile.
+- The shell acts on the brightness, volume, mute and screenshot keys meanwhile.
 
 ## Shell link
 
@@ -124,6 +128,29 @@ other key.
 - Slot centres follow the keys. Stock puts them at x = 49, 105, 161, 217 and
   273. Ours are in `theme.rs`.
 
+## Pausing
+
+- Fn+K (`KEY_HOME`) pauses the app in front and opens the switcher. The app
+  sees Fn and Home pressed and released; the shell waits until every key is
+  up, then sends SIGSTOP to the group.
+- The shell keeps the app's last frame. Before it sends SIGCONT, it puts that
+  frame back on the panel, so an app that redraws only what changed still
+  looks right.
+- While apps are paused and the shell is in front, the shell grabs the
+  keyboard. Before an app resumes, the shell lets go and writes `MSC_SCAN`
+  events to the device until every paused reader's queue overflows, so the
+  app reads `SYN_DROPPED` instead of keys typed elsewhere. Ignore `EV_MSC`.
+- Closing a paused app from the switcher sends SIGTERM and SIGCONT together,
+  then SIGKILL 3 s later. So does a stopping shell.
+- An app allowed to run in the background (Settings > Apps) is not stopped.
+  While the shell is in front it gets no keys (the shell holds the grab),
+  and the shell repaints over anything it draws, keeping its pixels for its
+  return. While another app is in front it reads that app's keys and its
+  drawing shows over it: the keyboard and panel are shared and nothing
+  stands between two running apps.
+- Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
+  and leaves them in front.
+
 ## Leaving
 
 - Exit normally. The shell returns when the whole process group is gone, so
@@ -131,7 +158,8 @@ other key.
 - When the user holds ESC, the shell shows a hint at 0.5 s, sends SIGTERM to
   the group at 3 s, and sends SIGKILL 3 s later. Apps should exit cleanly on
   SIGTERM.
-- The shell repaints the whole panel when the app is gone.
+- The shell repaints the whole panel when the app is gone, and when it is
+  paused.
 
 ## Terminal
 

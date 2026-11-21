@@ -1,0 +1,22 @@
+// Gh0stdeck runs as a systemd user service, not in an active seat session,
+// so the stock rules that ask for subject.active never match it. Same
+// reasoning as stock's 60-applaunch-updater.rules.
+polkit.addRule(function(action, subject) {
+    if (!subject.isInGroup("sudo") && !subject.isInGroup("netdev")) {
+        return;
+    }
+    var allowed = [
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.settings.modify.own",
+        "org.freedesktop.NetworkManager.settings.modify.system",
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.enable-disable-wifi",
+        "org.freedesktop.timedate1.set-timezone",
+        "org.freedesktop.timedate1.set-ntp",
+        // gh0st-helper: logs, SSH, radio switches, power. Fixed verbs only.
+        "org.cpzero.gh0st.helper"
+    ];
+    if (allowed.indexOf(action.id) >= 0) {
+        return polkit.Result.YES;
+    }
+});

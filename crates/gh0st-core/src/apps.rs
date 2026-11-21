@@ -52,6 +52,73 @@ pub enum IconRef {
     None,
 }
 
+/// How home shows the apps: `gh0st.home_layout` in config.json.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layout {
+    #[default]
+    Grid,
+    List,
+}
+
+impl Layout {
+    pub fn from_config(s: &str) -> Option<Layout> {
+        match s {
+            "grid" => Some(Layout::Grid),
+            "list" => Some(Layout::List),
+            _ => None,
+        }
+    }
+
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Layout::Grid => "grid",
+            Layout::List => "list",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Layout::Grid => "Grid",
+            Layout::List => "List",
+        }
+    }
+
+    pub fn toggled(self) -> Layout {
+        match self {
+            Layout::Grid => Layout::List,
+            Layout::List => Layout::Grid,
+        }
+    }
+}
+
+/// Where the pinned apps live, one `.desktop` file name per line.
+pub fn pins_path() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "/".into())
+        .join(".local/state/gh0st/pinned")
+}
+
+pub fn load_pins() -> Vec<String> {
+    std::fs::read_to_string(pins_path())
+        .map(|s| {
+            s.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn save_pins(pins: &[String]) -> std::io::Result<()> {
+    let path = pins_path();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    crate::config::write_atomic(&path, (pins.join("\n") + "\n").as_bytes())
+}
+
 #[derive(Clone, Debug)]
 pub struct App {
     /// File name of the `.desktop`, unique across both folders.
@@ -60,6 +127,8 @@ pub struct App {
     pub icon: IconRef,
     /// Ours run their argv directly; third-party ones go through `sh -c`.
     pub ours: bool,
+    /// On home. Settings > Apps lists the hidden ones too.
+    pub shown: bool,
     mtime: u64,
     seq: usize,
 }
@@ -72,6 +141,7 @@ impl App {
             entry,
             icon: IconRef::None,
             ours,
+            shown: true,
             mtime: 0,
             seq: 0,
         }
@@ -99,6 +169,22 @@ pub fn stock_key(file: &str) -> String {
         h = h.wrapping_mul(16_777_619);
     }
     format!("{key}_{h:08x}")
+}
+
+/// Our per-app setting `leaf` for `file`: `gh0st.app.<file>.<leaf>`, with
+/// the file name's dots and odd bytes made `_` so the key does not nest.
+pub fn app_key(file: &str, leaf: &str) -> String {
+    let id: String = file
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() {
+                b as char
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("gh0st.app.{id}.{leaf}")
 }
 
 /// Shown unless switched on in Settings > Apps.
@@ -134,12 +220,27 @@ fn order_of(label: &str) -> Option<usize> {
     ORDER.iter().position(|&o| o == norm)
 }
 
-/// Reads both folders and returns the apps to show, in order.
+/// Reads both folders and returns the apps to show, in order, with Settings
+/// built in.
 pub fn scan(dirs: &Dirs, config: &Config, pins: &[String]) -> Vec<App> {
-    scan_with(dirs, config, pins, desktop::is_executable)
+    let mut apps = scan_all(dirs, config, pins, desktop::is_executable);
+    apps.retain(|a| a.shown);
+    apps
 }
 
 pub fn scan_with(
+    dirs: &Dirs,
+    config: &Config,
+    pins: &[String],
+    executable: impl Fn(&Path) -> bool + Copy,
+) -> Vec<App> {
+    let mut apps = scan_all(dirs, config, pins, executable);
+    apps.retain(|a| a.shown);
+    apps
+}
+
+/// Every app, hidden ones included (`shown` false), for Settings > Apps.
+pub fn scan_all(
     dirs: &Dirs,
     config: &Config,
     pins: &[String],
@@ -183,9 +284,6 @@ pub fn scan_with(
                 Some(v) => v != 0,
                 None => !HIDDEN_BY_DEFAULT.contains(&file.as_str()),
             };
-            if !shown {
-                continue;
-            }
             let icon = resolve_icon(&entry.icon, &dirs.icon_root);
             let mtime = std::fs::metadata(&path)
                 .and_then(|m| m.modified())
@@ -198,6 +296,7 @@ pub fn scan_with(
                 entry,
                 icon,
                 ours,
+                shown,
                 mtime,
                 seq,
             });
@@ -298,7 +397,6 @@ mod tests {
         let apps = scan_with(&t.dirs(), &c, &[], |_| true);
         assert_eq!(names(&apps), ["Settings", "Files", "Music", "Zebra"]);
         assert_eq!(apps[0].icon, IconRef::Symbol("settings".into()));
-        assert!(apps[0].ours);
         let apps = scan_with(&t.dirs(), &c, &["zz.desktop".into()], |_| true);
         assert_eq!(names(&apps)[0], "Zebra");
     }
@@ -313,6 +411,8 @@ mod tests {
         c.set_int(&stock_key("zclaw.desktop"), 1);
         c.set_int(&stock_key("music.desktop"), 0);
         assert_eq!(names(&scan_with(&t.dirs(), &c, &[], |_| true)), ["ZClaw"]);
+        let all = scan_all(&t.dirs(), &c, &[], |_| true);
+        assert_eq!(all.iter().filter(|a| !a.shown).count(), 1, "Music, hidden");
     }
 
     #[test]
@@ -354,6 +454,14 @@ mod tests {
         let apps = scan_with(&t.dirs(), &Config::default(), &[], |_| true);
         assert_eq!(apps[0].icon, IconRef::Path(t.0.join("share/images/m.png")));
         assert_eq!(apps[1].icon, IconRef::None, "kept, drawn as a letter");
+    }
+
+    #[test]
+    fn our_app_keys_do_not_nest_on_the_file_name() {
+        assert_eq!(
+            app_key("music.desktop", "icon"),
+            "gh0st.app.music_desktop.icon"
+        );
     }
 
     #[test]

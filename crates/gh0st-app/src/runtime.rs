@@ -6,13 +6,11 @@ use crate::key::{self, Key};
 use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer};
 use crate::ui::Ui;
 use gh0st_core::keys::Keyboard;
-use gh0st_core::{battery, rt, status};
+use gh0st_core::{battery, child, job, rt, status};
 use gh0st_ui::widgets::{self, Battery, Hint, Net, SoftKey as Slot, Status};
 use gh0st_ui::{Canvas, Rect, Theme, theme};
-use std::io::Read;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::RawFd;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 
 const TOAST_MS: u64 = 2000;
 
@@ -26,14 +24,14 @@ struct TimerEntry {
 struct JobProc {
     id: u64,
     owner: usize,
-    child: Child,
-    buf: Vec<u8>,
-    eof: bool,
+    job: job::Job,
+    /// Bytes of output already handed out as lines.
+    sent: usize,
 }
 
 /// What the self-drawn top bar shows. Read at start and on the minute.
 struct Bar {
-    clock: [u8; 5],
+    clock: String,
     clock_at: u64,
     battery_dir: Option<PathBuf>,
     battery: Option<Battery>,
@@ -43,7 +41,7 @@ struct Bar {
 impl Bar {
     fn new() -> Bar {
         Bar {
-            clock: *b"--:--",
+            clock: "--:--".into(),
             clock_at: 0,
             battery_dir: battery::find(std::path::Path::new("/sys/class/power_supply")),
             battery: None,
@@ -51,8 +49,8 @@ impl Bar {
         }
     }
 
-    fn refresh(&mut self) {
-        let (clock, at) = rt::clock_text();
+    fn refresh(&mut self, h24: bool) {
+        let (clock, at) = rt::clock_text(h24);
         self.clock = clock;
         self.clock_at = at;
         self.battery = self
@@ -117,8 +115,13 @@ impl Runtime {
     }
 
     pub fn start(&mut self, now: u64) {
-        self.bar.refresh();
+        self.bar.refresh(self.h24());
         self.call(0, now, |p, cx| p.start(cx));
+    }
+
+    /// The clock style the shell uses: `gh0st.clock` is `12h` or 24-hour.
+    fn h24(&self) -> bool {
+        self.s.settings.get_str("gh0st.clock") != Some("12h")
     }
 
     pub fn depth(&self) -> usize {
@@ -157,7 +160,17 @@ impl Runtime {
                     every: every.then_some(ms),
                 }),
                 Request::Cancel(id) => self.timers.retain(|t| t.id != id),
-                Request::Spawn { id, argv } => self.spawn(id, owner, &argv),
+                Request::Spawn {
+                    id,
+                    argv,
+                    mut input,
+                } => {
+                    self.spawn(id, owner, &argv, input.as_deref());
+                    // A password may be in it.
+                    if let Some(i) = input.as_mut() {
+                        i.fill(0);
+                    }
+                }
             }
         }
         self.retheme();
@@ -192,9 +205,9 @@ impl Runtime {
             self.s.requests.clear();
         }
         self.timers.retain(|t| t.owner < i);
-        for j in self.jobs.iter_mut().filter(|j| j.owner >= i) {
-            let _ = j.child.kill();
-            let _ = j.child.wait();
+        for j in self.jobs.iter().filter(|j| j.owner >= i) {
+            // SAFETY: kill(2) on a pid this runtime started.
+            unsafe { libc::kill(j.job.pid, libc::SIGTERM) };
         }
         self.jobs.retain(|j| j.owner < i);
     }
@@ -247,31 +260,17 @@ impl Runtime {
         }
     }
 
-    fn spawn(&mut self, id: u64, owner: usize, argv: &[String]) {
-        let Some((prog, args)) = argv.split_first() else {
-            self.pending.push((id, owner));
-            return;
-        };
-        let child = Command::new(prog)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .spawn();
-        match child {
-            Ok(child) => {
-                if let Some(out) = &child.stdout {
-                    let _ = rt::set_nonblock_cloexec(out.as_raw_fd());
-                }
-                self.jobs.push(JobProc {
-                    id,
-                    owner,
-                    child,
-                    buf: Vec::new(),
-                    eof: false,
-                });
-            }
+    fn spawn(&mut self, id: u64, owner: usize, argv: &[String], input: Option<&[u8]>) {
+        let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+        match job::spawn(&args, input) {
+            Ok(job) => self.jobs.push(JobProc {
+                id,
+                owner,
+                job,
+                sent: 0,
+            }),
             Err(e) => {
-                eprintln!("gh0st app: {prog}: {e}");
+                eprintln!("gh0st app: {}: {e}", args.first().unwrap_or(&""));
                 self.pending.push((id, owner));
             }
         }
@@ -281,8 +280,8 @@ impl Runtime {
     pub fn job_fds(&self) -> Vec<(u64, RawFd)> {
         self.jobs
             .iter()
-            .filter(|j| !j.eof)
-            .filter_map(|j| Some((j.id, j.child.stdout.as_ref()?.as_raw_fd())))
+            .filter(|j| j.job.fd() >= 0)
+            .map(|j| (j.id, j.job.fd()))
             .collect()
     }
 
@@ -291,30 +290,19 @@ impl Runtime {
         let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) else {
             return;
         };
-        let mut chunk = [0u8; 4096];
-        loop {
-            let n = match j.child.stdout.as_mut().map(|o| o.read(&mut chunk)) {
-                Some(Ok(0)) | None => {
-                    j.eof = true;
-                    break;
-                }
-                Some(Ok(n)) => n,
-                Some(Err(e)) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Some(Err(_)) => {
-                    j.eof = true;
-                    break;
-                }
-            };
-            j.buf.extend_from_slice(&chunk[..n]);
-        }
-        let mut lines = Vec::new();
-        while let Some(i) = j.buf.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = j.buf.drain(..=i).collect();
-            lines.push(String::from_utf8_lossy(&line[..line.len() - 1]).into_owned());
-        }
-        if j.eof && !j.buf.is_empty() {
-            lines.push(String::from_utf8_lossy(&std::mem::take(&mut j.buf)).into_owned());
-        }
+        j.job.read();
+        let closed = j.job.fd() < 0;
+        let out = &j.job.bytes()[j.sent..];
+        let end = if closed {
+            out.len()
+        } else {
+            out.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1)
+        };
+        let lines: Vec<String> = String::from_utf8_lossy(&out[..end])
+            .lines()
+            .map(String::from)
+            .collect();
+        j.sent += end;
         let owner = j.owner;
         for line in lines {
             self.call(owner, now, |p, cx| p.job(Job(id), JobEvent::Line(line), cx));
@@ -322,24 +310,22 @@ impl Runtime {
         self.reap(now);
     }
 
-    /// Hands out exit codes of jobs whose output has ended and whose process
-    /// is gone. Runs on SIGCHLD and after a job's output ends.
+    /// Collects exited children, and hands out the exit code of each job
+    /// whose output has ended too. Runs on SIGCHLD and when a job's output
+    /// ends.
     pub fn reap(&mut self, now: u64) {
-        let mut done = Vec::new();
-        self.jobs.retain_mut(|j| {
-            if !j.eof {
-                return true;
+        for (pid, status) in child::reap() {
+            if let Some(j) = self.jobs.iter_mut().find(|j| j.job.pid == pid) {
+                j.job.exited(status);
             }
-            match j.child.try_wait() {
-                Ok(Some(status)) => {
-                    done.push((j.id, j.owner, status.code()));
-                    false
-                }
-                Ok(None) => true,
-                Err(_) => {
-                    done.push((j.id, j.owner, None));
-                    false
-                }
+        }
+        let mut done = Vec::new();
+        self.jobs.retain(|j| {
+            if j.job.done() {
+                done.push((j.id, j.owner, j.job.code()));
+                false
+            } else {
+                true
             }
         });
         for (id, owner, code) in done {
@@ -383,7 +369,8 @@ impl Runtime {
             self.dirty = true;
         }
         if now >= self.bar.clock_at && self.top_bars().top {
-            self.bar.refresh();
+            let h24 = self.h24();
+            self.bar.refresh(h24);
             self.dirty = true;
         }
     }
@@ -405,9 +392,12 @@ impl Runtime {
         self.canvas.set_clip(full);
         let c = &mut self.canvas;
         if bars.top {
+            // The dock of open apps is the shell's; an app's own bar has none.
             let s = Status {
+                dock: &[],
+                front: None,
                 title: page.title(),
-                clock: std::str::from_utf8(&self.bar.clock).unwrap_or("--:--"),
+                clock: &self.bar.clock,
                 battery: self.bar.battery,
                 net: self.bar.net,
             };

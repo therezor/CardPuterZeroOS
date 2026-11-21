@@ -30,16 +30,18 @@ battery in `/sys/class/power_supply`. Details and sources in
 
 - `crates/gh0st-ui`: RGB565 canvas, fonts and icons baked by `build.rs`, widgets,
   theme.
-- `crates/gh0st-shell`: the home screen (grid or list, nav and search modes).
-  `examples/mockups.rs` renders every screen to PNG.
+- `crates/gh0st-shell`: the home screen (grid or list, nav and search modes),
+  the switcher and the dock. `examples/mockups.rs` renders its screens to PNG.
 - `crates/gh0st-core`: syscalls, event loop, input, config, apps, children.
 - `crates/gh0st-app`: the app SDK. Pages, OS bars, soft keys, lists, jobs,
   a sim backend and a test driver. Apps depend on it alone. The guide is
   `docs/sdk.md`, which is also the crate's rustdoc, so its examples compile in
   `cargo test`.
-- `crates/gh0st-settings`: Settings, an SDK app with its own binary.
+- `crates/gh0st-settings`: Settings, an SDK app with its own binary. The page
+  model is in `src/model`, the controller in `src/app.rs`.
+  `examples/mockups.rs` renders every page into `mockups/settings`.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
-- `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC).
+- `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC), our fox.
 - `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
   home is an app built to it: Settings, the terminal.
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
@@ -62,8 +64,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - **Geometry and colour live in `theme.rs`.** Widgets never hardcode either.
 - **Keep the stock app contract.** `.desktop` files in
   `/usr/share/APPLaunch/applications`, cwd `/usr/share/APPLaunch`, the
-  `LV_LINUX_*` and `APPLAUNCH_LINUX_*` env, no `EVIOCGRAB`, ESC held 3 s sends
-  SIGTERM to the group, SIGKILL 3 s later.
+  `LV_LINUX_*` and `APPLAUNCH_LINUX_*` env, ESC held 3 s sends SIGTERM to the
+  group, SIGKILL 3 s later. Never `EVIOCGRAB` while an app is in front; the
+  shell grabs only while it is in front with apps paused.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
   apps too. Keep unknown keys. Our keys use a `gh0st.` prefix.
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`. Build only:

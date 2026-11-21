@@ -1,5 +1,6 @@
-//! The keyboard's evdev device, read raw and never grabbed: a child app opens
-//! the same device and must see every key, as in stock.
+//! The keyboard's evdev device, read raw. A child app opens the same device
+//! and must see every key, as in stock, so the shell grabs it only while no
+//! app is in front and some app is paused.
 
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
@@ -18,11 +19,22 @@ struct InputEvent {
     value: i32,
 }
 
+const EV_SYN: u16 = 0;
 const EV_KEY: u16 = 1;
+const EV_MSC: u16 = 4;
+const MSC_SCAN: u16 = 4;
+/// `_IOW('E', 0x90, int)`.
+const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
+/// Scan-and-sync pairs that overflow any reader's queue. 64 did on the
+/// device; the queue size is the driver's guess, so leave room.
+const FLUSH_PAIRS: usize = 256;
 
 pub struct Device {
     file: std::fs::File,
     pub path: PathBuf,
+    /// Opened read-write, so `flush_readers` can write.
+    writable: bool,
+    grabbed: bool,
 }
 
 /// The keyboard: `$LV_LINUX_KEYBOARD_DEVICE`, the stock path, then any input
@@ -50,16 +62,65 @@ pub fn find() -> Option<PathBuf> {
 }
 
 impl Device {
+    /// Read-write if allowed, else read-only.
     pub fn open(path: &Path) -> io::Result<Device> {
         use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
-            .open(path)?;
+        let open = |write: bool| {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(write)
+                .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(path)
+        };
+        let (file, writable) = match open(true) {
+            Ok(f) => (f, true),
+            Err(_) => (open(false)?, false),
+        };
         Ok(Device {
             file,
             path: path.to_path_buf(),
+            writable,
+            grabbed: false,
         })
+    }
+
+    /// Takes every key for the shell alone, or gives them back.
+    pub fn grab(&mut self, on: bool) {
+        if on == self.grabbed {
+            return;
+        }
+        // SAFETY: EVIOCGRAB takes an int by value on a descriptor we own.
+        if unsafe { libc::ioctl(self.fd(), EVIOCGRAB as _, on as libc::c_int) } == 0 {
+            self.grabbed = on;
+        }
+    }
+
+    /// Empties the queue of every reader that is not reading, such as a
+    /// paused app, so it does not replay old keys when it runs again. Each
+    /// reader gets scan events no app acts on; a full queue is replaced by
+    /// `SYN_DROPPED` and the newest of them. Must run ungrabbed, or only
+    /// the shell would get them.
+    pub fn flush_readers(&self) {
+        if !self.writable || self.grabbed {
+            return;
+        }
+        let pair = [
+            InputEvent {
+                kind: EV_MSC,
+                code: MSC_SCAN,
+                ..InputEvent::default()
+            },
+            InputEvent {
+                kind: EV_SYN,
+                ..InputEvent::default()
+            },
+        ];
+        let batch: Vec<InputEvent> = pair.iter().copied().cycle().take(64).collect();
+        let bytes = std::mem::size_of_val(batch.as_slice());
+        for _ in 0..FLUSH_PAIRS / 32 {
+            // SAFETY: writing whole input_event structs from a local Vec.
+            unsafe { libc::write(self.fd(), batch.as_ptr() as *const libc::c_void, bytes) };
+        }
     }
 
     pub fn fd(&self) -> RawFd {

@@ -5,8 +5,8 @@ stack of pages. Each page says which OS bars it wants, draws itself, and
 answers keys. The SDK runs the event loop, maps the keyboard, draws the bars,
 and sends only the changed rows to the panel.
 
-Settings (`crates/gh0st-settings`) is built on this SDK alone. Read it for a
-full app. Apps in other languages use the contract in `apps.md` directly.
+Settings (`crates/gh0st-settings`) is built on this SDK, plus `gh0st-core`
+for the app list, pins and the backlight. Read it for a full app. Apps in other languages use the contract in `apps.md` directly.
 
 Status: the SDK draws the OS bars inside the app for now. Once the shell link
 lands (roadmap A1), the shell draws them instead. Apps don't change.

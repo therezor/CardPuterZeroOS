@@ -52,8 +52,11 @@ These gaps were in no doc before this one:
    must be made at first boot, not baked into the image.
 7. **Updates and packaging.** There are no `.deb`s and no signed repo, and
    nothing checks the Store catalogs.
-8. **Root helper.** Logs, SSH, time, the password and updates need root. One
-   helper with fixed verbs covers them all.
+8. **Root helper.** `gh0st-helper` exists, run by pkexec, with four fixed
+   verbs: logs, SSH, rfkill and power. Our polkit rule lets anyone in `sudo`
+   or `netdev` run it, and control NetworkManager, without a password. So any
+   app the user runs can call every verb. M3 closes that before more verbs
+   arrive.
 9. **Panel driver delivery.** `install.sh` builds the driver on the device, and
    the image drops the compilers.
 10. **Deep idle and power loss.** The kernel has no suspend. Nothing shuts down
@@ -80,6 +83,52 @@ habit. It doesn't stop hostile ones.
 | Mic per app | PipeWire client permissions | Hard | L3 |
 | Enforce network and helper rules | Root-owned app cgroups, Yama, and a UID per app or Landlock | High | L3 |
 | Store `postinst` runs as root | The Store installs only from our signed catalog | Hard | M6 |
+
+## Settings: what comes next
+
+In order. Each row names what it changes and whether it works on today's
+stock image. Rows marked M3 wait for the password check in the helper,
+because without it any app could call them.
+
+**Privacy page.** Today it has one row, Logs.
+
+| Setting | What it changes | Helper verb | Works today |
+|---|---|---|---|
+| What is exposed | A readout at the top: open ports from `ss -tln`, SSH on or off, radios on | None, read only | Yes |
+| Wi-Fi MAC for new networks | `wifi.cloned-mac-address` (random or stable per network) and scan MAC randomization, in a NetworkManager conf.d file | `mac random`, `stable` or `device` | Yes |
+| Send hostname to DHCP | The `ipv4.dhcp-send-hostname` and `ipv6.dhcp-send-hostname` defaults, in the same file | `dhcp-hostname on` or `off` | Yes |
+| IPv6 privacy addresses | The `ipv6.ip6-privacy=2` default | `ip6-privacy on` or `off` | Yes |
+| Bluetooth visible | `bluetoothctl discoverable off`, and a neutral device name | None | Yes |
+| Clear logs now | Vacuums the journal | `logs clear` | Yes |
+| Forget all Wi-Fi networks | `nmcli connection delete` for each Wi-Fi profile, after a confirm | None | Yes |
+| Time server | A timesyncd conf.d file: the Debian pool, a typed server, or off | `ntp-server` | Yes |
+| SSH keys only | An sshd_config.d drop-in with `PasswordAuthentication no` | `ssh-keys on` or `off`, after M3 | Yes |
+| ADB | The stock ADB gadget unit | `adb on` or `off`, after M3 | Yes |
+| Encrypted DNS | systemd-resolved with DNS over TLS to Quad9, Cloudflare or a typed server | `dns`, after M3 | Needs systemd-resolved (M2) |
+| Firewall | The nftables inbound policy from M2, shown and switched | `firewall on` or `off`, after M3 | Needs nftables (M2) |
+| Network per app | In Apps, per app: network allowed or blocked | `net-block`, after M3 | Needs cgroups (M5) |
+
+**Lock and identity** (M4).
+- Screen lock: a password, and lock when the screen goes off. The helper
+  checks the password.
+- Screen-off and lock while an app runs.
+- Factory reset: formats the user data partition, then runs first-boot setup.
+
+**Other pages.**
+- Keyboard: key repeat delay and rate, which the shell reads from config.
+- Storage: used and free, the screenshots folder, and clearing the apt cache
+  (helper verb `apt-clean`).
+- Battery: charge, health and cycle count from the gauge, and the
+  low-battery power-off level.
+- Date and time: set by hand when network time is off
+  (`timedatectl set-time`).
+- Updates (M6): check the signed repo when the user asks, then install.
+
+**In the SDK and the shell.**
+- The shell link (A1), so the shell draws Settings' bars and Settings keeps
+  no clock timer.
+- A dot in the top bar while the camera or the mic is in use. The shell draws
+  it, so no app can hide it.
 
 ## Milestones
 
@@ -131,14 +180,17 @@ problems early.
 - Done when it boots to gh0st and stock apps run.
 
 **A1. App SDK v0.** `crates/gh0st-app` with pages, OS bars, soft keys, lists,
-text fields, jobs, timers, a sim backend and a test driver. Built; the guide is
-`sdk.md`. Still to do: the shell link (`apps.md`), so the shell draws the bars
-instead of each app. Done when an SDK app runs on the device and on the Mac,
-and its soft keys line up with keys 4 to 8.
+text fields, jobs with stdin, timers, a sim backend and a test driver. Built;
+the guide is `sdk.md`. Still to do: the shell link (`apps.md`), so the shell
+draws the bars instead of each app. Done when an SDK app runs on the device
+and on the Mac, and its soft keys line up with keys 4 to 8.
 
-**A2. Settings v0.** `gh0st-settings` with the pages that need no root:
-Appearance, Display, Sound and About. Built and run in the sim. Done when each
-setting applies on the device and the app has zero wakeups while idle.
+**A2. Settings as an app.** Done in the sim on 2026-11-21. Every page the
+shell had (Wi-Fi, Network, a connection, Bluetooth, Display, Sound,
+Appearance, Apps, one app, System, time zones, Privacy, About) moved into
+`gh0st-settings` with its tests. The shell lost about 3,000 lines and 86 KB of
+binary. Done when each page works on the device. The next steps are in
+Settings: what comes next.
 
 **M2. Network and privacy defaults**, in `cpzeroos-base`.
 - nftables drops inbound traffic, except established connections, DHCP and
@@ -161,21 +213,22 @@ setting applies on the device and the app has zero wakeups while idle.
   nothing, and the AP capture shows only DHCP, DoT to the chosen resolver, and
   NTP.
 
-**M3. Root helper.** `gh0st-helper` lives in the gh0st binary. systemd starts
-it on demand from a socket, and it exits when idle.
-- It checks `SO_PEERCRED` for UID 1000, takes fixed verbs with checked
-  arguments, and never runs a shell.
+**M3. Root helper, locked down.** `gh0st-helper` lives in the gh0st binary
+and runs through pkexec today. It runs only when called and exits after.
+- It takes fixed verbs with checked arguments and never runs a shell.
+- Today our polkit rule says YES, without a password, to anyone in `sudo` or
+  `netdev`. pkexec can't ask for a password here, since no polkit agent runs.
+  So the helper must check the password itself, read from stdin.
 - Verbs: logging mode, SSH, ADB, hostname, timezone, time, NTP server,
   regdomain, password, rfkill, Wi-Fi and network, reboot, power off, updates,
   factory reset, and per-app network rules.
-- Any app can reach the socket as UID 1000. So the sensitive verbs (SSH, ADB,
-  password, factory reset, updates and network rules) carry the user's
-  password, which the helper checks and rate limits.
+- Any app can run the helper as UID 1000. So the sensitive verbs (SSH,
+  firewall, DNS, ADB, factory reset, updates and network rules) carry the
+  user's password, which the helper checks and rate limits.
 - Done when the verb parser has unit tests and no helper process runs while
   idle.
 
-**A3. Settings, root pages.** Wi-Fi, Network, Bluetooth, Privacy (logs Off,
-RAM or Persistent, MAC policy, SSH, ADB, radios, DNS), Time and Updates.
+**A3. Settings, privacy and the rest.** See Settings: what comes next.
 
 **M4. First boot, identity, lock.**
 - Setup runs on the device: a keyboard tutorial, then user, password, Wi-Fi,
@@ -191,12 +244,15 @@ RAM or Persistent, MAC policy, SSH, ADB, radios, DNS), Time and Updates.
 - Done when a reset device boots to setup with no open ports and no traffic.
 
 **M5. Apps in cgroups, multitasking, memory.**
+- Done on the `switcher` branch: Fn+K pauses the app in front with SIGSTOP
+  and opens the switcher, Settings > Apps lets an app run in the background,
+  and the shell grabs the keyboard while apps are paused.
 - gh0st's unit gets `Delegate=yes`. The shell moves itself to a leaf cgroup and
   starts each app in its own child cgroup.
 - Spike first. Can an app move itself out of its cgroup and dodge its network
   rule? Which PSI trigger window may an unprivileged process set?
 - The shell freezes background apps with `cgroup.freeze`, then
-  `memory.reclaim` pushes their pages to zram. The switcher is a plain list.
+  `memory.reclaim` pushes their pages to zram.
 - OOM order: the shell lowest, apps higher, frozen apps highest. Under PSI
   pressure the oldest frozen app dies first.
 - Each app has a network toggle, set through the helper.

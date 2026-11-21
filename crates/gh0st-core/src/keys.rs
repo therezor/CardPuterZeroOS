@@ -1,7 +1,7 @@
 //! Keys from raw evdev codes, without libinput or xkbcommon. The TCA8418
 //! driver sends letters and digits as US codes, and its symbol layer as reused
 //! codes that a table turns into characters (stock `cp0_keyboard_keymap.c`).
-//! Fn is held like Shift. Arrows are Fn+F/Z/X/C.
+//! Fn is held like Shift. Arrows are Fn+F/Z/X/C, Home is Fn+K.
 
 /// Linux input codes this keyboard sends.
 pub mod code {
@@ -18,6 +18,7 @@ pub mod code {
     pub const F10: u16 = 68;
     pub const RIGHTCTRL: u16 = 97;
     pub const RIGHTALT: u16 = 100;
+    /// Fn+K. Opens the app switcher.
     pub const HOME: u16 = 102;
     pub const UP: u16 = 103;
     pub const LEFT: u16 = 105;
@@ -222,6 +223,7 @@ pub fn code_for_name(name: &str) -> Option<u16> {
         "left" => code::LEFT,
         "right" => code::RIGHT,
         "fn" => code::FN,
+        "home" => code::HOME,
         "shift" => code::LEFTSHIFT,
         "ctrl" => code::LEFTCTRL,
         "alt" => code::LEFTALT,

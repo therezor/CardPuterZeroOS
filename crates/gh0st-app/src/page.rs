@@ -94,9 +94,17 @@ pub(crate) enum Request {
     Back,
     Quit,
     Toast(String),
-    Timer { id: u64, ms: u64, every: bool },
+    Timer {
+        id: u64,
+        ms: u64,
+        every: bool,
+    },
     Cancel(u64),
-    Spawn { id: u64, argv: Vec<String> },
+    Spawn {
+        id: u64,
+        argv: Vec<String>,
+        input: Option<Vec<u8>>,
+    },
 }
 
 /// The app's settings in the shared device config,
@@ -136,6 +144,10 @@ impl Settings {
 
     pub fn set_bool(&mut self, key: &str, v: bool) {
         self.update(|c| c.set_bool(key, v));
+    }
+
+    pub fn remove(&mut self, key: &str) {
+        self.update(|c| c.remove(key));
     }
 
     /// Re-reads the file before each write, so a change the shell or a
@@ -245,14 +257,27 @@ impl Cx<'_> {
         self.s.requests.push(Request::Cancel(timer.0));
     }
 
-    /// Runs a program without a shell. Its output comes to [`Page::job`] a
-    /// line at a time, then its exit code. It runs inside the app's own
-    /// event loop, so the app never blocks on it.
+    /// Runs a program without a shell. Its output, stdout and stderr
+    /// together, comes to [`Page::job`] a line at a time, then its exit code.
+    /// It runs inside the app's own event loop, so the app never blocks on
+    /// it. The C locale keeps tool output in a shape parsers expect.
     pub fn spawn(&mut self, argv: &[&str]) -> Job {
+        self.spawn_inner(argv, None)
+    }
+
+    /// As [`spawn`](Cx::spawn), with `input` written to its stdin. Pass a
+    /// password this way, never in `argv`, where any user can read it.
+    /// The SDK zeroes its copy once written.
+    pub fn spawn_with_input(&mut self, argv: &[&str], input: &[u8]) -> Job {
+        self.spawn_inner(argv, Some(input.to_vec()))
+    }
+
+    fn spawn_inner(&mut self, argv: &[&str], input: Option<Vec<u8>>) -> Job {
         let id = self.s.id();
         self.s.requests.push(Request::Spawn {
             id,
             argv: argv.iter().map(|a| a.to_string()).collect(),
+            input,
         });
         Job(id)
     }

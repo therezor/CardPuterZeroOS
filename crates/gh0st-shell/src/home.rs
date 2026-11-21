@@ -7,6 +7,7 @@
 //! or scrolls the list. Each runs a fixed time with an ease-out, and the shell
 //! draws frames only while one runs.
 
+use crate::motion::{self, lerp, lerp_rect};
 use crate::search::score;
 use gh0st_ui::Canvas;
 use gh0st_ui::geom::Rect;
@@ -15,43 +16,7 @@ use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, AppItem, Hint, Status, Visual};
 use std::rc::Rc;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Layout {
-    #[default]
-    Grid,
-    List,
-}
-
-impl Layout {
-    pub fn from_config(s: &str) -> Option<Layout> {
-        match s {
-            "grid" => Some(Layout::Grid),
-            "list" => Some(Layout::List),
-            _ => None,
-        }
-    }
-
-    pub fn config_name(self) -> &'static str {
-        match self {
-            Layout::Grid => "grid",
-            Layout::List => "list",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Layout::Grid => "Grid",
-            Layout::List => "List",
-        }
-    }
-
-    pub fn toggled(self) -> Layout {
-        match self {
-            Layout::Grid => Layout::List,
-            Layout::List => Layout::Grid,
-        }
-    }
-}
+pub use gh0st_core::apps::Layout;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -59,6 +24,7 @@ pub enum Mode {
     Search,
 }
 
+#[derive(Clone)]
 pub enum Icon {
     /// A baked symbol on a badge in theme tint `tint`.
     Symbol { name: &'static str, tint: usize },
@@ -72,14 +38,18 @@ pub enum Icon {
 pub struct Picture {
     pub large: Image,
     pub small: Image,
+    /// For a top-bar slot.
+    pub tiny: Image,
 }
 
 impl Icon {
-    /// Loads a PNG for both badge sizes, leaving a 3 px inset inside each.
+    /// Loads a PNG for both badge sizes, leaving an inset inside each, and
+    /// for a bar slot.
     pub fn picture(path: &std::path::Path, t: &Theme) -> Result<Icon, String> {
         let large = Image::load_png(path, (t.m.badge - 6) as u32)?;
         let small = Image::load_png(path, (t.m.badge_small - 4) as u32)?;
-        Ok(Icon::Picture(Rc::new(Picture { large, small })))
+        let tiny = Image::load_png(path, t.m.slot_icon as u32)?;
+        Ok(Icon::Picture(Rc::new(Picture { large, small, tiny })))
     }
 }
 
@@ -94,9 +64,6 @@ pub struct Entry {
 
 const GLIDE_MS: u64 = 80;
 const SLIDE_MS: u64 = 180;
-/// Frame spacing while something moves. The SPI panel shows fewer, but a
-/// frame that is not ready in time is simply skipped by the kernel.
-pub const FRAME_MS: u64 = 20;
 
 /// Where each item sits, worked out once from the theme.
 #[derive(Clone, Copy, Debug)]
@@ -165,33 +132,7 @@ enum Motion {
     Scroll { from_px: i32, from: Rect },
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Anim {
-    start: u64,
-    ms: u64,
-    motion: Motion,
-}
-
-impl Anim {
-    /// Eased progress 0-1, cubic ease-out: fast start, soft landing.
-    fn progress(&self, now: u64) -> f32 {
-        let p = (now.saturating_sub(self.start) as f32 / self.ms as f32).min(1.0);
-        1.0 - (1.0 - p).powi(3)
-    }
-}
-
-fn lerp(a: i32, b: i32, p: f32) -> i32 {
-    a + ((b - a) as f32 * p).round() as i32
-}
-
-fn lerp_rect(a: Rect, b: Rect, p: f32) -> Rect {
-    Rect::new(
-        lerp(a.x, b.x, p),
-        lerp(a.y, b.y, p),
-        lerp(a.w, b.w, p),
-        lerp(a.h, b.h, p),
-    )
-}
+type Anim = motion::Anim<Motion>;
 
 pub struct Home {
     layout: Layout,
@@ -430,13 +371,12 @@ impl Home {
 
     /// When the next animation frame is due, if anything moves.
     pub fn next_frame(&self, now: u64) -> Option<u64> {
-        let a = self.anim?;
-        Some((now + FRAME_MS).min(a.start + a.ms))
+        self.anim.map(|a| a.next_frame(now))
     }
 
     /// Drops a finished animation. Called after each drawn frame.
     pub fn settle(&mut self, now: u64) {
-        if self.anim.is_some_and(|a| now >= a.start + a.ms) {
+        if self.anim.is_some_and(|a| a.done(now)) {
             self.anim = None;
         }
     }
@@ -489,7 +429,12 @@ impl Home {
         AppItem {
             label: &e.name,
             note: &e.note,
-            visual: visual(t, e, small),
+            visual: visual(
+                t,
+                &e.icon,
+                &e.name,
+                if small { Size::Small } else { Size::Large },
+            ),
             pinned: e.pinned,
         }
     }
@@ -582,16 +527,31 @@ impl Home {
     }
 }
 
-fn visual<'a>(t: &Theme, e: &'a Entry, small: bool) -> Visual<'a> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Size {
+    /// A grid tile or switcher card.
+    Large,
+    /// A list row.
+    Small,
+    /// A top-bar slot.
+    Tiny,
+}
+
+/// How an app's icon draws at `size`.
+pub fn visual<'a>(t: &Theme, icon: &'a Icon, name: &str, size: Size) -> Visual<'a> {
     let tint = |i: usize| t.c.tints[i % t.c.tints.len()];
-    match &e.icon {
+    match icon {
         Icon::Symbol { name, tint: i } => Visual::Badge {
             icon: name,
             tint: tint(*i),
         },
-        Icon::Picture(p) => Visual::Image(if small { &p.small } else { &p.large }),
+        Icon::Picture(p) => Visual::Image(match size {
+            Size::Large => &p.large,
+            Size::Small => &p.small,
+            Size::Tiny => &p.tiny,
+        }),
         Icon::Letter { tint: i } => Visual::Letter {
-            ch: e.name.chars().next().unwrap_or('?'),
+            ch: name.chars().next().unwrap_or('?'),
             tint: tint(*i),
         },
     }
@@ -686,7 +646,7 @@ mod tests {
         let mut h = home(&TEN, Layout::Grid);
         h.move_by(1, 0, 1000);
         assert!(matches!(h.anim.unwrap().motion, Motion::Glide { .. }));
-        assert_eq!(h.next_frame(1000), Some(1000 + FRAME_MS));
+        assert_eq!(h.next_frame(1000), Some(1000 + motion::FRAME_MS));
         h.settle(1000 + GLIDE_MS);
         assert!(h.anim.is_none());
         h.select(7);

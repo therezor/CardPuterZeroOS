@@ -88,7 +88,7 @@ const fn face(
 
 /// Icon sizes in pixels, with the stroke width each one is drawn at. Lucide is
 /// drawn on a 24 grid with a 2 unit stroke; at 14 px that is a blurry 1.2 px.
-const ICON_SIZES: &[(u32, f32)] = &[(14, 1.5), (20, 1.75), (36, 2.6)];
+const ICON_SIZES: &[(u32, f32)] = &[(12, 1.4), (14, 1.5), (16, 1.6), (20, 1.75), (36, 2.6)];
 
 fn main() {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../assets");

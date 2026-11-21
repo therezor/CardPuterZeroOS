@@ -40,14 +40,10 @@ pub fn argv(app: &App, terminal: &str) -> Vec<String> {
     v
 }
 
-pub struct Running {
-    pub pgid: i32,
-    leader_done: bool,
-}
-
 /// `pause` asks a terminal app to wait for a key after its command exits
 /// (stock `Sysplause`). It reaches the terminal as `GH0ST_SYSPLAUSE=1`.
-pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<Running> {
+/// Returns the new process group, whose id is the leader's pid.
+pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<i32> {
     let (prog, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::other("empty command"))?;
@@ -60,19 +56,17 @@ pub fn spawn(argv: &[String], dev: &Devices, pause: bool) -> io::Result<Running>
         .env("LV_LINUX_KEYBOARD_DEVICE", dev.keyboard)
         .env("APPLAUNCH_LINUX_KEYBOARD_DEVICE", dev.keyboard)
         .env("APPLAUNCH_LINUX_KEYBOARD_MAP", dev.keymap)
-        .env("GH0ST_SYSPLAUSE", if pause { "1" } else { "0" });
+        .env("GH0ST_SYSPLAUSE", if pause { "1" } else { "0" })
+        // The stock camera grabs the keyboard unless told not to, and a grab
+        // cuts the shell off from Fn+K, ESC held and the volume keys.
+        .env("CAMERA_APP_KEYBOARD_GRAB", "false");
     if Path::new(APP_CWD).is_dir() {
         cmd.current_dir(APP_CWD);
     }
     let child = cmd.spawn()?;
-    let pid = child.id() as i32;
     // The Child handle is dropped without waiting: `reap` collects the
     // leader and anything orphaned to us, so nothing stays a zombie.
-    drop(child);
-    Ok(Running {
-        pgid: pid,
-        leader_done: false,
-    })
+    Ok(child.id() as i32)
 }
 
 /// Makes the shell the reaper for orphans of its apps, so an app that forks
@@ -85,44 +79,138 @@ pub fn become_subreaper() {
     }
 }
 
-impl Running {
-    /// Collects exited children after SIGCHLD. True when the app is done:
-    /// its leader exited and no process is left in its group.
-    pub fn reap(&mut self) -> bool {
-        loop {
-            let mut status = 0;
-            // SAFETY: non-blocking wait for any child.
-            let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
-            if pid <= 0 {
-                break;
-            }
-            if pid == self.pgid {
-                self.leader_done = true;
-            }
+fn signal_group(pgid: i32, sig: libc::c_int) {
+    if pgid > 0 {
+        // SAFETY: signalling a process group we started.
+        unsafe { libc::kill(-pgid, sig) };
+    }
+}
+
+/// Pauses every process in the group. False if the signal reached none of
+/// them: a group led by a root process, say.
+pub fn stop(pgid: i32) -> bool {
+    // SAFETY: signalling a process group we started.
+    pgid > 0 && unsafe { libc::kill(-pgid, libc::SIGSTOP) } == 0
+}
+
+/// Waits up to `ms` until every live member of the group is stopped. A
+/// member the shell may not signal (run through sudo) never stops.
+pub fn group_stopped(pgid: i32, ms: u64) -> bool {
+    let end = crate::rt::now_ms() + ms;
+    loop {
+        if !group_has_running(pgid) {
+            return true;
         }
-        self.leader_done && !self.group_alive()
+        if crate::rt::now_ms() >= end {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
+}
 
-    /// The leader is gone but the group may not be: the caller rechecks on a
-    /// short timer, since a leftover member that is not our child sends no
-    /// SIGCHLD when it exits.
-    pub fn leader_exited(&self) -> bool {
-        self.leader_done
+/// Any member of the group still running, from `/proc`. Without `/proc` (a
+/// host run) the stop is trusted.
+fn group_has_running(pgid: i32) -> bool {
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    rd.flatten().any(|e| {
+        let name = e.file_name();
+        let Some(pid) = name
+            .to_str()
+            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        else {
+            return false;
+        };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        match stat_state_pgrp(&stat) {
+            Some((state, pgrp)) => pgrp == pgid && !matches!(state, 'T' | 't' | 'Z' | 'X'),
+            None => false,
+        }
+    })
+}
+
+/// State and process group from a `/proc/PID/stat` line. The name field can
+/// hold spaces and brackets, so parsing starts after its last `)`.
+fn stat_state_pgrp(stat: &str) -> Option<(char, i32)> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let mut f = rest.split_whitespace();
+    let state = f.next()?.chars().next()?;
+    let _ppid = f.next()?;
+    let pgrp = f.next()?.parse().ok()?;
+    Some((state, pgrp))
+}
+
+pub fn cont(pgid: i32) {
+    signal_group(pgid, libc::SIGCONT);
+}
+
+/// Asks the group to exit. A paused group cannot act on SIGTERM until it
+/// runs, so it gets SIGCONT too.
+pub fn terminate(pgid: i32) {
+    signal_group(pgid, libc::SIGTERM);
+    signal_group(pgid, libc::SIGCONT);
+}
+
+pub fn kill(pgid: i32) {
+    signal_group(pgid, libc::SIGKILL);
+}
+
+/// True while any process of the group exists.
+pub fn group_alive(pgid: i32) -> bool {
+    // SAFETY: signal 0 only checks that the group exists.
+    pgid > 0 && unsafe { libc::kill(-pgid, 0) } == 0
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stopped {
+    Yes,
+    /// The leader exited instead; it has been reaped here.
+    Exited,
+    /// Not stopped in time: in uninterruptible sleep, say.
+    Late,
+}
+
+/// Waits up to `ms` for our child `pid` to stop after SIGSTOP. SIGSTOP is
+/// queued at once but takes effect when the process next runs.
+pub fn wait_stopped(pid: i32, ms: u64) -> Stopped {
+    let end = crate::rt::now_ms() + ms;
+    loop {
+        let mut status = 0;
+        // SAFETY: a non-blocking wait on our own child.
+        let r = unsafe { libc::waitpid(pid, &mut status, libc::WUNTRACED | libc::WNOHANG) };
+        if r == pid {
+            return if libc::WIFSTOPPED(status) {
+                Stopped::Yes
+            } else {
+                Stopped::Exited
+            };
+        }
+        if r < 0 {
+            return Stopped::Exited;
+        }
+        if crate::rt::now_ms() >= end {
+            return Stopped::Late;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
+}
 
-    fn group_alive(&self) -> bool {
-        // SAFETY: signal 0 only checks that the group exists.
-        unsafe { libc::kill(-self.pgid, 0) == 0 }
-    }
-
-    pub fn terminate(&self) {
-        // SAFETY: signalling our own child's group.
-        unsafe { libc::kill(-self.pgid, libc::SIGTERM) };
-    }
-
-    pub fn kill(&self) {
-        // SAFETY: as above.
-        unsafe { libc::kill(-self.pgid, libc::SIGKILL) };
+/// Collects every exited child: apps, their orphans, helpers and jobs. One
+/// reaper for all, since `waitpid(-1)` in two places would steal each
+/// other's exits. Returns (pid, status).
+pub fn reap() -> Vec<(i32, i32)> {
+    let mut out = Vec::new();
+    loop {
+        let mut status = 0;
+        // SAFETY: non-blocking wait for any child.
+        let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+        if pid <= 0 {
+            return out;
+        }
+        out.push((pid, status));
     }
 }
 
@@ -139,16 +227,10 @@ pub fn fire(argv: &[&str]) {
     }
 }
 
-/// Collects finished helpers while no app runs.
-pub fn reap_helpers() {
-    loop {
-        let mut status = 0;
-        // SAFETY: non-blocking wait for any child.
-        if unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) } <= 0 {
-            break;
-        }
-    }
-}
+/// Tests that start children hold this: `reap` takes any child's exit, so
+/// two such tests running at once would steal each other's.
+#[cfg(test)]
+pub(crate) static CHILD_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -188,21 +270,37 @@ mod tests {
         );
     }
 
-    #[test]
-    fn done_means_the_whole_group_is_gone() {
-        let dev = Devices {
+    fn dev() -> Devices<'static> {
+        Devices {
             fb: "/dev/null",
             keyboard: "/dev/null",
             keymap: "",
-        };
+        }
+    }
+
+    fn sh(cmd: &str) -> Vec<String> {
+        ["/bin/sh", "-c", cmd].map(String::from).to_vec()
+    }
+
+    #[test]
+    fn stat_lines_read_past_odd_names() {
+        assert_eq!(
+            stat_state_pgrp("123 (we (ird) x) T 1 120 120 0"),
+            Some(('T', 120))
+        );
+        assert_eq!(stat_state_pgrp("garbage"), None);
+    }
+
+    #[test]
+    fn the_group_outlives_its_leader_until_the_last_member_exits() {
+        let _one = CHILD_TESTS.lock().unwrap();
         // The leader exits at once; its background child keeps the group
         // alive for a moment.
-        let argv: Vec<String> = ["/bin/sh", "-c", "sleep 0.3 & exit 0"]
-            .map(String::from)
-            .to_vec();
-        let mut r = spawn(&argv, &dev, false).unwrap();
+        let pgid = spawn(&sh("sleep 0.3 & exit 0"), &dev(), false).unwrap();
         let start = crate::rt::now_ms();
-        while !r.reap() {
+        let mut leader_done = false;
+        while !(leader_done && !group_alive(pgid)) {
+            leader_done |= reap().iter().any(|&(p, _)| p == pgid);
             assert!(crate::rt::now_ms() - start < 5000, "group never finished");
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
@@ -210,5 +308,27 @@ mod tests {
             crate::rt::now_ms() - start >= 250,
             "returned before the background child exited"
         );
+    }
+
+    #[test]
+    fn a_paused_group_stops_resumes_and_still_takes_terminate() {
+        let _one = CHILD_TESTS.lock().unwrap();
+        let pgid = spawn(&sh("exec sleep 30"), &dev(), false).unwrap();
+        assert!(stop(pgid));
+        assert_eq!(wait_stopped(pgid, 2000), Stopped::Yes);
+        assert!(group_stopped(pgid, 1000));
+        cont(pgid);
+        stop(pgid);
+        assert_eq!(wait_stopped(pgid, 2000), Stopped::Yes);
+        terminate(pgid);
+        let start = crate::rt::now_ms();
+        while group_alive(pgid) {
+            reap();
+            assert!(
+                crate::rt::now_ms() - start < 3000,
+                "a stopped group ignored SIGTERM"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }
