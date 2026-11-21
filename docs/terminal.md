@@ -54,8 +54,8 @@ Delete. Not measured on the device yet; the same source disagrees with
 | r, t | Zoom out, in (- and = too) |
 | m | Fit or window |
 | b | Top bar on or off |
-| / then n, N | Find, older, newer |
-| [ ] | Previous, next shell prompt |
+| n | Find: type, then Enter or ↑ for older, ↓ for newer, Esc when done |
+| u, i | Previous, next shell prompt |
 | v, then ↑ ↓ and y | Copy whole lines |
 | p | Paste |
 | o, w | New tab, close tab |

@@ -97,9 +97,9 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("r t", "zoom out, in"),
     ("m", "fit, window"),
     ("b", "top bar"),
-    ("/ n N", "find"),
+    ("n", "find"),
     ("v", "copy lines"),
-    ("[ ]", "prompts"),
+    ("u i", "prev, next prompt"),
     ("p", "paste"),
     ("o w", "new, close tab"),
     ("1-9 Tab", "go to tab"),
@@ -508,7 +508,7 @@ impl Term {
                 | code::C
                 | PAGEUP
                 | PAGEDOWN
-        ) || matches!(ch, Some('r' | 't' | '-' | '=' | '+'));
+        ) || matches!(ch, Some('r' | 't' | '-' | '=' | '+' | 'u' | 'i'));
         if k.state == KeyState::Repeat && !moves {
             return;
         }
@@ -550,14 +550,14 @@ impl Term {
             (_, Some(d @ '1'..='9')) => self.switch(d as usize - '1' as usize, cx),
             (_, Some('g')) if k.shift => self.scroll(false, usize::MAX / 2, cx),
             (_, Some('g')) => self.scroll(true, usize::MAX / 2, cx),
-            (_, Some('/')) => {
-                self.mode = Mode::Find(String::new());
+            // Letters, so nothing here needs the Sym key; / [ ] work too.
+            (_, Some('n' | '/')) => {
+                self.mode = Mode::Find(self.query.clone());
                 cx.redraw();
             }
-            (_, Some('n')) => self.find_next(!k.shift, cx),
             (_, Some('v')) => self.start_select(cx),
-            (_, Some('[')) => self.jump_prompt(true, cx),
-            (_, Some(']')) => self.jump_prompt(false, cx),
+            (_, Some('u' | '[')) => self.jump_prompt(true, cx),
+            (_, Some('i' | ']')) => self.jump_prompt(false, cx),
             (_, Some('s')) => cx.push(Prefs::new()),
             (_, Some('p')) => {
                 self.mode = Mode::Typing;
@@ -626,15 +626,16 @@ impl Term {
         let Mode::Find(q) = &mut self.mode else {
             return;
         };
+        // The query stays up: Enter or ↑ finds the next older match, ↓ the
+        // next newer one, until Esc.
         match k.code {
             code::ESC => self.mode = Mode::View,
-            code::ENTER => {
-                if !q.is_empty() {
-                    self.query = std::mem::take(q);
+            code::ENTER | code::UP | code::DOWN => {
+                if *q != self.query {
+                    self.query = q.clone();
+                    self.hit = None;
                 }
-                self.mode = Mode::View;
-                self.hit = None;
-                self.find_next(true, cx);
+                self.find_next(k.code != code::DOWN, cx);
             }
             code::BACKSPACE => {
                 q.pop();
@@ -770,11 +771,11 @@ impl Term {
             Mode::View => vec![
                 ("↑↓", "scroll"),
                 ("r t", "zoom"),
-                ("/", "find"),
+                ("n", "find"),
                 ("h", "keys"),
             ],
             Mode::Help => vec![("any key", "back")],
-            Mode::Find(_) => vec![("Enter", "find"), ("Esc", "cancel")],
+            Mode::Find(_) => vec![("Enter ↑", "older"), ("↓", "newer"), ("Esc", "done")],
             Mode::Select { .. } => vec![("↑↓", "extend"), ("y", "copy"), ("Esc", "cancel")],
         }
     }
