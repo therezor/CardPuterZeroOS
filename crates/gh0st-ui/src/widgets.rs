@@ -490,40 +490,15 @@ pub fn chip_w(t: &Theme, ch: &Chip) -> i32 {
     chip_ink_w(t, ch) + 2 * t.m.chip_pad
 }
 
-/// Widths for a bar. Chips are centred on their keys, so neighbours share
-/// the room between their centres. A crowded pair gives up padding in
-/// proportion to what each has spare, down to the least; only past that
-/// does a chip lose its icon.
+/// Widths for a bar: every chip as wide as its key, less a gap, so the bar
+/// reads as a row of keycaps over the real ones.
 pub fn bar_widths(t: &Theme, chips: &[Chip; 5]) -> [i32; 5] {
-    let room = t.m.softkey_x[1] - t.m.softkey_x[0] - 2;
-    let want = chips.map(|ch| if ch.is_empty() { 0 } else { chip_w(t, &ch) });
-    let need = chips.map(|ch| chip_ink_w(t, &ch) + 2 * t.m.chip_pad_min);
-    let mut half = want.map(|w| w / 2);
-    for a in 0..4 {
-        let b = a + 1;
-        if want[a] == 0 || want[b] == 0 || half[a] + half[b] <= room {
-            continue;
-        }
-        let (na, nb) = (need[a] / 2, need[b] / 2);
-        let (ha, hb) = if na + nb <= room {
-            let (sa, sb) = (want[a] / 2 - na, want[b] / 2 - nb);
-            let extra = room - na - nb;
-            let ga = if sa + sb > 0 {
-                extra * sa / (sa + sb)
-            } else {
-                extra / 2
-            };
-            (na + ga, nb + extra - ga)
-        } else {
-            (room / 2, room - room / 2)
-        };
-        half[a] = half[a].min(ha);
-        half[b] = half[b].min(hb);
-    }
-    half.map(|h| 2 * h)
+    let key = t.m.softkey_x[1] - t.m.softkey_x[0] - 2;
+    chips.map(|ch| if ch.is_empty() { 0 } else { key })
 }
 
-fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color) {
+/// Draws the icon in `icon_ink` and the word in `ink`, centred together.
+fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink: Color) {
     let busy;
     let word = if ch.look == Look::Busy {
         busy = format!("{}\u{2026}", ch.word);
@@ -540,41 +515,53 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color) {
     // capitals and ends on their baseline.
     let iy = inner.y + (inner.h - s) / 2 + 1;
     if word.is_empty() {
-        icon::draw(c, ch.icon, IconSize::Tiny, x, iy, ink);
+        icon::draw(c, ch.icon, IconSize::Tiny, x, iy, icon_ink);
         return;
     }
     let mut lx = x;
     if !ch.icon.is_empty() {
-        icon::draw(c, ch.icon, IconSize::Tiny, x, iy, ink);
+        icon::draw(c, ch.icon, IconSize::Tiny, x, iy, icon_ink);
         lx += s + 3;
     }
     let tr = Rect::new(lx, inner.y, inner.right() - lx, inner.h);
     text_in(c, t.f.small_bold, tr, word, ink);
 }
 
-/// One chip: a tab centred on `cx`, its top at `top`, `w` wide, open at the
-/// foot. In the action bar the foot is the screen's edge, right over the key.
+/// One chip: a keycap centred on `cx`, its top at `top`, `w` wide, open at
+/// the foot. In the action bar the foot is the screen's edge, right over the
+/// key. Pressed, it sinks a row and darkens, as a key does.
 pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     // A word is never cut: short of room, a chip drops its icon first.
     let tight = chip_ink_w(t, ch) + 2 * t.m.chip_pad_min > w;
     let bare;
-    let (ch, w) = if tight && !ch.icon.is_empty() && !ch.word.is_empty() {
+    let ch = if tight && !ch.icon.is_empty() && !ch.word.is_empty() {
         bare = Chip { icon: "", ..*ch };
-        (&bare, chip_w(t, &bare).min(w))
+        &bare
     } else {
-        (ch, w)
+        ch
     };
-    let r = Rect::new(cx - w / 2, top, w, t.m.chip_h);
+    let pressed = ch.look == Look::Pressed;
+    let light = crate::color::luminance(t.c.bg) > 0.5;
+    let sink = i32::from(pressed);
+    let r = Rect::new(cx - w / 2, top + sink, w, t.m.chip_h - sink);
     let k = &t.c;
-    let (fill, ink, edge, tick) = match ch.look {
-        Look::Normal => (k.surface, k.fg, Some(k.border), k.muted),
-        Look::Main => (k.accent, k.accent_fg, None, k.accent_fg),
-        Look::On => (mix(k.bg, k.accent, 80), k.accent, None, k.accent),
-        Look::Danger | Look::Hold(_) => (k.surface, k.critical, Some(k.critical), k.critical),
-        Look::DangerMain => (k.critical, k.bg, None, k.bg),
-        Look::Disabled => (k.bg, k.disabled(), Some(k.border), k.border),
-        Look::Pressed => (k.fg, k.bg, None, k.bg),
-        Look::Busy => (k.surface, k.muted, Some(k.border), k.muted),
+    // Fill, word, icon, edge, tick. The icon carries the colour; the word
+    // stays plain, so a row of chips reads at a glance.
+    let (fill, ink, icon_ink, edge, tick) = match ch.look {
+        Look::Normal => (k.surface, k.fg, k.accent, Some(k.border), k.muted),
+        Look::Main => (k.accent, k.accent_fg, k.accent_fg, None, k.accent_fg),
+        Look::On => (mix(k.bg, k.accent, 80), k.accent, k.accent, None, k.accent),
+        Look::Danger | Look::Hold(_) => {
+            (k.surface, k.critical, k.critical, Some(k.critical), k.critical)
+        }
+        Look::DangerMain => (k.critical, k.bg, k.bg, None, k.bg),
+        Look::Disabled => (k.bg, k.disabled(), k.disabled(), Some(k.border), k.border),
+        Look::Pressed => {
+            // Darker than at rest on any palette.
+            let down = if light { mix(k.surface, k.fg, 25) } else { mix(k.surface, k.bg, 150) };
+            (down, k.fg, k.accent, Some(k.border), k.muted)
+        }
+        Look::Busy => (k.surface, k.muted, k.muted, Some(k.border), k.muted),
     };
     // Round on top, square at the foot: the shape runs on past the foot and
     // the clip cuts it there, edge and all.
@@ -585,18 +572,31 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     if let Some(e) = edge {
         c.stroke_round_rect(shape, t.m.chip_r, e);
     }
+    // A keycap's lit top: one lighter row under the edge. A pressed key
+    // has none.
+    if !pressed && ch.look != Look::Disabled {
+        let y = r.y + i32::from(edge.is_some());
+        // Lighter than the fill on any palette: toward fg on a dark one,
+        // toward white on a light one.
+        let lit = if light {
+            mix(fill, crate::color::rgb(255, 255, 255), 160)
+        } else {
+            mix(fill, k.fg, 40)
+        };
+        c.hline(r.x + t.m.chip_r, r.right() - t.m.chip_r, y, lit);
+    }
     c.set_clip(old);
     // The tick points at the key: centred on it, at the screen's edge.
     let tick_r = Rect::new(cx - 1, r.bottom() - TICK_H, 2, TICK_H);
     c.fill(tick_r, tick);
-    chip_ink(c, t, r, ch, ink);
+    chip_ink(c, t, r, ch, ink, icon_ink);
     if let Look::Hold(pc) = ch.look {
         let old = c.clip();
         let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
         c.set_clip(part.intersect(&old));
         c.round_rect(shape, t.m.chip_r, k.critical);
         c.fill(tick_r, k.bg);
-        chip_ink(c, t, r, ch, k.bg);
+        chip_ink(c, t, r, ch, k.bg, k.bg);
         c.set_clip(old);
     }
 }

@@ -165,23 +165,24 @@ and 7.
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
 needs saying, a dialog or message names them in key pills.
 
-**What a chip is.** A 19 px tab, its top corners rounded 3 px, edged on its
-top and sides and square and open at the foot, where the screen ends. A short tick at its foot
-sits over the centre of its key. A 12 px icon and one word in Label style,
-7 px clear on each side. A word is never cut. When two
-neighbours crowd each other they share the squeeze, down to 4 px each side;
-past that a chip drops its icon. Words of five letters or fewer keep their
-icons on a full bar.
+**What a chip is.** A keycap standing on the screen's bottom edge: 19 px
+tall and as wide as its key (54 px), so the bar reads as a row of keys over
+the real ones. Its top corners are rounded 3 px; it is edged on its top and
+sides, with a lighter row under the top edge, and square and open at the
+foot. A short tick at its foot sits over the centre of its key. Inside: a
+12 px icon in the accent colour and one word in Label style, centred. A word
+is never cut: with less than 3 px each side, a chip drops its icon. Four
+letters or so keep it.
 
 | State | Looks | For |
 |---|---|---|
-| normal | `surface` with a `border` edge | most actions |
+| normal | `surface` with a `border` edge, accent icon | most actions |
 | on | a pale accent fill | a toggle that is on: Flash |
 | danger | a `critical` edge and word | Forget, Stop, Close |
 | danger, held | fills `critical` left to right | Erase: hold it 0.7 s |
 | main | `accent` fill | an action that is the page's main one but not on Enter |
 | disabled | no fill, `disabled` word | can't be used now; the key does nothing |
-| pressed | `fg` fill | while its key is down |
+| pressed | sinks a row, darker, no lit top | while its key is down |
 | busy | the word and "…" | working: no second press |
 
 Rows change the chips. On a choice row, 5 and 7 read Prev and Next and z and

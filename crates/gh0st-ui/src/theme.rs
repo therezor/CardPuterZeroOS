@@ -464,7 +464,7 @@ pub const CARDPUTER: Metrics = Metrics {
     chip_h: 19,
     chip_r: 3,
     chip_pad: 7,
-    chip_pad_min: 4,
+    chip_pad_min: 3,
     pill_h: 15,
     toast_h: 20,
     card_pad: 10,
