@@ -415,9 +415,9 @@ impl Runtime {
             Overlay::Keys(s) => s.menu,
             Overlay::None => None,
         };
-        if let Some(m) = menu {
-            self.menu_last = m.selected_id().map(|id| (m.owner, id));
-        }
+        // Back on a setting just changed, to change it again; anywhere else
+        // the menu opens at the top, on the most used row.
+        self.menu_last = menu.and_then(|m| m.changed().map(|id| (m.owner, id)));
         self.dirty = true;
     }
 

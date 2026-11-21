@@ -41,7 +41,8 @@ Delete. Not measured on the device yet; the same source disagrees with
 `hardware-facts.md` on two keys.
 
 - Fn+K is the switcher, not Home. In scroll mode, `k` sends Home.
-- Shift+PgUp and Shift+PgDn scroll the history while typing.
+- Shift+Fn+L (Shift+PgUp) enters scroll mode a page back. Shift+Fn+M pages
+  forward.
 - Holding Esc for 3 s closes the terminal, as it closes any app.
 
 **Fn+Esc or Fn+H opens the menu.** Rows, most used first:

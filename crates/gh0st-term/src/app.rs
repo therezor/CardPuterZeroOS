@@ -645,7 +645,11 @@ impl Term {
             cmd::SETTINGS => cx.push(Prefs::new()),
             cmd::SCROLL => self.scroll(back, 1, cx),
             cmd::PAN => self.pan(back, cx),
-            cmd::PAGE | cmd::HISTORY => self.scroll(back, page, cx),
+            cmd::HISTORY => {
+                self.mode = Mode::View;
+                self.scroll(back, page, cx);
+            }
+            cmd::PAGE => self.scroll(back, page, cx),
             cmd::ENDS => self.scroll(back, usize::MAX / 2, cx),
             cmd::PROMPT => self.jump_prompt(back, cx),
             cmd::HOME => {
@@ -1044,10 +1048,11 @@ impl Page for Term {
         let on = |c: Command| c.mode(SCROLLING, scroll);
         let moves = |c: Command| c.keys_only().repeats();
 
+        // Scrolling back from typing enters scroll mode, as tmux does.
         c.add(
-            moves(Command::choice(cmd::HISTORY, "Scroll back, forward", ""))
+            moves(Command::choice(cmd::HISTORY, "Scroll back", ""))
                 .keys("Shift+PgUp Shift+PgDn")
-                .mode(TYPING, typing && !self.waiting),
+                .mode(TYPING, (typing || scroll) && !self.waiting),
         );
         c.group("View");
         let label = if typing { "Scroll mode" } else { "Back to typing" };

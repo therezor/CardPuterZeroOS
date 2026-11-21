@@ -35,6 +35,10 @@ impl Page for Reader {
         ui.text(SIZES[self.size]);
     }
 
+    fn bars(&self) -> Bars {
+        Bars::top().command_hints()
+    }
+
     fn typing(&self) -> bool {
         self.editing
     }
@@ -173,11 +177,20 @@ fn h_opens_keys_and_esc_goes_back_to_the_menu() {
 }
 
 #[test]
-fn the_menu_reopens_on_the_last_row() {
+fn the_menu_reopens_on_a_setting_just_changed() {
     let mut a = app();
     a.d.keys("fn+esc\nfn+x\nenter\nfn+esc");
     a.d.keys("fn+esc\nenter");
     assert_eq!(a.ids(), [NIGHT, NIGHT]);
+}
+
+#[test]
+fn after_an_action_the_menu_opens_at_the_top() {
+    let mut a = app();
+    a.d.keys("fn+esc\nfn+x\nenter\nfn+x\nenter");
+    assert_eq!(a.ids(), [NIGHT, FIND]);
+    a.d.keys("fn+esc\nenter");
+    assert_eq!(a.ids(), [NIGHT, FIND, SIZE], "the first row, not Find");
 }
 
 #[test]
@@ -208,6 +221,7 @@ fn snapshots() {
     };
     let dir = std::path::PathBuf::from(dir);
     let mut a = app();
+    a.d.save(&dir.join("page-hints.png")).unwrap();
     a.d.keys("fn+esc");
     a.d.save(&dir.join("menu-1.png")).unwrap();
     a.d.keys("fn+x");

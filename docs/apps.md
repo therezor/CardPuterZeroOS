@@ -180,7 +180,8 @@ that behaves the same.
 - Fn+Esc or Fn+H opens the menu over the app and closes it again.
 - Esc closes it without acting. Never open a menu with plain Esc: Esc is
   back, and terminal programs need it.
-- It opens on the row picked last time.
+- It opens at the top, on the most used row. Right after a setting was
+  changed in place, it opens on that setting, to change it again.
 - F and X (or Fn with them) move, wrapping at the ends.
 
 **Rows**

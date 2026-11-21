@@ -38,6 +38,8 @@ pub(crate) struct Menu {
     sel: usize,
     /// The selected row asks first, and Enter was pressed once.
     armed: bool,
+    /// The last row changed in place.
+    changed: Option<u32>,
     first: Cell<usize>,
 }
 
@@ -50,6 +52,7 @@ impl Menu {
             lines: Vec::new(),
             sel: 0,
             armed: false,
+            changed: None,
             first: Cell::new(0),
         };
         m.refresh(cmds);
@@ -107,12 +110,25 @@ impl Menu {
         self.selected().map(|c| c.id)
     }
 
+    /// The setting changed in place last, if the selection is still on it.
+    pub fn changed(&self) -> Option<u32> {
+        self.changed.filter(|&id| self.selected_id() == Some(id))
+    }
+
     /// The page's own commands, without the rows the SDK added.
     pub fn page_commands(&self) -> impl Iterator<Item = &Command> {
         self.cmds.iter().filter(|c| c.id != KEYS && c.id != CLOSE_APP)
     }
 
     pub fn key(&mut self, k: &RawKey) -> Out {
+        let out = self.key_inner(k);
+        if let Out::Run { id, close: false, .. } = out {
+            self.changed = Some(id);
+        }
+        out
+    }
+
+    fn key_inner(&mut self, k: &RawKey) -> Out {
         if k.state == State::Release {
             return Out::Nothing;
         }
