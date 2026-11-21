@@ -30,7 +30,7 @@ The binary is about 1 MB, static, with its fonts and icons built in.
 - Fn+K pauses the app in front and opens the switcher: Home, then every open
   app. A paused app is stopped, not left running, and comes back showing
   what it showed. Del closes one. Keys typed elsewhere never reach it.
-- Shows the skull, a slot for each open app, the network, battery and clock
+- Shows the mark, a slot for each open app, the network, battery and clock
   in the top bar. It reads them from sysfs when the kernel reports a change,
   so nothing polls.
 - Settings is part of the shell: Wi-Fi, network, Bluetooth, display, sound,
@@ -105,4 +105,4 @@ which lives in its own repository.
 
 The Rust code is MIT. The panel driver is GPL-2.0, from M5Stack and Noralf
 Trønnes. Inter and JetBrains Mono are under the SIL Open Font License, and
-the Lucide icons under ISC.
+the Lucide icons under ISC. The mark is the Tabler "components" icon, MIT.

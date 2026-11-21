@@ -25,9 +25,9 @@ pub struct Battery {
 }
 
 pub struct Status<'a> {
-    /// Open apps after the skull, in launch order.
+    /// Open apps after the mark, in launch order.
     pub dock: &'a [Visual<'a>],
-    /// The filled slot: 0 is the skull, 1 the first app. `None` fills none.
+    /// The filled slot: 0 is the mark, 1 the first app. `None` fills none.
     pub front: Option<usize>,
     /// The page's name, after the dock. Empty on home.
     pub title: &'a str,
@@ -37,7 +37,7 @@ pub struct Status<'a> {
 }
 
 /// The shell's mark, where pt35 has its skull.
-pub const LOGO: &str = "gh0st-skull";
+pub const LOGO: &str = "gh0st-components";
 
 /// Body area between the two bars.
 pub fn body(t: &Theme) -> Rect {
@@ -92,7 +92,7 @@ pub fn soft(t: &Theme) -> Color {
     mix(t.c.muted, t.c.fg, 150)
 }
 
-/// The top bar, as on pt35: the skull, a slot for each open app, the page's
+/// The top bar, as on pt35: the mark, a slot for each open app, the page's
 /// name, then network, battery and clock on the right.
 pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     let r = Rect::new(0, 0, t.m.width, t.m.bar_h);
@@ -119,9 +119,10 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     }
     let end = x;
 
-    let y = (inner.h - t.m.slot_h + 1) / 2;
+    // Rounded down, so slot ink shares rows with the clock's digits.
+    let y = (inner.h - t.m.slot_h) / 2;
     let step = t.m.slot_w + t.m.slot_gap;
-    // The skull has no box: it is accent while home is in front. It is the
+    // The mark has no box: it is accent while home is in front. It is the
     // size of the icons in the slots.
     let logo = t.m.slot_icon;
     let ink = if s.front == Some(0) {
@@ -134,7 +135,7 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
         LOGO,
         IconSize::Tiny,
         t.m.pad,
-        (inner.h - logo + 1) / 2,
+        y + (t.m.slot_h - logo) / 2,
         ink,
     );
     let mut sx = t.m.pad + logo + 2 * t.m.slot_gap;
@@ -350,7 +351,7 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
             let size = if r.w >= 32 {
                 IconSize::Medium
             } else {
-                IconSize::Small
+                IconSize::Bar
             };
             let s = size as i32;
             let (x, y) = r.centre(s, s);
