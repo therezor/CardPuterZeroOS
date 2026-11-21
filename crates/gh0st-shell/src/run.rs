@@ -1340,10 +1340,12 @@ impl Shell {
             Some(keys::Nav::Left) => self.switcher.move_by(-1, now),
             Some(keys::Nav::Right) => self.switcher.move_by(1, now),
             _ if k.is(code::BACKSPACE) && k.state == State::Press => {
-                if let Some(id) = self.switcher.selected_app().map(|c| c.id.clone()) {
-                    self.tasks.close(&id, now);
-                    self.switcher.set_apps(self.tasks.cards());
+                // Del on an app closes it; on Home, every app.
+                match self.switcher.selected_app().map(|c| c.id.clone()) {
+                    Some(id) => self.tasks.close(&id, now),
+                    None => self.tasks.close_all(now),
                 }
+                self.switcher.set_apps(self.tasks.cards());
             }
             _ => return,
         }

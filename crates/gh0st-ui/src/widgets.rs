@@ -121,12 +121,11 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
 
     let y = (inner.h - t.m.slot_h + 1) / 2;
     let step = t.m.slot_w + t.m.slot_gap;
-    let mut sx = t.m.pad / 2;
-    let skull = Rect::new(sx, y, t.m.slot_w, t.m.slot_h);
-    let ink = slot(c, t, skull, s.front == Some(0));
-    let (x, y) = skull.centre(t.m.slot_icon, t.m.slot_icon);
-    icon::draw(c, SKULL, IconSize::Tiny, x, y, ink);
-    sx += step + t.m.slot_gap;
+    // The skull has no box: it is accent while home is in front.
+    let s16 = IconSize::Bar as i32;
+    let ink = if s.front == Some(0) { t.c.accent } else { t.c.muted };
+    icon::draw(c, SKULL, IconSize::Bar, t.m.pad - 2, (inner.h - s16) / 2, ink);
+    let mut sx = t.m.pad - 2 + s16 + 2 * t.m.slot_gap;
 
     // Every app gets a slot while they fit; past that the last one counts
     // the rest.
@@ -476,7 +475,7 @@ pub fn card_content(c: &mut Canvas, t: &Theme, r: Rect, card: &Card, selected: b
     }
     let b = t.m.badge;
     // Badge, name and state as one block, centred in the card.
-    let block = b + 6 + 18 + 15;
+    let block = b + 6 + 18 + if card.note.is_empty() { 0 } else { 15 };
     let br = Rect::new(r.x + (r.w - b) / 2, r.y + (r.h - block) / 2, b, b);
     badge(c, t, br, &card.visual, selected);
     let f = if selected { t.f.body_bold } else { t.f.body };

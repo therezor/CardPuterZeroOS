@@ -1,5 +1,5 @@
 //! Built-in symbols: Lucide outlines rasterized by `build.rs` into 8-bit alpha
-//! masks at four sizes. They take any colour at draw time.
+//! masks at five sizes. They take any colour at draw time.
 
 use crate::canvas::Canvas;
 use crate::color::Color;
@@ -11,6 +11,8 @@ pub enum IconSize {
     /// A top-bar slot.
     Tiny = 12,
     Small = 14,
+    /// The skull in the top bar.
+    Bar = 16,
     Medium = 20,
     Large = 36,
 }
@@ -57,6 +59,7 @@ mod tests {
             for s in [
                 IconSize::Tiny,
                 IconSize::Small,
+                IconSize::Bar,
                 IconSize::Medium,
                 IconSize::Large,
             ] {

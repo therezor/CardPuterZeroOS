@@ -231,18 +231,10 @@ impl Switcher {
             let r = self.geo.card(slot);
             let r = Rect::new(r.x + offset, r.y, r.w, r.h);
             let index = index as usize;
-            let note;
             let card = match index.checked_sub(1).map(|i| &self.apps[i]) {
                 None => CardView {
                     label: "Home",
-                    note: match self.apps.len() {
-                        0 => "Nothing open",
-                        1 => "1 app open",
-                        n => {
-                            note = format!("{n} apps open");
-                            &note
-                        }
-                    },
+                    note: "",
                     visual: Visual::Badge {
                         icon: widgets::SKULL,
                         tint: t.c.accent,
@@ -267,6 +259,11 @@ impl Switcher {
             hints.push(Hint {
                 key: "Del",
                 label: "close",
+            });
+        } else if !self.apps.is_empty() {
+            hints.push(Hint {
+                key: "Del",
+                label: "close all",
             });
         }
         hints.push(Hint {
