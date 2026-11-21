@@ -6,8 +6,8 @@ use crate::home::Icon;
 use crate::switcher::{self, Card};
 use gh0st_core::child;
 use gh0st_core::esc::KILL_GRACE_MS;
-use gh0st_core::usage::AppUsage;
 use gh0st_core::link::Link;
+use gh0st_core::usage::AppUsage;
 use gh0st_ui::Canvas;
 
 /// How often to look for a leftover group member once the leader has gone:

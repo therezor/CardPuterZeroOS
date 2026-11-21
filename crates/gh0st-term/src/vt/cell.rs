@@ -245,6 +245,22 @@ impl Cell {
         }
     }
 
+    /// The cell as one word: the code point in the low 21 bits, then the
+    /// flags, attributes, fg and bg.
+    #[inline]
+    pub fn bits(&self) -> u64 {
+        self.w as u64 | (self.fg as u64) << 32 | (self.bg as u64) << 48
+    }
+
+    /// The bits that say what a cell looks like, past its code point: the
+    /// layout flags, the style and both colours.
+    pub const LOOK: u64 = !(CP as u64);
+
+    /// One printable ASCII char in one cell: history stores it as one byte.
+    pub fn is_ascii(&self) -> bool {
+        (0x20..0x7f).contains(&self.code()) && self.w & (WIDE | SPACER | CLUSTER) == 0
+    }
+
     /// A space that shows nothing: no background, no line through it.
     pub fn is_blank(&self) -> bool {
         self.code() == ' ' as u32

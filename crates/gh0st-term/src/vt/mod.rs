@@ -22,9 +22,21 @@ const TITLE_MAX: usize = 256;
 const REP_MAX: usize = 64 * 1024;
 
 /// The parser and the terminal it drives.
+///
+/// Plain text between escape sequences, which is most of what programs
+/// write, never reaches vte: `feed` writes ASCII runs straight into the row
+/// and decodes UTF-8 itself. A call per char costs about 80 ns on the
+/// CardputerZero's A53, which held the whole terminal to 7 MB/s. vte gets
+/// each sequence from its ESC and stops once it is dispatched, so it is
+/// back in its ground state whenever this code takes over.
 pub struct Vt {
     parser: vte::Parser<OSC_MAX>,
     pub t: Terminal,
+    /// vte has a sequence under way.
+    in_seq: bool,
+    /// A UTF-8 char cut off at the end of the last feed.
+    partial: [u8; 4],
+    partial_len: usize,
 }
 
 impl Vt {
@@ -32,11 +44,122 @@ impl Vt {
         Vt {
             parser: vte::Parser::<OSC_MAX>::new_with_size(),
             t: Terminal::new(cols, rows, history),
+            in_seq: false,
+            partial: [0; 4],
+            partial_len: 0,
         }
     }
 
-    pub fn feed(&mut self, bytes: &[u8]) {
-        self.parser.advance(&mut self.t, bytes);
+    pub fn feed(&mut self, mut b: &[u8]) {
+        while !b.is_empty() {
+            if self.in_seq {
+                self.t.done = false;
+                let n = self.parser.advance_until_terminated(&mut self.t, b);
+                b = &b[n..];
+                if self.t.done {
+                    self.in_seq = false;
+                }
+                continue;
+            }
+            let n = self.plain(b);
+            b = &b[n..];
+            if !b.is_empty() {
+                // An ESC: the sequence is vte's.
+                self.in_seq = true;
+            }
+        }
+    }
+
+    /// Ground-state text up to the next ESC. Returns the bytes taken.
+    fn plain(&mut self, b: &[u8]) -> usize {
+        let mut i = 0;
+        if self.partial_len > 0 {
+            // Finish the char the last feed cut off.
+            while i < b.len() && self.partial_len < utf8_len(self.partial[0]) {
+                if b[i] & 0xc0 != 0x80 {
+                    break;
+                }
+                self.partial[self.partial_len] = b[i];
+                self.partial_len += 1;
+                i += 1;
+            }
+            let need = utf8_len(self.partial[0]);
+            if self.partial_len < need && i == b.len() {
+                return i;
+            }
+            let bytes = &self.partial[..self.partial_len];
+            let c = std::str::from_utf8(bytes)
+                .ok()
+                .and_then(|s| s.chars().next())
+                .unwrap_or('\u{fffd}');
+            self.partial_len = 0;
+            self.char(c);
+        }
+        while i < b.len() {
+            let c = b[i];
+            match c {
+                0x1b => return i,
+                0x20..=0x7e => {
+                    let start = i;
+                    while i < b.len() && (0x20..=0x7e).contains(&b[i]) {
+                        i += 1;
+                    }
+                    self.t.print_ascii(&b[start..i]);
+                }
+                0x00..=0x1f => {
+                    self.t.execute(c);
+                    i += 1;
+                }
+                0x7f => i += 1,
+                _ => {
+                    let need = utf8_len(c);
+                    if need == 0 {
+                        self.t.print('\u{fffd}');
+                        i += 1;
+                        continue;
+                    }
+                    let end = (i + need).min(b.len());
+                    let cont = b[i + 1..end]
+                        .iter()
+                        .take_while(|&&x| x & 0xc0 == 0x80)
+                        .count();
+                    if i + 1 + cont == b.len() && cont < need - 1 {
+                        // Cut off by the end of the buffer: wait for the rest.
+                        self.partial[..b.len() - i].copy_from_slice(&b[i..]);
+                        self.partial_len = b.len() - i;
+                        return b.len();
+                    }
+                    let c = std::str::from_utf8(&b[i..i + 1 + cont])
+                        .ok()
+                        .and_then(|s| s.chars().next())
+                        .unwrap_or('\u{fffd}');
+                    self.char(c);
+                    i += 1 + cont;
+                }
+            }
+        }
+        i
+    }
+
+    /// A decoded char, as vte would hand it out: C1 controls execute.
+    fn char(&mut self, c: char) {
+        if ('\u{80}'..='\u{9f}').contains(&c) {
+            self.t.execute(c as u32 as u8);
+        } else {
+            self.t.print(c);
+        }
+    }
+}
+
+/// The length of the UTF-8 char a lead byte starts; 0 for a byte that
+/// can't lead.
+fn utf8_len(b: u8) -> usize {
+    match b {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf4 => 4,
+        _ => 0,
     }
 }
 
@@ -147,6 +270,8 @@ pub struct Terminal {
     pub default_shape: CursorShape,
     /// Bits from [`event`], cleared by the app.
     pub events: u8,
+    /// A sequence just ended and vte is back in its ground state.
+    done: bool,
     last: Option<char>,
 }
 
@@ -182,6 +307,7 @@ impl Terminal {
             shape: CursorShape::default(),
             default_shape: CursorShape::default(),
             events: 0,
+            done: false,
             last: None,
         }
     }
@@ -891,7 +1017,51 @@ fn arg(params: &Params, i: usize, default: usize) -> usize {
     }
 }
 
+impl Terminal {
+    /// A run of printable ASCII, written straight into the row.
+    pub fn print_ascii(&mut self, mut s: &[u8]) {
+        while !s.is_empty() {
+            let line = self.charsets[self.gl] == Charset::Line;
+            if line || self.modes.insert || self.cur.wrap_next {
+                self.print(s[0] as char);
+                s = &s[1..];
+                continue;
+            }
+            let (x, y, pen, cols) = (self.cur.x, self.cur.y, self.cur.pen, self.cols);
+            let n = (cols - x).min(s.len());
+            let g = if self.alt_active {
+                &mut self.alt
+            } else {
+                &mut self.main
+            };
+            // Wide chars cut by either end of the run lose their other half.
+            if g.rows[y].cells[x].is_spacer() {
+                g.unsplit(y, x);
+            }
+            if g.rows[y].cells[x + n - 1].is_wide() {
+                g.unsplit(y, x + n - 1);
+            }
+            for (cell, &b) in g.rows[y].cells[x..x + n].iter_mut().zip(s) {
+                *cell = Cell::new(b as char, &pen);
+            }
+            g.dirty[y] = true;
+            self.last = Some(s[n - 1] as char);
+            if x + n >= cols {
+                self.cur.x = cols - 1;
+                self.cur.wrap_next = true;
+            } else {
+                self.cur.x = x + n;
+            }
+            s = &s[n..];
+        }
+    }
+}
+
 impl Perform for Terminal {
+    fn terminated(&self) -> bool {
+        self.done
+    }
+
     fn print(&mut self, c: char) {
         let line = self.charsets[self.gl] == Charset::Line;
         // The common case, plain ASCII mid-line, without the checks a wide
@@ -921,6 +1091,10 @@ impl Perform for Terminal {
     }
 
     fn execute(&mut self, byte: u8) {
+        // CAN and SUB abort a sequence.
+        if matches!(byte, 0x18 | 0x1a) {
+            self.done = true;
+        }
         match byte {
             0x07 => self.events |= event::BELL,
             0x08 => {
@@ -943,6 +1117,7 @@ impl Perform for Terminal {
     }
 
     fn csi_dispatch(&mut self, params: &Params, inter: &[u8], _ignore: bool, action: char) {
+        self.done = true;
         let n = |i| arg(params, i, 1);
         match (action, inter) {
             ('@', []) => {
@@ -1055,6 +1230,7 @@ impl Perform for Terminal {
     }
 
     fn esc_dispatch(&mut self, inter: &[u8], _ignore: bool, byte: u8) {
+        self.done = true;
         match (inter, byte) {
             ([], b'7') => self.save_cursor(),
             ([], b'8') => self.restore_cursor(),
@@ -1082,7 +1258,10 @@ impl Perform for Terminal {
         }
     }
 
-    fn osc_dispatch(&mut self, params: &[&[u8]], _bell: bool) {
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell: bool) {
+        // Ended by ESC \ the parser is in its escape state, and the
+        // backslash's esc_dispatch ends it.
+        self.done = bell;
         self.osc(params);
     }
 }

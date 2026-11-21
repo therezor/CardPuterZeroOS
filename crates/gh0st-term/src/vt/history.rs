@@ -130,7 +130,8 @@ impl<'a> Iterator for Units<'a> {
 
 #[derive(Default)]
 struct Open {
-    text: String,
+    /// UTF-8, kept as bytes so ASCII runs go in without a char at a time.
+    text: Vec<u8>,
     runs: Vec<u8>,
     units: usize,
     last: Option<Style>,
@@ -139,7 +140,7 @@ struct Open {
 }
 
 impl Open {
-    fn push(&mut self, cell: &Cell, clusters: &Clusters) {
+    fn style(&mut self, cell: &Cell) {
         let key = cell.style_key();
         if self.last != Some(key) {
             self.last = Some(key);
@@ -149,16 +150,42 @@ impl Open {
             self.runs.extend_from_slice(&key.1.to_le_bytes());
             self.runs.extend_from_slice(&key.2.to_le_bytes());
         }
-        match cell.code() {
-            c @ 0x20..=0x7e if !cell.is_cluster() => self.text.push(c as u8 as char),
-            _ => clusters.push_text(cell, &mut self.text),
+    }
+
+    /// From the first cell on, the ASCII cells in its style, in one pass.
+    /// Returns how many went in; 0 if the first isn't such a cell.
+    fn push_ascii(&mut self, cells: &[Cell]) -> usize {
+        if !cells[0].is_ascii() {
+            return 0;
         }
+        self.style(&cells[0]);
+        let look = cells[0].bits() & Cell::LOOK;
+        self.text.reserve(cells.len());
+        let mut n = 0;
+        for c in cells {
+            let b = c.bits();
+            let cp = b as u32 & 0x1f_ffff;
+            if b & Cell::LOOK != look || cp.wrapping_sub(0x20) >= 0x5f {
+                break;
+            }
+            self.text.push(cp as u8);
+            n += 1;
+        }
+        self.units += n;
+        n
+    }
+
+    fn push(&mut self, cell: &Cell, clusters: &Clusters) {
+        self.style(cell);
+        let mut s = String::new();
+        clusters.push_text(cell, &mut s);
+        self.text.extend_from_slice(s.as_bytes());
         self.units += 1;
     }
 
     fn line(&self) -> Line<'_> {
         Line {
-            text: &self.text,
+            text: std::str::from_utf8(&self.text).unwrap_or(""),
             runs: &self.runs,
             flags: self.flags,
         }
@@ -241,8 +268,19 @@ impl History {
         } else {
             row.used()
         };
-        for c in row.cells[..used].iter().filter(|c| !c.is_spacer()) {
-            self.open.push(c, clusters);
+        let cells = &row.cells[..used];
+        let mut i = 0;
+        while i < cells.len() {
+            let first = &cells[i];
+            let n = self.open.push_ascii(&cells[i..]);
+            if n > 0 {
+                i += n;
+            } else {
+                if !first.is_spacer() {
+                    self.open.push(first, clusters);
+                }
+                i += 1;
+            }
             if self.open.text.len() >= LINE_MAX {
                 self.open.flags |= flag::CONT;
                 self.close();
@@ -273,7 +311,7 @@ impl History {
         self.data
             .extend_from_slice(&((o.runs.len() / RUN) as u16).to_le_bytes());
         self.data.push(o.flags);
-        self.data.extend_from_slice(o.text.as_bytes());
+        self.data.extend_from_slice(&o.text);
         self.data.extend_from_slice(&o.runs);
         // Keep the buffers: the next line reuses them.
         o.text.clear();

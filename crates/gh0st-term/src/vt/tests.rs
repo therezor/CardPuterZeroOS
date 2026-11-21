@@ -272,3 +272,47 @@ fn erasing_below_forgets_wraps_and_prompts() {
     feed(&mut v, "\x1b]133;A\x07abcdef\x1b[H\x1b[J");
     assert!(v.t.grid().rows.iter().all(|r| !r.wrapped && !r.prompt));
 }
+
+/// The same bytes fed whole, a byte at a time and in odd chunks must give
+/// the same screen: the fast path must agree with vte at every cut.
+#[test]
+fn any_split_gives_the_same_screen() {
+    let samples: &[&[u8]] = &[
+        "plain \x1b[1;31mred\x1b[0m and \x1b[38;2;1;2;3mrgb\x1b[m".as_bytes(),
+        "Привіт 世界 e\u{301} \x1b]2;títle\x1b\\after".as_bytes(),
+        b"\x1b[?1049h\x1b[2;3Hx\x1b[?1049l\r\nback",
+        b"abc\x1b[1\x18def\x1b]0;t\x07ghi\x1bPq#0\x1b\\jkl",
+        b"bad \xff\xfe utf8 \xe2\x82 cut \xc3\xa9 ok\x7fdel",
+        "\x1b(0lqk\x1b(B tabs\tand\x08back".as_bytes(),
+    ];
+    for &bytes in samples {
+        let mut whole = vt(12, 4);
+        feed_bytes(&mut whole, bytes);
+        // vte driving the terminal for every byte, as before the fast path.
+        let mut reference = vt(12, 4);
+        let mut p = vte::Parser::<4096>::new_with_size();
+        p.advance(&mut reference.t, bytes);
+        assert_eq!(screen(&whole), screen(&reference), "vte on {bytes:?}");
+        assert_eq!(whole.t.cursor(), reference.t.cursor(), "vte on {bytes:?}");
+        for step in [1, 2, 3, 5, 7] {
+            let mut cut = vt(12, 4);
+            for chunk in bytes.chunks(step) {
+                feed_bytes(&mut cut, chunk);
+            }
+            assert_eq!(screen(&cut), screen(&whole), "step {step} on {bytes:?}");
+            assert_eq!(cut.t.cursor(), whole.t.cursor(), "step {step} on {bytes:?}");
+            assert_eq!(cut.t.title, whole.t.title);
+        }
+    }
+}
+
+#[test]
+fn a_cancelled_sequence_returns_to_text() {
+    let mut v = vt(10, 1);
+    feed(&mut v, "a\x1b[12\x18b");
+    assert_eq!(screen(&v), ["ab"]);
+}
+
+fn feed_bytes(v: &mut Vt, b: &[u8]) {
+    v.feed(b);
+}
