@@ -166,8 +166,16 @@ fn write_boot(
     if new.len() == old.len() {
         let (o, n) = (old.as_bytes(), new.as_bytes());
         let first = o.iter().zip(n).position(|(a, b)| a != b).unwrap_or(0);
-        let last = n.len() - o.iter().rev().zip(n.iter().rev()).position(|(a, b)| a != b).unwrap_or(0);
-        let f = std::fs::OpenOptions::new().write(true).open(path).map_err(io)?;
+        let last = n.len()
+            - o.iter()
+                .rev()
+                .zip(n.iter().rev())
+                .position(|(a, b)| a != b)
+                .unwrap_or(0);
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .map_err(io)?;
         f.write_all_at(&n[first..last], first as u64).map_err(io)?;
         f.sync_all().map_err(io)?;
     } else {
@@ -192,13 +200,17 @@ fn set_cpu(mode: CpuMode) -> Result<(), String> {
     let policies: Vec<_> = std::fs::read_dir(CPUFREQ)
         .map_err(|e| format!("{CPUFREQ}: {e}"))?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("policy")))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with("policy"))
+        })
         .collect();
     if policies.is_empty() {
         return Err("no cpufreq policy".into());
     }
     for p in &policies {
-        let have = std::fs::read_to_string(p.join("scaling_available_governors")).unwrap_or_default();
+        let have =
+            std::fs::read_to_string(p.join("scaling_available_governors")).unwrap_or_default();
         if !have.split_whitespace().any(|g| g == gov) {
             return Err(format!("the kernel has no {gov} governor"));
         }
@@ -363,7 +375,10 @@ mod tests {
         assert_eq!(parse(&args("power reboot")), Some(Verb::Power(true)));
         assert_eq!(parse(&args("gpu-mem 64")), Some(Verb::GpuMem(64)));
         assert_eq!(parse(&args("regdom GB")), Some(Verb::Regdom("GB".into())));
-        assert_eq!(parse(&args("cpu power-saver")), Some(Verb::Cpu(CpuMode::PowerSaver)));
+        assert_eq!(
+            parse(&args("cpu power-saver")),
+            Some(Verb::Cpu(CpuMode::PowerSaver))
+        );
         assert_eq!(
             parse(&args("hostname RZR-ZERO")),
             Some(Verb::Hostname("RZR-ZERO".into()))
@@ -455,8 +470,14 @@ mod tests {
         let line = "root=x quiet cfg80211.ieee80211_regdom=AE\n";
         let p = scratch("cmdline.txt", line);
         write_boot(&p, |t| sysconf::set_regdom(t, "GB")).unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), line.replace("AE", "GB"));
-        assert_eq!(std::fs::read_to_string(p.with_extension("bak")).unwrap(), line);
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            line.replace("AE", "GB")
+        );
+        assert_eq!(
+            std::fs::read_to_string(p.with_extension("bak")).unwrap(),
+            line
+        );
         assert!(!p.with_extension("new").exists());
     }
 
@@ -464,10 +485,16 @@ mod tests {
     fn a_longer_edit_goes_through_a_rename() {
         let p = scratch("config.txt", "arm_64bit=1\n");
         write_boot(&p, |t| sysconf::set_gpu_mem(t, 64)).unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "gpu_mem=64\narm_64bit=1\n");
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "gpu_mem=64\narm_64bit=1\n"
+        );
         assert!(!p.with_extension("new").exists());
         write_boot(&p, |_| Ok("x".repeat(200))).unwrap_err();
         assert!(write_boot(&p, |_| Err("set by hand")).is_err());
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "gpu_mem=64\narm_64bit=1\n");
+        assert_eq!(
+            std::fs::read_to_string(&p).unwrap(),
+            "gpu_mem=64\narm_64bit=1\n"
+        );
     }
 }

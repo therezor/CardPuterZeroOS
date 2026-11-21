@@ -4,9 +4,9 @@
 
 use crate::field::TextField;
 use crate::list::{List, Row, Trail};
-use gh0st_ui::theme::Tone;
 use gh0st_ui::font::Font;
 use gh0st_ui::icon::{self, IconSize};
+use gh0st_ui::theme::Tone;
 use gh0st_ui::widgets::{self, Trailing};
 use gh0st_ui::{Canvas, Color, Rect, Theme};
 

@@ -208,7 +208,8 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
                 look: Look::Normal,
             };
             chips[4] = menu;
-            let owned: Vec<(u8, gh0st_app::Chip)> = found.into_iter().map(|(n, ch, _)| (n, ch)).collect();
+            let owned: Vec<(u8, gh0st_app::Chip)> =
+                found.into_iter().map(|(n, ch, _)| (n, ch)).collect();
             for (n, ch) in &owned {
                 chips[(*n - 4) as usize] = chip_of(ch);
             }
@@ -246,8 +247,7 @@ fn main() {
             masked: true,
             secret: true,
         };
-        let mut scenes: Vec<(&str, Canvas)> =
-            vec![("root", scene(&t, &st, PageId::Root, 0, None))];
+        let mut scenes: Vec<(&str, Canvas)> = vec![("root", scene(&t, &st, PageId::Root, 0, None))];
         if palette.name == "Mint" {
             let s = |id, sel| scene(&t, &st, id, sel, None);
             scenes.extend([
@@ -303,7 +303,13 @@ fn main() {
                 ),
                 (
                     "auth-wrong",
-                    scene(&t, &st, PageId::Advanced, 0, Some(password("Wrong password"))),
+                    scene(
+                        &t,
+                        &st,
+                        PageId::Advanced,
+                        0,
+                        Some(password("Wrong password")),
+                    ),
                 ),
                 ("swap", s(PageId::Swap, 0)),
                 ("compression", s(PageId::Choose(Choice::Compression), 0)),
@@ -355,9 +361,18 @@ fn main() {
                         }),
                     ),
                 ),
-                ("advanced-restart", scene(&t, &pending, PageId::Advanced, 5, None)),
-                ("swap-restart", scene(&t, &swap_pending, PageId::Swap, 3, None)),
-                ("system-restart", scene(&t, &pending, PageId::System, 4, None)),
+                (
+                    "advanced-restart",
+                    scene(&t, &pending, PageId::Advanced, 5, None),
+                ),
+                (
+                    "swap-restart",
+                    scene(&t, &swap_pending, PageId::Swap, 3, None),
+                ),
+                (
+                    "system-restart",
+                    scene(&t, &pending, PageId::System, 4, None),
+                ),
                 ("timezone", s(PageId::TimeZone(Some("Europe".into())), 2)),
                 ("privacy", s(PageId::Privacy, 0)),
                 ("about", s(PageId::About, 0)),

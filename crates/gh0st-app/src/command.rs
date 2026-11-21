@@ -537,7 +537,11 @@ impl Chord {
                 if self.fn_ {
                     out.push_str("Fn+");
                 }
-                out.push(if self.shift { c.to_ascii_uppercase() } else { c });
+                out.push(if self.shift {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                });
             }
             K::Digits(a, b) => {
                 out.push((b'0' + a) as char);
@@ -637,7 +641,10 @@ mod tests {
         assert_eq!(cs.lookup(&k, true).unwrap().id, 1, "fires while typing");
         let t = key(&[code::FN_M5], T);
         assert_eq!(cs.lookup(&t, true).unwrap().step, Step::Next);
-        assert!(cs.lookup(&key(&[], T), false).is_none(), "plain t is not Fn+t");
+        assert!(
+            cs.lookup(&key(&[], T), false).is_none(),
+            "plain t is not Fn+t"
+        );
         assert_eq!(cs.list[0].keys_text(), "Fn+Space");
     }
 
@@ -672,7 +679,12 @@ mod tests {
     fn hints_come_from_live_commands() {
         let mut cs = Commands::new();
         cs.add(Command::choice(1, "Scroll", "").keys("f x").hint("scroll"));
-        cs.add(Command::action(2, "Find").keys("n").hint("find").mode("x", false));
+        cs.add(
+            Command::action(2, "Find")
+                .keys("n")
+                .hint("find")
+                .mode("x", false),
+        );
         cs.add(Command::action(3, "Done").keys("Esc q").hint("done"));
         let hints = cs.hints();
         assert_eq!(hints[0], ("f x".to_string(), "scroll"));

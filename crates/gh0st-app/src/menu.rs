@@ -18,7 +18,11 @@ pub(crate) enum Out {
     Nothing,
     Close,
     /// Run a page command; `close` shuts the menu first.
-    Run { id: u32, step: Step, close: bool },
+    Run {
+        id: u32,
+        step: Step,
+        close: bool,
+    },
     Help,
     Quit,
 }
@@ -117,7 +121,10 @@ impl Menu {
 
     pub fn key(&mut self, k: &RawKey) -> Out {
         let out = self.key_inner(k);
-        if let Out::Run { id, close: false, .. } = out {
+        if let Out::Run {
+            id, close: false, ..
+        } = out
+        {
             self.changed = Some(id);
         }
         out
@@ -545,8 +552,16 @@ mod tests {
     fn help_starts_with_the_chips_and_groups_by_mode() {
         let mut cs = Commands::new();
         cs.group("View");
-        cs.add(Command::action(1, "Find").keys("n").mode("Scroll mode", false));
-        cs.add(Command::action(2, "Back").keys("Shift+PgUp").mode("Typing", true));
+        cs.add(
+            Command::action(1, "Find")
+                .keys("n")
+                .mode("Scroll mode", false),
+        );
+        cs.add(
+            Command::action(2, "Back")
+                .keys("Shift+PgUp")
+                .mode("Typing", true),
+        );
         cs.add(Command::action(3, "No keys"));
         let under = vec![("5".to_string(), "Find".to_string())];
         let keys = vec![("Esc".to_string(), "Back".to_string())];
@@ -561,7 +576,13 @@ mod tests {
             .collect();
         assert_eq!(
             heads,
-            ["Under the screen", "Keys", "Scroll mode", "Typing", "Everywhere"]
+            [
+                "Under the screen",
+                "Keys",
+                "Scroll mode",
+                "Typing",
+                "Everywhere"
+            ]
         );
     }
 

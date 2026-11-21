@@ -44,7 +44,11 @@ impl Page for Reader {
         c.group("View");
         c.add(Command::choice(SIZE, "Text size", SIZES[self.size]).keys("r t"));
         c.add(Command::toggle(NIGHT, "Night", self.night).keys("b"));
-        c.add(Command::action(FIND, "Find").keys("n").mode("Reading", reading));
+        c.add(
+            Command::action(FIND, "Find")
+                .keys("n")
+                .mode("Reading", reading),
+        );
         c.add(
             Command::action(DOWN, "Scroll down")
                 .keys("x")
@@ -54,7 +58,11 @@ impl Page for Reader {
                 .hint("scroll"),
         );
         c.group("Edit");
-        c.add(Command::action(EDIT, "Edit").keys("e").mode("Reading", reading));
+        c.add(
+            Command::action(EDIT, "Edit")
+                .keys("e")
+                .mode("Reading", reading),
+        );
     }
 
     fn command(&mut self, id: u32, step: Step, _: &mut Cx) {
@@ -122,7 +130,11 @@ fn a_choice_steps_in_place_and_the_menu_stays() {
     a.d.keys("esc");
     assert_eq!(a.d.toast(), None, "Esc closes the menu first");
     a.d.keys("esc");
-    assert_eq!(a.d.toast(), Some("Hold to exit"), "then Esc reaches the page");
+    assert_eq!(
+        a.d.toast(),
+        Some("Hold to exit"),
+        "then Esc reaches the page"
+    );
 }
 
 #[test]

@@ -87,7 +87,11 @@ struct Face {
 impl Face {
     /// Mono faces are sharpened; Inter keeps its smooth edges.
     fn sharpen(&self) -> f32 {
-        if self.snap_x_height { 0.0 } else { MONO_SHARPEN }
+        if self.snap_x_height {
+            0.0
+        } else {
+            MONO_SHARPEN
+        }
     }
 }
 
@@ -178,7 +182,12 @@ fn grid_fit(font: &FontRef, scale: PxScale) -> ab_glyph::Point {
 /// Each glyph then moves sideways, up to half a pixel, to put its own
 /// stems on pixels: m's three stems can't all fit the face's offset. The
 /// cell stays put; only the ink inside it moves.
-fn glyph_fit(font: &FontRef, scale: PxScale, id: ab_glyph::GlyphId, face: ab_glyph::Point) -> ab_glyph::Point {
+fn glyph_fit(
+    font: &FontRef,
+    scale: PxScale,
+    id: ab_glyph::GlyphId,
+    face: ab_glyph::Point,
+) -> ab_glyph::Point {
     let mut best = (f32::MAX, face);
     for i in -4..4 {
         let at = point(face.x + i as f32 / 8.0, face.y);

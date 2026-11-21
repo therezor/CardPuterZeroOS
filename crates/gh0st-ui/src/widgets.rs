@@ -207,11 +207,25 @@ fn draw_status(c: &mut Canvas, t: &Theme, s: &Status, bluetooth: bool) -> bool {
     let logo = t.m.slot_icon;
     let home = s.front == Some(0);
     let (mark, ink) = if s.icon.is_empty() {
-        (LOGO, if home || s.dock.is_empty() { t.c.accent } else { t.c.muted })
+        (
+            LOGO,
+            if home || s.dock.is_empty() {
+                t.c.accent
+            } else {
+                t.c.muted
+            },
+        )
     } else {
         (s.icon, t.c.accent)
     };
-    icon::draw(c, mark, IconSize::Tiny, t.m.pad, y + (t.m.slot_h - logo) / 2, ink);
+    icon::draw(
+        c,
+        mark,
+        IconSize::Tiny,
+        t.m.pad,
+        y + (t.m.slot_h - logo) / 2,
+        ink,
+    );
     let side = (t.m.slot_w - logo) / 2;
     if home {
         front_mark(c, t, t.m.pad - side, t.m.slot_w);
@@ -266,7 +280,13 @@ fn draw_status(c: &mut Canvas, t: &Theme, s: &Status, bluetooth: bool) -> bool {
     if !s.context.is_empty() {
         let cx = after + 6;
         if cx + t.f.small.measure(s.context) <= end {
-            text_in(c, t.f.small, Rect::new(cx, inner.y, end - cx, inner.h), s.context, t.c.muted);
+            text_in(
+                c,
+                t.f.small,
+                Rect::new(cx, inner.y, end - cx, inner.h),
+                s.context,
+                t.c.muted,
+            );
         }
     }
     true
@@ -400,7 +420,13 @@ pub fn hint_bar(c: &mut Canvas, t: &Theme, hints: &[Hint], right: Option<Hint>) 
         let kx = lx - 4 - pills_w(t, h.key);
         if kx >= end + 12 {
             pills(c, t, kx, y, h.key, Pill::Normal);
-            text_in(c, t.f.small, Rect::new(lx, y, lw, t.m.pill_h), h.label, t.c.muted);
+            text_in(
+                c,
+                t.f.small,
+                Rect::new(lx, y, lw, t.m.pill_h),
+                h.label,
+                t.c.muted,
+            );
         }
     }
 }
@@ -413,7 +439,11 @@ pub fn key_row(c: &mut Canvas, t: &Theme, x: i32, y: i32, hints: &[Hint]) -> i32
         if i > 0 {
             x += 12;
         }
-        let style = if h.key == "Enter" { Pill::Main } else { Pill::Normal };
+        let style = if h.key == "Enter" {
+            Pill::Main
+        } else {
+            Pill::Normal
+        };
         x = pills(c, t, x, y, h.key, style) + 4;
         let lr = Rect::new(x, y, t.f.small.measure(h.label), t.m.pill_h);
         x = text_in(c, t.f.small, lr, h.label, t.c.muted);
@@ -490,8 +520,8 @@ pub fn chip_w(t: &Theme, ch: &Chip) -> i32 {
     chip_ink_w(t, ch) + 2 * t.m.chip_pad
 }
 
-/// Widths for a bar: every chip as wide as its key, less a gap, so the bar
-/// reads as a row of keycaps over the real ones.
+/// Widths for a bar: every chip as wide as its key, less a gap, so each
+/// underline sits over its key alone.
 pub fn bar_widths(t: &Theme, chips: &[Chip; 5]) -> [i32; 5] {
     let key = t.m.softkey_x[1] - t.m.softkey_x[0] - 2;
     chips.map(|ch| if ch.is_empty() { 0 } else { key })
@@ -506,7 +536,7 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
     } else {
         ch.word
     };
-    // Inside the top edge, above the tick at the foot.
+    // Inside the top edge, above the bar at the foot.
     let inner = Rect::new(r.x, r.y + 1, r.w, r.h - 1 - TICK_H);
     // Centred, so the padding is even on both sides.
     let x = inner.x + (inner.w - chip_ink_w(t, ch)) / 2;
@@ -527,10 +557,10 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
     text_in(c, t.f.small_bold, tr, word, ink);
 }
 
-/// One chip: a keycap centred on `cx`, its top at `top`, `w` wide, open at
-/// the foot, with a notch there pointing at the key. In the action bar the
-/// foot is the screen's edge, right over the key. Pressed, it sinks a row
-/// and darkens, as a key does.
+/// One chip: an underlined tab centred on `cx`, its top at `top`, `w` wide.
+/// No fill: the icon and word sit over a bar along the foot, which in the
+/// action bar is the screen's edge, right over the key. Pressed, the bar
+/// thickens and the ink drops a row, as a key does.
 pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     let red = matches!(ch.look, Look::Danger | Look::DangerMain | Look::Hold(_));
     // A word is never cut: short of room, a chip drops its icon first. A
@@ -543,69 +573,57 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     } else {
         ch
     };
-    let pressed = ch.look == Look::Pressed;
-    let light = crate::color::luminance(t.c.bg) > 0.5;
-    let sink = i32::from(pressed);
-    let r = Rect::new(cx - w / 2, top + sink, w, t.m.chip_h - sink);
+    let r = Rect::new(cx - w / 2, top, w, t.m.chip_h);
     let k = &t.c;
-    // No outline: the fill is the shape. On a light palette `surface` is
-    // too near `bg`, so the cap takes a step toward `border`.
-    let cap = if light { mix(k.surface, k.border, 110) } else { k.surface };
-    let down = if light { mix(cap, k.fg, 25) } else { mix(k.surface, k.bg, 150) };
-    // Fill, word, icon, notch. The icon carries the colour; the word stays
-    // plain, but for red chips, whose word alone is red.
-    let (fill, ink, icon_ink, notch) = match ch.look {
-        Look::Normal => (cap, k.fg, k.accent, k.muted),
-        Look::Main => (k.accent, k.accent_fg, k.accent_fg, k.accent_fg),
-        Look::On => (mix(k.bg, k.accent, 80), k.accent, k.accent, k.accent),
-        Look::Danger | Look::Hold(_) => (cap, k.critical, k.critical, k.critical),
-        Look::DangerMain => (k.critical, k.bg, k.bg, k.bg),
-        Look::Disabled => (mix(k.bg, cap, 120), k.disabled(), k.disabled(), k.disabled()),
-        Look::Pressed => (down, k.fg, k.accent, k.muted),
-        Look::Busy => (cap, k.muted, k.muted, k.muted),
+    // Word, icon, bar, bar height, and a wash behind for states that stay.
+    let (ink, icon_ink, bar, bar_h, wash) = match ch.look {
+        Look::Normal => (k.fg, k.accent, k.accent, BAR_H, None),
+        Look::Main => (k.accent, k.accent, k.accent, BAR_H + 1, None),
+        Look::On => (k.accent, k.accent, k.accent, BAR_H, Some(k.accent)),
+        Look::Danger | Look::Hold(_) => (k.critical, k.critical, k.critical, BAR_H, None),
+        Look::DangerMain => (
+            k.critical,
+            k.critical,
+            k.critical,
+            BAR_H + 1,
+            Some(k.critical),
+        ),
+        Look::Disabled => (k.disabled(), k.disabled(), k.border, BAR_H, None),
+        Look::Pressed => (k.fg, k.accent, k.accent, BAR_H_DOWN, None),
+        Look::Busy => (k.muted, k.muted, k.muted, BAR_H, None),
     };
-    // Round on top, square at the foot: the shape runs on past the foot and
-    // the clip cuts it there.
-    let old = c.clip();
-    c.set_clip(r.intersect(&old));
-    let shape = Rect::new(r.x, r.y, r.w, r.h + t.m.chip_r);
-    c.round_rect(shape, t.m.chip_r, fill);
-    // A keycap's lit top. A pressed key has none.
-    if !pressed && ch.look != Look::Disabled {
-        let lit = if light {
-            mix(fill, crate::color::rgb(255, 255, 255), 160)
-        } else {
-            mix(fill, k.fg, 40)
-        };
-        c.hline(r.x + t.m.chip_r, r.right() - t.m.chip_r, r.y, lit);
+    if let Some(wash) = wash {
+        c.fill(r, mix(k.bg, wash, 50));
     }
-    c.set_clip(old);
-    notch_at(c, cx, r.bottom(), notch);
-    chip_ink(c, t, r, ch, ink, icon_ink);
+    c.fill(Rect::new(r.x, r.bottom() - bar_h, r.w, bar_h), bar);
+    let sink = i32::from(ch.look == Look::Pressed);
+    chip_ink(
+        c,
+        t,
+        Rect::new(r.x, r.y + sink, r.w, r.h),
+        ch,
+        ink,
+        icon_ink,
+    );
     if let Look::Hold(pc) = ch.look {
         let old = c.clip();
         let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
         c.set_clip(part.intersect(&old));
-        c.round_rect(shape, t.m.chip_r, k.critical);
-        notch_at(c, cx, r.bottom(), k.bg);
+        c.fill(r, k.critical);
         chip_ink(c, t, r, ch, k.bg, k.bg);
         c.set_clip(old);
     }
 }
 
-/// A small triangle at the foot, pointing down at the key's centre.
-fn notch_at(c: &mut Canvas, cx: i32, foot: i32, color: Color) {
-    for i in 0..TICK_H {
-        let w = 2 * (TICK_H - i);
-        c.fill(Rect::new(cx - w / 2, foot - TICK_H + i, w, 1), color);
-    }
-}
+/// The bar under a chip, and under one whose key is down.
+const BAR_H: i32 = 2;
+const BAR_H_DOWN: i32 = 4;
 
-/// The notch at a chip's foot, over the centre of its key.
-const TICK_H: i32 = 3;
+/// Room kept at a chip's foot for its bar and a row clear of it.
+const TICK_H: i32 = BAR_H + 1;
 
-/// The action bar: a tab over each of keys 4 to 8 that has one, standing on
-/// the screen's bottom edge right above its key. No fill behind them.
+/// The action bar: a tab over each of keys 4 to 8 that has one, underlined
+/// along the screen's bottom edge right above its key. No fill behind them.
 pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
     c.fill(hint_rect(t), t.c.bg);
     let top = t.m.height - t.m.chip_h;
@@ -631,7 +649,14 @@ pub fn search_bar(c: &mut Canvas, t: &Theme, query: &str) {
     let cancel = Rect::new(0, r.y + 1, 0, r.h - 1);
     let lx = text_right(c, t.f.small, right, cancel, "cancel", t.c.muted);
     let pill = pills_w(t, "Esc");
-    pills(c, t, lx - 4 - pill, r.y + (r.h - t.m.pill_h + 1) / 2, "Esc", Pill::Normal);
+    pills(
+        c,
+        t,
+        lx - 4 - pill,
+        r.y + (r.h - t.m.pill_h + 1) / 2,
+        "Esc",
+        Pill::Normal,
+    );
     let field = Rect::new(tx, r.y + 1, lx - pill - 16 - tx, r.h - 1);
     let end = text_in(c, t.f.body, field, query, t.c.fg);
     c.fill(Rect::new(end + 2, r.y + 4, 1, r.h - 7), t.c.accent);
@@ -1024,7 +1049,13 @@ pub fn keys_line(
         right = text_right(c, t.f.small, right, r, value, t.c.muted) - 8;
     }
     let lx = (x + keys_w).max(end) + 8;
-    text_in(c, t.f.small, Rect::new(lx, r.y, right - lx, r.h), label, t.c.fg);
+    text_in(
+        c,
+        t.f.small,
+        Rect::new(lx, r.y, right - lx, r.h),
+        label,
+        t.c.fg,
+    );
 }
 
 fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: bool) {
@@ -1081,7 +1112,14 @@ fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: 
         }
         Trailing::Check => {
             let s = IconSize::Small as i32;
-            icon::draw(c, "check", IconSize::Small, right - s, r.y + (r.h - s) / 2, t.c.accent);
+            icon::draw(
+                c,
+                "check",
+                IconSize::Small,
+                right - s,
+                r.y + (r.h - s) / 2,
+                t.c.accent,
+            );
             right -= s + 8;
         }
         Trailing::Tag(word, tone) => {
@@ -1257,14 +1295,24 @@ pub fn toast(
     let col = t.c.tone(tone);
     c.round_rect(r, t.m.radius_large, t.c.surface);
     c.stroke_round_rect(r, t.m.radius_large, mix(t.c.border, col, 110));
-    icon::draw(c, tone.icon(), IconSize::Tiny, r.x + 8, r.y + (h - s) / 2, col);
+    icon::draw(
+        c,
+        tone.icon(),
+        IconSize::Tiny,
+        r.x + 8,
+        r.y + (h - s) / 2,
+        col,
+    );
     let tx = r.x + 8 + s + 5;
     let tr = Rect::new(tx, r.y, r.right() - 8 - tx, h);
     text_in(c, t.f.small_bold, tr, text, t.c.fg);
     if let Some(pc) = held {
         let bar = Rect::new(r.x + 4, r.bottom() - 4, r.w - 8, 2);
         c.fill(bar, t.c.border);
-        c.fill(Rect::new(bar.x, bar.y, bar.w * pc.min(100) as i32 / 100, 2), col);
+        c.fill(
+            Rect::new(bar.x, bar.y, bar.w * pc.min(100) as i32 / 100, 2),
+            col,
+        );
     }
     r
 }
@@ -1290,7 +1338,14 @@ pub fn level_bar(c: &mut Canvas, t: &Theme, icon_name: &str, label: &str, level:
     c.hline(0, r.w, r.bottom() - 1, t.c.accent);
     let inner = Rect::new(t.m.pad, 0, r.w - 2 * t.m.pad, r.h - 1);
     let s = IconSize::Tiny as i32;
-    icon::draw(c, icon_name, IconSize::Tiny, inner.x, (inner.h - s) / 2, t.c.accent);
+    icon::draw(
+        c,
+        icon_name,
+        IconSize::Tiny,
+        inner.x,
+        (inner.h - s) / 2,
+        t.c.accent,
+    );
     let lr = Rect::new(inner.x + s + 6, 0, t.f.small_bold.measure(label), inner.h);
     let lx = text_in(c, t.f.small_bold, lr, label, t.c.fg);
     let p = Percent::new(level);
@@ -1331,15 +1386,31 @@ pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
     let (icon_name, text, note, keys) = (m.icon, m.text, m.note, m.keys);
     let ink = m.tone.map_or(t.c.muted, |k| t.c.tone(k));
     let s = IconSize::Large as i32;
-    let block = s + 8 + 18 + if note.is_empty() { 0 } else { 15 }
+    let block = s
+        + 8
+        + 18
+        + if note.is_empty() { 0 } else { 15 }
         + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
     let top = area.y + (area.h - block).max(0) / 2;
-    icon::draw(c, icon_name, IconSize::Large, area.x + (area.w - s) / 2, top, ink);
+    icon::draw(
+        c,
+        icon_name,
+        IconSize::Large,
+        area.x + (area.w - s) / 2,
+        top,
+        ink,
+    );
     let tr = Rect::new(area.x + 12, top + s + 8, area.w - 24, 18);
     text_centre(c, t.f.body_bold, tr, text, t.c.fg);
     let mut y = tr.bottom();
     if !note.is_empty() {
-        text_centre(c, t.f.small, Rect::new(tr.x, y + 1, tr.w, 15), note, t.c.muted);
+        text_centre(
+            c,
+            t.f.small,
+            Rect::new(tr.x, y + 1, tr.w, 15),
+            note,
+            t.c.muted,
+        );
         y += 15;
     }
     if !keys.is_empty() {
@@ -1359,7 +1430,13 @@ pub fn progress(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: Option<u
         }
         None => line.right(),
     };
-    text_in(c, t.f.small, Rect::new(line.x, line.y, right - line.x, line.h), label, t.c.fg);
+    text_in(
+        c,
+        t.f.small,
+        Rect::new(line.x, line.y, right - line.x, line.h),
+        label,
+        t.c.fg,
+    );
     let bar = Rect::new(r.x, line.bottom() + 3, r.w, 4);
     c.round_rect(bar, 2, t.c.border);
     let part = match value {
@@ -1379,7 +1456,14 @@ pub fn progress(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: Option<u
 pub fn disabled_row(c: &mut Canvas, t: &Theme, r: Rect, icon_name: &str, label: &str, why: &str) {
     let ink = t.c.disabled();
     let s = IconSize::Small as i32;
-    icon::draw(c, icon_name, IconSize::Small, r.x + 9, r.y + (r.h - s) / 2, ink);
+    icon::draw(
+        c,
+        icon_name,
+        IconSize::Small,
+        r.x + 9,
+        r.y + (r.h - s) / 2,
+        ink,
+    );
     let x = r.x + 9 + s + 9;
     let wx = text_right(c, t.f.small, r.right() - 8, r, why, ink);
     text_in(c, t.f.body, Rect::new(x, r.y, wx - 8 - x, r.h), label, ink);
@@ -1393,7 +1477,13 @@ pub fn note_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, note: &str, selec
     let top = Rect::new(r.x, r.y + 2, r.w, 16);
     let body = Row { label: "", ..*row };
     row_body(c, t, r, &body, selected, false);
-    let x = r.x + 9 + if row.icon.is_some() { IconSize::Small as i32 + 9 } else { 0 };
+    let x = r.x
+        + 9
+        + if row.icon.is_some() {
+            IconSize::Small as i32 + 9
+        } else {
+            0
+        };
     let right = r.right() - 8 - trailing_w(t, &row.trailing);
     let f = if selected { t.f.body_bold } else { t.f.body };
     let col = if selected { t.c.fg } else { soft(t) };
@@ -1440,7 +1530,13 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, clock: &str, s: &Status) {
         label: "unlock",
     }];
     let w = key_row_w(t, &hints);
-    key_row(c, t, (t.m.width - w) / 2, b.bottom() - t.m.pill_h - 6, &hints);
+    key_row(
+        c,
+        t,
+        (t.m.width - w) / 2,
+        b.bottom() - t.m.pill_h - 6,
+        &hints,
+    );
 }
 
 #[cfg(test)]

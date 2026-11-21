@@ -811,10 +811,19 @@ fn advanced(s: &State) -> Vec<Item> {
         Item::new(
             "flag",
             "Wi-Fi country",
-            Value::TextChevron(s.country.as_deref().map_or_else(String::new, |c| s.country_name(c))),
+            Value::TextChevron(
+                s.country
+                    .as_deref()
+                    .map_or_else(String::new, |c| s.country_name(c)),
+            ),
             Act::Open(PageId::Country(None)),
         ),
-        Item::new("cpu", "CPU mode", Value::TextChevron(cpu), pick(Choice::CpuMode)),
+        Item::new(
+            "cpu",
+            "CPU mode",
+            Value::TextChevron(cpu),
+            pick(Choice::CpuMode),
+        ),
         Item::new(
             "tag",
             "Device name",
@@ -854,7 +863,9 @@ fn swap(s: &State) -> Vec<Item> {
         Item::new(
             "zoom-out",
             "Compression",
-            Value::TextChevron(known(s.swap_comp.clone().or_else(|| s.swap_comp_running.clone()))),
+            Value::TextChevron(known(
+                s.swap_comp.clone().or_else(|| s.swap_comp_running.clone()),
+            )),
             Act::Open(PageId::Choose(Choice::Compression)),
         ),
         Item::new(
@@ -926,13 +937,27 @@ fn options(s: &State, c: Choice) -> Vec<Item> {
     match c {
         Choice::GpuMem => sysconf::GPU_MEMS
             .iter()
-            .map(|&mb| row(format!("{mb} MB"), gpu_note(mb), mb.to_string(), s.gpu_mem == GpuMem::Set(mb)))
+            .map(|&mb| {
+                row(
+                    format!("{mb} MB"),
+                    gpu_note(mb),
+                    mb.to_string(),
+                    s.gpu_mem == GpuMem::Set(mb),
+                )
+            })
             .collect(),
         Choice::CpuMode => {
             let now = CpuMode::from_governor(&s.governor);
             CpuMode::ALL
                 .iter()
-                .map(|&m| row(m.label().into(), cpu_note(m), m.verb().into(), now == Some(m)))
+                .map(|&m| {
+                    row(
+                        m.label().into(),
+                        cpu_note(m),
+                        m.verb().into(),
+                        now == Some(m),
+                    )
+                })
                 .collect()
         }
         Choice::Logs => Logs::ALL
@@ -948,7 +973,14 @@ fn options(s: &State, c: Choice) -> Vec<Item> {
         }
         Choice::Swappiness => sysconf::SWAPPINESS
             .iter()
-            .map(|&n| row(n.to_string(), swappiness_note(n), n.to_string(), s.swappiness == Some(n)))
+            .map(|&n| {
+                row(
+                    n.to_string(),
+                    swappiness_note(n),
+                    n.to_string(),
+                    s.swappiness == Some(n),
+                )
+            })
             .collect(),
     }
 }
@@ -1137,9 +1169,15 @@ mod tests {
             Act::Run(Command::Choose(Choice::GpuMem, "16".into()))
         );
         let cpu = build(&PageId::Choose(Choice::CpuMode), &s);
-        assert!((0..3).all(|i| cpu.item(i).unwrap().icon == Some("")), "ondemand is none of them");
+        assert!(
+            (0..3).all(|i| cpu.item(i).unwrap().icon == Some("")),
+            "ondemand is none of them"
+        );
         let adv = build(&PageId::Advanced, &s);
-        assert_eq!(adv.item(3).unwrap().value, Value::TextChevron("ondemand".into()));
+        assert_eq!(
+            adv.item(3).unwrap().value,
+            Value::TextChevron("ondemand".into())
+        );
     }
 
     #[test]
@@ -1150,7 +1188,10 @@ mod tests {
         };
         let row = |s: &State| build(&PageId::Advanced, s).item(1).unwrap().value.clone();
         assert_eq!(row(&s), Value::TextChevron("414 MB".into()));
-        assert_eq!(build(&PageId::Advanced, &s).item(1).unwrap().act, Act::Open(PageId::Swap));
+        assert_eq!(
+            build(&PageId::Advanced, &s).item(1).unwrap().act,
+            Act::Open(PageId::Swap)
+        );
         assert!(!s.restart_needed(), "no drop-in, nothing pending");
         s.swap_mb = Some(0);
         assert_eq!(row(&s), Value::TextChevron("Off".into()));
@@ -1194,7 +1235,9 @@ mod tests {
         };
         let checked = |s: &State| {
             let p = build(&PageId::Choose(Choice::Swappiness), s);
-            (0..p.len()).filter(|&i| p.item(i).unwrap().icon == Some("check")).collect::<Vec<_>>()
+            (0..p.len())
+                .filter(|&i| p.item(i).unwrap().icon == Some("check"))
+                .collect::<Vec<_>>()
         };
         assert_eq!(checked(&s), [1]);
         s.swappiness = Some(80);
@@ -1217,9 +1260,13 @@ mod tests {
     #[test]
     fn countries_go_initial_then_name() {
         let s = State {
-            countries: [("AD", "Andorra"), ("AE", "United Arab Emirates"), ("GB", "Britain (UK)")]
-                .map(|(c, n)| (c.to_string(), n.to_string()))
-                .to_vec(),
+            countries: [
+                ("AD", "Andorra"),
+                ("AE", "United Arab Emirates"),
+                ("GB", "Britain (UK)"),
+            ]
+            .map(|(c, n)| (c.to_string(), n.to_string()))
+            .to_vec(),
             country: Some("AE".into()),
             ..state()
         };

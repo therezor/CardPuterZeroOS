@@ -2,14 +2,14 @@
 //! frame. The device loop, the sim and the test driver all feed this.
 
 use crate::bars::{Bars, Chip};
-use crate::key::{self, Key};
 use crate::command::{Commands, Step};
 use crate::dialog::{self, Answer, Dialog};
+use crate::key::{self, Key};
 use crate::menu::{Menu, Out, Sheet, SheetOut};
 use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer, Watch};
 use crate::ui::Ui;
-use gh0st_core::keys::{Keyboard, State};
 use gh0st_core::keys::code as keys_code;
+use gh0st_core::keys::{Keyboard, State};
 use gh0st_core::{battery, child, job, rt, status};
 use gh0st_ui::theme::Tone;
 use gh0st_ui::widgets::{self, Battery, Hint, Look, Net, Status};
@@ -145,7 +145,11 @@ enum Overlay {
     None,
     Menu(Menu),
     Help(Sheet),
-    Dialog { id: u32, owner: usize, d: Box<Dialog> },
+    Dialog {
+        id: u32,
+        owner: usize,
+        d: Box<Dialog>,
+    },
 }
 
 pub(crate) struct Runtime {
@@ -563,7 +567,8 @@ impl Runtime {
 
     /// Closes the dialog and tells its page how.
     fn answer(&mut self, yes: bool, now: u64) {
-        let Overlay::Dialog { id, owner, mut d } = std::mem::replace(&mut self.overlay, Overlay::None)
+        let Overlay::Dialog { id, owner, mut d } =
+            std::mem::replace(&mut self.overlay, Overlay::None)
         else {
             return;
         };
@@ -605,7 +610,8 @@ impl Runtime {
         let from_cmds = self.commands_of(i).chips();
         std::array::from_fn(|k| {
             bars.chips[k].clone().or_else(|| {
-                from_cmds[k].map(|(id, icon, word, on)| Chip::new(icon, word).runs(id).disabled(!on))
+                from_cmds[k]
+                    .map(|(id, icon, word, on)| Chip::new(icon, word).runs(id).disabled(!on))
             })
         })
     }
@@ -738,7 +744,9 @@ impl Runtime {
                         self.quit_all();
                     }
                     Out::Help => {
-                        if let Overlay::Menu(m) = std::mem::replace(&mut self.overlay, Overlay::None) {
+                        if let Overlay::Menu(m) =
+                            std::mem::replace(&mut self.overlay, Overlay::None)
+                        {
                             let owner = m.owner;
                             self.overlay = Overlay::Help(self.help(owner, Some(m)));
                         }
@@ -1137,7 +1145,12 @@ impl Runtime {
                     let n = k as u8 + 5;
                     let look = match &self.hold {
                         Some(h) if h.what == Held::Chip(n) => Look::Hold(h.pc),
-                        _ if self.pressed.is_some_and(|p| p.1 == n) => Look::Pressed,
+                        // A red chip stays red while its key is down.
+                        _ if self.pressed.is_some_and(|p| p.1 == n)
+                            && !matches!(c.look, Look::Danger | Look::DangerMain) =>
+                        {
+                            Look::Pressed
+                        }
                         _ => c.look,
                     };
                     chips[k + 1] = widgets::Chip {
@@ -1296,7 +1309,9 @@ mod tests {
             }
             fn raw(&mut self, key: &RawKey, _: &mut Cx) {
                 if key.state == gh0st_core::keys::State::Press {
-                    self.log.borrow_mut().push(format!("raw {} fn {}", key.code, key.fn_));
+                    self.log
+                        .borrow_mut()
+                        .push(format!("raw {} fn {}", key.code, key.fn_));
                 }
             }
             fn command(&mut self, id: u32, _: Step, _: &mut Cx) {
@@ -1343,7 +1358,11 @@ mod tests {
             d.keys("enter\n5\n4\n4").wait(100);
             assert_eq!(*log.borrow(), ["Enter", "Soft(5)"]);
             assert!(!d.quit());
-            assert_eq!(d.toast(), Some("Hold to exit"), "the second 4 was on the first page");
+            assert_eq!(
+                d.toast(),
+                Some("Hold to exit"),
+                "the second 4 was on the first page"
+            );
         }
 
         #[test]
@@ -1389,7 +1408,10 @@ mod tests {
                 .filter(|l| l.starts_with(&format!("raw {esc} ")) || l.starts_with("raw 6 "))
                 .cloned()
                 .collect();
-            assert_eq!(got, [format!("raw {esc} fn false"), "raw 6 fn false".into()]);
+            assert_eq!(
+                got,
+                [format!("raw {esc} fn false"), "raw 6 fn false".into()]
+            );
             d.keys("esc");
             assert_eq!(d.toast(), Some("Hold to exit"));
         }
@@ -1420,7 +1442,9 @@ mod tests {
             fn key(&mut self, key: Key, cx: &mut Cx) {
                 match key {
                     Key::Soft(5) => cx.ask(1, Dialog::password("Join").yes("join")),
-                    Key::Soft(6) => cx.ask(2, Dialog::confirm("Erase?", "Gone.").yes("erase").hold()),
+                    Key::Soft(6) => {
+                        cx.ask(2, Dialog::confirm("Erase?", "Gone.").yes("erase").hold())
+                    }
                     _ => {}
                 }
             }

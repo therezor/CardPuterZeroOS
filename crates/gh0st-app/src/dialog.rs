@@ -213,7 +213,11 @@ impl Dialog {
     /// mockups may call this.
     pub fn draw(&self, c: &mut Canvas, t: &Theme, area: Rect) {
         widgets::scrim(c, t, area);
-        let edge = if self.danger { t.c.critical } else { t.c.accent };
+        let edge = if self.danger {
+            t.c.critical
+        } else {
+            t.c.accent
+        };
         let w = t.m.width - 44;
         let lines = if self.line.is_empty() {
             Vec::new()
@@ -237,8 +241,16 @@ impl Dialog {
             widgets::text_field(c, t, fr, &f.text, f.masked, true, &f.placeholder);
             y = fr.bottom() + t.m.card_gap;
         }
-        let ink = if self.field.is_some() { t.c.muted } else { t.c.soft() };
-        let font = if self.field.is_some() { t.f.small } else { t.f.body };
+        let ink = if self.field.is_some() {
+            t.c.muted
+        } else {
+            t.c.soft()
+        };
+        let font = if self.field.is_some() {
+            t.f.small
+        } else {
+            t.f.body
+        };
         for line in lines.iter().take(3) {
             widgets::text_in(c, font, Rect::new(body.x, y, body.w, 18), line, ink);
             y += 18;

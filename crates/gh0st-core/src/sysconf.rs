@@ -15,7 +15,8 @@ const REGDOM: &str = "cfg80211.ieee80211_regdom=";
 
 /// The boot partition. `GH0ST_BOOT_DIR` points a host run at a copy.
 pub fn boot_dir() -> PathBuf {
-    std::env::var_os("GH0ST_BOOT_DIR").map_or_else(|| PathBuf::from("/boot/firmware"), PathBuf::from)
+    std::env::var_os("GH0ST_BOOT_DIR")
+        .map_or_else(|| PathBuf::from("/boot/firmware"), PathBuf::from)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,7 +83,11 @@ pub fn set_gpu_mem(config: &str, mb: u32) -> Result<String, &'static str> {
     match gpu_mem(config) {
         GpuMem::Unsupported => Err("gpu_mem is set by hand in config.txt"),
         GpuMem::Absent => {
-            let eol = if config.contains("\r\n") { "\r\n" } else { "\n" };
+            let eol = if config.contains("\r\n") {
+                "\r\n"
+            } else {
+                "\n"
+            };
             Ok(format!("gpu_mem={mb}{eol}{config}"))
         }
         GpuMem::Set(_) => Ok(config
@@ -123,9 +128,9 @@ pub fn set_regdom(cmdline: &str, cc: &str) -> Result<String, &'static str> {
         return Err("cmdline.txt is not one kernel command line");
     }
     let end = &cmdline[body.len()..];
-    let mut at = body.match_indices(REGDOM).filter(|(i, _)| {
-        *i == 0 || body.as_bytes()[i - 1].is_ascii_whitespace()
-    });
+    let mut at = body
+        .match_indices(REGDOM)
+        .filter(|(i, _)| *i == 0 || body.as_bytes()[i - 1].is_ascii_whitespace());
     match (at.next(), at.next()) {
         (Some(_), Some(_)) => Err("cmdline.txt sets the Wi-Fi country twice"),
         (Some((i, _)), None) => {
@@ -316,13 +321,15 @@ pub fn comp_algorithms(text: &str) -> (Vec<String>, Option<String>) {
     let mut now = None;
     let all = text
         .split_whitespace()
-        .map(|w| match w.strip_prefix('[').and_then(|w| w.strip_suffix(']')) {
-            Some(cur) => {
-                now = Some(cur.to_string());
-                cur.to_string()
-            }
-            None => w.to_string(),
-        })
+        .map(
+            |w| match w.strip_prefix('[').and_then(|w| w.strip_suffix(']')) {
+                Some(cur) => {
+                    now = Some(cur.to_string());
+                    cur.to_string()
+                }
+                None => w.to_string(),
+            },
+        )
         .collect();
     (all, now)
 }
@@ -430,7 +437,9 @@ mod tests {
     fn the_panel_overlay_keeps_its_place() {
         let low = set_gpu_mem(DEVICE, 64).unwrap();
         let lines: Vec<&str> = low.lines().collect();
-        let v5 = lines.iter().position(|l| *l == "dtoverlay=cardputerzero-v5-overlay");
+        let v5 = lines
+            .iter()
+            .position(|l| *l == "dtoverlay=cardputerzero-v5-overlay");
         let te = lines.iter().position(|l| *l == "dtoverlay=gh0st-panel-te");
         assert_eq!(te, v5.map(|i| i + 1));
     }
@@ -454,8 +463,14 @@ mod tests {
             assert_eq!(gpu_mem(text), GpuMem::Unsupported, "{text:?}");
             assert!(set_gpu_mem(text, 64).is_err());
         }
-        assert_eq!(gpu_mem("#gpu_mem=16\n[pi4]\n[all]\ngpu_mem=96\n"), GpuMem::Set(96));
-        assert!(set_gpu_mem("gpu_mem=128\n", 48).is_err(), "only the listed sizes");
+        assert_eq!(
+            gpu_mem("#gpu_mem=16\n[pi4]\n[all]\ngpu_mem=96\n"),
+            GpuMem::Set(96)
+        );
+        assert!(
+            set_gpu_mem("gpu_mem=128\n", 48).is_err(),
+            "only the listed sizes"
+        );
     }
 
     #[test]

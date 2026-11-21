@@ -196,7 +196,10 @@ pub fn check() -> Auth {
     if euid != 0 {
         return Auth::Failed("not root; run through pkexec".into());
     }
-    let caller = match std::env::var("PKEXEC_UID").ok().and_then(|v| v.parse::<u32>().ok()) {
+    let caller = match std::env::var("PKEXEC_UID")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
         Some(0) => return Auth::Ok,
         Some(u) => u,
         None if uid == 0 => return Auth::Ok,
@@ -307,7 +310,8 @@ mod tests {
 
     #[test]
     fn start_time_survives_odd_names() {
-        let stat = "42 (gh0st (set) x) S 1 42 42 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 98765 1000 50";
+        let stat =
+            "42 (gh0st (set) x) S 1 42 42 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 98765 1000 50";
         assert_eq!(stat_starttime(stat), Some(98765));
         assert_eq!(stat_starttime("garbage"), None);
     }

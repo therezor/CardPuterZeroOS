@@ -959,7 +959,11 @@ impl Page for Term {
     /// The program takes every key, so no action bar: its view modes draw
     /// their own hints.
     fn bars(&self) -> Bars {
-        if self.bar { Bars::top_only() } else { Bars::none() }
+        if self.bar {
+            Bars::top_only()
+        } else {
+            Bars::none()
+        }
     }
 
     fn tabs(&self) -> (usize, usize) {
@@ -1075,44 +1079,81 @@ impl Page for Term {
                 .mode(TYPING, (typing || scroll) && idle),
         );
         let size = format!("{}x{}", look.cw, look.ch);
-        c.add(on(Command::choice(cmd::SIZE, "Text size", size).keys("r t").repeats()));
+        c.add(on(Command::choice(cmd::SIZE, "Text size", size)
+            .keys("r t")
+            .repeats()));
         let grid = format!("{} {gc}x{gr}", self.layout.name());
         c.add(on(Command::choice(cmd::LAYOUT, "Grid", grid).keys("m")));
         c.add(on(Command::action(cmd::FIND, "Find").keys("n")));
         c.add(on(Command::action(cmd::COPY, "Copy lines").keys("v")));
         let pasteable = !self.clipboard.is_empty();
-        c.add(on(Command::action(cmd::PASTE, "Paste").keys("p").enabled(pasteable)));
+        c.add(on(Command::action(cmd::PASTE, "Paste")
+            .keys("p")
+            .enabled(pasteable)));
         c.group("Tabs");
         c.add(on(Command::action(cmd::NEW_TAB, "New tab").keys("o")));
         if self.tabs.len() > 1 {
             let at = format!("{} of {}", self.cur + 1, self.tabs.len());
             c.add(on(Command::choice(cmd::TAB, "Tab", at).keys("Tab 1-9")));
         }
-        c.add(on(Command::action(cmd::CLOSE_TAB, "Close tab").keys("w").confirm()));
+        c.add(on(Command::action(cmd::CLOSE_TAB, "Close tab")
+            .keys("w")
+            .confirm()));
         c.group("Settings");
         c.add(on(Command::toggle(cmd::BAR, "Top bar", self.bar).keys("b")));
-        c.add(on(Command::action(cmd::SETTINGS, "More settings").keys("s").opens()));
+        c.add(on(Command::action(cmd::SETTINGS, "More settings")
+            .keys("s")
+            .opens()));
 
         // Scroll mode's moves have keys but no menu rows.
         let up_down = |id, label| on(moves(Command::choice(id, label, "")));
-        c.add(up_down(cmd::SCROLL, "Scroll up, down").keys("f x").hint("scroll"));
+        c.add(
+            up_down(cmd::SCROLL, "Scroll up, down")
+                .keys("f x")
+                .hint("scroll"),
+        );
         c.add(up_down(cmd::PAN, "Pan left, right").keys("z c").hint("pan"));
         c.add(up_down(cmd::PAGE, "Page up, down").keys("PgUp PgDn"));
         c.add(up_down(cmd::PROMPT, "Previous, next prompt").keys("u i"));
-        c.add(on(Command::choice(cmd::ENDS, "Oldest line, live", "").keys("g G").keys_only()));
-        c.add(on(Command::action(cmd::HOME, "Send Home").keys("k").keys_only()));
-        c.add(on(Command::action(cmd::KEYS, "Help").keys("h").keys_only().hint("help")));
-        c.add(on(Command::action(cmd::DONE, "Back to typing").keys("Esc q").keys_only().hint("done")));
+        c.add(on(Command::choice(cmd::ENDS, "Oldest line, live", "")
+            .keys("g G")
+            .keys_only()));
+        c.add(on(Command::action(cmd::HOME, "Send Home")
+            .keys("k")
+            .keys_only()));
+        c.add(on(Command::action(cmd::KEYS, "Help")
+            .keys("h")
+            .keys_only()
+            .hint("help")));
+        c.add(on(Command::action(cmd::DONE, "Back to typing")
+            .keys("Esc q")
+            .keys_only()
+            .hint("done")));
 
         let f = |c: Command| c.keys_only().mode(FINDING, find);
-        c.add(f(Command::action(cmd::OLDER, "Older match").keys("Enter Up").repeats().hint("older")));
-        c.add(f(Command::action(cmd::NEWER, "Newer match").keys("Down").repeats().hint("newer")));
-        c.add(f(Command::action(cmd::FIND_DONE, "Done").keys("Esc").hint("done")));
+        c.add(f(Command::action(cmd::OLDER, "Older match")
+            .keys("Enter Up")
+            .repeats()
+            .hint("older")));
+        c.add(f(Command::action(cmd::NEWER, "Newer match")
+            .keys("Down")
+            .repeats()
+            .hint("newer")));
+        c.add(f(Command::action(cmd::FIND_DONE, "Done")
+            .keys("Esc")
+            .hint("done")));
 
         let s = |c: Command| c.keys_only().mode(COPYING, select);
-        c.add(s(Command::choice(cmd::EXTEND, "Extend up, down", "").keys("f x").repeats().hint("extend")));
-        c.add(s(Command::action(cmd::YANK, "Copy").keys("y Enter").hint("copy")));
-        c.add(s(Command::action(cmd::CANCEL, "Cancel").keys("Esc").hint("cancel")));
+        c.add(s(Command::choice(cmd::EXTEND, "Extend up, down", "")
+            .keys("f x")
+            .repeats()
+            .hint("extend")));
+        c.add(s(Command::action(cmd::YANK, "Copy")
+            .keys("y Enter")
+            .hint("copy")));
+        c.add(s(Command::action(cmd::CANCEL, "Cancel")
+            .keys("Esc")
+            .hint("cancel")));
     }
 
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {

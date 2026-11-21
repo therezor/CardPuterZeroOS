@@ -369,7 +369,11 @@ pub fn sdk_dialog(d: &Dialog) -> gh0st_app::Dialog {
                 .placeholder(placeholder)
                 .value(text);
             // A network asks to be joined; the rest just take a password.
-            if title.starts_with("Join") { d.yes("join") } else { d }
+            if title.starts_with("Join") {
+                d.yes("join")
+            } else {
+                d
+            }
         }
         Dialog::Text {
             title,

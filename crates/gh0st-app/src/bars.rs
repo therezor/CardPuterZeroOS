@@ -166,7 +166,10 @@ impl Bars {
 
     /// A chip over key 5, 6 or 7.
     pub fn chip(mut self, key: u8, chip: Chip) -> Bars {
-        if let Some(slot) = (5..=7).contains(&key).then(|| &mut self.chips[(key - 5) as usize]) {
+        if let Some(slot) = (5..=7)
+            .contains(&key)
+            .then(|| &mut self.chips[(key - 5) as usize])
+        {
             *slot = Some(chip);
         }
         self

@@ -1,9 +1,9 @@
 //! Pages and what they can ask of the system.
 
 use crate::bars::Bars;
-use crate::key::Key;
 use crate::command::{Commands, Step};
 use crate::dialog::{Answer, Dialog};
+use crate::key::Key;
 use crate::ui::Ui;
 use gh0st_core::config::{self, Config};
 use gh0st_core::keys::Key as RawKey;

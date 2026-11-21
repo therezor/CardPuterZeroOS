@@ -12,8 +12,7 @@ use gh0st_ui::snapshot::write_png;
 use gh0st_ui::theme::{self, Theme, Tone};
 use gh0st_ui::widgets::{
     self, AppItem, Battery, Card, Chip, Hint, Look, Message, Net, Row, Status, Trailing, Visual,
-    soft,
-    text_in,
+    soft, text_in,
 };
 use gh0st_ui::{Canvas, Color, Rect};
 use std::path::PathBuf;
@@ -91,7 +90,12 @@ fn frame(t: &Theme) -> Canvas {
 }
 
 fn rows_from(t: &Theme, y: i32, row_h: i32, i: usize) -> Rect {
-    Rect::new(t.m.margin, y + i as i32 * row_h, t.m.width - 2 * t.m.margin, row_h)
+    Rect::new(
+        t.m.margin,
+        y + i as i32 * row_h,
+        t.m.width - 2 * t.m.margin,
+        row_h,
+    )
 }
 
 fn row<'a>(icon: &'a str, tint: Color, label: &'a str, trailing: Trailing<'a>) -> Row<'a> {
@@ -127,7 +131,14 @@ fn wrap(f: Font, s: &str, w: i32) -> Vec<String> {
 
 /// A card with a question, centred over the content, keys at its foot:
 /// the same space above its title as below its keys. Returns the body.
-fn ask_card(c: &mut Canvas, t: &Theme, title: &str, edge: Color, text: &str, keys: &[(&str, &str)]) -> Rect {
+fn ask_card(
+    c: &mut Canvas,
+    t: &Theme,
+    title: &str,
+    edge: Color,
+    text: &str,
+    keys: &[(&str, &str)],
+) -> Rect {
     let w = t.m.width - 44;
     let lines = wrap(t.f.body, text, w - 24).len() as i32;
     let h = widgets::card_h(t, lines * 18 + t.m.card_gap + t.m.pill_h);
@@ -231,7 +242,13 @@ fn roles(t: &Theme) -> Canvas {
             c.round_rect(sw, t.m.radius, col);
             c.stroke_round_rect(sw, t.m.radius, k.border);
         }
-        text_in(&mut c, t.f.small, Rect::new(x + 1, y + 17, w, 13), name, k.muted);
+        text_in(
+            &mut c,
+            t.f.small,
+            Rect::new(x + 1, y + 17, w, 13),
+            name,
+            k.muted,
+        );
     }
     c
 }
@@ -264,7 +281,13 @@ fn type_scale(t: &Theme) -> Canvas {
     for (s, label) in sizes {
         let px = s as i32;
         icon::draw(&mut c, "settings", s, 206, y, t.c.accent);
-        text_in(&mut c, t.f.small, Rect::new(248, y, 70, px.max(13)), label, t.c.muted);
+        text_in(
+            &mut c,
+            t.f.small,
+            Rect::new(248, y, 70, px.max(13)),
+            label,
+            t.c.muted,
+        );
         y += px + 4;
     }
     c
@@ -274,7 +297,13 @@ fn top_rows(t: &Theme, bars: &[(&str, Status)]) -> Canvas {
     let mut c = frame(t);
     let mut y = 0;
     for (caption, b) in bars {
-        text_in(&mut c, t.f.small, Rect::new(8, y, 300, 13), caption, t.c.muted);
+        text_in(
+            &mut c,
+            t.f.small,
+            Rect::new(8, y, 300, 13),
+            caption,
+            t.c.muted,
+        );
         y += 13;
         let mut bar = Canvas::new(t.m.width, t.m.bar_h);
         widgets::status_bar(&mut bar, t, b);
@@ -306,8 +335,14 @@ fn top_a(t: &Theme) -> Canvas {
     top_rows(
         t,
         &[
-            ("First page: app icon and name; Wi-Fi, battery, clock", top("settings", "Settings")),
-            ("Deeper: the page in bold, its parent muted", sub("wifi", "Wi-Fi", "Settings")),
+            (
+                "First page: app icon and name; Wi-Fi, battery, clock",
+                top("settings", "Settings"),
+            ),
+            (
+                "Deeper: the page in bold, its parent muted",
+                sub("wifi", "Wi-Fi", "Settings"),
+            ),
             ("Tabs for sessions, the front one underlined", tabs),
             ("Bluetooth on", bt),
             ("On a cable, charging", cable),
@@ -412,10 +447,28 @@ fn rows_a(t: &Theme) -> Canvas {
     for (i, rw) in rows.iter().enumerate() {
         widgets::list_row(&mut c, t, rows_from(t, y, h, i), rw, false);
     }
-    widgets::disabled_row(&mut c, t, rows_from(t, y, h, 3), "usb", "USB gadget", "needs a cable");
-    let forget = row("trash-2", t.c.critical, "Forget network", Trailing::Alert("Press again"));
+    widgets::disabled_row(
+        &mut c,
+        t,
+        rows_from(t, y, h, 3),
+        "usb",
+        "USB gadget",
+        "needs a cable",
+    );
+    let forget = row(
+        "trash-2",
+        t.c.critical,
+        "Forget network",
+        Trailing::Alert("Press again"),
+    );
     widgets::list_row(&mut c, t, rows_from(t, y, h, 4), &forget, true);
-    let slots = [NONE, NONE, l("trash-2", "Forget", Look::DangerMain), NONE, menu()];
+    let slots = [
+        NONE,
+        NONE,
+        l("trash-2", "Forget", Look::DangerMain),
+        NONE,
+        menu(),
+    ];
     widgets::action_bar(&mut c, t, &slots);
     c
 }
@@ -427,14 +480,45 @@ fn rows_b(t: &Theme) -> Canvas {
     let mut y = 20;
     widgets::section(&mut c, t, Rect::new(6, y, 300, 15), "Connected");
     y += 15;
-    let home = row("wifi", a, "HomeNet", Trailing::Signal { level: 3, secure: false });
+    let home = row(
+        "wifi",
+        a,
+        "HomeNet",
+        Trailing::Signal {
+            level: 3,
+            secure: false,
+        },
+    );
     let note = "Connected, 5 GHz, 192.168.1.42";
-    widgets::note_row(&mut c, t, rows_from(t, y, t.m.app_row_h, 0), &home, note, true);
+    widgets::note_row(
+        &mut c,
+        t,
+        rows_from(t, y, t.m.app_row_h, 0),
+        &home,
+        note,
+        true,
+    );
     y += t.m.app_row_h + 2;
     widgets::section(&mut c, t, Rect::new(6, y, 300, 15), "Nearby");
     y += 15;
-    let office = row("wifi", a, "Office-5G", Trailing::Signal { level: 4, secure: true });
-    let cafe = row("wifi", a, "Cafe Guest", Trailing::Signal { level: 2, secure: false });
+    let office = row(
+        "wifi",
+        a,
+        "Office-5G",
+        Trailing::Signal {
+            level: 4,
+            secure: true,
+        },
+    );
+    let cafe = row(
+        "wifi",
+        a,
+        "Cafe Guest",
+        Trailing::Signal {
+            level: 2,
+            secure: false,
+        },
+    );
     widgets::list_row(&mut c, t, rows_from(t, y, t.m.row_h, 0), &office, false);
     widgets::list_row(&mut c, t, rows_from(t, y, t.m.row_h, 1), &cafe, false);
     let (area, _) = widgets::rows_area(t, t.m.row_h);
@@ -456,7 +540,11 @@ fn picker(t: &Theme) -> Canvas {
     let a = t.c.accent;
     let (area, _) = widgets::rows_area(t, t.m.row_h);
     for (i, name) in ["Mint", "Nord", "Paper"].iter().enumerate() {
-        let tr = if i == 0 { Trailing::Check } else { Trailing::None };
+        let tr = if i == 0 {
+            Trailing::Check
+        } else {
+            Trailing::None
+        };
         let r = rows_from(t, area.y, t.m.row_h, i);
         widgets::list_row(&mut c, t, r, &row("palette", a, name, tr), i == 1);
     }
@@ -471,7 +559,14 @@ fn form(t: &Theme) -> Canvas {
     field(&mut c, t, 35, "alex", false, false, false);
     field_label(&mut c, t, 62, "Password, 4 or more", t.c.muted);
     field(&mut c, t, 76, "abc", true, true, true);
-    icon::draw(&mut c, "triangle-alert", IconSize::Tiny, 15, 103, t.c.critical);
+    icon::draw(
+        &mut c,
+        "triangle-alert",
+        IconSize::Tiny,
+        15,
+        103,
+        t.c.critical,
+    );
     let er = Rect::new(31, 101, 260, 16);
     text_in(&mut c, t.f.small, er, "Too short: 4 or more", t.c.critical);
     let h = hints(&[("Esc", "back"), ("Tab", "next field"), ("Enter", "next")]);
@@ -482,10 +577,24 @@ fn form(t: &Theme) -> Canvas {
 fn wifi_behind(c: &mut Canvas, t: &Theme) {
     widgets::status_bar(c, t, &sub("wifi", "Wi-Fi", "Settings"));
     let a = t.c.accent;
-    let names = ["HomeNet", "Office-5G", "Cafe Guest", "Neighbours", "Library"];
+    let names = [
+        "HomeNet",
+        "Office-5G",
+        "Cafe Guest",
+        "Neighbours",
+        "Library",
+    ];
     let (area, _) = widgets::rows_area(t, t.m.row_h);
     for (i, s) in names.iter().enumerate() {
-        let rw = row("wifi", a, s, Trailing::Signal { level: 3, secure: true });
+        let rw = row(
+            "wifi",
+            a,
+            s,
+            Trailing::Signal {
+                level: 3,
+                secure: true,
+            },
+        );
         widgets::list_row(c, t, rows_from(t, area.y, t.m.row_h, i), &rw, i == 1);
     }
 }
@@ -533,12 +642,25 @@ fn dialog_danger(t: &Theme) -> Canvas {
     scrim(&mut c, t);
     let text = "Apps, files and settings are deleted. This can't be undone.";
     let crit = t.c.critical;
-    let body = ask_card(&mut c, t, "Erase everything?", crit, text, &[("Esc", "cancel")]);
+    let body = ask_card(
+        &mut c,
+        t,
+        "Erase everything?",
+        crit,
+        text,
+        &[("Esc", "cancel")],
+    );
     let hint = "hold 7 to erase";
     let hx = body.right() - t.f.small.measure(hint);
     let hr = Rect::new(hx, body.bottom() - t.m.pill_h, body.w, t.m.pill_h);
     text_in(&mut c, t.f.small, hr, hint, t.c.muted);
-    let slots = [NONE, NONE, NONE, l("trash-2", "Erase", Look::Hold(40)), NONE];
+    let slots = [
+        NONE,
+        NONE,
+        NONE,
+        l("trash-2", "Erase", Look::Hold(40)),
+        NONE,
+    ];
     widgets::action_bar(&mut c, t, &slots);
     c
 }
@@ -549,7 +671,13 @@ fn dialog_three(t: &Theme) -> Canvas {
     let text = "Packing list has edits you haven't saved.";
     let keys = [("Esc", "cancel"), ("Enter", "save")];
     ask_card(&mut c, t, "Save changes?", t.c.accent, text, &keys);
-    let slots = [NONE, NONE, l("trash-2", "Discard", Look::Danger), NONE, NONE];
+    let slots = [
+        NONE,
+        NONE,
+        l("trash-2", "Discard", Look::Danger),
+        NONE,
+        NONE,
+    ];
     widgets::action_bar(&mut c, t, &slots);
     c
 }
@@ -564,7 +692,10 @@ fn app_menu(t: &Theme) -> Canvas {
     y += 15;
     let rows: [(Row, &str); 2] = [
         (row("search", a, "Search", Trailing::None), "n"),
-        (row("layout-grid", a, "Top bar", Trailing::Toggle(true)), "b"),
+        (
+            row("layout-grid", a, "Top bar", Trailing::Toggle(true)),
+            "b",
+        ),
     ];
     for (i, (rw, k)) in rows.iter().enumerate() {
         widgets::menu_row(&mut c, t, Rect::new(x, y, w, 22), rw, k, kw, i == 0, false);
@@ -573,10 +704,28 @@ fn app_menu(t: &Theme) -> Canvas {
     widgets::section(&mut c, t, Rect::new(x, y, w, 15), "App");
     y += 15;
     let help = row("keyboard", a, "Help", Trailing::Chevron);
-    widgets::menu_row(&mut c, t, Rect::new(x, y, w, 22), &help, "Fn h", kw, false, false);
+    widgets::menu_row(
+        &mut c,
+        t,
+        Rect::new(x, y, w, 22),
+        &help,
+        "Fn h",
+        kw,
+        false,
+        false,
+    );
     y += 22;
     let close = row("circle-x", t.c.critical, "Close app", Trailing::None);
-    widgets::menu_row(&mut c, t, Rect::new(x, y, w, 22), &close, "", kw, false, false);
+    widgets::menu_row(
+        &mut c,
+        t,
+        Rect::new(x, y, w, 22),
+        &close,
+        "",
+        kw,
+        false,
+        false,
+    );
     let slots = [NONE, NONE, NONE, NONE, l("menu", "", Look::On)];
     widgets::action_bar(&mut c, t, &slots);
     c
@@ -671,7 +820,12 @@ fn esc_hung(t: &Theme) -> Canvas {
 
 fn low_battery(t: &Theme) -> Canvas {
     let mut c = notes_first(t);
-    widgets::banner(&mut c, t, "Battery 3%: powering off in 30 s", Tone::Critical);
+    widgets::banner(
+        &mut c,
+        t,
+        "Battery 3%: powering off in 30 s",
+        Tone::Critical,
+    );
     c
 }
 
@@ -685,13 +839,43 @@ fn progress_screen(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &sub("download", "Updates", "Settings"));
     let w = t.m.width - 30;
-    widgets::progress(&mut c, t, Rect::new(15, 26, w, 24), "Downloading gh0st 0.5", Some(42), 0);
+    widgets::progress(
+        &mut c,
+        t,
+        Rect::new(15, 26, w, 24),
+        "Downloading gh0st 0.5",
+        Some(42),
+        0,
+    );
     let note = "18 of 43 MB, about a minute left";
-    text_in(&mut c, t.f.small, Rect::new(15, 50, 290, 13), note, t.c.muted);
-    widgets::progress(&mut c, t, Rect::new(15, 76, w, 24), "Checking the download", None, 76);
+    text_in(
+        &mut c,
+        t.f.small,
+        Rect::new(15, 50, 290, 13),
+        note,
+        t.c.muted,
+    );
+    widgets::progress(
+        &mut c,
+        t,
+        Rect::new(15, 76, w, 24),
+        "Checking the download",
+        None,
+        76,
+    );
     let note = "Moves only while it is on screen";
-    text_in(&mut c, t.f.small, Rect::new(15, 100, 290, 13), note, t.c.muted);
-    widgets::action_bar(&mut c, t, &[NONE, NONE, l("square", "Stop", Look::Danger), NONE, menu()]);
+    text_in(
+        &mut c,
+        t.f.small,
+        Rect::new(15, 100, 290, 13),
+        note,
+        t.c.muted,
+    );
+    widgets::action_bar(
+        &mut c,
+        t,
+        &[NONE, NONE, l("square", "Stop", Look::Danger), NONE, menu()],
+    );
     c
 }
 
@@ -777,7 +961,13 @@ fn find(t: &Theme) -> Canvas {
         widgets::note_row(&mut c, t, r, &row(ic, a, s, Trailing::None), v, i == 0);
     }
     let r = rows_from(t, 46 + 2 * t.m.app_row_h, t.m.row_h, 0);
-    widgets::list_row(&mut c, t, r, &row("download", a, "Updates", Trailing::None), false);
+    widgets::list_row(
+        &mut c,
+        t,
+        r,
+        &row("download", a, "Updates", Trailing::None),
+        false,
+    );
     let h = hints(&[("Esc", "cancel"), ("Enter", "open")]);
     widgets::hint_bar(&mut c, t, &h, Some(HELP));
     c
@@ -819,14 +1009,55 @@ fn home(t: &Theme) -> Canvas {
     widgets::status_bar(&mut c, t, &status);
     let tints = t.c.tints;
     let items = [
-        ("Terminal", Visual::System { icon: "square-terminal" }),
+        (
+            "Terminal",
+            Visual::System {
+                icon: "square-terminal",
+            },
+        ),
         ("Settings", Visual::System { icon: "settings" }),
-        ("Store", Visual::Badge { icon: "shopping-bag", tint: tints[2] }),
-        ("Camera", Visual::Badge { icon: "camera", tint: tints[3] }),
-        ("Files", Visual::Badge { icon: "folder", tint: tints[2] }),
-        ("Music", Visual::Letter { ch: 'm', tint: tints[5] }),
-        ("Recorder", Visual::Badge { icon: "mic", tint: tints[3] }),
-        ("Notes", Visual::Badge { icon: "pencil", tint: tints[4] }),
+        (
+            "Store",
+            Visual::Badge {
+                icon: "shopping-bag",
+                tint: tints[2],
+            },
+        ),
+        (
+            "Camera",
+            Visual::Badge {
+                icon: "camera",
+                tint: tints[3],
+            },
+        ),
+        (
+            "Files",
+            Visual::Badge {
+                icon: "folder",
+                tint: tints[2],
+            },
+        ),
+        (
+            "Music",
+            Visual::Letter {
+                ch: 'm',
+                tint: tints[5],
+            },
+        ),
+        (
+            "Recorder",
+            Visual::Badge {
+                icon: "mic",
+                tint: tints[3],
+            },
+        ),
+        (
+            "Notes",
+            Visual::Badge {
+                icon: "pencil",
+                tint: tints[4],
+            },
+        ),
     ];
     let area = widgets::grid(t);
     let tw = (area.w - 3 * t.m.gap) / 4;
@@ -941,7 +1172,11 @@ fn terminal(t: &Theme, scroll: bool) -> Canvas {
     };
     widgets::status_bar(&mut c, t, &s);
     let lh = 12;
-    let bottom = if scroll { t.m.height - t.m.hint_h } else { t.m.height };
+    let bottom = if scroll {
+        t.m.height - t.m.hint_h
+    } else {
+        t.m.height
+    };
     let n_lines = ((bottom - 20) / lh) as usize;
     let first = TERM.len().saturating_sub(n_lines);
     for (i, line) in TERM[first..].iter().enumerate() {
@@ -950,7 +1185,11 @@ fn terminal(t: &Theme, scroll: bool) -> Canvas {
         if scroll && i == 3 {
             c.fill(r, mix(t.c.bg, t.c.accent, 60));
         }
-        let col = if line.starts_with("rezor") { t.c.accent } else { t.c.fg };
+        let col = if line.starts_with("rezor") {
+            t.c.accent
+        } else {
+            t.c.fg
+        };
         text_in(&mut c, t.f.mono, r, line, col);
         if !scroll && i + first == TERM.len() - 1 {
             let x = 4 + t.f.mono.measure(line);
@@ -1007,7 +1246,13 @@ fn sheet(t: &Theme, screens: &[(&str, &str, Canvas)]) -> Canvas {
         let ox = gap + (i as i32 % cols) * (w + gap);
         let oy = gap + (i as i32 / cols) * (h + gap + cap);
         let label = format!("{name}  {caption}");
-        text_in(&mut s, t.f.small_bold, Rect::new(ox, oy, w, cap - 3), &label, t.c.fg);
+        text_in(
+            &mut s,
+            t.f.small_bold,
+            Rect::new(ox, oy, w, cap - 3),
+            &label,
+            t.c.fg,
+        );
         blit(&mut s, c, ox, oy + cap);
         s.stroke_round_rect(Rect::new(ox - 1, oy + cap - 1, w + 2, h + 2), 1, t.c.border);
     }
@@ -1047,38 +1292,138 @@ fn main() {
         ("01-roles", "colour roles", roles, true),
         ("02-type", "type and icon scale", type_scale, false),
         ("03-top-a", "top bar: what can show", top_a, false),
-        ("04-top-b", "top bar: app item, overflow, battery", top_b, false),
+        (
+            "04-top-b",
+            "top bar: app item, overflow, battery",
+            top_b,
+            false,
+        ),
         ("05-chips", "chip states", chip_states, true),
-        ("06-list", "Enter opens, Esc back: no chips for them", |t| settings(t, 0, link_slots()), true),
-        ("08-list-choice", "choice row: 5 Prev, 7 Next", choice_row, false),
-        ("09-picker", "Enter on a choice opens the full list", picker, false),
-        ("10-list-level", "level row: 5 Less, 7 More", level_row, false),
-        ("12-rows-a", "rows: value, check, tag, disabled, armed", rows_a, true),
-        ("13-rows-b", "rows: sections, two lines, signal", rows_b, false),
-        ("14-typing", "typing: a key-hint bar replaces the chips", form, true),
-        ("16-dialog-typing", "dialog with a field: hint bar", dialog_typing, true),
-        ("18-dialog-busy", "after Enter: busy in the card", dialog_busy, false),
-        ("19-dialog-danger", "data loss: hold 7, never Enter", dialog_danger, true),
-        ("20-dialog-three", "Enter save, 6 Discard, Esc cancel", dialog_three, false),
-        ("21-menu", "app menu (8): Esc goes back one level", app_menu, false),
+        (
+            "06-list",
+            "Enter opens, Esc back: no chips for them",
+            |t| settings(t, 0, link_slots()),
+            true,
+        ),
+        (
+            "08-list-choice",
+            "choice row: 5 Prev, 7 Next",
+            choice_row,
+            false,
+        ),
+        (
+            "09-picker",
+            "Enter on a choice opens the full list",
+            picker,
+            false,
+        ),
+        (
+            "10-list-level",
+            "level row: 5 Less, 7 More",
+            level_row,
+            false,
+        ),
+        (
+            "12-rows-a",
+            "rows: value, check, tag, disabled, armed",
+            rows_a,
+            true,
+        ),
+        (
+            "13-rows-b",
+            "rows: sections, two lines, signal",
+            rows_b,
+            false,
+        ),
+        (
+            "14-typing",
+            "typing: a key-hint bar replaces the chips",
+            form,
+            true,
+        ),
+        (
+            "16-dialog-typing",
+            "dialog with a field: hint bar",
+            dialog_typing,
+            true,
+        ),
+        (
+            "18-dialog-busy",
+            "after Enter: busy in the card",
+            dialog_busy,
+            false,
+        ),
+        (
+            "19-dialog-danger",
+            "data loss: hold 7, never Enter",
+            dialog_danger,
+            true,
+        ),
+        (
+            "20-dialog-three",
+            "Enter save, 6 Discard, Esc cancel",
+            dialog_three,
+            false,
+        ),
+        (
+            "21-menu",
+            "app menu (8): Esc goes back one level",
+            app_menu,
+            false,
+        ),
         ("22-help", "Help (Fn h): every key", help, false),
         ("23-toasts", "toast tones", toasts, true),
-        ("24-toast", "a toast floats above the chips", toast_float, false),
+        (
+            "24-toast",
+            "a toast floats above the chips",
+            toast_float,
+            false,
+        ),
         ("26-esc-tap", "Esc tapped on the first page", esc_tap, false),
-        ("27-esc-hold", "Esc held: the toast fills over 0.7 s", esc_hold, false),
-        ("28-esc-hung", "app hung: banner takes the top bar", esc_hung, false),
+        (
+            "27-esc-hold",
+            "Esc held: the toast fills over 0.7 s",
+            esc_hold,
+            false,
+        ),
+        (
+            "28-esc-hung",
+            "app hung: banner takes the top bar",
+            esc_hung,
+            false,
+        ),
         ("29-low-battery", "system banner", low_battery, false),
-        ("30-volume", "volume keys: level takes the top bar", volume, false),
+        (
+            "30-volume",
+            "volume keys: level takes the top bar",
+            volume,
+            false,
+        ),
         ("31-progress", "progress", progress_screen, false),
         ("32-empty", "empty: Enter does the one action", empty, false),
         ("33-error", "error state", error, false),
         ("34-reader", "long text: PgUp, PgDn", reader, false),
         ("35-find", "find while typing", find, false),
         ("36-home", "home: 4 Apps, 6 Find, 8 Menu", home, true),
-        ("37-switcher", "switcher: 5 closes one, 7 all", switcher, false),
+        (
+            "37-switcher",
+            "switcher: 5 closes one, 7 all",
+            switcher,
+            false,
+        ),
         ("37b-close-all", "Close all asks first", close_all, false),
-        ("38-term-typing", "terminal: Esc as everywhere, Fn Esc sends Esc", |t| terminal(t, false), false),
-        ("39-term-scroll", "terminal scroll mode: chips", |t| terminal(t, true), false),
+        (
+            "38-term-typing",
+            "terminal: Esc as everywhere, Fn Esc sends Esc",
+            |t| terminal(t, false),
+            false,
+        ),
+        (
+            "39-term-scroll",
+            "terminal scroll mode: chips",
+            |t| terminal(t, true),
+            false,
+        ),
         ("40-camera", "camera: Enter shoots", camera, false),
     ];
     for palette in theme::PALETTES {

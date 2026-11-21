@@ -123,5 +123,8 @@ fn raw_keys_bring_releases_and_esc_comes_from_fn_esc() {
     let keys = &seen.borrow().keys;
     assert!(keys.contains(&(46, KeyState::Press)));
     assert!(keys.contains(&(46, KeyState::Release)));
-    assert!(keys.contains(&(1, KeyState::Press)), "Fn+Esc is the Esc key");
+    assert!(
+        keys.contains(&(1, KeyState::Press)),
+        "Fn+Esc is the Esc key"
+    );
 }

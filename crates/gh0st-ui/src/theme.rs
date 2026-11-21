@@ -574,7 +574,10 @@ mod tests {
         assert_eq!(p.bg, NORD.bg);
         assert_eq!(p.accent, hex("#f0a35e"));
         assert_eq!(p.tints[1], hex("#112233"));
-        assert!(parse_palette("bg = #dcf3e5\n", "Bad").is_err(), "fg on a light bg");
+        assert!(
+            parse_palette("bg = #dcf3e5\n", "Bad").is_err(),
+            "fg on a light bg"
+        );
         assert!(parse_palette("accent = red\n", "Bad").is_err());
         assert!(find("../etc/passwd").is_none());
     }
@@ -588,7 +591,11 @@ mod tests {
             assert!(contrast(p.disabled(), p.bg) >= 2.8, "{} disabled", p.name);
             for tone in [Tone::Info, Tone::Ok, Tone::Warning, Tone::Critical] {
                 let c = p.tone(tone);
-                assert!(contrast(c, p.surface) >= 3.0, "{} {tone:?} on surface", p.name);
+                assert!(
+                    contrast(c, p.surface) >= 3.0,
+                    "{} {tone:?} on surface",
+                    p.name
+                );
             }
             assert!(
                 contrast(p.accent_fg, p.accent) >= 4.5,

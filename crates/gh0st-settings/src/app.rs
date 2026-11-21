@@ -429,12 +429,15 @@ impl Settings {
                 if word.parse().ok().map(GpuMem::Set) == Some(s.gpu_mem) {
                     return;
                 }
-                let mut call = HelperCall::new(&["gpu-mem", word], format!("GPU memory: {word} MB"));
+                let mut call =
+                    HelperCall::new(&["gpu-mem", word], format!("GPU memory: {word} MB"));
                 call.restart = true;
                 call
             }
             Choice::CpuMode => {
-                let Some(m) = CpuMode::from_verb(word) else { return };
+                let Some(m) = CpuMode::from_verb(word) else {
+                    return;
+                };
                 if CpuMode::from_governor(&s.governor) == Some(m) {
                     return;
                 }
@@ -454,7 +457,8 @@ impl Settings {
                 if !sysconf::COMPRESSIONS.contains(&word) || now == Some(word) {
                     return;
                 }
-                let mut call = HelperCall::new(&["swap-comp", word], format!("Compression: {word}"));
+                let mut call =
+                    HelperCall::new(&["swap-comp", word], format!("Compression: {word}"));
                 call.restart = true;
                 call
             }
@@ -689,7 +693,8 @@ impl Settings {
                         .iter()
                         .find(|(c, _)| *c == cc)
                         .map_or_else(|| cc.clone(), |(_, n)| n.clone());
-                    let mut call = HelperCall::new(&["regdom", &cc], format!("Wi-Fi country: {name}"));
+                    let mut call =
+                        HelperCall::new(&["regdom", &cc], format!("Wi-Fi country: {name}"));
                     call.restart = true;
                     self.helper_call(cx, call);
                 }
@@ -715,7 +720,10 @@ impl Settings {
                 Dialog::Text {
                     title: "Swap size".into(),
                     placeholder: "MB, 0 for off",
-                    text: self.state.swap_shown().map_or_else(String::new, |n| n.to_string()),
+                    text: self
+                        .state
+                        .swap_shown()
+                        .map_or_else(String::new, |n| n.to_string()),
                     masked: false,
                     secret: false,
                 },
@@ -728,7 +736,7 @@ impl Settings {
         self.dialog = Some((d, a));
     }
 
-/// Hands a dialog the page wants to the SDK, once.
+    /// Hands a dialog the page wants to the SDK, once.
     fn flush(&mut self, cx: &mut Cx) {
         let Some((d, _)) = self.dialog.as_ref().filter(|_| !self.asked) else {
             return;
@@ -1074,25 +1082,28 @@ impl Settings {
         let boot = sysconf::boot_dir();
         let read = |p: &Path| std::fs::read_to_string(p).ok();
         let s = &mut self.state;
-        s.gpu_mem = read(&boot.join(sysconf::CONFIG))
-            .map_or(GpuMem::Unsupported, |t| sysconf::gpu_mem(&t));
+        s.gpu_mem =
+            read(&boot.join(sysconf::CONFIG)).map_or(GpuMem::Unsupported, |t| sysconf::gpu_mem(&t));
         s.country = read(&boot.join(sysconf::CMDLINE)).and_then(|t| sysconf::regdom(&t));
         s.country_running =
             read(Path::new("/proc/cmdline")).map(|t| sysconf::regdom(&t).unwrap_or_default());
         if s.countries.is_empty() {
-            s.countries = sysconf::countries(&read(Path::new(sysconf::COUNTRIES)).unwrap_or_default());
+            s.countries =
+                sysconf::countries(&read(Path::new(sysconf::COUNTRIES)).unwrap_or_default());
         }
-        s.governor = read(Path::new(GOVERNOR)).unwrap_or_default().trim().to_string();
+        s.governor = read(Path::new(GOVERNOR))
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         s.hostname = read(Path::new("/proc/sys/kernel/hostname"))
             .unwrap_or_default()
             .trim()
             .to_string();
-        s.swap_mb = read(Path::new(sysconf::swap_backend().dropin()))
-            .and_then(|t| sysconf::swap_conf(&t));
+        s.swap_mb =
+            read(Path::new(sysconf::swap_backend().dropin())).and_then(|t| sysconf::swap_conf(&t));
         // No zram0 is no swap.
-        s.swap_running = Some(
-            read(Path::new(sysconf::ZRAM_DISKSIZE)).map_or(0, |t| sysconf::swap_running(&t)),
-        );
+        s.swap_running =
+            Some(read(Path::new(sysconf::ZRAM_DISKSIZE)).map_or(0, |t| sysconf::swap_running(&t)));
         s.swap_comp =
             read(Path::new(sysconf::ZRAM_COMP_DROPIN)).and_then(|t| sysconf::comp_from_conf(&t));
         s.swap_comp_running =
@@ -1817,11 +1828,17 @@ mod tests {
             Step::Locked(40)
         );
         assert_eq!(
-            auth_step(Some(1), "gh0st-helper: the kernel has no powersave governor\n"),
+            auth_step(
+                Some(1),
+                "gh0st-helper: the kernel has no powersave governor\n"
+            ),
             Step::Failed("the kernel has no powersave governor".into())
         );
         assert_eq!(
-            auth_step(Some(126), "Error executing command as another user: Not authorized\n"),
+            auth_step(
+                Some(126),
+                "Error executing command as another user: Not authorized\n"
+            ),
             Step::Failed("Not allowed: polkit rule missing".into())
         );
         assert_eq!(auth_step(None, ""), Step::Failed("Failed".into()));

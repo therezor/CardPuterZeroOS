@@ -165,25 +165,23 @@ and 7.
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
 needs saying, a dialog or message names them in key pills.
 
-**What a chip is.** A keycap standing on the screen's bottom edge: 19 px
-tall and as wide as its key (54 px), so the bar reads as a row of keys over
-the real ones. No outline: its fill is its shape, with a lighter row along
-its top and its top corners rounded 3 px. At its foot, square on the screen's
-edge, a small notch points down at its key. Inside: a 12 px icon in the
-accent colour and one word in Label style, centred. A word is never cut:
-with less than 3 px each side, a chip drops its icon.
+**What a chip is.** A tab over its key, with no fill: a 12 px icon in the
+accent colour and one word in Label style, centred over a 2 px bar along the
+screen's bottom edge. The bar is as wide as the key (54 px), so each one
+underlines its own key. A word is never cut: with less than 3 px each side, a
+chip drops its icon.
 
 | State | Looks | For |
 |---|---|---|
-| normal | a `surface` cap, accent icon, plain word | most actions |
-| on | a pale accent cap | a toggle that is on: Flash |
-| danger | the word alone, in `critical`; no icon | Forget, Stop, Close |
+| normal | an accent bar, accent icon, plain word | most actions |
+| on | a pale accent wash, accent word | a toggle that is on: Flash |
+| danger | the word alone, in `critical`, over a red bar; no icon | Forget, Stop, Close |
 | danger, held | fills `critical` left to right | Erase: hold it 0.7 s |
-| armed | a `critical` cap | pressed once, press again |
-| main | an `accent` cap | an action that is the page's main one but not on Enter |
-| disabled | faint cap and word | can't be used now; the key does nothing |
-| pressed | sinks a row, darker, no lit top | while its key is down |
-| busy | the word and "…" | working: no second press |
+| armed | a pale red wash, a thicker red bar | pressed once, press again |
+| main | accent word, a thicker bar | an action that is the page's main one but not on Enter |
+| disabled | faint word, a `border` bar | can't be used now; the key does nothing |
+| pressed | the bar doubles, the word drops a row | while its key is down |
+| busy | the word and "…", a muted bar | working: no second press |
 
 Rows change the chips. On a choice row, 5 and 7 read Prev and Next and z and
 c do the same; on a level row they read Less and More.
