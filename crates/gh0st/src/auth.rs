@@ -120,7 +120,7 @@ fn boottime() -> u64 {
     ts.tv_sec as u64
 }
 
-fn user_name(uid: u32) -> Option<String> {
+pub(crate) fn user_name(uid: u32) -> Option<String> {
     // SAFETY: getpwuid returns NULL or a pointer to static storage, read at
     // once; the helper is single-threaded.
     unsafe {
@@ -135,7 +135,7 @@ fn user_name(uid: u32) -> Option<String> {
     }
 }
 
-fn wipe(buf: &mut [u8]) {
+pub(crate) fn wipe(buf: &mut [u8]) {
     for b in buf.iter_mut() {
         // SAFETY: b is a valid &mut u8; volatile so the zeroing stays.
         unsafe { std::ptr::write_volatile(b, 0) };
@@ -144,7 +144,7 @@ fn wipe(buf: &mut [u8]) {
 
 /// One line from stdin, without its newline. Stops at a newline so a
 /// terminal works too.
-fn read_password() -> Vec<u8> {
+pub(crate) fn read_password() -> Vec<u8> {
     let mut out = Vec::with_capacity(64);
     let mut byte = [0u8; 1];
     let mut stdin = std::io::stdin().lock();

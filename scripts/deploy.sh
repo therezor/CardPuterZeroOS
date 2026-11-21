@@ -31,7 +31,11 @@ if [ "${1:-}" = rollback ]; then
         /etc/rpi/swap.conf.d/90-gh0st-swap.conf /etc/sysctl.d/90-gh0st-swap.conf \
         /etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf \
         /etc/systemd/zram-generator.conf.d/90-gh0st-swap-compression.conf \
-        && sudo systemctl daemon-reload'
+        /etc/NetworkManager/conf.d/90-gh0st-mac.conf \
+        /etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf \
+        /etc/NetworkManager/conf.d/90-gh0st-dhcp-hostname.conf \
+        /etc/NetworkManager/conf.d/90-gh0st-ip6-privacy.conf \
+        && sudo systemctl daemon-reload && sudo nmcli general reload conf'
     restart_launcher
     echo "stock launcher restored on $host"
     exit 0

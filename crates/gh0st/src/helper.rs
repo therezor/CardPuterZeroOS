@@ -11,20 +11,33 @@
 //!     gh0st-helper swap MB                       password, restart
 //!     gh0st-helper swap-comp zstd|lz4|lzo-rle    password, restart
 //!     gh0st-helper swappiness 0..200             password
+//!     gh0st-helper set-time EPOCH                password
+//!     gh0st-helper ntp on|off                    password
+//!     gh0st-helper mac random|stable|device      password
+//!     gh0st-helper scan-mac random|device        password
+//!     gh0st-helper dhcp-hostname on|off          password
+//!     gh0st-helper ip6-privacy on|off            password
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper power off|reboot
+//!     gh0st-helper user-create NAME              setup only, the new password
+//!     gh0st-helper setup-finish                  setup only
 //!
 //! A password verb reads the user's password as one line on stdin (see
-//! `auth`). Exit codes: 0 done, 1 failed, 2 usage, 10 password required,
-//! 11 wrong password, 12 locked (stderr says for how many seconds). Nothing
-//! it prints mentions polkit, so Settings can tell its errors from pkexec's.
+//! `auth`). A setup verb runs only for root while setup's marker exists
+//! (docs/setup.md); `user-create` reads the new user's password instead.
+//! Exit codes: 0 done, 1 failed, 2 usage, 10 password required, 11 wrong
+//! password, 12 locked (stderr says for how many seconds), 13 setup only.
+//! Nothing it prints mentions polkit, so Settings can tell its errors from
+//! pkexec's.
 
 use crate::auth::{self, Auth};
 use gh0st_core::rfkill::{self, Radio};
-use gh0st_core::sysconf::{self, CpuMode};
-use std::os::unix::fs::FileExt;
-use std::path::Path;
-use std::process::Command;
+use gh0st_core::sysconf::{self, CpuMode, MacPolicy};
+use std::ffi::CString;
+use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, FileExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Sorts after stock's `persist.conf`, so its Storage= wins.
 const LOGGING_CONF: &str = "/etc/systemd/journald.conf.d/zz-gh0st-logging.conf";
@@ -35,6 +48,25 @@ const CPUFREQ: &str = "/sys/devices/system/cpu/cpufreq";
 const MAX_GROWTH: usize = 64;
 /// A sanity bound for parsing; `set_swap` holds it to twice RAM.
 const SWAP_PARSE_MAX: u32 = 4096;
+/// Setup runs while this exists; `setup-finish` removes it.
+const SETUP_MARKER: &str = "/var/lib/cpzeroos/setup";
+const SETUP_STATE: &str = "/var/lib/cpzeroos/setup.state";
+/// Setup's own home: the look chosen during setup is in its config.
+const SETUP_HOME: &str = "/var/lib/cpzeroos/setup-home";
+/// A dev image's SSH key, waiting for the user setup makes.
+const SEED_KEYS: &str = "/var/lib/cpzeroos/seed/authorized_keys";
+const LINGER_DIR: &str = "/var/lib/systemd/linger";
+const USER_UID: u32 = 1000;
+/// The device user's groups. One the system lacks is left out, so
+/// `useradd` doesn't fail on it.
+const USER_GROUPS: [&str; 11] = [
+    "sudo", "netdev", "video", "input", "render", "audio", "gpio", "i2c", "spi", "dialout",
+    "plugdev",
+];
+const PASSWORD_MIN: usize = 4;
+/// The clock setup and Settings may set: 2024 to 2099.
+const EPOCH_MIN: i64 = 1_704_067_200;
+const EPOCH_MAX: i64 = 4_102_444_800;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -47,8 +79,16 @@ pub enum Verb {
     Swap(u32),
     SwapComp(&'static str),
     Swappiness(u32),
+    SetTime(i64),
+    Ntp(bool),
+    Mac(MacPolicy),
+    ScanMac(bool),
+    DhcpHostname(bool),
+    Ip6Privacy(bool),
     Rfkill(Radio, bool),
     Power(bool),
+    UserCreate(String),
+    SetupFinish,
 }
 
 impl Verb {
@@ -64,9 +104,20 @@ impl Verb {
             | Verb::Hostname(_)
             | Verb::Swap(_)
             | Verb::SwapComp(_)
-            | Verb::Swappiness(_) => true,
-            Verb::Rfkill(..) | Verb::Power(_) => false,
+            | Verb::Swappiness(_)
+            | Verb::SetTime(_)
+            | Verb::Ntp(_)
+            | Verb::Mac(_)
+            | Verb::ScanMac(_)
+            | Verb::DhcpHostname(_)
+            | Verb::Ip6Privacy(_) => true,
+            Verb::Rfkill(..) | Verb::Power(_) | Verb::UserCreate(_) | Verb::SetupFinish => false,
         }
+    }
+
+    /// Whether only setup may run it: root, while the marker exists.
+    pub fn setup_only(&self) -> bool {
+        matches!(self, Verb::UserCreate(_) | Verb::SetupFinish)
     }
 }
 
@@ -91,6 +142,15 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["swap", n] => Verb::Swap(number(n, SWAP_PARSE_MAX)?),
         ["swap-comp", a] => Verb::SwapComp(sysconf::COMPRESSIONS.into_iter().find(|c| c == a)?),
         ["swappiness", n] => Verb::Swappiness(number(n, sysconf::SWAPPINESS_MAX)?),
+        ["set-time", n] => Verb::SetTime(epoch(n)?),
+        ["ntp", s] => Verb::Ntp(on(s)?),
+        ["mac", m] => Verb::Mac(MacPolicy::from_verb(m)?),
+        ["scan-mac", "random"] => Verb::ScanMac(true),
+        ["scan-mac", "device"] => Verb::ScanMac(false),
+        ["dhcp-hostname", s] => Verb::DhcpHostname(on(s)?),
+        ["ip6-privacy", s] => Verb::Ip6Privacy(on(s)?),
+        ["user-create", n] if sysconf::valid_user_name(n) => Verb::UserCreate(n.to_string()),
+        ["setup-finish"] => Verb::SetupFinish,
         ["rfkill", "bluetooth", s] => Verb::Rfkill(Radio::Bluetooth, on(s)?),
         ["rfkill", "wlan", s] => Verb::Rfkill(Radio::Wlan, on(s)?),
         ["power", "off"] => Verb::Power(false),
@@ -103,6 +163,14 @@ pub fn parse(args: &[String]) -> Option<Verb> {
 fn number(s: &str, max: u32) -> Option<u32> {
     let plain = s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
     s.parse().ok().filter(|&n| plain && n <= max)
+}
+
+/// Seconds since 1970, plain digits, in the range a clock may be set to.
+fn epoch(s: &str) -> Option<i64> {
+    let plain = !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && !s.starts_with('0');
+    s.parse()
+        .ok()
+        .filter(|n| plain && (EPOCH_MIN..EPOCH_MAX).contains(n))
 }
 
 /// The journald drop-in for each logging level.
@@ -273,6 +341,218 @@ fn write_conf(path: &str, text: &str) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// A NetworkManager drop-in of ours, then a reload so the next connection
+/// takes it.
+fn write_nm(path: &str, text: &str) -> Result<(), String> {
+    write_conf(path, text)?;
+    run(&["nmcli", "general", "reload", "conf"])
+}
+
+/// The system clock now, and the RTC when there is one, so the time
+/// survives a power cut before network time.
+#[cfg(target_os = "linux")]
+fn set_time(epoch: i64) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let ts = libc::timespec {
+        tv_sec: epoch as _,
+        tv_nsec: 0,
+    };
+    // SAFETY: ts is a valid timespec.
+    if unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &ts) } != 0 {
+        return Err(format!("clock: {}", std::io::Error::last_os_error()));
+    }
+    let Ok(rtc) = std::fs::File::open("/dev/rtc0") else {
+        return Ok(());
+    };
+    // SAFETY: a zeroed tm is valid, and gmtime_r fills it from t.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let t = ts.tv_sec;
+    unsafe { libc::gmtime_r(&t, &mut tm) };
+    /// `struct rtc_time` from linux/rtc.h.
+    #[repr(C)]
+    struct RtcTime([libc::c_int; 9]);
+    let rt = RtcTime([
+        tm.tm_sec, tm.tm_min, tm.tm_hour, tm.tm_mday, tm.tm_mon, tm.tm_year, tm.tm_wday,
+        tm.tm_yday, 0,
+    ]);
+    /// `_IOW('p', 0x0a, struct rtc_time)`.
+    const RTC_SET_TIME: u32 = 0x4024_700a;
+    // SAFETY: rt is a valid rtc_time for the ioctl to read.
+    if unsafe { libc::ioctl(rtc.as_raw_fd(), RTC_SET_TIME as _, &rt) } != 0 {
+        return Err(format!("/dev/rtc0: {}", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_time(_: i64) -> Result<(), String> {
+    Err("setting the clock needs Linux".into())
+}
+
+/// True for root while setup's marker exists. The helper checks this itself:
+/// pkexec would let the device user run it too.
+fn in_setup() -> bool {
+    // SAFETY: plain syscalls with no arguments.
+    let (uid, euid) = unsafe { (libc::getuid(), libc::geteuid()) };
+    let root = match std::env::var("PKEXEC_UID").ok() {
+        Some(v) => v == "0",
+        None => uid == 0,
+    };
+    euid == 0 && root && Path::new(SETUP_MARKER).exists()
+}
+
+/// A user from the password database: uid, gid and home.
+fn passwd(name: &str) -> Option<(u32, u32, PathBuf)> {
+    let c = CString::new(name).ok()?;
+    // SAFETY: getpwnam returns NULL or static storage, read at once; the
+    // helper is single-threaded.
+    unsafe {
+        let pw = libc::getpwnam(c.as_ptr());
+        if pw.is_null() {
+            return None;
+        }
+        let home = std::ffi::CStr::from_ptr((*pw).pw_dir).to_string_lossy();
+        Some(((*pw).pw_uid, (*pw).pw_gid, PathBuf::from(home.as_ref())))
+    }
+}
+
+fn group_exists(name: &str) -> bool {
+    let Ok(c) = CString::new(name) else {
+        return false;
+    };
+    // SAFETY: as for getpwnam.
+    unsafe { !libc::getgrnam(c.as_ptr()).is_null() }
+}
+
+/// Makes the device user, UID 1000, and sets its password. Run again after
+/// a power cut it finishes the same user; any other clash refuses.
+fn user_create(name: &str, password: &[u8]) -> Result<(), String> {
+    if password.len() < PASSWORD_MIN {
+        return Err(format!(
+            "the password needs {PASSWORD_MIN} or more characters"
+        ));
+    }
+    if password.contains(&0) {
+        return Err("the password has a NUL in it".into());
+    }
+    let groups: Vec<&str> = USER_GROUPS
+        .into_iter()
+        .filter(|g| group_exists(g))
+        .collect();
+    let groups = groups.join(",");
+    let taken = auth::user_name(USER_UID);
+    match (passwd(name), taken) {
+        (Some((uid, ..)), _) if uid != USER_UID => return Err(format!("{name} is taken")),
+        (None, Some(other)) => return Err(format!("UID {USER_UID} is {other} already")),
+        (None, None) if group_exists(name) => return Err(format!("{name} is a group already")),
+        (None, None) => run(&[
+            "useradd",
+            "-m",
+            "-u",
+            "1000",
+            "-U",
+            "-s",
+            "/bin/bash",
+            "-G",
+            &groups,
+            name,
+        ])?,
+        (Some(_), _) => run(&["usermod", "-a", "-G", &groups, name])?,
+    }
+    chpasswd(name, password)?;
+    let (uid, gid, home) = passwd(name).ok_or_else(|| format!("{name}: not made"))?;
+    seed_home(&home, uid, gid)
+}
+
+fn chpasswd(name: &str, password: &[u8]) -> Result<(), String> {
+    let mut child = Command::new("chpasswd")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("chpasswd: {e}"))?;
+    let mut line = Vec::with_capacity(name.len() + password.len() + 2);
+    line.extend_from_slice(name.as_bytes());
+    line.push(b':');
+    line.extend_from_slice(password);
+    line.push(b'\n');
+    let wrote = child.stdin.take().map(|mut i| i.write_all(&line));
+    auth::wipe(&mut line);
+    let ok = child.wait().is_ok_and(|s| s.success());
+    match wrote {
+        Some(Ok(())) if ok => Ok(()),
+        _ => Err("chpasswd failed".into()),
+    }
+}
+
+/// Copies what setup gathered into the new home: the look in config.json,
+/// and on a dev image the SSH key.
+fn seed_home(home: &Path, uid: u32, gid: u32) -> Result<(), String> {
+    let config = Path::new(SETUP_HOME).join(".config/cardputerzero/config.json");
+    if config.exists() {
+        let dir = owned_dirs(home, &[".config", "cardputerzero"], 0o755, uid, gid)?;
+        copy_owned(&config, &dir.join("config.json"), 0o644, uid, gid)?;
+    }
+    if Path::new(SEED_KEYS).exists() {
+        let dir = owned_dirs(home, &[".ssh"], 0o700, uid, gid)?;
+        copy_owned(
+            Path::new(SEED_KEYS),
+            &dir.join("authorized_keys"),
+            0o600,
+            uid,
+            gid,
+        )?;
+    }
+    Ok(())
+}
+
+/// `base/a/b`, each part made if missing and given to the user.
+fn owned_dirs(
+    base: &Path,
+    parts: &[&str],
+    mode: u32,
+    uid: u32,
+    gid: u32,
+) -> Result<PathBuf, String> {
+    let mut dir = base.to_path_buf();
+    for p in parts {
+        dir.push(p);
+        let io = |e: std::io::Error| format!("{}: {e}", dir.display());
+        if !dir.is_dir() {
+            std::fs::DirBuilder::new()
+                .mode(mode)
+                .create(&dir)
+                .map_err(io)?;
+        }
+        std::os::unix::fs::chown(&dir, Some(uid), Some(gid)).map_err(io)?;
+    }
+    Ok(dir)
+}
+
+fn copy_owned(from: &Path, to: &Path, mode: u32, uid: u32, gid: u32) -> Result<(), String> {
+    let io = |e: std::io::Error| format!("{}: {e}", to.display());
+    std::fs::copy(from, to).map_err(io)?;
+    std::fs::set_permissions(to, std::fs::Permissions::from_mode(mode)).map_err(io)?;
+    std::os::unix::fs::chown(to, Some(uid), Some(gid)).map_err(io)
+}
+
+/// Hands the device to the user. The order makes every power cut safe: the
+/// linger file is on disk before the marker goes, and the next boot runs
+/// setup while the marker is there, the shell once it's gone.
+fn setup_finish() -> Result<(), String> {
+    let name = auth::user_name(USER_UID).ok_or("no user made yet")?;
+    std::fs::create_dir_all(LINGER_DIR).map_err(|e| format!("{LINGER_DIR}: {e}"))?;
+    let linger = Path::new(LINGER_DIR).join(&name);
+    let io = |e: std::io::Error| format!("{}: {e}", linger.display());
+    std::fs::File::create(&linger)
+        .and_then(|f| f.sync_all())
+        .map_err(io)?;
+    sync_dir(&linger);
+    std::fs::remove_file(SETUP_MARKER).map_err(|e| format!("{SETUP_MARKER}: {e}"))?;
+    sync_dir(Path::new(SETUP_MARKER));
+    let _ = std::fs::remove_file(SETUP_STATE);
+    let _ = std::fs::remove_dir_all(SETUP_HOME);
+    run(&["systemctl", "start", "user@1000.service"])
+}
+
 fn act(v: Verb) -> Result<(), String> {
     match v {
         Verb::Logs(level) => {
@@ -311,6 +591,27 @@ fn act(v: Verb) -> Result<(), String> {
         Verb::Swap(mb) => set_swap(mb),
         Verb::SwapComp(alg) => set_swap_comp(alg),
         Verb::Swappiness(n) => set_swappiness(n),
+        Verb::SetTime(t) => set_time(t),
+        Verb::Ntp(on) => run(&["timedatectl", "set-ntp", if on { "true" } else { "false" }]),
+        Verb::Mac(p) => write_nm(sysconf::NM_MAC_DROPIN, &p.conf()),
+        Verb::ScanMac(random) => {
+            write_nm(sysconf::NM_SCAN_MAC_DROPIN, &sysconf::scan_mac_conf(random))
+        }
+        Verb::DhcpHostname(send) => write_nm(
+            sysconf::NM_HOSTNAME_DROPIN,
+            &sysconf::dhcp_hostname_conf(send),
+        ),
+        Verb::Ip6Privacy(on) => write_nm(
+            sysconf::NM_IP6_PRIVACY_DROPIN,
+            &sysconf::ip6_privacy_conf(on),
+        ),
+        Verb::UserCreate(name) => {
+            let mut password = auth::read_password();
+            let r = user_create(&name, &password);
+            auth::wipe(&mut password);
+            r
+        }
+        Verb::SetupFinish => setup_finish(),
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
         Verb::Power(reboot) => run(&["systemctl", if reboot { "reboot" } else { "poweroff" }]),
     }
@@ -321,11 +622,17 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!(
             "usage: gh0st-helper logs off|ram|persistent | ssh on|off | gpu-mem 16..256 | \
              regdom XX | cpu balanced|power-saver|performance | hostname NAME | swap MB | \
-             swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | \
-             rfkill bluetooth|wlan on|off | power off|reboot"
+             swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | set-time EPOCH | ntp on|off | \
+             mac random|stable|device | scan-mac random|device | dhcp-hostname on|off | \
+             ip6-privacy on|off | rfkill bluetooth|wlan on|off | power off|reboot | \
+             user-create NAME | setup-finish"
         );
         return 2;
     };
+    if v.setup_only() && !in_setup() {
+        eprintln!("gh0st-helper: only during setup");
+        return 13;
+    }
     if v.gated() {
         match auth::check() {
             Auth::Ok => {}
@@ -388,6 +695,29 @@ mod tests {
         assert_eq!(parse(&args("swap-comp lz4")), Some(Verb::SwapComp("lz4")));
         assert_eq!(parse(&args("swappiness 0")), Some(Verb::Swappiness(0)));
         assert_eq!(parse(&args("swappiness 200")), Some(Verb::Swappiness(200)));
+        assert_eq!(
+            parse(&args("set-time 1795000000")),
+            Some(Verb::SetTime(1_795_000_000))
+        );
+        assert_eq!(parse(&args("ntp off")), Some(Verb::Ntp(false)));
+        assert_eq!(
+            parse(&args("mac stable")),
+            Some(Verb::Mac(MacPolicy::Stable))
+        );
+        assert_eq!(parse(&args("scan-mac device")), Some(Verb::ScanMac(false)));
+        assert_eq!(
+            parse(&args("dhcp-hostname on")),
+            Some(Verb::DhcpHostname(true))
+        );
+        assert_eq!(
+            parse(&args("ip6-privacy off")),
+            Some(Verb::Ip6Privacy(false))
+        );
+        assert_eq!(
+            parse(&args("user-create alex")),
+            Some(Verb::UserCreate("alex".into()))
+        );
+        assert_eq!(parse(&args("setup-finish")), Some(Verb::SetupFinish));
         for bad in [
             "",
             "logs",
@@ -420,6 +750,25 @@ mod tests {
             "swappiness 201",
             "swappiness 060",
             "swappiness -1",
+            "set-time",
+            "set-time 0",
+            "set-time 01795000000",
+            "set-time -5",
+            "set-time 1600000000",
+            "set-time 9999999999",
+            "set-time 1795000000.5",
+            "ntp maybe",
+            "mac stable-ssid",
+            "mac",
+            "scan-mac on",
+            "dhcp-hostname yes",
+            "ip6-privacy 2",
+            "user-create",
+            "user-create Alex",
+            "user-create root:x",
+            "user-create ../x",
+            "user-create alex extra",
+            "setup-finish now",
         ] {
             assert_eq!(parse(&args(bad)), None, "{bad:?}");
         }
@@ -437,11 +786,39 @@ mod tests {
             ("swap 256", true),
             ("swap-comp zstd", true),
             ("swappiness 100", true),
+            ("set-time 1795000000", true),
+            ("ntp on", true),
+            ("mac random", true),
+            ("scan-mac random", true),
+            ("dhcp-hostname off", true),
+            ("ip6-privacy on", true),
             ("rfkill wlan on", false),
             ("power off", false),
+            ("user-create alex", false),
+            ("setup-finish", false),
         ] {
             assert_eq!(parse(&args(verb)).unwrap().gated(), gated, "{verb}");
         }
+    }
+
+    #[test]
+    fn only_making_the_user_and_finishing_are_setup_verbs() {
+        for verb in ["user-create alex", "setup-finish"] {
+            assert!(parse(&args(verb)).unwrap().setup_only(), "{verb}");
+        }
+        for verb in ["hostname zero", "ssh on", "power off", "mac random"] {
+            assert!(!parse(&args(verb)).unwrap().setup_only(), "{verb}");
+        }
+    }
+
+    #[test]
+    fn a_short_password_is_refused_before_anything_runs() {
+        assert!(
+            user_create("alex", b"abc")
+                .unwrap_err()
+                .contains("4 or more")
+        );
+        assert!(user_create("alex", b"ab\0cd").unwrap_err().contains("NUL"));
     }
 
     #[test]

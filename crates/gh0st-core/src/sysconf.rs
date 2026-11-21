@@ -1,5 +1,6 @@
 //! System files the root helper writes and Settings reads: the Pi's boot
-//! files, the CPU governor, the hostname and the zram swap size. Pure text
+//! files, the CPU governor, the hostname, the zram swap size and
+//! NetworkManager's privacy settings. Pure text
 //! in and out, so both sides use the same parser and the transforms test
 //! on any host.
 
@@ -368,6 +369,87 @@ pub fn swap_max(meminfo: &str) -> u32 {
         .map_or(SWAP_MAX_FALLBACK, |kb| kb / 1024 * 2)
 }
 
+// NetworkManager's privacy settings. The image ships its defaults in
+// /usr/lib/NetworkManager/conf.d/50-cpzeroos.conf; Settings and setup write
+// one whole file per setting in /etc, which NetworkManager reads after it.
+
+pub const NM_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-mac.conf";
+pub const NM_SCAN_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf";
+pub const NM_HOSTNAME_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-dhcp-hostname.conf";
+pub const NM_IP6_PRIVACY_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-ip6-privacy.conf";
+const NM_HEADER: &str = "# Settings > Privacy.\n";
+
+/// The hardware address a connection shows the network.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MacPolicy {
+    /// A new one each time it connects.
+    Random,
+    /// One per network, the same each time: the image's default.
+    Stable,
+    /// The device's own.
+    Device,
+}
+
+impl MacPolicy {
+    pub fn from_verb(s: &str) -> Option<MacPolicy> {
+        Some(match s {
+            "random" => MacPolicy::Random,
+            "stable" => MacPolicy::Stable,
+            "device" => MacPolicy::Device,
+            _ => return None,
+        })
+    }
+
+    pub fn verb(self) -> &'static str {
+        match self {
+            MacPolicy::Random => "random",
+            MacPolicy::Stable => "stable",
+            MacPolicy::Device => "device",
+        }
+    }
+
+    pub fn conf(self) -> String {
+        let (wifi, ethernet) = match self {
+            MacPolicy::Random => ("random", "random"),
+            MacPolicy::Stable => ("stable-ssid", "stable"),
+            MacPolicy::Device => ("permanent", "permanent"),
+        };
+        format!(
+            "{NM_HEADER}[connection]\nwifi.cloned-mac-address={wifi}\n\
+             ethernet.cloned-mac-address={ethernet}\n"
+        )
+    }
+}
+
+/// A random address while scanning for networks.
+pub fn scan_mac_conf(random: bool) -> String {
+    let v = if random { "yes" } else { "no" };
+    format!("{NM_HEADER}[device]\nwifi.scan-rand-mac-address={v}\n")
+}
+
+/// Whether DHCP tells the network this device's name.
+pub fn dhcp_hostname_conf(send: bool) -> String {
+    format!(
+        "{NM_HEADER}[connection]\nipv4.dhcp-send-hostname={send}\nipv6.dhcp-send-hostname={send}\n"
+    )
+}
+
+/// IPv6 temporary addresses, preferred over the stable one.
+pub fn ip6_privacy_conf(on: bool) -> String {
+    let v = if on { 2 } else { 0 };
+    format!("{NM_HEADER}[connection]\nipv6.ip6-privacy={v}\n")
+}
+
+/// A login name `useradd` takes and setup allows: a lowercase letter, then
+/// up to 31 lowercase letters, digits, `-` and `_`.
+pub fn valid_user_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    (1..=32).contains(&b.len())
+        && b[0].is_ascii_lowercase()
+        && b.iter()
+            .all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'_')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,5 +629,50 @@ mod tests {
             assert_eq!(CpuMode::from_governor(m.governor()), Some(m));
         }
         assert_eq!(CpuMode::from_governor("ondemand\n"), None);
+    }
+    #[test]
+    fn each_mac_policy_writes_both_kinds_of_connection() {
+        let c = MacPolicy::Stable.conf();
+        assert!(c.contains("wifi.cloned-mac-address=stable-ssid\n"));
+        assert!(c.contains("ethernet.cloned-mac-address=stable\n"));
+        assert!(
+            MacPolicy::Device
+                .conf()
+                .contains("wifi.cloned-mac-address=permanent")
+        );
+        for p in [MacPolicy::Random, MacPolicy::Stable, MacPolicy::Device] {
+            assert_eq!(MacPolicy::from_verb(p.verb()), Some(p));
+        }
+        assert_eq!(MacPolicy::from_verb("stable-ssid"), None);
+    }
+
+    #[test]
+    fn the_privacy_files_say_what_they_set() {
+        assert!(scan_mac_conf(false).contains("[device]\nwifi.scan-rand-mac-address=no\n"));
+        let h = dhcp_hostname_conf(false);
+        assert!(h.contains("ipv4.dhcp-send-hostname=false\n"));
+        assert!(h.contains("ipv6.dhcp-send-hostname=false\n"));
+        assert!(ip6_privacy_conf(true).contains("ipv6.ip6-privacy=2\n"));
+        assert!(ip6_privacy_conf(false).contains("ipv6.ip6-privacy=0\n"));
+    }
+
+    #[test]
+    fn user_names_useradd_takes() {
+        for ok in ["alex", "a", "a-b_c9", &"a".repeat(32)] {
+            assert!(valid_user_name(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "Alex",
+            "9lives",
+            "-x",
+            "_x",
+            "a.b",
+            "a b",
+            "al:ex",
+            &"a".repeat(33),
+        ] {
+            assert!(!valid_user_name(bad), "{bad}");
+        }
     }
 }

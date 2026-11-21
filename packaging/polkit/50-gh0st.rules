@@ -14,7 +14,9 @@ polkit.addRule(function(action, subject) {
         "org.freedesktop.timedate1.set-timezone",
         "org.freedesktop.timedate1.set-ntp",
         // gh0st-helper: fixed verbs only. Logs, SSH, GPU memory, Wi-Fi
-        // country, CPU mode, hostname and swap also check the user's password.
+        // country, CPU mode, hostname, swap, the clock and the network
+        // privacy settings also check the user's password. Making the user
+        // and finishing setup run only for root during setup.
         "org.cpzero.gh0st.helper"
     ];
     if (allowed.indexOf(action.id) >= 0) {

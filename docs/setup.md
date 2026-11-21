@@ -139,22 +139,31 @@ finishes what is missing. A cut after it starts the shell.
 ## Helper verbs
 
 The password always goes on stdin, never in the arguments. Setup runs as root, so the
-gated verbs don't ask it. Each verb has its arm in `Verb::gated`, and parser tests.
+gated verbs don't ask it. Each verb has its arm in `Verb::gated`, and parser tests. Built
+2026-11-21 in `crates/gh0st/src/helper.rs`, the text in `gh0st_core::sysconf`.
 
 | Verb | Stdin | Allowed |
 |---|---|---|
-| `user-create NAME` | the new password | Only during setup: the marker exists and the caller is root |
+| `user-create NAME` | the new password | Only during setup: the helper itself checks that the marker exists and the caller is root (exit 13 otherwise) |
 | `setup-finish` | none | Only during setup |
-| `set-time EPOCH` | the user's password | Gated. Sets the clock (`clock_settime`) and the RTC (`RTC_SET_TIME`). `timedatectl set-time` is refused while network time is on. |
-| `ntp on\|off` | the user's password | Gated |
-| `mac random\|stable\|device` | the user's password | Gated. One file in `/etc/NetworkManager/conf.d`, then a reload |
-| `dhcp-hostname on\|off` | the user's password | Gated. The same file |
-| `ip6-privacy on\|off` | the user's password | Gated. The same file |
+| `set-time EPOCH` | the user's password | Gated. Sets the clock (`clock_settime`) and the RTC (`RTC_SET_TIME`), 2024 to 2099. `timedatectl set-time` is refused while network time is on. |
+| `ntp on\|off` | the user's password | Gated. `timedatectl set-ntp` |
+| `mac random\|stable\|device` | the user's password | Gated. `90-gh0st-mac.conf` |
+| `scan-mac random\|device` | the user's password | Gated. `90-gh0st-scan-mac.conf` |
+| `dhcp-hostname on\|off` | the user's password | Gated. `90-gh0st-dhcp-hostname.conf` |
+| `ip6-privacy on\|off` | the user's password | Gated. `90-gh0st-ip6-privacy.conf` |
+
+The network verbs each write one whole file in `/etc/NetworkManager/conf.d`, which
+NetworkManager reads after the image's `50-cpzeroos.conf`, then reload it. A new
+connection takes the change.
 
 `user-create` runs `useradd -m -u 1000 -U -s /bin/bash` with the groups `sudo`,
 `netdev`, `video`, `input`, `render`, `audio`, `gpio`, `i2c`, `spi`, `dialout` and
-`plugdev`. It sets the password with `chpasswd`, installs the staged `config.json` (and, on
-a dev image, the staged SSH key), and can run twice. The existing verbs stay as they are:
+`plugdev`, leaving out any the system lacks. It sets the password with `chpasswd`,
+installs the staged `config.json` (and, on a dev image, the staged SSH key), and can run
+twice: UID 1000 with the same name carries on, any other clash refuses. `setup-finish`
+writes the linger file and syncs it and its directory, removes the marker and syncs
+`/var/lib/cpzeroos`, then starts `user@1000.service`. The existing verbs stay as they are:
 `regdom`, `hostname`, `logs`, `ssh`, `rfkill`, `power`.
 
 ## What gets built
