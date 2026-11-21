@@ -147,6 +147,9 @@ enum NetJob {
     GpuMem,
     /// After the helper unblocks the radio, power it on.
     BtUnblock,
+    /// The image boots with Wi-Fi blocked: setup's network step unblocks it,
+    /// then turns it on.
+    WifiUnblock,
     Password,
     ConnQuery,
     /// A profile change; reconnect after it when the profile is in use.
@@ -748,7 +751,8 @@ impl Settings {
                 }
             }
             Command::SetZone(zone) => {
-                if self.state.zones.contains(&zone) {
+                // Before the full list arrives, timedatectl checks the name.
+                if self.state.zones.is_empty() || self.state.zones.contains(&zone) {
                     let argv = ["timedatectl", "set-timezone", &zone];
                     self.run(cx, NetJob::TimeSet(Some(zone.clone())), &argv);
                     self.state.zone = zone;
@@ -1201,6 +1205,10 @@ impl Settings {
             s.countries =
                 sysconf::countries(&read(Path::new(sysconf::COUNTRIES)).unwrap_or_default());
         }
+        if let Some(cc) = &s.country {
+            let tab = read(Path::new(sysconf::ZONE_TAB)).unwrap_or_default();
+            s.country_zones = sysconf::zones_for(&tab, cc);
+        }
         s.governor = read(Path::new(GOVERNOR))
             .unwrap_or_default()
             .trim()
@@ -1481,6 +1489,13 @@ impl Settings {
                 self.query_bt(cx);
             }
             NetJob::BtScan => self.query_bt(cx),
+            NetJob::WifiUnblock => {
+                if !ok {
+                    cx.toast(&helper_failure(&out));
+                }
+                self.state.wifi_on = true;
+                self.run(cx, NetJob::SetRadio, &["nmcli", "radio", "wifi", "on"]);
+            }
             NetJob::BtUnblock => {
                 if ok {
                     self.run(cx, NetJob::BtPower, &["bluetoothctl", "power", "on"]);
@@ -1709,7 +1724,10 @@ impl Page for Settings {
                 self.query_sys(cx);
                 self.query_volume(cx);
             }
-            Some(PageId::Wifi) => self.query_net(cx, true),
+            Some(PageId::Wifi) => {
+                let argv = ["pkexec", HELPER, "rfkill", "wlan", "on"];
+                self.run(cx, NetJob::WifiUnblock, &argv);
+            }
             Some(PageId::Privacy) => {
                 self.query_sys(cx);
                 self.query_bt(cx);
@@ -1717,6 +1735,11 @@ impl Page for Settings {
             Some(PageId::TimeZone(_)) => {
                 self.run(cx, NetJob::Zones, &["timedatectl", "list-timezones"]);
                 self.query_sys(cx);
+            }
+            Some(PageId::CountryZones) => {
+                self.run(cx, NetJob::Zones, &["timedatectl", "list-timezones"]);
+                self.query_sys(cx);
+                self.query_advanced(cx);
             }
             Some(_) => self.query_advanced(cx),
         }

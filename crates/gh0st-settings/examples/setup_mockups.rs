@@ -220,6 +220,33 @@ fn secret<'a>(label: &'a str, text: &'a str, error: Option<&'a str>) -> Field<'a
 
 // ---------------------------------------------------------------- steps
 
+/// Setup's first screen while builds are pre-alpha.
+fn notice(t: &Theme) -> Canvas {
+    let mut c = frame(t);
+    top(
+        &mut c,
+        t,
+        "triangle-alert",
+        "Before you start",
+        "",
+        Net::None,
+    );
+    let keys = [Hint {
+        key: "Enter",
+        label: "go on",
+    }];
+    let m = Message {
+        icon: "triangle-alert",
+        tone: Some(Tone::Warning),
+        text: "A pre-alpha test build",
+        note: "It can be unstable,\nand the SDK and the design can still change.",
+        keys: &keys,
+    };
+    widgets::message(&mut c, t, widgets::body(t), &m);
+    chips(&mut c, t, NONE, NONE, NONE);
+    c
+}
+
 fn welcome(t: &Theme) -> Canvas {
     let mut c = frame(t);
     top(&mut c, t, "", "Welcome", "", Net::None);
@@ -404,7 +431,7 @@ fn menu_open(t: &Theme) -> Canvas {
         widgets::menu_row(&mut c, t, Rect::new(x, y, w, 22), rw, k, kw, i == 0, false);
         y += 22;
     }
-    widgets::section(&mut c, t, Rect::new(x, y, w, 15), "Keys");
+    widgets::section(&mut c, t, Rect::new(x, y, w, 15), "App");
     y += 15;
     let help = Row {
         tint: a,
@@ -510,7 +537,7 @@ fn privacy(t: &Theme, selected: usize) -> Canvas {
         row(t, "tag", "Send device name", Trailing::Toggle(false)),
         row(t, "globe", "IPv6 privacy address", Trailing::Toggle(true)),
         row(t, "clock", "Network time", Trailing::Toggle(true)),
-        row(t, "hard-drive", "Keep logs", Trailing::Choice("Off")),
+        row(t, "hard-drive", "Keep logs", Trailing::ValueChevron("Off")),
         row(t, "square-terminal", "SSH", Trailing::Toggle(false)),
         row(t, "bluetooth", "Bluetooth", Trailing::Toggle(false)),
     ];
@@ -789,6 +816,7 @@ fn main() {
         }
     }
     let all: &[Screen] = &[
+        ("00-notice", "pre-alpha: first of all", notice),
         (
             "01-welcome",
             "Enter takes the tour, 6 skips to settings",
@@ -816,7 +844,7 @@ fn main() {
         ("13-privacy", "Enter flips, 6 Done goes on", |t| {
             privacy(t, 0)
         }),
-        ("14-privacy-logs", "a choice row: 5 and 7 change it", |t| {
+        ("14-privacy-logs", "Keep logs opens its list", |t| {
             privacy(t, 5)
         }),
         ("15-network", "Enter joins, 5 Scan, 7 Skip", network),

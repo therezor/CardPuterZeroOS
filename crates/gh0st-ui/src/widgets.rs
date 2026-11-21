@@ -1423,11 +1423,10 @@ pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
     let (icon_name, text, note, keys) = (m.icon, m.text, m.note, m.keys);
     let ink = m.tone.map_or(t.c.muted, |k| t.c.tone(k));
     let s = IconSize::Large as i32;
-    let block = s
-        + 8
-        + 18
-        + if note.is_empty() { 0 } else { 15 }
-        + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
+    // A note breaks onto a new line at each `\n`.
+    let lines: Vec<&str> = note.split('\n').filter(|l| !l.is_empty()).collect();
+    let block =
+        s + 8 + 18 + 15 * lines.len() as i32 + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
     let top = area.y + (area.h - block).max(0) / 2;
     icon::draw(
         c,
@@ -1440,14 +1439,9 @@ pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
     let tr = Rect::new(area.x + 12, top + s + 8, area.w - 24, 18);
     text_centre(c, t.f.body_bold, tr, text, t.c.fg);
     let mut y = tr.bottom();
-    if !note.is_empty() {
-        text_centre(
-            c,
-            t.f.small,
-            Rect::new(tr.x, y + 1, tr.w, 15),
-            note,
-            t.c.muted,
-        );
+    for line in lines {
+        let lr = Rect::new(tr.x, y + 1, tr.w, 15);
+        text_centre(c, t.f.small, lr, line, t.c.muted);
         y += 15;
     }
     if !keys.is_empty() {

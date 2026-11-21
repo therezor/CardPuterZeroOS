@@ -21,6 +21,10 @@ Mockups in `mockups/setup` (`cargo run -p gh0st-settings --example setup_mockups
 320x170: the top bar, 132 px of content, the action bar. One idea per screen and at most
 four lines of body text.
 
+First, while builds are pre-alpha, a notice (user, 2026-11-21): "A pre-alpha test build.
+It can be unstable, and the SDK and the design can still change." Enter goes on.
+`tour::PRE_ALPHA` drops it.
+
 After the welcome, setup comes in two parts: a **tour** of the keys and the design
 system, then the **settings** (user, 2026-11-21). The welcome screen offers both: Enter
 starts the tour, and 6 skips straight to the settings. Each part counts its own steps.
@@ -47,10 +51,10 @@ take the tour" and "6 skip to settings", and 6 has a Skip chip. Esc does nothing
 
 | # | Step | What it does |
 |---|---|---|
-| 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. |
-| 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. Picked for the user when there is one. "Other" opens the region list. |
+| 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. 7 Skip keeps the world country. |
+| 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. "Other" opens the region list. 7 Skip keeps the zone. |
 | 3 | Privacy | The private defaults, each switchable: Wi-Fi address per network, random address while scanning, hostname not sent, IPv6 privacy addresses, network time, logs off, SSH off, Bluetooth off. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
-| 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. With a cable in, "Use the cable" makes the wired profile. Nothing goes online before this step. |
+| 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. With a cable in, "Use the cable" makes the wired profile (not built yet). Nothing goes online before this step. |
 | 5 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
 | 6 | Account | The name and the password, then the password again on its own screen. |
 | 7 | Device name and look | The device name (`zero` unless changed), the home layout, the palette (Mint, Nord, Paper) and the clock. 5 and 7 change a choice; Done on 6 goes on. The look applies at once. |
@@ -128,15 +132,18 @@ again.
 choices land in its own `config.json` through `Cx::settings()`, and theme setup at once.
 `user-create` installs that file into the new home.
 
-**No shell runs during setup.** Setup handles the brightness keys itself, and powers off
-after 10 idle minutes on battery. Fn+K and holding Esc do nothing; the tutorial only
-describes them.
+**No shell runs during setup.** Setup lights the panel at start when it is dark. Fn+K and
+holding Esc do nothing; the tour only describes them. Not built yet: the brightness keys,
+and powering off after 10 idle minutes on battery.
 
 ## Power cuts
 
-**Resume.** `/var/lib/cpzeroos/setup.state` (root, 0600) keeps the step and the answers
-so far. Never the password. System steps apply as they are made and can run twice. The
-account is made only on Done. On resume a joined network shows as connected.
+**Resume.** `/var/lib/cpzeroos/setup.state` (root, 0600) keeps the step, whether the
+tour was taken, and the account name. Never the password, so a resume never starts past
+the account step. System steps apply as they are made and can run twice. The account is
+made only on Done. When a cut came after `user-create`, the account step keeps that name
+and asks only its password. When `setup-finish` fails, Done offers Restart (`power
+reboot`): the marker may be gone already, and either boot path is then right.
 
 **Hand-over.** At any power cut, the next boot runs exactly one of setup or the shell:
 
@@ -208,7 +215,12 @@ chips, hint bar, menu, help and dialogs came with the design system.
 - System > **Unlock with password**, config key `gh0st.lock.password`, default true.
 - `PageId::Look`, setup's device name and look.
 
-Still to build: the setup module itself (phase 6).
+**The setup module** (`src/setup`), built 2026-11-21: `gh0st-settings --setup` runs
+`setup::steps` under `run_with(.., Options { closable: false })`. The notice, the welcome
+and the tour lessons are in `tour.rs`; Country, Time zone (`PageId::CountryZones`),
+Privacy, Network and Device and look are embedded Settings; `clock.rs`, `account.rs` and
+`finish.rs` are the rest. Done draws "Starting" before `setup-finish` runs, and quits when
+it succeeds. `$GH0ST_SETUP_ROOT` moves the files setup reads and writes, for a host run.
 
 **Shell** (`crates/gh0st-shell`): the lock screen asks for the password when
 `gh0st.lock.password` is true. It checks with `/usr/sbin/unix_chkpwd`, which lets a user
@@ -226,10 +238,12 @@ check their own password, and waits longer after each wrong try.
 
 ## Tests
 
-- `gh0st-settings --setup --sim DIR` walks every step from a key script, with fake
-  `pkexec`, `nmcli` and `timedatectl` first on `PATH` that log their calls.
-- Driver tests: skipping, a Wi-Fi join, a bad name, passwords that differ, and resuming
-  from `setup.state` at each step.
+- Built: `tests/setup_sim.rs` runs `gh0st-settings --setup --sim` from a key script, with
+  fake `pkexec`, `nmcli` and `timedatectl` first on `PATH`. It checks every helper call,
+  `user-create` before `setup-finish`, the password on stdin only, and none in
+  `setup.state`. `tests/embed.rs` checks the embedded steps' chips and Esc.
+- Still to add: a Wi-Fi join, a bad name, passwords that differ, and resuming at each
+  step.
 - The image's checks: the marker, no UID 1000, the unit enabled; the QEMU smoke test sees
   setup start and no `user@1000`.
 - On the device, from a fresh flash: setup after the logo; no traffic before step 6; the

@@ -155,7 +155,9 @@ pub fn countries(tab: &str) -> Vec<(String, String)> {
             valid_country(cc).then(|| (cc.to_string(), name.trim().to_string()))
         })
         .collect();
-    out.sort_by(|a, b| a.1.cmp(&b.1));
+    // By name as a person reads it: "US minor outlying islands" after
+    // "Uganda", not before.
+    out.sort_by_key(|(_, name)| name.to_lowercase());
     out
 }
 
@@ -497,6 +499,29 @@ pub fn nm_privacy(files: &[String]) -> NmPrivacy {
     }
 }
 
+/// The tz database's zones for each country.
+pub const ZONE_TAB: &str = "/usr/share/zoneinfo/zone.tab";
+
+/// The zones `zone.tab` lists for country `cc`, in its order.
+pub fn zones_for(tab: &str, cc: &str) -> Vec<String> {
+    tab.lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let code = f.next()?;
+            let zone = f.nth(1)?;
+            (code == cc).then(|| zone.to_string())
+        })
+        .collect()
+}
+
+/// A user or a group already has `name`, in `/etc/passwd` and `/etc/group`
+/// text: `useradd -U` would fail on it.
+pub fn name_taken(passwd: &str, group: &str, name: &str) -> bool {
+    let has = |text: &str| text.lines().any(|l| l.split(':').next() == Some(name));
+    has(passwd) || has(group)
+}
+
 /// A login name `useradd` takes and setup allows: a lowercase letter, then
 /// up to 31 lowercase letters, digits, `-` and `_`.
 pub fn valid_user_name(s: &str) -> bool {
@@ -763,5 +788,36 @@ mod tests {
         );
         // A key in the wrong section is not that setting.
         assert!(!nm_privacy(&["[device]\nwifi.cloned-mac-address=random\n".into()]).mac_private);
+    }
+    #[test]
+    fn zones_come_from_the_country_s_lines() {
+        let tab = "# comment\nUS\t+404251-0740023\tAmerica/New_York\tEastern\n\
+                   GB\t+513030-0000731\tEurope/London\n\
+                   US\t+415100-0873900\tAmerica/Chicago\tCentral\n";
+        assert_eq!(
+            zones_for(tab, "US"),
+            ["America/New_York", "America/Chicago"]
+        );
+        assert_eq!(zones_for(tab, "GB"), ["Europe/London"]);
+        assert!(zones_for(tab, "UA").is_empty());
+    }
+
+    #[test]
+    fn a_name_is_taken_by_a_user_or_a_group() {
+        let passwd = "root:x:0:0::/root:/bin/sh\nzero:x:1000:1000::/home/zero:/bin/bash\n";
+        let group = "video:x:44:\nzero:x:1000:\n";
+        assert!(name_taken(passwd, group, "root"));
+        assert!(name_taken(passwd, group, "video"));
+        assert!(!name_taken(passwd, group, "alex"));
+        assert!(!name_taken(passwd, group, "ro"), "a prefix is not a name");
+    }
+    #[test]
+    fn countries_sort_as_read_not_by_case() {
+        let tab = "UM\tUS minor outlying islands\nUG\tUganda\nUS\tUnited States\n";
+        let names: Vec<String> = countries(tab).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(
+            names,
+            ["Uganda", "United States", "US minor outlying islands"]
+        );
     }
 }

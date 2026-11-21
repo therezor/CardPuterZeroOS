@@ -40,6 +40,8 @@ pub enum PageId {
     About,
     /// Setup's device name and look: name, layout, palette, clock.
     Look,
+    /// The time zones of the Wi-Fi country, then Other for every region.
+    CountryZones,
 }
 
 /// A value a row changes in place: Enter flips a toggle, Z and C step the rest.
@@ -358,7 +360,7 @@ pub fn icon(id: &PageId) -> &'static str {
         PageId::Appearance => "palette",
         PageId::Apps | PageId::App(_) => "layout-grid",
         PageId::System | PageId::Advanced | PageId::Swap => "cpu",
-        PageId::TimeZone(_) => "clock",
+        PageId::TimeZone(_) | PageId::CountryZones => "clock",
         PageId::Country(_) => "globe",
         PageId::Privacy => "shield",
         PageId::Look => "palette",

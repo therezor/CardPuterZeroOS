@@ -187,6 +187,8 @@ pub struct State {
     pub country_running: Option<String>,
     /// (code, name), sorted by name. Loaded when the picker opens.
     pub countries: Vec<(String, String)>,
+    /// The Wi-Fi country's zones from `zone.tab`.
+    pub country_zones: Vec<String>,
     pub governor: String,
     pub hostname: String,
     /// Swap in MB from our drop-in (`None` with none), and the zram swap
@@ -431,6 +433,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
         ),
         PageId::System => ("System", Body::List(system(s)), vec![]),
         PageId::TimeZone(region) => ("Time zone", Body::List(zones(s, region.as_deref())), vec![]),
+        PageId::CountryZones => ("Time zone", Body::List(country_zones(s)), vec![]),
         PageId::Advanced => ("Advanced", Body::List(advanced(s)), vec![]),
         PageId::Swap => ("Swap", Body::List(swap(s)), vec![]),
         PageId::Choose(c) => (
@@ -1168,6 +1171,32 @@ fn zones(s: &State, region: Option<&str>) -> Vec<Item> {
     }
 }
 
+/// The country's zones that the system knows, by city, then Other for the
+/// full list.
+fn country_zones(s: &State) -> Vec<Item> {
+    let known = |z: &&String| s.zones.is_empty() || s.zones.contains(z);
+    let mut items: Vec<Item> = s
+        .country_zones
+        .iter()
+        .filter(known)
+        .map(|z| Item {
+            icon: Some(if *z == s.zone { "check" } else { "" }),
+            label: z.rsplit('/').next().unwrap_or(z).replace('_', " "),
+            value: Value::None,
+            act: Act::Run(Command::SetZone(z.clone())),
+            danger: false,
+        })
+        .collect();
+    items.push(Item {
+        icon: Some(""),
+        label: "Other\u{2026}".into(),
+        value: Value::Chevron,
+        act: Act::Open(PageId::TimeZone(None)),
+        danger: false,
+    });
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1487,5 +1516,17 @@ mod tests {
         let p = build(&PageId::Look, &s);
         assert_eq!(p.item(0).unwrap().value, Value::TextChevron("zero".into()));
         assert_eq!(p.item(2).unwrap().act, Act::Set(Setting::Palette));
+    }
+    #[test]
+    fn the_country_s_zones_come_first_then_other() {
+        let mut s = state();
+        s.country_zones = ["Europe/London", "Atlantic/Nowhere"]
+            .map(String::from)
+            .to_vec();
+        let p = build(&PageId::CountryZones, &s);
+        assert_eq!(p.len(), 2, "London, then Other; the unknown zone left out");
+        assert_eq!(p.item(0).unwrap().label, "London");
+        assert_eq!(p.item(0).unwrap().icon, Some("check"));
+        assert_eq!(p.item(1).unwrap().act, Act::Open(PageId::TimeZone(None)));
     }
 }
