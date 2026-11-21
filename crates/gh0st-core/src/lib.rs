@@ -11,6 +11,7 @@ pub mod esc;
 pub mod evdev;
 pub mod job;
 pub mod keys;
+pub mod link;
 pub mod procfs;
 pub mod rfkill;
 pub mod rt;

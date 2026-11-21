@@ -65,9 +65,43 @@ impl Driver {
         while let Some(at) = self.rt.next_at().filter(|&at| at <= end) {
             self.now = self.now.max(at);
             self.rt.tick(self.now);
+            // As the real loop does: a due frame clears its deadline.
+            if self.rt.frame_due(self.now) {
+                self.rt.render();
+                self.rt.last_frame = self.now;
+            }
         }
         self.now = end;
         self
+    }
+
+    /// Runs the real loop over watched fds for `ms` of wall time: reads,
+    /// queued writes and child exits reach the page as on the device.
+    pub fn pump(&mut self, ms: u64) -> &mut Driver {
+        let end = gh0st_core::rt::now_ms() + ms;
+        loop {
+            let left = end.saturating_sub(gh0st_core::rt::now_ms());
+            let watches = self.rt.watch_fds();
+            let mut fds: Vec<_> = watches
+                .iter()
+                .map(|&(_, fd, out)| gh0st_core::rt::pollfd_rw(fd, true, out))
+                .collect();
+            let _ = gh0st_core::rt::wait(&mut fds, Some(gh0st_core::rt::now_ms() + left.min(10)));
+            self.now += 1;
+            for (f, &(id, _, _)) in fds.iter().zip(&watches) {
+                if gh0st_core::rt::writable(f) {
+                    self.rt.writable(id);
+                }
+                if gh0st_core::rt::readable(f) {
+                    self.rt.ready(id, self.now);
+                }
+            }
+            self.rt.reap(self.now);
+            self.rt.tick(self.now);
+            if left == 0 {
+                return self;
+            }
+        }
     }
 
     /// The screen as the panel would show it now.

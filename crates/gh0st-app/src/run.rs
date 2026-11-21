@@ -5,6 +5,7 @@
 use crate::page::Page;
 use crate::runtime::Runtime;
 use gh0st_core::evdev;
+use gh0st_core::link::Link;
 use gh0st_core::rt::{self, Signals};
 use gh0st_core::script::Script;
 use gh0st_ui::display::{Display, Frames};
@@ -31,7 +32,9 @@ pub fn run(page: impl Page + 'static) -> ! {
 }
 
 enum Input {
-    Keyboard(evdev::Device),
+    /// The device, and its path to open it again after a pause. None while
+    /// paused: the app reads no keys then.
+    Keyboard(Option<evdev::Device>, PathBuf),
     Script(Script),
 }
 
@@ -50,34 +53,57 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
             let fb = Framebuffer::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let kb = evdev::find().ok_or("no keyboard found")?;
             let dev = evdev::Device::open(&kb).map_err(|e| format!("{}: {e}", kb.display()))?;
-            (Box::new(fb), Input::Keyboard(dev))
+            (Box::new(fb), Input::Keyboard(Some(dev), kb))
         }
     };
     let signals = Signals::install(&[libc::SIGTERM, libc::SIGINT, libc::SIGCHLD])
         .map_err(|e| format!("signals: {e}"))?;
+    // Under --sim too when a test hands one over.
+    rt_.link = Link::from_env();
+    if let Some(l) = &rt_.link {
+        l.send(&["hello", "1"]);
+    }
 
     rt_.start(rt::now_ms());
     rt_.render();
     display.flush_all(&rt_.canvas);
+    rt_.last_frame = rt::now_ms();
 
     let mut raw = Vec::new();
+    let mut full = false;
     while !rt_.quit {
         let jobs = rt_.job_fds();
+        let watches = rt_.watch_fds();
         let input_fd = match &input {
-            Input::Keyboard(d) => d.fd(),
-            Input::Script(s) => s.fd(),
+            Input::Keyboard(d, _) => d.as_ref().map(|d| d.fd()),
+            Input::Script(s) => Some(s.fd()),
         };
-        let mut fds = vec![rt::pollfd(input_fd), rt::pollfd(signals.fd())];
+        let mut fds = vec![rt::pollfd(signals.fd())];
+        let link_at = rt_.link.as_ref().map(|l| {
+            fds.push(rt::pollfd(l.fd()));
+            fds.len() - 1
+        });
+        let input_at = input_fd.map(|fd| {
+            fds.push(rt::pollfd(fd));
+            fds.len() - 1
+        });
+        let jobs_at = fds.len();
         fds.extend(jobs.iter().map(|&(_, fd)| rt::pollfd(fd)));
+        let watch_at = fds.len();
+        fds.extend(
+            watches
+                .iter()
+                .map(|&(_, fd, out)| rt::pollfd_rw(fd, true, out)),
+        );
         let script_at = match &input {
             Input::Script(s) => s.next_at(),
-            Input::Keyboard(_) => None,
+            Input::Keyboard(..) => None,
         };
         let deadline = rt::earliest([rt_.next_at(), script_at]);
         rt::wait(&mut fds, deadline).map_err(|e| format!("poll: {e}"))?;
         let now = rt::now_ms();
 
-        if rt::readable(&fds[1]) {
+        if rt::readable(&fds[0]) {
             for sig in signals.drain() {
                 match sig {
                     libc::SIGCHLD => rt_.reap(now),
@@ -85,11 +111,42 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
                 }
             }
         }
+        // The shell's word comes before keys: after a pause, keys belong
+        // to whatever is in front now.
+        if link_at.is_some_and(|i| rt::readable(&fds[i])) {
+            while let Some(m) = rt_.link.as_ref().and_then(|l| l.recv()) {
+                match m.first().map(String::as_str) {
+                    Some("pause") => {
+                        if let Input::Keyboard(dev, _) = &mut input {
+                            *dev = None;
+                        }
+                        rt_.pause_input(now);
+                        if let Some(l) = &rt_.link {
+                            l.send(&["paused"]);
+                        }
+                    }
+                    Some("resume") => {
+                        if let Input::Keyboard(dev, path) = &mut input {
+                            *dev = evdev::Device::open(path).ok();
+                        }
+                        rt_.resume_input(now);
+                        full = true;
+                    }
+                    Some("redraw") => {
+                        rt_.dirty = true;
+                        full = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
         raw.clear();
         match &mut input {
-            Input::Keyboard(d) => {
-                if rt::readable(&fds[0]) {
-                    d.read_keys(&mut raw);
+            Input::Keyboard(d, _) => {
+                if let (Some(d), Some(i)) = (d.as_mut(), input_at) {
+                    if rt::readable(&fds[i]) {
+                        d.read_keys(&mut raw);
+                    }
                 }
             }
             Input::Script(s) => {
@@ -103,14 +160,28 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
             rt_.raw_key(code, value, now);
         }
         for (i, &(id, _)) in jobs.iter().enumerate() {
-            if rt::readable(&fds[2 + i]) {
+            if rt::readable(&fds[jobs_at + i]) {
                 rt_.read_job(id, now);
             }
         }
+        for (i, &(id, _, _)) in watches.iter().enumerate() {
+            let f = &fds[watch_at + i];
+            if rt::writable(f) {
+                rt_.writable(id);
+            }
+            if rt::readable(f) {
+                rt_.ready(id, now);
+            }
+        }
         rt_.tick(now);
-        if rt_.dirty && !rt_.quit {
+        if rt_.frame_due(now) {
             rt_.render();
-            display.flush(&rt_.canvas, rt_.canvas.bounds());
+            if std::mem::take(&mut full) {
+                display.flush_all(&rt_.canvas);
+            } else {
+                display.flush(&rt_.canvas, rt_.canvas.bounds());
+            }
+            rt_.last_frame = now;
         }
         if let Input::Script(s) = &input {
             if s.finished(now) && raw.is_empty() {

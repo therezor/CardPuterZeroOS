@@ -286,7 +286,11 @@ pub fn hint_bar(c: &mut Canvas, t: &Theme, hints: &[Hint], pages: Option<(usize,
     c.hline(0, r.w, r.y, t.c.border);
     let mut x = t.m.pad;
     for h in hints {
-        x = key_pill(c, t, x, r, h.key) + 4;
+        // "z c" is two keys: a pill each, as in menus.
+        for k in h.key.split(' ').filter(|k| !k.is_empty()) {
+            x = key_pill(c, t, x, r, k) + 2;
+        }
+        x += 2;
         let label = Rect::new(x, r.y + 1, r.right() - x, r.h - 1);
         x = text_in(c, t.f.small, label, h.label, t.c.muted) + 12;
     }
@@ -631,6 +635,8 @@ pub enum Trailing<'a> {
     Value(&'a str),
     ValueChevron(&'a str),
     Toggle(bool),
+    /// A word in the warning colour: "Enter again" on a row that asks first.
+    Alert(&'a str),
     /// A setting with a few values, changed with left and right.
     Choice(&'a str),
     /// A 0-100 level, changed with left and right: a short bar and a percent.
@@ -655,9 +661,100 @@ pub struct Row<'a> {
 /// calm.
 pub fn list_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool) {
     if selected {
-        c.round_rect(r, t.m.radius, t.c.surface);
-        c.round_rect(Rect::new(r.x, r.y + 4, 3, r.h - 8), 1, t.c.accent);
+        row_selection(c, t, r);
     }
+    row_body(c, t, r, row, selected, false);
+}
+
+fn row_selection(c: &mut Canvas, t: &Theme, r: Rect) {
+    c.round_rect(r, t.m.radius, t.c.surface);
+    c.round_rect(Rect::new(r.x, r.y + 4, 3, r.h - 8), 1, t.c.accent);
+}
+
+/// A row of an app menu: a list row with its keys in pills on the right,
+/// in a column `keys_w` wide so values line up. A `dim` row can't be used
+/// now.
+#[allow(clippy::too_many_arguments)]
+pub fn menu_row(
+    c: &mut Canvas,
+    t: &Theme,
+    r: Rect,
+    row: &Row,
+    keys: &str,
+    keys_w: i32,
+    selected: bool,
+    dim: bool,
+) {
+    if selected {
+        row_selection(c, t, r);
+    }
+    let right = r.right() - 8;
+    if !keys.is_empty() {
+        let w = pills_w(t, keys);
+        pills(c, t, right - w, r.y + (r.h - PILL_H) / 2, keys, dim);
+    }
+    let gap = if keys_w > 0 { keys_w + 6 } else { 0 };
+    let body = Rect::new(r.x, r.y, r.w - gap, r.h);
+    row_body(c, t, body, row, selected, dim);
+}
+
+/// The height of a key pill outside a bar.
+pub const PILL_H: i32 = 15;
+
+/// The width of `keys` as pills: one pill per space-separated key.
+pub fn pills_w(t: &Theme, keys: &str) -> i32 {
+    let mut w = 0;
+    for k in keys.split(' ').filter(|k| !k.is_empty()) {
+        if w > 0 {
+            w += 3;
+        }
+        w += pill_w(t, k);
+    }
+    w
+}
+
+fn pill_w(t: &Theme, key: &str) -> i32 {
+    (t.f.small_bold.measure(key) + 7).max(13)
+}
+
+/// Draws `keys` as pills from `x`, top at `y`. Returns the right edge.
+pub fn pills(c: &mut Canvas, t: &Theme, x: i32, y: i32, keys: &str, dim: bool) -> i32 {
+    let mut x = x;
+    let fg = if dim { t.c.muted } else { t.c.fg };
+    for k in keys.split(' ').filter(|k| !k.is_empty()) {
+        let pill = Rect::new(x, y, pill_w(t, k), PILL_H);
+        c.round_rect(pill, t.m.radius_small, t.c.border);
+        text_centre(c, t.f.small_bold, pill, k, fg);
+        x = pill.right() + 3;
+    }
+    x - 3
+}
+
+/// A line of a Keys screen: the keys in pills, what they do, and a value on
+/// the right. Labels start `keys_w` in, so they line up, unless the keys
+/// need more room.
+pub fn keys_line(
+    c: &mut Canvas,
+    t: &Theme,
+    r: Rect,
+    keys: &str,
+    keys_w: i32,
+    label: &str,
+    value: &str,
+) {
+    let x = r.x + 9;
+    let y = r.y + (r.h - PILL_H) / 2;
+    // Keys wider than the column push their label right, never under it.
+    let end = pills(c, t, x, y, keys, false);
+    let mut right = r.right() - 8;
+    if !value.is_empty() {
+        right = text_right(c, t.f.small, right, r, value, t.c.muted) - 8;
+    }
+    let lx = (x + keys_w).max(end) + 8;
+    text_in(c, t.f.small, Rect::new(lx, r.y, right - lx, r.h), label, t.c.fg);
+}
+
+fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: bool) {
     let mut x = r.x + 9;
     if let Some(name) = row.icon {
         let s = IconSize::Small as i32;
@@ -680,6 +777,9 @@ pub fn list_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool) {
         }
         Trailing::Toggle(on) => {
             right = toggle(c, t, right, r, on) - 8;
+        }
+        Trailing::Alert(v) => {
+            right = text_right(c, t.f.small_bold, right, r, v, t.c.warning) - 8;
         }
         Trailing::Choice(v) => {
             let arrow = if selected { t.c.accent } else { muted };
@@ -725,7 +825,11 @@ pub fn list_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool) {
         }
     }
     let f = if selected { t.f.body_bold } else { t.f.body };
-    let col = if selected { t.c.fg } else { soft(t) };
+    let col = match (dim, selected) {
+        (true, _) => muted,
+        (false, true) => t.c.fg,
+        (false, false) => soft(t),
+    };
     text_in(c, f, Rect::new(x, r.y, right - x, r.h), row.label, col);
 }
 

@@ -152,9 +152,146 @@ calls `stop` on every page, top first, and exits.
 | `Key::Ctrl(c)`, `Key::Alt(c)` | Ctrl or Alt with a letter or digit |
 | `Key::Other(code)` | Anything else, by Linux input code (`gh0st_app::codes`) |
 
+Fn+Esc and Fn+H never reach a page: they open the app menu (see Commands).
+
 The OS acts on the brightness, volume, mute and screenshot keys itself. They
 still reach the page as `Key::Other`, so a page that shows those values can
 read them again.
+
+### Raw keys
+
+A terminal needs every key as it is. A page whose `raw_keys` returns true gets
+each press, repeat and release in `Page::raw`, as a `RawKey` with its code, its
+text and Shift, Ctrl, Alt and Fn. Esc comes there too, not to `back`. Every
+key but Esc and the modifiers repeats. `RawKey::text` keeps the character
+under Ctrl and Alt, so Ctrl+[ can become ESC. Nothing is drawn after a raw key
+unless the page calls `cx.redraw()`.
+
+## Commands
+
+A page lists what the user can do once, in `commands`. The SDK builds four
+things from that list, so they never disagree:
+
+- **The app menu.** Fn+Esc or Fn+H opens it in every app. Rows come in the
+  order the page adds them, under the group headings it sets. The SDK adds
+  Keys and Close app last.
+- **The Keys screen.** Every command with keys, under the mode it works in,
+  then the keys that work everywhere. The menu's Keys row opens it, and so
+  does `cx.show_keys()`.
+- **The keys.** A command's keys run it while its mode is on. They also pick
+  its row while the menu is open.
+- **Hints.** `Bars::command_hints()` shows a hint bar of the live commands
+  that have a `hint`. It follows the page's mode by itself.
+
+Three kinds of command:
+
+| Kind | Menu row | Keys and Enter |
+|---|---|---|
+| `Command::action` | Label, keys on the right. A chevron with `.opens()` | Run it. From the menu, the menu closes first |
+| `Command::toggle` | A switch | Flip it in place: the menu stays open |
+| `Command::choice` | `‹ value ›` | Left and Right step it in place. Enter steps forward |
+
+The page hears each one in `command(id, step, cx)`. `step` is `Run` for an
+action, `Prev` or `Next` for a toggle or a choice, and `Nth(n)` for a key
+from a range such as `1-9`. A toggle flips on any step.
+
+```rust
+use gh0st_app::prelude::*;
+
+const SIZE: u32 = 1;
+const NIGHT: u32 = 2;
+const FIND: u32 = 3;
+const DOWN: u32 = 4;
+
+const SIZES: &[&str] = &["Small", "Medium", "Large"];
+
+struct Reader {
+    size: usize,
+    night: bool,
+}
+
+impl Page for Reader {
+    fn title(&self) -> &str {
+        "Reader"
+    }
+
+    fn bars(&self) -> Bars {
+        Bars::top().command_hints()
+    }
+
+    fn commands(&self, c: &mut Commands) {
+        c.group("View");
+        // One row, two keys: r steps back, t forward.
+        c.add(Command::choice(SIZE, "Text size", SIZES[self.size]).keys("r t"));
+        c.add(Command::toggle(NIGHT, "Night", self.night).keys("b"));
+        c.add(Command::action(FIND, "Find").keys("n").opens());
+        // Keys only: on the Keys screen and the hint bar, not in the menu.
+        c.add(
+            Command::action(DOWN, "Scroll down")
+                .keys("x")
+                .keys_only()
+                .repeats()
+                .hint("scroll"),
+        );
+    }
+
+    fn command(&mut self, id: u32, step: Step, _: &mut Cx) {
+        match (id, step) {
+            (SIZE, Step::Prev) => self.size = self.size.saturating_sub(1),
+            (SIZE, _) => self.size = (self.size + 1).min(SIZES.len() - 1),
+            (NIGHT, _) => self.night = !self.night,
+            _ => {}
+        }
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.text(SIZES[self.size]);
+    }
+}
+```
+
+### Keys
+
+`keys` takes the keys as the keyboard shows them, split by spaces:
+
+| Spec | Key |
+|---|---|
+| `n` | N, without Shift |
+| `G` | Shift+G |
+| `f x z c` | F, X, Z and C, or Fn with them (the arrows) |
+| `Esc`, `Enter`, `Tab`, `Space`, `Bksp` | The key of that name |
+| `PgUp`, `PgDn`, `Up`, `Del` ... | Keys of the Fn layer. They show as the device's keys: `Fn+L`, `Fn+M`, `Fn+F`, `Fn+Bksp` |
+| `Shift+PgUp`, `Ctrl+s`, `Alt+x` | With modifiers |
+| `1-9` | Digits 1 to 9: `Step::Nth(0)` to `Nth(8)` |
+
+A choice with two keys steps back on the first and forward on the second.
+
+- **Modes.** `.mode("Scroll mode", on)` names the mode a command's keys work
+  in, for the Keys screen, and says whether it is on now. Its keys do
+  nothing while it is off, but its menu row and the menu's letter for it
+  still work.
+- **Typing.** While `typing()` is true, letters, digits and symbols type, so
+  commands bound to them don't run. Named keys still do.
+- **Repeat.** A command runs once per press. With `.repeats()`, a held key
+  runs it again and again. Once a press has run a command, that key's
+  repeats and release never reach the page, even when the command changed
+  the mode.
+- **Asking first.** With `.confirm()`, a menu row needs Enter twice. Close app
+  always does.
+- **Mode switches.** A toggle with `.closes()` closes the menu once flipped,
+  for a mode the user wants to use at once.
+- **Hints** show a command's first key, or both keys of a choice's pair.
+- **Fn.** Fn with Space, Enter, Tab, R, T, Y, G or V arrives as that key with
+  Fn held: `"Fn+Space"`, `"Fn+r"`. The Fn layer changes every other key, and
+  no program reads Fn, so these are free for an app's own commands even
+  while it types.
+- **Disabled.** `.enabled(false)` dims the row and its keys do nothing.
+- **Raw keys.** Commands come first for raw-key pages too: `raw` gets only
+  the keys no live command took.
+- **Ids.** Keep yours below `0xffff_fff0`. The SDK's rows use the top ones.
+
+Fn+Esc and Fn+H never reach a page. The rules for every app's menu are in
+`apps.md`, The app menu.
 
 ## Soft keys
 
@@ -385,6 +522,72 @@ impl Page for Volume {
 `cx.after(ms)` fires `timer` once. `cx.every(ms)` fires it until
 `cx.cancel(timer)`. Each firing wakes the CPU, so keep timers for things on
 screen. Closing a page stops its timers and kills its jobs.
+
+### Your own fds and children
+
+A job hands out whole lines and closes stdin. When an app needs more, a PTY
+or a socket, it joins its own fd to the loop:
+
+- `cx.watch(fd)` returns a `Watch`. `Page::ready` runs when the fd is
+  readable or its other end closed. Read until it would block. Make the fd
+  non-blocking.
+- `cx.write(watch, bytes)` writes without blocking. What doesn't fit waits in
+  order and goes out when the fd has room.
+- `cx.unwatch(watch)` takes the fd out. The page still owns it and closes it.
+- `cx.adopt(pid)` takes a child the page started itself. Its exit comes to
+  `Page::exited`. The SDK reaps every child, so never call `waitpid`.
+
+`ready` and `exited` draw only when the page calls `cx.redraw()`, so output
+that changes nothing on screen costs no frame. A page that changes faster
+than the panel shows returns its least gap from `Page::frame_ms`; the SDK
+then draws the latest state at most that often.
+
+```rust,no_run
+use gh0st_app::prelude::*;
+use std::os::fd::RawFd;
+
+struct Tail {
+    fd: RawFd,
+    lines: usize,
+}
+
+impl Page for Tail {
+    fn title(&self) -> &str {
+        "Tail"
+    }
+
+    fn start(&mut self, cx: &mut Cx) {
+        cx.watch(self.fd);
+    }
+
+    fn ready(&mut self, _: Watch, cx: &mut Cx) {
+        let mut buf = [0u8; 4096];
+        // SAFETY: reads into a stack buffer of its own length.
+        let n = unsafe { libc::read(self.fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if n > 0 {
+            self.lines += buf[..n as usize].iter().filter(|&&b| b == b'\n').count();
+            cx.redraw();
+        }
+    }
+
+    fn frame_ms(&self) -> u64 {
+        20
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.big(&self.lines.to_string());
+    }
+}
+```
+
+### Running behind
+
+When the user allows it (Settings > Apps, or `X-Gh0st-Background=true` in the
+`.desktop` file), an app keeps running while another is in front. The shell
+tells the SDK over the shell link, and the SDK stops drawing and reading keys
+until the app is back. Timers, jobs and watched fds go on. `cx.in_front()`
+says which. `cx.notify(text)` reaches the user either way: a toast in the
+app, or one the shell draws over whatever is in front.
 
 ## Settings and files
 

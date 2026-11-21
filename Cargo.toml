@@ -7,6 +7,7 @@ members = [
     "crates/gh0st-shell",
     "crates/gh0st-app",
     "crates/gh0st-settings",
+    "crates/gh0st-term",
 ]
 
 [workspace.package]

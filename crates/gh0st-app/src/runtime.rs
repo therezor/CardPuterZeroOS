@@ -3,9 +3,12 @@
 
 use crate::bars::{Bars, Bottom};
 use crate::key::{self, Key};
-use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer};
+use crate::command::Commands;
+use crate::menu::{Menu, Out, Sheet, SheetOut};
+use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer, Watch};
 use crate::ui::Ui;
-use gh0st_core::keys::Keyboard;
+use gh0st_core::keys::{Keyboard, State};
+use gh0st_core::keys::code as keys_code;
 use gh0st_core::{battery, child, job, rt, status};
 use gh0st_ui::widgets::{self, Battery, Hint, Net, SoftKey as Slot, Status};
 use gh0st_ui::{Canvas, Rect, Theme, theme};
@@ -27,6 +30,14 @@ struct JobProc {
     job: job::Job,
     /// Bytes of output already handed out as lines.
     sent: usize,
+}
+
+struct WatchEntry {
+    id: u64,
+    owner: usize,
+    fd: RawFd,
+    /// Bytes waiting for room in the fd.
+    out: Vec<u8>,
 }
 
 /// What the self-drawn top bar shows. Read at start and on the minute.
@@ -81,6 +92,12 @@ impl Bar {
     }
 }
 
+enum Overlay {
+    None,
+    Menu(Menu),
+    Keys(Sheet),
+}
+
 pub(crate) struct Runtime {
     stack: Vec<Box<dyn Page>>,
     pub s: Shared,
@@ -90,6 +107,23 @@ pub(crate) struct Runtime {
     jobs: Vec<JobProc>,
     /// Jobs that couldn't start: id and owner, told on the next tick.
     pending: Vec<(u64, usize)>,
+    watches: Vec<WatchEntry>,
+    /// Children pages started themselves: pid and owner.
+    adopted: Vec<(i32, usize)>,
+    /// When the last frame was drawn, for [`Page::frame_ms`].
+    pub last_frame: u64,
+    /// The shell has another app or itself in front: draw nothing, and
+    /// keep no deadline that only the screen needs.
+    pub paused: bool,
+    /// The shell link, when the shell started the app.
+    pub link: Option<gh0st_core::link::Link>,
+    /// The app menu or the Keys screen, while one is open.
+    overlay: Overlay,
+    /// Keys whose press the menu or a command took: their repeats and
+    /// releases don't reach the page.
+    taken: Vec<u16>,
+    /// The menu row last picked, and the depth of the page it was on.
+    menu_last: Option<(usize, u32)>,
     toast: Option<(String, u64)>,
     bar: Bar,
     palette: String,
@@ -115,6 +149,14 @@ impl Runtime {
             timers: Vec::new(),
             jobs: Vec::new(),
             pending: Vec::new(),
+            watches: Vec::new(),
+            adopted: Vec::new(),
+            last_frame: 0,
+            paused: false,
+            link: None,
+            overlay: Overlay::None,
+            taken: Vec::new(),
+            menu_last: None,
             toast: None,
             bar: Bar::new(),
             palette,
@@ -139,11 +181,18 @@ impl Runtime {
 
     /// Runs `f` on page `i` with a fresh `Cx`, then carries out what it asked.
     fn call(&mut self, i: usize, now: u64, f: impl FnOnce(&mut dyn Page, &mut Cx)) {
+        if self.stack.get(i).is_some() {
+            self.dirty = true;
+        }
+        self.call_quiet(i, now, f);
+    }
+
+    /// As `call`, but draws only if the page asks.
+    fn call_quiet(&mut self, i: usize, now: u64, f: impl FnOnce(&mut dyn Page, &mut Cx)) {
         let Some(page) = self.stack.get_mut(i) else {
             return;
         };
         f(page.as_mut(), &mut Cx { s: &mut self.s });
-        self.dirty = true;
         self.apply(i, now);
     }
 
@@ -180,6 +229,32 @@ impl Runtime {
                         i.fill(0);
                     }
                 }
+                Request::Watch { id, fd } => self.watches.push(WatchEntry {
+                    id,
+                    owner,
+                    fd,
+                    out: Vec::new(),
+                }),
+                Request::Unwatch(id) => self.watches.retain(|w| w.id != id),
+                Request::Write { id, bytes } => {
+                    if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
+                        w.out.extend_from_slice(&bytes);
+                        drain(w);
+                    }
+                }
+                Request::Adopt(pid) => self.adopted.push((pid, owner)),
+                Request::Redraw => self.dirty = true,
+                Request::Notify(text) => match &self.link {
+                    Some(l) if self.paused => {
+                        l.send(&["toast", &text]);
+                    }
+                    _ => self.toast = Some((text, now + TOAST_MS)),
+                },
+                Request::ShowKeys => {
+                    let cmds = self.commands_of(owner);
+                    self.overlay = Overlay::Keys(Sheet::new(cmds.iter(), None));
+                    self.dirty = true;
+                }
             }
         }
         self.retheme();
@@ -196,6 +271,8 @@ impl Runtime {
     }
 
     fn pop(&mut self, now: u64) {
+        self.overlay = Overlay::None;
+        self.menu_last = None;
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
@@ -219,6 +296,8 @@ impl Runtime {
             unsafe { libc::kill(j.job.pid, libc::SIGTERM) };
         }
         self.jobs.retain(|j| j.owner < i);
+        self.watches.retain(|w| w.owner < i);
+        self.adopted.retain(|a| a.1 < i);
     }
 
     /// Closes every page, top first. SIGTERM and SIGINT land here.
@@ -236,6 +315,8 @@ impl Runtime {
 
     /// One evdev key event.
     pub fn raw_key(&mut self, code: u16, value: i32, now: u64) {
+        let raw = self.stack.last().is_some_and(|p| p.raw_keys());
+        self.kb.set_repeat_all(raw);
         if let Some(k) = self.kb.event(code, value, now) {
             self.key(&k, now);
         }
@@ -252,6 +333,57 @@ impl Runtime {
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
+        let taken = self.taken.iter().position(|&c| c == raw.code);
+        if let (State::Release, Some(i)) = (raw.state, taken) {
+            self.taken.swap_remove(i);
+            return;
+        }
+        // Fn+Esc and Help (Fn+H) are the menu key in every app, raw-key
+        // pages too. Plain Esc stays the page's.
+        let menu_key = raw.code == keys_code::HELP || (raw.code == keys_code::ESC && raw.fn_);
+        if menu_key {
+            if raw.state == State::Press {
+                self.take(raw.code);
+                if let Overlay::None = self.overlay {
+                    let select = self.menu_last.filter(|l| l.0 == top).map(|l| l.1);
+                    self.overlay = Overlay::Menu(Menu::new(top, self.commands_of(top), select));
+                } else {
+                    self.close_overlay();
+                }
+                self.dirty = true;
+            }
+            return;
+        }
+        if !matches!(self.overlay, Overlay::None) {
+            if raw.state == State::Press {
+                self.take(raw.code);
+            }
+            self.overlay_key(raw, now);
+            return;
+        }
+        if raw.state != State::Release {
+            let typing = self.stack[top].typing();
+            let held = self.taken.contains(&raw.code);
+            match self.commands_of(top).lookup(raw, typing) {
+                Some(hit) => {
+                    if raw.state == State::Press {
+                        self.take(raw.code);
+                    }
+                    if raw.state == State::Press || hit.repeats {
+                        self.call(top, now, |p, cx| p.command(hit.id, hit.step, cx));
+                    }
+                    return;
+                }
+                // Held from a command that has gone, as one that changed
+                // the mode: its repeats mean nothing now.
+                None if held => return,
+                None => {}
+            }
+        }
+        if self.stack[top].raw_keys() {
+            self.call_quiet(top, now, |p, cx| p.raw(raw, cx));
+            return;
+        }
         let typing = self.stack[top].typing();
         let Some(k) = key::map(raw, typing, self.top_bars().soft_slots()) else {
             return;
@@ -266,6 +398,90 @@ impl Runtime {
             self.dirty = true;
         } else {
             self.call(top, now, |p, cx| p.key(k, cx));
+        }
+    }
+
+    fn take(&mut self, code: u16) {
+        // Releases can go missing (a pause drops them): keep this small.
+        if self.taken.len() >= 8 {
+            self.taken.remove(0);
+        }
+        self.taken.push(code);
+    }
+
+    fn commands_of(&self, i: usize) -> Commands {
+        let mut c = Commands::new();
+        if let Some(p) = self.stack.get(i) {
+            p.commands(&mut c);
+        }
+        c
+    }
+
+    fn close_overlay(&mut self) {
+        let overlay = std::mem::replace(&mut self.overlay, Overlay::None);
+        let menu = match overlay {
+            Overlay::Menu(m) => Some(m),
+            Overlay::Keys(s) => s.menu,
+            Overlay::None => None,
+        };
+        // Back on a setting just changed, to change it again; anywhere else
+        // the menu opens at the top, on the most used row.
+        self.menu_last = menu.and_then(|m| m.changed().map(|id| (m.owner, id)));
+        self.dirty = true;
+    }
+
+    fn overlay_key(&mut self, raw: &gh0st_core::keys::Key, now: u64) {
+        if raw.state != State::Release {
+            self.dirty = true;
+        }
+        match &mut self.overlay {
+            Overlay::None => {}
+            Overlay::Keys(s) => {
+                if s.key(raw) == SheetOut::Back {
+                    let menu = match std::mem::replace(&mut self.overlay, Overlay::None) {
+                        Overlay::Keys(s) => s.menu,
+                        _ => None,
+                    };
+                    if let Some(m) = menu {
+                        self.overlay = Overlay::Menu(m);
+                    }
+                }
+            }
+            Overlay::Menu(m) => {
+                let owner = m.owner;
+                match m.key(raw) {
+                    Out::Nothing => {}
+                    Out::Close => self.close_overlay(),
+                    Out::Quit => {
+                        self.close_overlay();
+                        self.quit_all();
+                    }
+                    Out::Keys => {
+                        if let Overlay::Menu(m) = std::mem::replace(&mut self.overlay, Overlay::None) {
+                            let mut sheet = Sheet::new(m.page_commands(), None);
+                            sheet.menu = Some(m);
+                            self.overlay = Overlay::Keys(sheet);
+                        }
+                    }
+                    Out::Run { id, step, close } => {
+                        if close {
+                            self.close_overlay();
+                        }
+                        let depth = self.stack.len();
+                        self.call(owner, now, |p, cx| p.command(id, step, cx));
+                        if !close {
+                            let fresh = self.commands_of(owner);
+                            match &mut self.overlay {
+                                // The command opened or closed a page: the
+                                // menu belonged to the old one.
+                                _ if self.stack.len() != depth => self.close_overlay(),
+                                Overlay::Menu(m) => m.refresh(fresh),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -292,6 +508,65 @@ impl Runtime {
             .filter(|j| j.job.fd() >= 0)
             .map(|j| (j.id, j.job.fd()))
             .collect()
+    }
+
+    /// Watched fds for poll: id, fd, and whether output waits for room.
+    pub fn watch_fds(&self) -> Vec<(u64, RawFd, bool)> {
+        self.watches
+            .iter()
+            .map(|w| (w.id, w.fd, !w.out.is_empty()))
+            .collect()
+    }
+
+    /// A watched fd is readable or closed.
+    pub fn ready(&mut self, id: u64, now: u64) {
+        if let Some(owner) = self.watches.iter().find(|w| w.id == id).map(|w| w.owner) {
+            self.call_quiet(owner, now, |p, cx| p.ready(Watch(id), cx));
+        }
+    }
+
+    /// A watched fd has room: send what waits.
+    pub fn writable(&mut self, id: u64) {
+        if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
+            drain(w);
+        }
+    }
+
+    /// True when a frame is wanted and the page's least gap since the last
+    /// one has passed.
+    pub fn frame_due(&self, now: u64) -> bool {
+        self.dirty && !self.quit && !self.paused && now >= self.frame_at()
+    }
+
+    /// Another app or the shell is in front: no keys, no frames.
+    pub fn pause_input(&mut self, now: u64) {
+        self.overlay = Overlay::None;
+        self.taken.clear();
+        self.kb.reset();
+        self.paused = true;
+        self.s.paused = true;
+        self.tell_front(false, now);
+    }
+
+    fn tell_front(&mut self, front: bool, now: u64) {
+        for i in 0..self.stack.len() {
+            self.call_quiet(i, now, |p, cx| p.front(front, cx));
+        }
+    }
+
+    /// Back in front after a pause: keys held before mean nothing now, and
+    /// the whole screen is drawn again.
+    pub fn resume_input(&mut self, now: u64) {
+        self.kb.reset();
+        self.paused = false;
+        self.s.paused = false;
+        self.dirty = true;
+        self.tell_front(true, now);
+    }
+
+    fn frame_at(&self) -> u64 {
+        let gap = self.stack.last().map_or(0, |p| p.frame_ms());
+        self.last_frame + gap
     }
 
     /// Reads what job `id` printed and hands out whole lines.
@@ -326,6 +601,10 @@ impl Runtime {
         for (pid, status) in child::reap() {
             if let Some(j) = self.jobs.iter_mut().find(|j| j.job.pid == pid) {
                 j.job.exited(status);
+            } else if let Some(i) = self.adopted.iter().position(|a| a.0 == pid) {
+                let (_, owner) = self.adopted.remove(i);
+                let code = libc::WIFEXITED(status).then(|| libc::WEXITSTATUS(status));
+                self.call_quiet(owner, now, |p, cx| p.exited(pid, code, cx));
             }
         }
         let mut done = Vec::new();
@@ -351,12 +630,17 @@ impl Runtime {
     /// The next time something is due: a timer, a key repeat, the toast's
     /// end, or the clock's minute when the top bar shows.
     pub fn next_at(&self) -> Option<u64> {
+        if self.paused {
+            let pending = (!self.pending.is_empty()).then_some(0);
+            return rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([pending]));
+        }
         let clock = self.top_bars().top.then_some(self.bar.clock_at);
         rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([
             self.kb.repeat_at(),
             self.toast.as_ref().map(|t| t.1),
             clock,
             (!self.pending.is_empty()).then_some(0),
+            self.dirty.then(|| self.frame_at()),
         ]))
     }
 
@@ -380,7 +664,7 @@ impl Runtime {
             self.toast = None;
             self.dirty = true;
         }
-        if now >= self.bar.clock_at && self.top_bars().top {
+        if !self.paused && now >= self.bar.clock_at && self.top_bars().top {
             let h24 = self.h24();
             self.bar.refresh(h24);
             self.dirty = true;
@@ -400,6 +684,20 @@ impl Runtime {
             let mut ui = Ui::new(&mut self.canvas, &t, area);
             page.draw(&mut ui);
         }
+        // Above the hint bar the menu and the Keys screen draw.
+        let panel_h = (t.m.height - t.m.hint_h - area.y).min(area.h);
+        let panel = Rect::new(area.x, area.y, area.w, panel_h);
+        let overlay_hints: Option<Vec<(&str, &str)>> = match &self.overlay {
+            Overlay::None => None,
+            Overlay::Menu(m) => {
+                m.draw(&mut self.canvas, &t, panel);
+                Some(m.hints().to_vec())
+            }
+            Overlay::Keys(s) => {
+                s.draw(&mut self.canvas, &t, panel);
+                Some(s.hints().to_vec())
+            }
+        };
         let full = self.canvas.bounds();
         self.canvas.set_clip(full);
         let c = &mut self.canvas;
@@ -416,19 +714,33 @@ impl Runtime {
             };
             widgets::status_bar(c, &t, &s);
         }
-        match &bars.bottom {
-            Bottom::None => {}
-            Bottom::Hints(h) => {
-                let hints: Vec<Hint> = h.iter().map(|(key, label)| Hint { key, label }).collect();
-                widgets::hint_bar(c, &t, &hints, None);
-            }
-            Bottom::Soft(keys) => {
-                let slots: [Slot; 5] = std::array::from_fn(|i| Slot {
-                    icon: &keys[i].icon,
-                    label: &keys[i].label,
-                    lit: keys[i].lit,
-                });
-                widgets::softkey_bar(c, &t, &slots);
+        if let Some(h) = &overlay_hints {
+            let hints: Vec<Hint> = h.iter().map(|&(key, label)| Hint { key, label }).collect();
+            widgets::hint_bar(c, &t, &hints, None);
+        } else {
+            match &bars.bottom {
+                Bottom::None => {}
+                Bottom::Hints(h) => {
+                    let hints: Vec<Hint> =
+                        h.iter().map(|(key, label)| Hint { key, label }).collect();
+                    widgets::hint_bar(c, &t, &hints, None);
+                }
+                Bottom::Commands => {
+                    let mut cmds = Commands::new();
+                    page.commands(&mut cmds);
+                    let h = cmds.hints();
+                    let hints: Vec<Hint> =
+                        h.iter().map(|(key, label)| Hint { key, label }).collect();
+                    widgets::hint_bar(c, &t, &hints, None);
+                }
+                Bottom::Soft(keys) => {
+                    let slots: [Slot; 5] = std::array::from_fn(|i| Slot {
+                        icon: &keys[i].icon,
+                        label: &keys[i].label,
+                        lit: keys[i].lit,
+                    });
+                    widgets::softkey_bar(c, &t, &slots);
+                }
             }
         }
         if let Some((text, _)) = &self.toast {
@@ -442,6 +754,28 @@ impl Runtime {
             c.fill(r, t.c.surface);
             c.hline(0, r.w, r.y, t.c.accent);
             widgets::text_centre(c, t.f.small_bold, r, text, t.c.fg);
+        }
+    }
+}
+
+/// Writes queued bytes until the fd would block. A broken fd drops them:
+/// its reader is gone.
+fn drain(w: &mut WatchEntry) {
+    while !w.out.is_empty() {
+        // SAFETY: writes from a live buffer to an fd the page gave us.
+        let n = unsafe { libc::write(w.fd, w.out.as_ptr().cast(), w.out.len()) };
+        if n > 0 {
+            w.out.drain(..n as usize);
+            continue;
+        }
+        let e = std::io::Error::last_os_error();
+        match e.raw_os_error() {
+            Some(libc::EINTR) => continue,
+            Some(libc::EAGAIN) => return,
+            _ => {
+                w.out.clear();
+                return;
+            }
         }
     }
 }

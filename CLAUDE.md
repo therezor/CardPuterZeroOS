@@ -1,9 +1,8 @@
 # CardPuterZeroOS
 
 A lean OS for the M5Stack CardputerZero. This workspace is **Gh0stdeck**, its Rust
-shell: the launcher and Settings, one binary called `gh0st`. They replace the
-stock C++/LVGL APPLaunch and keep its app contract. The terminal is a
-separate project, installed as an app. The distro side is in
+shell: the launcher, plus Settings and the terminal as apps. They replace the
+stock C++/LVGL APPLaunch and keep its app contract. The distro side is in
 `docs/distro-plan.md`.
 
 ## Writing style
@@ -40,8 +39,11 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/gh0st-settings`: Settings, an SDK app with its own binary. The page
   model is in `src/model`, the controller in `src/app.rs`.
   `examples/mockups.rs` renders every page into `mockups/settings`.
+- `crates/gh0st-term`: the terminal, an SDK app with its own binary. `src/vt`
+  is the emulator on `vte`; `docs/terminal.md` is its guide.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
-- `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC), our fox.
+- `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
+  kept as published), Lucide icons (ISC), our mark.
 - `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
   home is an app built to it: Settings, the terminal.
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
@@ -69,8 +71,9 @@ battery in `/sys/class/power_supply`. Details and sources in
   shell grabs only while it is in front with apps paused.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
   apps too. Keep unknown keys. Our keys use a `gh0st.` prefix.
-- New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`. Build only:
-  `resvg`.
+- New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`, and in the
+  terminal `vte` (the DEC parser, without std so its OSC buffer is bounded) and
+  `unicode-width` (wcwidth). Build only: `resvg`.
 
 ## Build and test
 

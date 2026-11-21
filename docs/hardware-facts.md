@@ -15,7 +15,17 @@ Measured on the device unless marked.
   not `KEY_FN`. The kernel driver applies their layers itself: Fn+F/Z/X/C
   arrive as Up/Left/Down/Right, Fn+K as Home (102), Fn+H as Help (138),
   Fn+G as SysRq, Fn+A/S/D as
-  mute and volume, Fn+Y/U as brightness. Ctrl 29, Alt 56.
+  mute and volume, Fn+Y/U as brightness. Ctrl 29, Alt 56. The device tree
+  below says Fn+J for SysRq and Fn+U/I for brightness: press them to settle it.
+- The driver's layers are in the device tree (`tca8418@34`: `linux,keymap`,
+  `keymap1` for Sym, `keymap2` for Fn). Fn changes every key but R, T, Y, G,
+  V, Space, Enter, Tab, Esc and the modifiers: Fn+Q/W/E media keys,
+  Fn+U/I brightness, Fn+J SysRq, Fn+L/M PgUp/PgDn, Fn+N End, Fn+B Insert,
+  Fn+1..0 F1 to F10, Fn+O/P F11/F12, Fn+Bksp Delete. Read 2026-11-21.
+- Fn+Esc keeps the Esc code: the reader sees Fn (389) down, Esc down, Esc
+  up, Fn up. A tapped Fn gives the same sequence as a held one: the driver
+  holds a one-shot Fn down until the next key comes up. Plain Esc comes alone.
+  Measured 2026-11-21 with a raw evdev read.
 - The only side button is power/boot. It sends no key event.
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
   400 MHz core clock divides to 50 MHz, so a full frame takes about 17.4 ms.

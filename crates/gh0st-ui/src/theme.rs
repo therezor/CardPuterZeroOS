@@ -21,6 +21,9 @@ pub struct Palette {
     pub border: Color,
     /// Badge tints for apps that are not ours, so the grid is not one colour.
     pub tints: [Color; 6],
+    /// The terminal's 16 ANSI colours: black, red, green, yellow, blue,
+    /// magenta, cyan, white, then the bright eight.
+    pub ansi: [Color; 16],
 }
 
 #[derive(Clone, Copy)]
@@ -55,6 +58,12 @@ pub struct Metrics {
     pub row_h: i32,
     /// A readout line on Network and About.
     pub line_h: i32,
+    /// An app menu row, and a section heading in it.
+    pub menu_row_h: i32,
+    pub menu_head_h: i32,
+    /// A line of the Keys screen, and the widest its key column grows.
+    pub keys_line_h: i32,
+    pub keys_col_max: i32,
     /// Top-bar slots: the mark, then one per open app.
     pub slot_w: i32,
     pub slot_h: i32,
@@ -108,6 +117,24 @@ pub const MINT: Palette = Palette {
         hex("#b48ef0"),
         hex("#f0a35e"),
     ],
+    ansi: [
+        hex("#1f2b26"),
+        hex("#ef6b73"),
+        hex("#3ddc97"),
+        hex("#e8c468"),
+        hex("#5fa8e8"),
+        hex("#b48ef0"),
+        hex("#5fd0e8"),
+        hex("#c8d8cf"),
+        hex("#4f665a"),
+        hex("#ff8f96"),
+        hex("#72f0b8"),
+        hex("#f5d88a"),
+        hex("#8cc4f5"),
+        hex("#cdb0f7"),
+        hex("#8ce2f2"),
+        hex("#f2fbf6"),
+    ],
 };
 
 pub const NORD: Palette = Palette {
@@ -130,6 +157,24 @@ pub const NORD: Palette = Palette {
         hex("#b48ead"),
         hex("#d08770"),
     ],
+    ansi: [
+        hex("#3b4252"),
+        hex("#bf616a"),
+        hex("#a3be8c"),
+        hex("#ebcb8b"),
+        hex("#81a1c1"),
+        hex("#b48ead"),
+        hex("#88c0d0"),
+        hex("#e5e9f0"),
+        hex("#7b88a1"),
+        hex("#d08770"),
+        hex("#b9d2a2"),
+        hex("#f0d9a8"),
+        hex("#9cb7d3"),
+        hex("#c7a5c0"),
+        hex("#8fbcbb"),
+        hex("#eceff4"),
+    ],
 };
 
 pub const PAPER: Palette = Palette {
@@ -151,6 +196,24 @@ pub const PAPER: Palette = Palette {
         hex("#b3363f"),
         hex("#6b4fa0"),
         hex("#b0582a"),
+    ],
+    ansi: [
+        hex("#1f2421"),
+        hex("#b3363f"),
+        hex("#1f7a55"),
+        hex("#8a5f00"),
+        hex("#1d5f9a"),
+        hex("#6b4fa0"),
+        hex("#1d6f8a"),
+        hex("#8f8a7f"),
+        hex("#5e665f"),
+        hex("#d0454f"),
+        hex("#2a9a6b"),
+        hex("#a87400"),
+        hex("#2b74b8"),
+        hex("#8463bd"),
+        hex("#2a8aa8"),
+        hex("#6f6a60"),
     ],
 };
 
@@ -186,6 +249,10 @@ pub const CARDPUTER: Metrics = Metrics {
     app_row_h: 33,
     row_h: 26,
     line_h: 15,
+    menu_row_h: 22,
+    menu_head_h: 15,
+    keys_line_h: 17,
+    keys_col_max: 92,
     slot_w: 14,
     slot_h: 14,
     slot_gap: 4,
@@ -193,6 +260,36 @@ pub const CARDPUTER: Metrics = Metrics {
     cards: 3,
     softkey_x: [49, 105, 161, 217, 273],
 };
+
+/// How far dim terminal text fades toward its background, of 255.
+pub const TERM_DIM: u8 = 140;
+/// The terminal's underline and bar cursors, and its scroll mark, in px.
+pub const TERM_CURSOR_W: i32 = 2;
+pub const TERM_MARK_W: i32 = 2;
+
+/// A terminal zoom level: a face and its bold, if baked. Without one the
+/// terminal draws bold by striking the glyph twice.
+#[derive(Clone, Copy)]
+pub struct TermFace {
+    pub regular: Font,
+    pub bold: Option<Font>,
+}
+
+const fn term_face(regular: Font, bold: Option<Font>) -> TermFace {
+    TermFace { regular, bold }
+}
+
+/// Terminus, the terminal's face. A bitmap face, so crisp at every size:
+/// anti-aliased faces blurred on the panel, as nothing hints them. Cells
+/// 6x12, 8x14, 8x16, 10x18, 10x20.
+pub const TERM_TERMINUS: &[TermFace] = &[
+    term_face(&font::TERMINUS_12, Some(&font::TERMINUS_12_BOLD)),
+    term_face(&font::TERMINUS_14, Some(&font::TERMINUS_14_BOLD)),
+    term_face(&font::TERMINUS_16, Some(&font::TERMINUS_16_BOLD)),
+    term_face(&font::TERMINUS_18, Some(&font::TERMINUS_18_BOLD)),
+    term_face(&font::TERMINUS_20, Some(&font::TERMINUS_20_BOLD)),
+];
+
 
 pub const FONTS: Fonts = Fonts {
     small: &font::SANS_13,
@@ -237,6 +334,10 @@ mod tests {
                 "{} accent text",
                 p.name
             );
+            // Black is a background colour in the terminal; the rest is text.
+            for (i, &c) in p.ansi.iter().enumerate().filter(|&(i, _)| i != 0) {
+                assert!(contrast(c, p.bg) >= 3.0, "{} ansi {i}", p.name);
+            }
         }
     }
 }

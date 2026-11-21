@@ -214,7 +214,7 @@ impl Settings {
                         .to_string(),
                     background: config
                         .get_bool(&apps::app_key(&a.file, "background"))
-                        .unwrap_or(false),
+                        .unwrap_or(a.entry.background),
                     pinned: pins.contains(&a.file),
                     file: a.file,
                     name: a.entry.name,
