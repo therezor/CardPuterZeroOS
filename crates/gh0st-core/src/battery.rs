@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 
 pub const SHUTDOWN_DELAY_MS: u64 = 15_000;
 
+/// How often a lit bar re-reads the battery. The gauge has no interrupt and
+/// the kernel polls it every 6 minutes, so a charger change only shows when
+/// someone reads `status`. A read fetches the current from the chip.
+pub const POLL_MS: u64 = 2_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reading {
     pub percent: u8,

@@ -44,6 +44,7 @@ impl Driver {
             std::process::id()
         ));
         let mut rt = Runtime::new(Box::new(page), Some(config));
+        rt.off_device();
         rt.start(0);
         Driver { rt, now: 0 }
     }

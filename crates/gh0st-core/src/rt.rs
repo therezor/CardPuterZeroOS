@@ -173,7 +173,8 @@ pub fn local_hms() -> (u32, u32, u32) {
 }
 
 /// "14:32", or "2:32" on a 12-hour clock, and the monotonic deadline of the
-/// next minute change. The clock is the only timer an idle home screen keeps.
+/// next minute change. With the battery read, the only timers a lit, idle home
+/// screen keeps.
 pub fn clock_text(h24: bool) -> (String, u64) {
     let (h, m, s) = local_hms();
     (

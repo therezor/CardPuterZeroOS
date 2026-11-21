@@ -1,8 +1,9 @@
 //! The shell process. It owns the panel and the keyboard while no app is in
 //! front, and steps aside while one is: it draws nothing then but the ESC
 //! hint, toasts and the battery countdown, laid over the app. Apps sent to
-//! the background are paused. One thread, one `poll`. While idle the only
-//! timer is the clock's minute.
+//! the background are paused. One thread, one `poll`. While idle with the
+//! screen on, the clock ticks each minute and the battery is read every 2 s.
+//! Dark, neither runs.
 
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::overlay::Overlay;
@@ -216,6 +217,8 @@ struct Shell {
     bluetooth: bool,
     clock: String,
     clock_at: u64,
+    /// The next battery read while the screen is on.
+    battery_at: u64,
     screen: Screen,
     dirty: bool,
     toast: Option<(String, u64)>,
@@ -331,6 +334,7 @@ impl Shell {
             bluetooth: false,
             clock: "--:--".into(),
             clock_at: 0,
+            battery_at: 0,
             screen: Screen::Home,
             dirty: true,
             toast: None,
@@ -490,6 +494,17 @@ impl Shell {
         self.dirty = true;
     }
 
+    /// The battery alone, on `POLL_MS`. A frame only if it changed.
+    fn poll_battery(&mut self, now: u64) {
+        self.battery_at = now + battery::POLL_MS;
+        let r = self.battery_dir.as_deref().and_then(battery::sample);
+        if r != self.battery {
+            self.battery = r;
+            self.low.update(r, now);
+            self.dirty = true;
+        }
+    }
+
     fn app_front(&self) -> bool {
         self.tasks.front().is_some()
     }
@@ -509,6 +524,7 @@ impl Shell {
             let shell = !app && self.screen != Screen::Off;
             let deadline = rt::earliest([
                 shell.then_some(self.clock_at),
+                (shell && self.battery_dir.is_some()).then_some(self.battery_at),
                 // Over an app no shell key repeats, so no repeat wakeups.
                 (!app).then(|| self.kb.repeat_at()).flatten(),
                 self.toast.as_ref().map(|t| t.1),
@@ -730,6 +746,10 @@ impl Shell {
         }
         if self.screen != Screen::Off {
             self.guard_background();
+        }
+        // After the guard, which skips a frame already dirty.
+        if self.screen != Screen::Off && self.battery_dir.is_some() && now >= self.battery_at {
+            self.poll_battery(now);
         }
         if self.tab_down.is_some_and(|t| now >= t + LOCK_HOLD_MS) {
             self.tab_down = None;

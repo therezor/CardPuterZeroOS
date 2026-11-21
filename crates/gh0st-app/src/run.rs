@@ -40,6 +40,9 @@ enum Input {
 
 fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
     let mut rt_ = Runtime::new(page, None);
+    if sim.is_some() {
+        rt_.off_device();
+    }
     let (w, h) = (rt_.canvas.width(), rt_.canvas.height());
     let (mut display, mut input): (Box<dyn Display>, Input) = match &sim {
         Some(dir) => (

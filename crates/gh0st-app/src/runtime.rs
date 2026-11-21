@@ -40,10 +40,12 @@ struct WatchEntry {
     out: Vec<u8>,
 }
 
-/// What the self-drawn top bar shows. Read at start and on the minute.
+/// What the self-drawn top bar shows. Read at start and on the minute, and
+/// the battery every `battery::POLL_MS`.
 struct Bar {
     clock: String,
     clock_at: u64,
+    battery_at: u64,
     battery_dir: Option<PathBuf>,
     battery: Option<Battery>,
     net: Net,
@@ -55,6 +57,7 @@ impl Bar {
         Bar {
             clock: "--:--".into(),
             clock_at: 0,
+            battery_at: 0,
             battery_dir: battery::find(std::path::Path::new("/sys/class/power_supply")),
             battery: None,
             net: Net::None,
@@ -66,15 +69,27 @@ impl Bar {
         let (clock, at) = rt::clock_text(h24);
         self.clock = clock;
         self.clock_at = at;
-        self.battery = self
-            .battery_dir
+        self.battery = self.read_battery();
+        self.links();
+    }
+
+    fn read_battery(&self) -> Option<Battery> {
+        self.battery_dir
             .as_deref()
             .and_then(battery::sample)
             .map(|r| Battery {
                 percent: r.percent,
                 charging: r.charging,
-            });
-        self.links();
+            })
+    }
+
+    /// The battery alone. True if it changed.
+    fn poll_battery(&mut self, now: u64) -> bool {
+        self.battery_at = now + battery::POLL_MS;
+        let b = self.read_battery();
+        let changed = b != self.battery;
+        self.battery = b;
+        changed
     }
 
     /// Network and Bluetooth, which a finished job (nmcli, bluetoothctl)
@@ -163,6 +178,12 @@ impl Runtime {
             dirty: true,
             quit: false,
         }
+    }
+
+    /// Under `--sim` and in tests: no battery, as in the shell.
+    pub(crate) fn off_device(&mut self) {
+        self.bar.battery_dir = None;
+        self.bar.battery = None;
     }
 
     pub fn start(&mut self, now: u64) {
@@ -628,17 +649,21 @@ impl Runtime {
     }
 
     /// The next time something is due: a timer, a key repeat, the toast's
-    /// end, or the clock's minute when the top bar shows.
+    /// end, or while the top bar shows, the clock's minute and the battery
+    /// read.
     pub fn next_at(&self) -> Option<u64> {
         if self.paused {
             let pending = (!self.pending.is_empty()).then_some(0);
             return rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([pending]));
         }
-        let clock = self.top_bars().top.then_some(self.bar.clock_at);
+        let top = self.top_bars().top;
+        let clock = top.then_some(self.bar.clock_at);
+        let battery = (top && self.bar.battery_dir.is_some()).then_some(self.bar.battery_at);
         rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([
             self.kb.repeat_at(),
             self.toast.as_ref().map(|t| t.1),
             clock,
+            battery,
             (!self.pending.is_empty()).then_some(0),
             self.dirty.then(|| self.frame_at()),
         ]))
@@ -664,10 +689,18 @@ impl Runtime {
             self.toast = None;
             self.dirty = true;
         }
-        if !self.paused && now >= self.bar.clock_at && self.top_bars().top {
-            let h24 = self.h24();
-            self.bar.refresh(h24);
-            self.dirty = true;
+        if !self.paused && self.top_bars().top {
+            if now >= self.bar.clock_at {
+                let h24 = self.h24();
+                self.bar.refresh(h24);
+                self.dirty = true;
+            }
+            if self.bar.battery_dir.is_some()
+                && now >= self.bar.battery_at
+                && self.bar.poll_battery(now)
+            {
+                self.dirty = true;
+            }
         }
     }
 
@@ -777,5 +810,65 @@ fn drain(w: &mut WatchEntry) {
                 return;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bars::Bars;
+
+    struct Plain(bool);
+
+    impl Page for Plain {
+        fn title(&self) -> &str {
+            "Plain"
+        }
+        fn draw(&self, _: &mut Ui) {}
+        fn bars(&self) -> Bars {
+            if self.0 { Bars::top() } else { Bars::none() }
+        }
+    }
+
+    /// A fake supply. `status` flips to Discharging halfway through 10 s of
+    /// virtual time. Returns the wakes and the frames.
+    fn run(top: bool, paused: bool) -> (u32, u32) {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("gh0st-poll-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("capacity"), "50\n").unwrap();
+        std::fs::write(dir.join("status"), "Charging\n").unwrap();
+        let mut rt = Runtime::new(Box::new(Plain(top)), Some(dir.join("config.json")));
+        rt.off_device();
+        rt.bar.battery_dir = Some(dir.clone());
+        rt.start(0);
+        rt.bar.clock_at = u64::MAX;
+        rt.paused = paused;
+        rt.tick(0);
+        rt.render();
+        let (mut wakes, mut frames) = (0, 0);
+        while let Some(at) = rt.next_at().filter(|&at| at <= 10_000) {
+            if at > 5_000 {
+                std::fs::write(dir.join("status"), "Discharging\n").unwrap();
+            }
+            rt.tick(at);
+            wakes += 1;
+            if rt.dirty {
+                rt.render();
+                frames += 1;
+            }
+            assert!(wakes < 100, "the read's deadline never moves on");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+        (wakes, frames)
+    }
+
+    #[test]
+    fn a_lit_bar_reads_the_battery_every_poll_and_draws_only_on_a_change() {
+        let reads = (10_000 / battery::POLL_MS) as u32;
+        assert_eq!(run(true, false), (reads, 1));
+        assert_eq!(run(false, false), (0, 0));
+        assert_eq!(run(true, true), (0, 0));
     }
 }

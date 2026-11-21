@@ -41,8 +41,14 @@ Measured on the device unless marked.
   ran while the TE wait was broken (see Frame pacing), so redo them.
 - Backlight: `/sys/class/backlight/backlight`, max 100, group `video` writable.
   Stock leaves it at 0 after its idle timeout, so the shell must turn it on.
-- Battery: `bq27220-0`, `type=Battery`. It sends a `change` uevent when the
-  capacity moves, so no battery timer is needed.
+- Battery: `bq27220-0`, `type=Battery`, with no interrupt in the device tree.
+  The kernel polls it every 360 s (`poll_interval`). Nothing tells the kernel
+  about the charger: no expander input, USB event or log line follows the
+  cable. Reads of `status` follow plug and unplug, and a read makes the driver
+  send a `change` uevent when something moved. On stock, `wf-panel-pi` (the
+  HDMI desktop's panel) reads it every 5 s, so most uevents come from that.
+  Measured 2026-11-21. The delay from the cable to `status` is not timed.
+  gh0st reads it every 2 s while a bar is lit.
 - LEDs: `ext_5v_out`, `grove_5v_out`, `ext_usb_gpio_fun`, `grove_fun`.
 - `wpctl`, `pw-play`, `aplay`, `bluetoothctl`, `nmcli`, `timedatectl`,
   `gpioset` are installed. `fb_load.service` has exited by the time the
@@ -253,7 +259,6 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
 | Backlight GPIO | stock drives M5IOE1 line 9 low at boot; gh0st does not yet | cold boot |
 | Remaining tearing | check by eye with `scripts/tear-test.sh`; if it tears, widen `te_margin_us` or slow the refresh (FRCTRL2). No faster SPI clock (above the DT cap and the ST7789V rating) | driver |
 | Battery | a `type=Battery` supply under `/sys/class/power_supply` | `battery.rs` |
-| Battery uevents | sent on capacity change? if not, add a slow timer | idle wakeups |
 | `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |
 | Root actions | time and ADB need root; reboot, power off, 5V rails do not | Settings |
 | `unix_chkpwd` right password | exits 0 with `password\0` on stdin, run by root | helper auth |

@@ -18,7 +18,7 @@ pub enum Net {
     Ethernet,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Battery {
     pub percent: u8,
     pub charging: bool,

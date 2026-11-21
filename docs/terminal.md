@@ -157,7 +157,8 @@ stays put when the text size changes, so magnify sends no SIGWINCH.
 ## What it costs
 
 - No timer runs while idle. With the top bar on, the clock wakes the app
-  once a minute; with it off, nothing does.
+  once a minute and the battery is read every 2 s (the gauge has no
+  interrupt, see `hardware-facts.md`); with it off, nothing does.
 - A frame redraws the grid and the flush sends only the rows that changed.
   Under a flood of output the screen updates at most every 20 ms, and the
   terminal reads at most 64 KB per loop turn, so keys stay answered.

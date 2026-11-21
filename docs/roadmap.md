@@ -220,7 +220,8 @@ Settings: what comes next.
 sizes, history with search, prompt jumps and line
 copy, and running behind other apps on the shell link. The guide is
 `terminal.md`. Done when its budgets hold on the device:
-- no wakeup at idle with the top bar off, one a minute with it on;
+- no wakeup at idle with the top bar off; with it on, the clock's minute and
+  the battery read every 2 s;
 - PSS at most `gh0st-settings` + 1 MB with one tab and empty history;
 - history at most 80 bytes per line of shell text;
 - a key echoed within one frame, 25 ms;
