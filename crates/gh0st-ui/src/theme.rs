@@ -279,22 +279,17 @@ const fn term_face(regular: Font, bold: Option<Font>) -> TermFace {
     TermFace { regular, bold }
 }
 
-/// Terminus, a bitmap face: crisp at every size. Cells 6x12, 8x14, 8x16.
+/// Terminus, the terminal's face. A bitmap face, so crisp at every size:
+/// anti-aliased faces blurred on the panel, as nothing hints them. Cells
+/// 6x12, 8x14, 8x16, 10x18, 10x20.
 pub const TERM_TERMINUS: &[TermFace] = &[
     term_face(&font::TERMINUS_12, Some(&font::TERMINUS_12_BOLD)),
     term_face(&font::TERMINUS_14, Some(&font::TERMINUS_14_BOLD)),
     term_face(&font::TERMINUS_16, Some(&font::TERMINUS_16_BOLD)),
+    term_face(&font::TERMINUS_18, Some(&font::TERMINUS_18_BOLD)),
+    term_face(&font::TERMINUS_20, Some(&font::TERMINUS_20_BOLD)),
 ];
 
-/// Fixed, xterm's bitmap face: crisp, and the widest coverage of any.
-/// Cells 5x8, 6x10, 7x13, 9x15, between Terminus's sizes. Anti-aliased
-/// faces blurred on the panel, as nothing hints them.
-pub const TERM_FIXED: &[TermFace] = &[
-    term_face(&font::FIXED_5X8, None),
-    term_face(&font::FIXED_6X10, None),
-    term_face(&font::FIXED_7X13, Some(&font::FIXED_7X13_BOLD)),
-    term_face(&font::FIXED_9X15, Some(&font::FIXED_9X15_BOLD)),
-];
 
 pub const FONTS: Fonts = Fonts {
     small: &font::SANS_13,

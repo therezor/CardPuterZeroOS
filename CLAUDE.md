@@ -43,8 +43,7 @@ battery in `/sys/class/power_supply`. Details and sources in
   is the emulator on `vte`; `docs/terminal.md` is its guide.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
-  kept as published), Fixed (public domain, cut to the glyphs baked),
-  Lucide icons (ISC), our mark.
+  kept as published), Lucide icons (ISC), our mark.
 - `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
   home is an app built to it: Settings, the terminal.
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.

@@ -7,7 +7,7 @@ use crate::keys;
 use crate::prefs::{self, Prefs, key};
 use crate::pty::{self, Pty};
 use crate::render::{self, Colors, Cursor, Look, Span};
-use crate::view::{Family, Pos, Src, View};
+use crate::view::{Pos, Src, View};
 use crate::vt::cell::{Cell, Clusters};
 use crate::vt::history::flag::PROMPT;
 use crate::vt::{CursorShape, Terminal, Vt, event};
@@ -111,7 +111,6 @@ mod cmd {
     pub const CLOSE_TAB: u32 = 8;
     pub const TAB: u32 = 9;
     pub const BAR: u32 = 10;
-    pub const FONT: u32 = 11;
     pub const SETTINGS: u32 = 12;
     pub const SCROLL: u32 = 20;
     pub const PAN: u32 = 21;
@@ -175,7 +174,6 @@ pub struct Term {
     buf: Vec<u8>,
     out: Vec<u8>,
     title: String,
-    family: Family,
     zoom: usize,
     /// Window mode's grid; None is fit mode.
     layout: Layout,
@@ -218,7 +216,6 @@ impl Term {
             buf: vec![0; 16 * 1024],
             out: Vec::new(),
             title: "Terminal".into(),
-            family: Family::Terminus,
             zoom: 0,
             layout: Layout::Magnify,
             window_size: (80, 24),
@@ -242,8 +239,7 @@ impl Term {
 
     fn load(&mut self, cx: &mut Cx) {
         let s = prefs::Settings::from(cx.settings());
-        self.family = Family::from_key(&s.font);
-        self.zoom = s.zoom.min(self.family.faces().len() - 1);
+        self.zoom = s.zoom.min(theme::TERM_TERMINUS.len() - 1);
         self.window_size = parse_size(&s.window_size).unwrap_or((80, 24));
         self.layout = Layout::from_key(&s.mode);
         self.bar = s.bar;
@@ -257,7 +253,7 @@ impl Term {
     }
 
     fn look(&self) -> Look {
-        Look::of(&self.family.faces()[self.zoom])
+        Look::of(&theme::TERM_TERMINUS[self.zoom])
     }
 
     /// The grid size, by layout.
@@ -379,7 +375,7 @@ impl Term {
             pid: pty.pid,
             pty: Some(pty),
             watch: Some(watch),
-            view: View::new(self.family, self.zoom, self.window()),
+            view: View::new(self.window()),
             sync: None,
         });
         self.cur = self.tabs.len() - 1;
@@ -529,7 +525,7 @@ impl Term {
     }
 
     fn zoom_to(&mut self, zoom: usize, cx: &mut Cx) {
-        let zoom = zoom.min(self.family.faces().len() - 1);
+        let zoom = zoom.min(theme::TERM_TERMINUS.len() - 1);
         if zoom == self.zoom {
             return;
         }
@@ -586,21 +582,6 @@ impl Term {
         }
     }
 
-    fn set_font(&mut self, family: Family, cx: &mut Cx) {
-        // Keep about the same cell height in the other face.
-        let h = self.look().ch;
-        let faces = family.faces();
-        let zoom = (0..faces.len())
-            .min_by_key(|&i| (Look::of(&faces[i]).ch - h).abs())
-            .unwrap_or(0);
-        self.family = family;
-        self.zoom = zoom;
-        self.relayout(cx);
-        let s = cx.settings();
-        s.set_str(key::FONT, family.key());
-        s.set_int(key::ZOOM, zoom as i64);
-    }
-
     /// One command, from its key or the app menu.
     fn run(&mut self, id: u32, step: Step, cx: &mut Cx) {
         let back = step == Step::Prev;
@@ -644,13 +625,6 @@ impl Term {
                 self.bar = !self.bar;
                 self.relayout(cx);
                 cx.settings().set_bool(key::BAR, self.bar);
-            }
-            cmd::FONT => {
-                let next = match self.family {
-                    Family::Terminus => Family::Fixed,
-                    Family::Fixed => Family::Terminus,
-                };
-                self.set_font(next, cx);
             }
             cmd::SETTINGS => cx.push(Prefs::new()),
             cmd::SCROLL => self.scroll(back, 1, cx),
@@ -1095,7 +1069,6 @@ impl Page for Term {
         c.add(on(Command::action(cmd::CLOSE_TAB, "Close tab").keys("w").confirm()));
         c.group("Settings");
         c.add(on(Command::toggle(cmd::BAR, "Top bar", self.bar).keys("b")));
-        c.add(Command::choice(cmd::FONT, "Font", self.family.name()));
         c.add(on(Command::action(cmd::SETTINGS, "More settings").keys("s").opens()));
 
         // Scroll mode's moves have keys but no menu rows.

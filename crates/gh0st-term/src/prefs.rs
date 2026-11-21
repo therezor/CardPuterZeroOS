@@ -1,11 +1,10 @@
 //! The terminal's settings page, opened from the menu or `s` in scroll mode. Every
 //! change saves at once; the terminal reads them back when the page closes.
 
-use crate::view::Family;
+use gh0st_app::gfx::theme::TERM_TERMINUS;
 use gh0st_app::prelude::*;
 
 pub mod key {
-    pub const FONT: &str = "gh0st.term.font";
     pub const ZOOM: &str = "gh0st.term.zoom";
     pub const MODE: &str = "gh0st.term.mode";
     pub const WINDOW: &str = "gh0st.term.window";
@@ -20,7 +19,7 @@ pub const MODES: &[&str] = &["magnify", "fit"];
 pub const HISTORY_KB: &[i64] = &[256, 1024, 4096];
 pub const CURSORS: &[&str] = &["block", "underline", "bar"];
 
-const ROWS: usize = 8;
+const ROWS: usize = 7;
 
 pub struct Prefs {
     list: List,
@@ -61,22 +60,13 @@ impl Page for Prefs {
         let Some(s) = &self.s else {
             return;
         };
-        let family = Family::from_key(&s.font);
-        let faces = family.faces();
-        let face = &faces[s.zoom.min(faces.len() - 1)];
+        let face = &TERM_TERMINUS[s.zoom.min(TERM_TERMINUS.len() - 1)];
         let cell = format!("{}x{}", face.regular.measure("M"), face.regular.line);
         let history = match s.history_kb {
             kb if kb >= 1024 => format!("{} MB", kb / 1024),
             kb => format!("{kb} KB"),
         };
         let rows = [
-            Row::choice(
-                "Font",
-                match family {
-                    Family::Terminus => "Terminus",
-                    Family::Fixed => "Fixed",
-                },
-            ),
             Row::choice("Cell size", &cell),
             Row::choice("Grid", if s.mode == "fit" { "Fit" } else { "Magnify" }),
             Row::choice("Magnify grid", &s.window_size),
@@ -101,24 +91,15 @@ impl Page for Prefs {
         let cur = Settings::from(s);
         match i {
             0 => {
-                let next = if Family::from_key(&cur.font) == Family::Terminus {
-                    Family::Fixed
-                } else {
-                    Family::Terminus
-                };
-                s.set_str(key::FONT, next.key());
-                s.set_int(key::ZOOM, 0);
-            }
-            1 => {
-                let n = Family::from_key(&cur.font).faces().len() as i64;
+                let n = TERM_TERMINUS.len() as i64;
                 s.set_int(key::ZOOM, (cur.zoom as i64 + d as i64).rem_euclid(n));
             }
-            2 => s.set_str(key::MODE, step(MODES, cur.mode.as_str(), d)),
-            3 => s.set_str(key::WINDOW, step(WINDOWS, cur.window_size.as_str(), d)),
-            4 => s.set_bool(key::BAR, !cur.bar),
-            5 => s.set_int(key::HISTORY, step(HISTORY_KB, cur.history_kb, d)),
-            6 => s.set_str(key::CURSOR, step(CURSORS, cur.cursor.as_str(), d)),
-            7 => s.set_bool(key::ALT_ESC, !cur.alt_esc),
+            1 => s.set_str(key::MODE, step(MODES, cur.mode.as_str(), d)),
+            2 => s.set_str(key::WINDOW, step(WINDOWS, cur.window_size.as_str(), d)),
+            3 => s.set_bool(key::BAR, !cur.bar),
+            4 => s.set_int(key::HISTORY, step(HISTORY_KB, cur.history_kb, d)),
+            5 => s.set_str(key::CURSOR, step(CURSORS, cur.cursor.as_str(), d)),
+            6 => s.set_bool(key::ALT_ESC, !cur.alt_esc),
             _ => {}
         }
         self.s = Some(Settings::from(s));
@@ -127,7 +108,6 @@ impl Page for Prefs {
 
 /// The terminal's settings, with their defaults.
 pub struct Settings {
-    pub font: String,
     pub zoom: usize,
     /// `magnify`, `fit` or `window`.
     pub mode: String,
@@ -146,7 +126,6 @@ impl Settings {
             .unwrap_or(WINDOWS[0])
             .to_string();
         Settings {
-            font: s.get_str(key::FONT).unwrap_or("terminus").to_string(),
             zoom: s.get_int(key::ZOOM).unwrap_or(0).max(0) as usize,
             mode: s
                 .get_str(key::MODE)

@@ -8,22 +8,17 @@ CLI page and runs `Terminal=true` apps (`apps.md`).
 Two layouts; the menu's Grid row, or `m` in scroll mode, switches. The table gives what fits on the
 screen at each size.
 
-| Face | Cells | Fits, top bar on | Fits, top bar off |
+| Terminus | Cells | Fits, top bar on | Fits, top bar off |
 |---|---|---|---|
-| Terminus 12 (default) | 6x12 | 53x12 | 53x14 |
-| Terminus 14 | 8x14 | 40x10 | 40x12 |
-| Terminus 16 | 8x16 | 40x9 | 40x10 |
-| Fixed 5x8 | 5x8 | 64x19 | 64x21 |
-| Fixed 6x10 | 6x10 | 53x15 | 53x17 |
-| Fixed 7x13 | 7x13 | 45x11 | 45x13 |
-| Fixed 9x15 | 9x15 | 35x10 | 35x11 |
+| 12 (default) | 6x12 | 53x12 | 53x14 |
+| 14 | 8x14 | 40x10 | 40x12 |
+| 16 | 8x16 | 40x9 | 40x10 |
+| 18 | 10x18 | 32x8 | 32x9 |
+| 20 | 10x20 | 32x7 | 32x8 |
 
-Both families are bitmap faces, so every pixel is either on or off and
-text stays sharp. Fixed is xterm's own font: public domain, with the widest
-coverage of any bitmap face, at sizes between Terminus's. Anti-aliased faces
-blurred on the panel: nothing hints them, so stems straddle pixels (m has
-three in six pixels). JetBrains Mono was the second family until
-2026-11-21; a saved `jetbrains` reads as Terminus. Box drawing, blocks,
+Terminus is a bitmap face: every pixel is on or off, so text stays sharp.
+Anti-aliased faces blurred on the panel, as nothing hints them; JetBrains
+Mono and Fixed were tried and dropped on 2026-11-21. Box drawing, blocks,
 braille and powerline arrows are drawn per cell, so lines join at any size.
 
 - **Magnify** (default). Programs see a fixed grid, 80x24 by default
@@ -102,7 +97,6 @@ The menu's More settings, or `s` in scroll mode. Saved in `~/.config/cardputerze
 
 | Key | Values | Default |
 |---|---|---|
-| `gh0st.term.font` | `terminus`, `fixed` | `terminus` |
 | `gh0st.term.zoom` | index into the face's sizes | 0 |
 | `gh0st.term.mode` | `magnify`, `fit` | `magnify` |
 | `gh0st.term.window` | `80x24`, `100x30`, `120x40`, `132x43` | `80x24` |

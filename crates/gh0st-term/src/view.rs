@@ -1,47 +1,8 @@
-//! What part of the terminal the screen shows: the face and zoom, fit or
-//! window, where the window is panned to, and how far back in history.
+//! What part of the terminal the screen shows: fit or window, where the
+//! window is panned to, and how far back in history.
 
 use crate::vt::Terminal;
 use crate::vt::history::History;
-use gh0st_app::gfx::theme::{self, TermFace};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Family {
-    Terminus,
-    Fixed,
-}
-
-impl Family {
-    pub fn faces(self) -> &'static [TermFace] {
-        match self {
-            Family::Terminus => theme::TERM_TERMINUS,
-            Family::Fixed => theme::TERM_FIXED,
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Family::Terminus => "terminus",
-            Family::Fixed => "fixed",
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Family::Terminus => "Terminus",
-            Family::Fixed => "Fixed",
-        }
-    }
-
-    pub fn from_key(s: &str) -> Family {
-        // "jetbrains" was the anti-aliased face, now gone: Terminus.
-        if s == "fixed" {
-            Family::Fixed
-        } else {
-            Family::Terminus
-        }
-    }
-}
 
 /// The first row on screen: a grid row, or a row of a history line (by its
 /// stable id and which of its wrapped rows).
@@ -86,8 +47,6 @@ pub enum Src {
 }
 
 pub struct View {
-    pub family: Family,
-    pub zoom: usize,
     /// Window mode: the grid is this size and the screen pans over it.
     /// None: fit mode, the grid is the screen.
     pub window: Option<(usize, usize)>,
@@ -102,20 +61,13 @@ pub struct View {
 const MARGIN: usize = 2;
 
 impl View {
-    pub fn new(family: Family, zoom: usize, window: Option<(usize, usize)>) -> View {
-        let zoom = zoom.min(family.faces().len() - 1);
+    pub fn new(window: Option<(usize, usize)>) -> View {
         View {
-            family,
-            zoom,
             window,
             pan_x: 0,
             top: Pos::Grid(0),
             follow: true,
         }
-    }
-
-    pub fn face(&self) -> &'static TermFace {
-        &self.family.faces()[self.zoom]
     }
 
     pub fn live(&self) -> bool {
@@ -294,7 +246,7 @@ mod tests {
         let v = term(6);
         let t = &v.t;
         assert_eq!(t.history.len(), 4);
-        let mut view = View::new(Family::Terminus, 0, None);
+        let mut view = View::new(None);
         assert_eq!(view.rows(t, 3), [Src::Grid(0), Src::Grid(1), Src::Grid(2)]);
         view.scroll(true, 2, t, 3);
         assert!(!view.live());
@@ -314,14 +266,14 @@ mod tests {
         let mut v = Vt::new(4, 2, 1 << 20);
         v.feed(b"abcdefgh\r\nx\r\ny");
         let t = &v.t;
-        let mut view = View::new(Family::Terminus, 0, None);
+        let mut view = View::new(None);
         view.scroll(true, 1, t, 2);
         assert_eq!(view.rows(t, 2), [Src::Hist(0, 1), Src::Grid(0)]);
     }
 
     #[test]
     fn the_window_follows_the_cursor() {
-        let mut view = View::new(Family::Terminus, 0, Some((80, 24)));
+        let mut view = View::new(Some((80, 24)));
         view.follow_cursor((70, 20), (80, 24), (53, 12));
         // Two cells of margin past the cursor.
         assert_eq!(view.pan_x, 20);
