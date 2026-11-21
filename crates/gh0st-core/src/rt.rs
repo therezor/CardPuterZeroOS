@@ -30,6 +30,22 @@ pub fn pollfd(fd: RawFd) -> libc::pollfd {
     }
 }
 
+/// A pollfd that also waits for room to write, when `write` is set.
+pub fn pollfd_rw(fd: RawFd, read: bool, write: bool) -> libc::pollfd {
+    let mut events = 0;
+    if read {
+        events |= libc::POLLIN;
+    }
+    if write {
+        events |= libc::POLLOUT;
+    }
+    libc::pollfd {
+        fd,
+        events,
+        revents: 0,
+    }
+}
+
 /// Blocks until a descriptor is readable or `deadline` passes. Returns false
 /// on timeout. EINTR counts as a wake: a signal has just been queued.
 pub fn wait(fds: &mut [libc::pollfd], deadline: Option<u64>) -> io::Result<bool> {
@@ -55,6 +71,10 @@ pub fn wait(fds: &mut [libc::pollfd], deadline: Option<u64>) -> io::Result<bool>
 
 pub fn readable(f: &libc::pollfd) -> bool {
     f.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0
+}
+
+pub fn writable(f: &libc::pollfd) -> bool {
+    f.revents & (libc::POLLOUT | libc::POLLERR) != 0
 }
 
 static SIG_PIPE: AtomicI32 = AtomicI32::new(-1);

@@ -59,6 +59,7 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
     rt_.start(rt::now_ms());
     rt_.render();
     display.flush_all(&rt_.canvas);
+    rt_.last_frame = rt::now_ms();
 
     let mut raw = Vec::new();
     while !rt_.quit {
@@ -67,8 +68,15 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
             Input::Keyboard(d) => d.fd(),
             Input::Script(s) => s.fd(),
         };
+        let watches = rt_.watch_fds();
         let mut fds = vec![rt::pollfd(input_fd), rt::pollfd(signals.fd())];
         fds.extend(jobs.iter().map(|&(_, fd)| rt::pollfd(fd)));
+        let watch_at = fds.len();
+        fds.extend(
+            watches
+                .iter()
+                .map(|&(_, fd, out)| rt::pollfd_rw(fd, true, out)),
+        );
         let script_at = match &input {
             Input::Script(s) => s.next_at(),
             Input::Keyboard(_) => None,
@@ -107,10 +115,20 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>) -> Result<(), String> {
                 rt_.read_job(id, now);
             }
         }
+        for (i, &(id, _, _)) in watches.iter().enumerate() {
+            let f = &fds[watch_at + i];
+            if rt::writable(f) {
+                rt_.writable(id);
+            }
+            if rt::readable(f) {
+                rt_.ready(id, now);
+            }
+        }
         rt_.tick(now);
-        if rt_.dirty && !rt_.quit {
+        if rt_.frame_due(now) {
             rt_.render();
             display.flush(&rt_.canvas, rt_.canvas.bounds());
+            rt_.last_frame = now;
         }
         if let Input::Script(s) = &input {
             if s.finished(now) && raw.is_empty() {

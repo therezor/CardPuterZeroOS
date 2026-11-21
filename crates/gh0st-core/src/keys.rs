@@ -263,7 +263,12 @@ pub struct Key {
     pub code: u16,
     pub state: State,
     /// The character this key types, if any, with Shift and Caps applied.
+    /// None while Ctrl or Alt is held.
     pub ch: Option<char>,
+    /// The character under the key with Shift, Caps and the symbol layer
+    /// applied, even while Ctrl or Alt is held: a terminal turns Ctrl+[
+    /// into ESC from it.
+    pub text: Option<char>,
     pub shift: bool,
     pub ctrl: bool,
     pub alt: bool,
@@ -306,6 +311,7 @@ pub struct Keyboard {
     caps: bool,
     fn_down: Option<u64>,
     repeat: Option<(Key, u64)>,
+    repeat_all: bool,
 }
 
 impl Keyboard {
@@ -318,7 +324,14 @@ impl Keyboard {
             caps: false,
             fn_down: None,
             repeat: None,
+            repeat_all: false,
         }
+    }
+
+    /// Repeat every held key but Esc and the modifiers, as a terminal
+    /// wants, instead of characters, arrows and deletion only.
+    pub fn set_repeat_all(&mut self, on: bool) {
+        self.repeat_all = on;
     }
 
     /// The map file if it exists, else the built-in table.
@@ -362,7 +375,12 @@ impl Keyboard {
             _ => {}
         }
         let key = self.make(code, if down { State::Press } else { State::Release });
-        if down && repeats(&key) {
+        let repeat = if self.repeat_all {
+            !is_modifier(code) && code != code::ESC
+        } else {
+            repeats(&key)
+        };
+        if down && repeat {
             self.repeat = Some((
                 Key {
                     state: State::Repeat,
@@ -378,7 +396,7 @@ impl Keyboard {
 
     fn make(&self, code: u16, state: State) -> Key {
         let shift = self.shift > 0;
-        let ch = if self.ctrl > 0 || self.alt > 0 || is_modifier(code) {
+        let text = if is_modifier(code) {
             None
         } else if let Some(&(_, c)) = self.sym.iter().find(|(k, _)| *k == code) {
             Some(c)
@@ -393,10 +411,12 @@ impl Keyboard {
                 c => c,
             }
         };
+        let ch = text.filter(|_| self.ctrl == 0 && self.alt == 0);
         Key {
             code,
             state,
             ch,
+            text,
             shift,
             ctrl: self.ctrl > 0,
             alt: self.alt > 0,
@@ -421,7 +441,9 @@ impl Keyboard {
 
     /// Forget held keys, after a child app had the keyboard.
     pub fn reset(&mut self) {
+        let all = self.repeat_all;
         *self = Keyboard::new(std::mem::take(&mut self.sym));
+        self.repeat_all = all;
     }
 }
 
@@ -436,6 +458,8 @@ fn is_modifier(code: u16) -> bool {
             | code::RIGHTALT
             | code::CAPSLOCK
             | code::FN
+            | code::FN_M5
+            | code::SYM_M5
     )
 }
 
@@ -541,5 +565,30 @@ mod tests {
         let c = press(&mut k, 46);
         assert!(c.ctrl);
         assert_eq!(c.ch, None);
+    }
+
+    #[test]
+    fn text_survives_ctrl_and_alt() {
+        let mut k = kb();
+        k.event(code::LEFTCTRL, 1, 0);
+        let b = press(&mut k, 74);
+        assert_eq!((b.ch, b.text), (None, Some('[')));
+        k.event(code::LEFTCTRL, 0, 0);
+        k.event(code::LEFTALT, 1, 0);
+        k.event(code::LEFTSHIFT, 1, 0);
+        assert_eq!(press(&mut k, 30).text, Some('A'));
+    }
+
+    #[test]
+    fn repeat_all_takes_enter_but_never_esc() {
+        let mut k = kb();
+        k.set_repeat_all(true);
+        k.event(code::ENTER, 1, 0);
+        assert!(k.repeat_at().is_some());
+        k.event(code::ENTER, 0, 10);
+        k.event(code::ESC, 1, 20);
+        assert!(k.repeat_at().is_none());
+        k.event(code::FN_M5, 1, 30);
+        assert!(k.repeat_at().is_none());
     }
 }

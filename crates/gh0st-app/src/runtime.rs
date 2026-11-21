@@ -3,7 +3,7 @@
 
 use crate::bars::{Bars, Bottom};
 use crate::key::{self, Key};
-use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer};
+use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer, Watch};
 use crate::ui::Ui;
 use gh0st_core::keys::Keyboard;
 use gh0st_core::{battery, child, job, rt, status};
@@ -27,6 +27,14 @@ struct JobProc {
     job: job::Job,
     /// Bytes of output already handed out as lines.
     sent: usize,
+}
+
+struct WatchEntry {
+    id: u64,
+    owner: usize,
+    fd: RawFd,
+    /// Bytes waiting for room in the fd.
+    out: Vec<u8>,
 }
 
 /// What the self-drawn top bar shows. Read at start and on the minute.
@@ -81,6 +89,11 @@ pub(crate) struct Runtime {
     jobs: Vec<JobProc>,
     /// Jobs that couldn't start: id and owner, told on the next tick.
     pending: Vec<(u64, usize)>,
+    watches: Vec<WatchEntry>,
+    /// Children pages started themselves: pid and owner.
+    adopted: Vec<(i32, usize)>,
+    /// When the last frame was drawn, for [`Page::frame_ms`].
+    pub last_frame: u64,
     toast: Option<(String, u64)>,
     bar: Bar,
     palette: String,
@@ -106,6 +119,9 @@ impl Runtime {
             timers: Vec::new(),
             jobs: Vec::new(),
             pending: Vec::new(),
+            watches: Vec::new(),
+            adopted: Vec::new(),
+            last_frame: 0,
             toast: None,
             bar: Bar::new(),
             palette,
@@ -130,11 +146,18 @@ impl Runtime {
 
     /// Runs `f` on page `i` with a fresh `Cx`, then carries out what it asked.
     fn call(&mut self, i: usize, now: u64, f: impl FnOnce(&mut dyn Page, &mut Cx)) {
+        if self.stack.get(i).is_some() {
+            self.dirty = true;
+        }
+        self.call_quiet(i, now, f);
+    }
+
+    /// As `call`, but draws only if the page asks.
+    fn call_quiet(&mut self, i: usize, now: u64, f: impl FnOnce(&mut dyn Page, &mut Cx)) {
         let Some(page) = self.stack.get_mut(i) else {
             return;
         };
         f(page.as_mut(), &mut Cx { s: &mut self.s });
-        self.dirty = true;
         self.apply(i, now);
     }
 
@@ -171,6 +194,21 @@ impl Runtime {
                         i.fill(0);
                     }
                 }
+                Request::Watch { id, fd } => self.watches.push(WatchEntry {
+                    id,
+                    owner,
+                    fd,
+                    out: Vec::new(),
+                }),
+                Request::Unwatch(id) => self.watches.retain(|w| w.id != id),
+                Request::Write { id, bytes } => {
+                    if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
+                        w.out.extend_from_slice(&bytes);
+                        drain(w);
+                    }
+                }
+                Request::Adopt(pid) => self.adopted.push((pid, owner)),
+                Request::Redraw => self.dirty = true,
             }
         }
         self.retheme();
@@ -210,6 +248,8 @@ impl Runtime {
             unsafe { libc::kill(j.job.pid, libc::SIGTERM) };
         }
         self.jobs.retain(|j| j.owner < i);
+        self.watches.retain(|w| w.owner < i);
+        self.adopted.retain(|a| a.1 < i);
     }
 
     /// Closes every page, top first. SIGTERM and SIGINT land here.
@@ -227,6 +267,8 @@ impl Runtime {
 
     /// One evdev key event.
     pub fn raw_key(&mut self, code: u16, value: i32, now: u64) {
+        let raw = self.stack.last().is_some_and(|p| p.raw_keys());
+        self.kb.set_repeat_all(raw);
         if let Some(k) = self.kb.event(code, value, now) {
             self.key(&k, now);
         }
@@ -243,6 +285,10 @@ impl Runtime {
         let Some(top) = self.stack.len().checked_sub(1) else {
             return;
         };
+        if self.stack[top].raw_keys() {
+            self.call_quiet(top, now, |p, cx| p.raw(raw, cx));
+            return;
+        }
         let typing = self.stack[top].typing();
         let Some(k) = key::map(raw, typing, self.top_bars().soft_slots()) else {
             return;
@@ -285,6 +331,39 @@ impl Runtime {
             .collect()
     }
 
+    /// Watched fds for poll: id, fd, and whether output waits for room.
+    pub fn watch_fds(&self) -> Vec<(u64, RawFd, bool)> {
+        self.watches
+            .iter()
+            .map(|w| (w.id, w.fd, !w.out.is_empty()))
+            .collect()
+    }
+
+    /// A watched fd is readable or closed.
+    pub fn ready(&mut self, id: u64, now: u64) {
+        if let Some(owner) = self.watches.iter().find(|w| w.id == id).map(|w| w.owner) {
+            self.call_quiet(owner, now, |p, cx| p.ready(Watch(id), cx));
+        }
+    }
+
+    /// A watched fd has room: send what waits.
+    pub fn writable(&mut self, id: u64) {
+        if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
+            drain(w);
+        }
+    }
+
+    /// True when a frame is wanted and the page's least gap since the last
+    /// one has passed.
+    pub fn frame_due(&self, now: u64) -> bool {
+        self.dirty && !self.quit && now >= self.frame_at()
+    }
+
+    fn frame_at(&self) -> u64 {
+        let gap = self.stack.last().map_or(0, |p| p.frame_ms());
+        self.last_frame + gap
+    }
+
     /// Reads what job `id` printed and hands out whole lines.
     pub fn read_job(&mut self, id: u64, now: u64) {
         let Some(j) = self.jobs.iter_mut().find(|j| j.id == id) else {
@@ -317,6 +396,10 @@ impl Runtime {
         for (pid, status) in child::reap() {
             if let Some(j) = self.jobs.iter_mut().find(|j| j.job.pid == pid) {
                 j.job.exited(status);
+            } else if let Some(i) = self.adopted.iter().position(|a| a.0 == pid) {
+                let (_, owner) = self.adopted.remove(i);
+                let code = libc::WIFEXITED(status).then(|| libc::WEXITSTATUS(status));
+                self.call_quiet(owner, now, |p, cx| p.exited(pid, code, cx));
             }
         }
         let mut done = Vec::new();
@@ -345,6 +428,7 @@ impl Runtime {
             self.toast.as_ref().map(|t| t.1),
             clock,
             (!self.pending.is_empty()).then_some(0),
+            self.dirty.then(|| self.frame_at()),
         ]))
     }
 
@@ -429,6 +513,28 @@ impl Runtime {
             c.fill(r, t.c.surface);
             c.hline(0, r.w, r.y, t.c.accent);
             widgets::text_centre(c, t.f.small_bold, r, text, t.c.fg);
+        }
+    }
+}
+
+/// Writes queued bytes until the fd would block. A broken fd drops them:
+/// its reader is gone.
+fn drain(w: &mut WatchEntry) {
+    while !w.out.is_empty() {
+        // SAFETY: writes from a live buffer to an fd the page gave us.
+        let n = unsafe { libc::write(w.fd, w.out.as_ptr().cast(), w.out.len()) };
+        if n > 0 {
+            w.out.drain(..n as usize);
+            continue;
+        }
+        let e = std::io::Error::last_os_error();
+        match e.raw_os_error() {
+            Some(libc::EINTR) => continue,
+            Some(libc::EAGAIN) => return,
+            _ => {
+                w.out.clear();
+                return;
+            }
         }
     }
 }

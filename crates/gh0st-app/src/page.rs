@@ -4,7 +4,9 @@ use crate::bars::Bars;
 use crate::key::Key;
 use crate::ui::Ui;
 use gh0st_core::config::{self, Config};
+use gh0st_core::keys::Key as RawKey;
 use gh0st_ui::Theme;
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 /// One screen of an app. An app is a stack of pages: the first one is the
@@ -69,7 +71,46 @@ pub trait Page {
     fn stop(&mut self, cx: &mut Cx) {
         let _ = cx;
     }
+
+    /// An fd from [`Cx::watch`] is readable, or its other end closed. Read
+    /// it until it would block. Nothing is drawn unless the page calls
+    /// [`Cx::redraw`].
+    fn ready(&mut self, watch: Watch, cx: &mut Cx) {
+        let _ = (watch, cx);
+    }
+
+    /// A child from [`Cx::adopt`] ended. `code` is None when a signal ended
+    /// it. Nothing is drawn unless the page calls [`Cx::redraw`].
+    fn exited(&mut self, pid: i32, code: Option<i32>, cx: &mut Cx) {
+        let _ = (pid, code, cx);
+    }
+
+    /// True to take the keyboard raw, as a terminal does: every press,
+    /// repeat and release comes to [`raw`](Page::raw) with its modifiers,
+    /// Esc included, and every key but Esc repeats. [`key`](Page::key) and
+    /// [`back`](Page::back) are not called.
+    fn raw_keys(&self) -> bool {
+        false
+    }
+
+    /// A raw key event, when [`raw_keys`](Page::raw_keys) is true. Nothing
+    /// is drawn unless the page calls [`Cx::redraw`].
+    fn raw(&mut self, key: &RawKey, cx: &mut Cx) {
+        let _ = (key, cx);
+    }
+
+    /// The least time between two frames, in ms. A page that changes faster
+    /// than the panel can show (a terminal under a flood of output) sets it
+    /// near the panel's refresh, and the SDK draws the latest state at most
+    /// that often.
+    fn frame_ms(&self) -> u64 {
+        0
+    }
 }
+
+/// An fd watched by [`Cx::watch`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Watch(pub(crate) u64);
 
 /// A timer started by [`Cx::after`] or [`Cx::every`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -105,6 +146,17 @@ pub(crate) enum Request {
         argv: Vec<String>,
         input: Option<Vec<u8>>,
     },
+    Watch {
+        id: u64,
+        fd: RawFd,
+    },
+    Unwatch(u64),
+    Write {
+        id: u64,
+        bytes: Vec<u8>,
+    },
+    Adopt(i32),
+    Redraw,
 }
 
 /// The app's settings in the shared device config,
@@ -280,6 +332,42 @@ impl Cx<'_> {
             input,
         });
         Job(id)
+    }
+
+    /// Joins `fd` to the app's event loop: [`Page::ready`] runs when it is
+    /// readable. The page keeps owning the fd and closes it after
+    /// [`unwatch`](Cx::unwatch). Make it non-blocking.
+    pub fn watch(&mut self, fd: RawFd) -> Watch {
+        let id = self.s.id();
+        self.s.requests.push(Request::Watch { id, fd });
+        Watch(id)
+    }
+
+    pub fn unwatch(&mut self, watch: Watch) {
+        self.s.requests.push(Request::Unwatch(watch.0));
+    }
+
+    /// Writes to a watched fd without blocking. What doesn't fit now waits
+    /// in a queue and goes out when the fd has room, in order.
+    pub fn write(&mut self, watch: Watch, bytes: &[u8]) {
+        self.s.requests.push(Request::Write {
+            id: watch.0,
+            bytes: bytes.to_vec(),
+        });
+    }
+
+    /// Takes a child the page started itself (a terminal's shell): its exit
+    /// comes to [`Page::exited`]. The SDK reaps every child, so a page must
+    /// never call `waitpid`.
+    pub fn adopt(&mut self, pid: i32) {
+        self.s.requests.push(Request::Adopt(pid));
+    }
+
+    /// Draws again after this callback. Keys, timers and jobs always draw;
+    /// [`Page::ready`], [`Page::exited`] and [`Page::raw`] draw only when
+    /// asked.
+    pub fn redraw(&mut self) {
+        self.s.requests.push(Request::Redraw);
     }
 
     /// The shared device settings.
