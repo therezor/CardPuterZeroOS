@@ -21,36 +21,48 @@ Mockups in `mockups/setup` (`cargo run -p gh0st-settings --example setup_mockups
 320x170: the top bar, 132 px of content, the action bar. One idea per screen and at most
 four lines of body text.
 
+After the welcome, setup comes in two parts: a **tour** of the keys and the design
+system, then the **settings** (user, 2026-11-21). The welcome screen offers both: Enter
+starts the tour, and 6 skips straight to the settings. Each part counts its own steps.
+
 Setup is drawn and driven like every other screen (`design.md`), so the user meets the
 real thing from the first key:
 
-- The top bar names the step and counts it: "Account  Setup 8 of 10".
+- The top bar names the step and counts it within its part: "Moving  Tour 2 of 7",
+  "Account  Setup 6 of 8". The welcome screen has no count.
 - **Enter goes on, Esc goes back.** No chip repeats them. Esc on the welcome screen does
   nothing.
 - A step's own actions are chips over 5 to 7, spread by the design rule: Skip, Scan. Where
   Enter already works the rows (a switch, a choice), a main chip, Done, on 6 goes on.
-- 8 opens setup's menu: Power off and Help, and during the lessons Skip lessons first.
+- 8 opens setup's menu: Power off and Help, and during the tour Skip the tour first.
   There is no Close app. Skip on a lesson goes to the next one.
 - While a field takes text the bar turns into key hints: "Esc back  Tab next field
   Enter next".
 - Fn+H lists every key on the step, as everywhere.
 
+**Welcome.** The mark and one line. Its message names both ways on in key pills, "Enter
+take the tour" and "6 skip to settings", and 6 has a Skip chip. Esc does nothing here.
+
+**The settings**, "Setup 1 of 8" to "Setup 8 of 8":
+
 | # | Step | What it does |
 |---|---|---|
-| 1 | Welcome | The mark, one line, Enter to start. |
-| 2 | Getting around | Seven short lessons on the keyboard and the design system, skippable. Each passes on the keys it asks for. See below. |
-| 3 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. |
-| 4 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. Picked for the user when there is one. "Other" opens the region list. |
-| 5 | Privacy | The private defaults, each switchable: Wi-Fi address per network, random address while scanning, hostname not sent, IPv6 privacy addresses, network time, logs off, SSH off, Bluetooth off. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
-| 6 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. With a cable in, "Use the cable" makes the wired profile. Nothing goes online before this step. |
-| 7 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
-| 8 | Account | The name and the password, then the password again on its own screen. |
-| 9 | Device name and look | The device name (`zero` unless changed), the home layout, the palette (Mint, Nord, Paper) and the clock. 5 and 7 change a choice; Done on 6 goes on. The look applies at once. |
-| 10 | Done | What was set, then "Starting" while the shell comes up. |
+| 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. |
+| 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. Picked for the user when there is one. "Other" opens the region list. |
+| 3 | Privacy | The private defaults, each switchable: Wi-Fi address per network, random address while scanning, hostname not sent, IPv6 privacy addresses, network time, logs off, SSH off, Bluetooth off. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
+| 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. With a cable in, "Use the cable" makes the wired profile. Nothing goes online before this step. |
+| 5 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
+| 6 | Account | The name and the password, then the password again on its own screen. |
+| 7 | Device name and look | The device name (`zero` unless changed), the home layout, the palette (Mint, Nord, Paper) and the clock. 5 and 7 change a choice; Done on 6 goes on. The look applies at once. |
+| 8 | Done | What was set, then "Starting" while the shell comes up. |
 
-### Getting around
+Esc on Country goes back to the tour's last lesson, or to the welcome screen when the tour
+was skipped.
 
-The lessons teach the keyboard first, then the design system, by using it. One idea each.
+### The tour
+
+"Tour 1 of 7" to "Tour 7 of 7": the keyboard first, then the design system, by using it.
+One idea each. Skip the tour, in the menu, goes straight to the settings.
 
 | # | Lesson | Teaches | Passes when |
 |---|---|---|---|
@@ -171,7 +183,8 @@ writes the linger file and syncs it and its directory, removes the marker and sy
 **SDK** (`crates/gh0st-app`), built 2026-11-21 with tests; the guide is `sdk.md`. The
 chips, hint bar, menu, help and dialogs came with the design system.
 
-- `Steps`: one page per step, each made as it opens with its label ("Setup 8 of 10").
+- `Steps`: one page per step, each made as it opens with its label ("Setup 6 of 8").
+  `part` numbers a part on its own.
   A step calls `cx.done()` to go on; Esc goes back. A maker that returns `None` is
   skipped. `from` resumes at a step, `on_step` hears each one.
 - `run_with(page, Options { closable: false })`: no hold Esc to exit, no Close app, the

@@ -737,6 +737,10 @@ let setup = Steps::new("Setup")
 # let _ = setup;
 ```
 
+`part("Tour")` starts a part numbered on its own: "Tour 2 of 7", then
+"Setup 1 of 8" after `part("Setup")`. A part named "" gives empty labels, for
+a welcome screen.
+
 Going back makes a step again, so keep what the user chose outside the
 steps, in state they share. `Steps::from(i)` opens at step `i`, to resume
 after a power cut; `on_step` hears each step as it opens, to save where the

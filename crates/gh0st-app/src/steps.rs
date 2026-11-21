@@ -16,6 +16,10 @@ type Maker = Box<dyn FnMut(&str) -> Option<Box<dyn Page>>>;
 /// direction the user is going: a step that applies only sometimes. Going
 /// back makes the step again, so keep what it collected outside it.
 ///
+/// Steps can come in parts, each numbered on its own: a tour, then the
+/// settings ("Tour 2 of 7", then "Setup 1 of 8"). Steps in a part named ""
+/// get an empty label.
+///
 /// Esc on the first step makes it again rather than leaving. After the last
 /// step `Steps` closes itself as if done. In an app that can't close it
 /// makes the last step again instead, so that step quits with [`Cx::quit`]
@@ -43,8 +47,9 @@ type Maker = Box<dyn FnMut(&str) -> Option<Box<dyn Page>>>;
 /// # let _ = setup;
 /// ```
 pub struct Steps {
-    name: String,
-    makers: Vec<Maker>,
+    parts: Vec<String>,
+    /// Each step's maker and the part it is in.
+    makers: Vec<(Maker, usize)>,
     at: usize,
     on_step: Option<Box<dyn FnMut(usize)>>,
 }
@@ -53,30 +58,54 @@ impl Steps {
     /// Steps whose labels start with `name`: "Setup 3 of 10".
     pub fn new(name: &str) -> Steps {
         Steps {
-            name: name.to_string(),
+            parts: vec![name.to_string()],
             makers: Vec::new(),
             at: 0,
             on_step: None,
         }
     }
 
-    /// A step that always applies.
-    pub fn step<P: Page + 'static>(mut self, mut make: impl FnMut(&str) -> P + 'static) -> Steps {
-        self.makers.push(Box::new(move |label| {
-            Some(Box::new(make(label)) as Box<dyn Page>)
-        }));
+    /// Starts a part: the steps added after this are numbered from 1 under
+    /// `name`.
+    pub fn part(mut self, name: &str) -> Steps {
+        self.parts.push(name.to_string());
         self
+    }
+
+    fn add(mut self, make: Maker) -> Steps {
+        let part = self.parts.len() - 1;
+        self.makers.push((make, part));
+        self
+    }
+
+    /// A step that always applies.
+    pub fn step<P: Page + 'static>(self, mut make: impl FnMut(&str) -> P + 'static) -> Steps {
+        self.add(Box::new(move |label| {
+            Some(Box::new(make(label)) as Box<dyn Page>)
+        }))
     }
 
     /// A step that applies when its maker returns a page.
     pub fn optional<P: Page + 'static>(
-        mut self,
+        self,
         mut make: impl FnMut(&str) -> Option<P> + 'static,
     ) -> Steps {
-        self.makers.push(Box::new(move |label| {
+        self.add(Box::new(move |label| {
             make(label).map(|p| Box::new(p) as Box<dyn Page>)
-        }));
-        self
+        }))
+    }
+
+    /// Step `i`'s label: its part's name, its place in the part, the part's
+    /// size.
+    fn label(&self, i: usize) -> String {
+        let part = self.makers[i].1;
+        let name = &self.parts[part];
+        if name.is_empty() {
+            return String::new();
+        }
+        let first = self.makers.iter().position(|m| m.1 == part).unwrap_or(i);
+        let n = self.makers.iter().filter(|m| m.1 == part).count();
+        format!("{name} {} of {n}", i - first + 1)
     }
 
     /// Opens at step `i`, counting from 0, as when resuming after a power
@@ -114,8 +143,8 @@ impl Steps {
                 (i, forward, end) = (total - 1, false, true);
                 continue;
             }
-            let label = format!("{} {} of {}", self.name, i + 1, total);
-            if let Some(page) = (self.makers[i as usize])(&label) {
+            let label = self.label(i as usize);
+            if let Some(page) = (self.makers[i as usize].0)(&label) {
                 self.at = i as usize;
                 if let Some(f) = self.on_step.as_mut() {
                     f(self.at);
@@ -131,7 +160,7 @@ impl Steps {
 
 impl Page for Steps {
     fn title(&self) -> &str {
-        &self.name
+        self.parts.last().map_or("", String::as_str)
     }
 
     /// A step is always on top, so this shows only between two of them.

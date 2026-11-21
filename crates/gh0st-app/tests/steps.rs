@@ -217,3 +217,21 @@ fn cx_quit_still_ends_it() {
     d.keys("type q");
     assert!(d.quit());
 }
+
+#[test]
+fn each_part_counts_its_own_steps() {
+    let log = Log::default();
+    let steps = Steps::new("")
+        .step(step(&log))
+        .part("Tour")
+        .step(step(&log))
+        .step(step(&log))
+        .part("Setup")
+        .step(step(&log));
+    let mut d = Driver::new(steps);
+    d.keys("enter\nenter\nenter");
+    assert_eq!(
+        taken(&log),
+        ["", "Tour 1 of 2", "Tour 2 of 2", "Setup 1 of 1"]
+    );
+}

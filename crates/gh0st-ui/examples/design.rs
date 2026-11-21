@@ -542,7 +542,7 @@ fn picker(t: &Theme) -> Canvas {
 
 fn form(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    widgets::status_bar(&mut c, t, &sub("user", "Account", "Setup 8 of 10"));
+    widgets::status_bar(&mut c, t, &sub("user", "Account", "Setup 6 of 8"));
     let fields = [
         Field {
             label: "Your name on this device",

@@ -18,21 +18,29 @@ use gh0st_settings::model::pages::{self, Network, State};
 use gh0st_settings::model::{self, Cursor, Dialog, PageId};
 use std::path::{Path, PathBuf};
 
-const STEPS: usize = 10;
+/// The settings part's steps, and the tour's lessons.
+const STEPS: usize = 8;
 const LESSONS: usize = 7;
+
+fn setup(n: usize) -> String {
+    format!("Setup {n} of {STEPS}")
+}
+
+fn tour(n: usize) -> String {
+    format!("Tour {n} of {LESSONS}")
+}
 
 // ---------------------------------------------------------------- bars
 
-/// The top bar for step `n`: its name, then "Setup n of 10". No network
+/// The top bar: the step's name, then its count in its part. No network
 /// until the user joins one.
-fn top(c: &mut Canvas, t: &Theme, icon: &str, title: &str, n: usize, net: Net) {
-    let context = format!("Setup {n} of {STEPS}");
+fn top(c: &mut Canvas, t: &Theme, icon: &str, title: &str, context: &str, net: Net) {
     let s = Status {
         dock: &[],
         front: None,
         icon,
         title,
-        context: &context,
+        context,
         tabs: &[],
         front_tab: 0,
         item: None,
@@ -136,17 +144,6 @@ fn para(c: &mut Canvas, t: &Theme, y: i32, s: &str, f: Font, lh: i32) -> i32 {
     y
 }
 
-/// A lesson's heading and its count: "Typing" and "1 of 7". Returns the y
-/// under it.
-fn heading(c: &mut Canvas, t: &Theme, y: i32, title: &str, i: usize) -> i32 {
-    let r = widgets::content(t);
-    let hr = Rect::new(r.x + 3, y, r.w - 6, 18);
-    text_in(c, t.f.body_bold, hr, title, t.c.fg);
-    let count = format!("{i} of {LESSONS}");
-    widgets::text_right(c, t.f.small, hr.right(), hr, &count, t.c.muted);
-    y + 20
-}
-
 fn row<'a>(t: &Theme, icon: &'a str, label: &'a str, trailing: Trailing<'a>) -> Row<'a> {
     Row {
         icon: (!icon.is_empty()).then_some(icon),
@@ -225,33 +222,39 @@ fn secret<'a>(label: &'a str, text: &'a str, error: Option<&'a str>) -> Field<'a
 
 fn welcome(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "", "Welcome", 1, Net::None);
-    let keys = [Hint {
-        key: "Enter",
-        label: "start",
-    }];
+    top(&mut c, t, "", "Welcome", "", Net::None);
+    let keys = [
+        Hint {
+            key: "Enter",
+            label: "take the tour",
+        },
+        Hint {
+            key: "6",
+            label: "skip to settings",
+        },
+    ];
     let m = Message {
         icon: widgets::LOGO,
         tone: Some(Tone::Info),
         text: "Welcome to Gh0st OS",
-        note: "A few questions, then it is yours.",
+        note: "A short tour of the keys, then the settings.",
         keys: &keys,
     };
     widgets::message(&mut c, t, widgets::body(t), &m);
-    chips(&mut c, t, NONE, NONE, NONE);
+    chips(&mut c, t, NONE, skip(), NONE);
     c
 }
 
-fn lesson_frame(t: &Theme) -> Canvas {
+fn lesson_frame(t: &Theme, title: &str, n: usize) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "keyboard", "Getting around", 2, Net::None);
+    top(&mut c, t, "keyboard", title, &tour(n), Net::None);
     c
 }
 
 fn lesson_typing(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t);
+    let mut c = lesson_frame(t, "Typing", 1);
     let r = widgets::content(t);
-    let y = heading(&mut c, t, r.y, "Typing", 1);
+    let y = r.y;
     typing_target(&mut c, t, y + 8, "Hello", 3);
     let s =
         "Press Shift, then the letter. Twice for caps lock. While you type, the bar shows keys.";
@@ -261,9 +264,9 @@ fn lesson_typing(t: &Theme) -> Canvas {
 }
 
 fn lesson_moving(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t);
+    let mut c = lesson_frame(t, "Moving", 2);
     let r = widgets::content(t);
-    let y = heading(&mut c, t, r.y, "Moving", 2);
+    let y = r.y;
     // A 5 by 4 board: walk the dot onto the ring.
     let cell = 22;
     let board = Rect::new(r.x + 4, y + 2, cell * 5, cell * 4);
@@ -304,9 +307,9 @@ fn lesson_moving(t: &Theme) -> Canvas {
 }
 
 fn lesson_symbols(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t);
+    let mut c = lesson_frame(t, "Symbols", 3);
     let r = widgets::content(t);
-    let y = heading(&mut c, t, r.y, "Symbols", 3);
+    let y = r.y;
     typing_target(&mut c, t, y + 8, "me@home.net", 4);
     let s = "Sym, then a key, types the symbol printed on it.";
     para(&mut c, t, y + 42, s, t.f.small, 15);
@@ -315,7 +318,7 @@ fn lesson_symbols(t: &Theme) -> Canvas {
 }
 
 fn lesson_bars(t: &Theme, lit: bool) -> Canvas {
-    let mut c = lesson_frame(t);
+    let mut c = lesson_frame(t, "The bars", 4);
     let r = widgets::content(t);
     // Callouts up to the top bar's two ends.
     let y = r.y + 2;
@@ -339,7 +342,7 @@ fn lesson_bars(t: &Theme, lit: bool) -> Canvas {
         "clock, battery, network",
         ink,
     );
-    let y = heading(&mut c, t, y + 26, "The bars", 4);
+    let y = y + 26;
     let s = "A word over a number key says what that key does. Press 7.";
     para(&mut c, t, y, s, t.f.body, 18);
     let light = if lit {
@@ -352,9 +355,9 @@ fn lesson_bars(t: &Theme, lit: bool) -> Canvas {
 }
 
 fn lesson_rows(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t);
+    let mut c = lesson_frame(t, "Rows", 5);
     let r = widgets::content(t);
-    let y = heading(&mut c, t, r.y, "Rows", 5);
+    let y = r.y;
     let s = "The right side says what a row does.";
     let y = para(&mut c, t, y, s, t.f.small, 15);
     let items = [
@@ -374,9 +377,9 @@ fn lesson_rows(t: &Theme) -> Canvas {
 }
 
 fn lesson_menu(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t);
+    let mut c = lesson_frame(t, "Menu and help", 6);
     let r = widgets::content(t);
-    let y = heading(&mut c, t, r.y, "Menu and help", 6);
+    let y = r.y;
     let s = "8 opens the menu. Fn and H list every key on the screen. Esc closes them, one at a time. Press 8, then pick Next lesson.";
     para(&mut c, t, y, s, t.f.body, 18);
     chips(&mut c, t, NONE, skip(), NONE);
@@ -386,7 +389,7 @@ fn lesson_menu(t: &Theme) -> Canvas {
 /// Setup's menu over 8: its own rows, then Help. No Close app.
 fn menu_open(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "menu", "Menu", 2, Net::None);
+    top(&mut c, t, "menu", "Menu", &tour(6), Net::None);
     let a = t.c.accent;
     let (x, w, kw) = (6, t.m.width - 12, 40);
     let mut y = 20;
@@ -394,7 +397,7 @@ fn menu_open(t: &Theme) -> Canvas {
     y += 15;
     let items = [
         (row(t, "arrow-right", "Next lesson", Trailing::None), ""),
-        (row(t, "skip-forward", "Skip lessons", Trailing::None), ""),
+        (row(t, "skip-forward", "Skip the tour", Trailing::None), ""),
         (row(t, "power", "Power off", Trailing::None), ""),
     ];
     for (i, (rw, k)) in items.iter().enumerate() {
@@ -426,9 +429,9 @@ fn menu_open(t: &Theme) -> Canvas {
 }
 
 fn lesson_care(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t);
+    let mut c = lesson_frame(t, "Taking care", 7);
     let r = widgets::content(t);
-    let y = heading(&mut c, t, r.y, "Taking care", 7);
+    let y = r.y;
     let s = "What loses data is never on Enter: press it twice, or hold its key. Hold 7 to try. Hold Esc to leave an app, Fn and K to switch.";
     para(&mut c, t, y, s, t.f.small, 15);
     chips(&mut c, t, skip(), NONE, l("", "Erase", Look::Hold(60)));
@@ -471,7 +474,7 @@ fn settings_page(c: &mut Canvas, t: &Theme, id: PageId, selected: usize) {
 
 fn country(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "globe", "Country", 3, Net::None);
+    top(&mut c, t, "globe", "Country", &setup(1), Net::None);
     settings_page(&mut c, t, PageId::Country(Some('U')), 1);
     chips(&mut c, t, NONE, NONE, NONE);
     c
@@ -479,7 +482,7 @@ fn country(t: &Theme) -> Canvas {
 
 fn time_zone(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "clock", "Time zone", 4, Net::None);
+    top(&mut c, t, "clock", "Time zone", &setup(2), Net::None);
     let items = [
         row(t, "", "New York", Trailing::Value("UTC\u{2212}5")),
         row(t, "", "Chicago", Trailing::Value("UTC\u{2212}6")),
@@ -495,7 +498,7 @@ fn time_zone(t: &Theme) -> Canvas {
 
 fn privacy(t: &Theme, selected: usize) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "shield", "Privacy", 5, Net::None);
+    top(&mut c, t, "shield", "Privacy", &setup(3), Net::None);
     let items = [
         row(t, "wifi", "Private Wi-Fi address", Trailing::Toggle(true)),
         row(
@@ -529,7 +532,7 @@ fn privacy(t: &Theme, selected: usize) -> Canvas {
 
 fn network(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "wifi", "Network", 6, Net::None);
+    top(&mut c, t, "wifi", "Network", &setup(4), Net::None);
     settings_page(&mut c, t, PageId::Wifi, 1);
     chips(&mut c, t, n("refresh-cw", "Scan"), NONE, skip());
     c
@@ -537,7 +540,7 @@ fn network(t: &Theme) -> Canvas {
 
 fn network_cable(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "wifi", "Network", 6, Net::None);
+    top(&mut c, t, "wifi", "Network", &setup(4), Net::None);
     let sig = |level| Trailing::Signal {
         level,
         secure: true,
@@ -560,7 +563,7 @@ fn network_cable(t: &Theme) -> Canvas {
 
 fn wifi_password(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "wifi", "Network", 6, Net::None);
+    top(&mut c, t, "wifi", "Network", &setup(4), Net::None);
     settings_page(&mut c, t, PageId::Wifi, 1);
     let d = model::sdk_dialog(&Dialog::Text {
         title: "Join \u{201c}Office-5G\u{201d}".into(),
@@ -581,7 +584,7 @@ fn wifi_password(t: &Theme) -> Canvas {
 
 fn date_time(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "clock", "Date and time", 7, Net::None);
+    top(&mut c, t, "clock", "Date and time", &setup(5), Net::None);
     let r = widgets::content(t);
     let s = "No network time yet. Check these.";
     let y = para(&mut c, t, r.y, s, t.f.small, 15);
@@ -597,7 +600,7 @@ fn date_time(t: &Theme) -> Canvas {
 
 fn account(t: &Theme, error: bool) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "user", "Account", 8, Net::Wifi(3));
+    top(&mut c, t, "user", "Account", &setup(6), Net::Wifi(3));
     let r = widgets::content(t);
     let y = field(
         &mut c,
@@ -624,7 +627,7 @@ fn account(t: &Theme, error: bool) -> Canvas {
 
 fn account_again(t: &Theme, differ: bool) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "user", "Account", 8, Net::Wifi(3));
+    top(&mut c, t, "user", "Account", &setup(6), Net::Wifi(3));
     let r = widgets::content(t);
     let (text, why) = match differ {
         true => ("hunter2", Some("They differ. Type it again.")),
@@ -645,7 +648,14 @@ fn account_again(t: &Theme, differ: bool) -> Canvas {
 
 fn look(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "palette", "Device and look", 9, Net::Wifi(3));
+    top(
+        &mut c,
+        t,
+        "palette",
+        "Device and look",
+        &setup(7),
+        Net::Wifi(3),
+    );
     let items = [
         row(t, "tag", "Device name", Trailing::ValueChevron("zero")),
         row(t, "layout-grid", "Home layout", Trailing::Choice("Grid")),
@@ -665,7 +675,7 @@ fn look(t: &Theme) -> Canvas {
 
 fn finished(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "circle-check", "Ready", 10, Net::Wifi(3));
+    top(&mut c, t, "circle-check", "Ready", &setup(8), Net::Wifi(3));
     let r = widgets::content(t);
     let lines = [
         ("Country", "Britain (UK)"),
@@ -709,7 +719,7 @@ fn starting(t: &Theme) -> Canvas {
 /// Fn h on the network step: the chips, then the keys.
 fn help(t: &Theme) -> Canvas {
     let mut c = frame(t);
-    top(&mut c, t, "keyboard", "Help", 6, Net::None);
+    top(&mut c, t, "keyboard", "Help", &setup(4), Net::None);
     let (x, w, kw) = (6, t.m.width - 12, 62);
     let mut y = 19;
     let lines: [(&str, &str); 7] = [
@@ -779,32 +789,28 @@ fn main() {
         }
     }
     let all: &[Screen] = &[
-        ("01-welcome", "Enter starts", welcome),
         (
-            "02-typing",
-            "lesson 1: a field, so key hints",
-            lesson_typing,
+            "01-welcome",
+            "Enter takes the tour, 6 skips to settings",
+            welcome,
         ),
-        ("03-moving", "lesson 2: f x z c", lesson_moving),
-        ("04-symbols", "lesson 3: Sym", lesson_symbols),
-        ("05-bars", "lesson 4: the bars, press 7", |t| {
+        ("02-typing", "tour 1: a field, so key hints", lesson_typing),
+        ("03-moving", "tour 2: f x z c", lesson_moving),
+        ("04-symbols", "tour 3: Sym", lesson_symbols),
+        ("05-bars", "tour 4: the bars, press 7", |t| {
             lesson_bars(t, false)
         }),
-        ("06-bars-lit", "lesson 4 passed: Light on", |t| {
+        ("06-bars-lit", "tour 4 passed: Light on", |t| {
             lesson_bars(t, true)
         }),
         (
             "07-rows",
-            "lesson 5: what a row's right side means",
+            "tour 5: what a row's right side means",
             lesson_rows,
         ),
-        (
-            "08-menu",
-            "lesson 6: press 8, pick Next lesson",
-            lesson_menu,
-        ),
+        ("08-menu", "tour 6: press 8, pick Next lesson", lesson_menu),
         ("09-menu-open", "setup's menu: no Close app", menu_open),
-        ("10-care", "lesson 7: hold 7, nothing is lost", lesson_care),
+        ("10-care", "tour 7: hold 7, nothing is lost", lesson_care),
         ("11-country", "a letter jumps", country),
         ("12-time-zone", "Enter picks", time_zone),
         ("13-privacy", "Enter flips, 6 Done goes on", |t| {
