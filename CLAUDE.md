@@ -34,7 +34,7 @@ battery in `/sys/class/power_supply`. Details and sources in
   `examples/mockups.rs` renders every screen to PNG.
 - `crates/gh0st-core`: syscalls, event loop, input, config, apps, children.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
-- `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC), our skull.
+- `assets/`: Inter and JetBrains Mono (OFL), Lucide icons (ISC), our fox.
 - `docs/apps.md`: what the shell gives an app. The terminal is built to it.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.

@@ -25,9 +25,9 @@ pub struct Battery {
 }
 
 pub struct Status<'a> {
-    /// Open apps after the skull, in launch order.
+    /// Open apps after the fox, in launch order.
     pub dock: &'a [Visual<'a>],
-    /// The filled slot: 0 is the skull, 1 the first app. `None` fills none.
+    /// The filled slot: 0 is the fox, 1 the first app. `None` fills none.
     pub front: Option<usize>,
     /// The page's name, after the dock. Empty on home.
     pub title: &'a str,
@@ -36,8 +36,8 @@ pub struct Status<'a> {
     pub net: Net,
 }
 
-/// The shell's mark: a skull, as on pt35, drawn smooth.
-pub const SKULL: &str = "gh0st-skull";
+/// The shell's mark, where pt35 has its skull.
+pub const LOGO: &str = "gh0st-fox";
 
 /// Body area between the two bars.
 pub fn body(t: &Theme) -> Rect {
@@ -92,7 +92,7 @@ pub fn soft(t: &Theme) -> Color {
     mix(t.c.muted, t.c.fg, 150)
 }
 
-/// The top bar, as on pt35: the skull, a slot for each open app, the page's
+/// The top bar, as on pt35: the fox, a slot for each open app, the page's
 /// name, then network, battery and clock on the right.
 pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     let r = Rect::new(0, 0, t.m.width, t.m.bar_h);
@@ -121,7 +121,7 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
 
     let y = (inner.h - t.m.slot_h + 1) / 2;
     let step = t.m.slot_w + t.m.slot_gap;
-    // The skull has no box: it is accent while home is in front.
+    // The fox has no box: it is accent while home is in front.
     let s16 = IconSize::Bar as i32;
     let ink = if s.front == Some(0) {
         t.c.accent
@@ -130,7 +130,7 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
     };
     icon::draw(
         c,
-        SKULL,
+        LOGO,
         IconSize::Bar,
         t.m.pad - 2,
         (inner.h - s16) / 2,

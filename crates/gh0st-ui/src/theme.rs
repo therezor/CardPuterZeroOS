@@ -55,7 +55,7 @@ pub struct Metrics {
     pub row_h: i32,
     /// A readout line on Network and About.
     pub line_h: i32,
-    /// Top-bar slots: the skull, then one per open app.
+    /// Top-bar slots: the fox, then one per open app.
     pub slot_w: i32,
     pub slot_h: i32,
     pub slot_gap: i32,

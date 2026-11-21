@@ -246,7 +246,7 @@ impl Switcher {
                     label: "Home",
                     note: "",
                     visual: Visual::Badge {
-                        icon: widgets::SKULL,
+                        icon: widgets::LOGO,
                         tint: t.c.accent,
                     },
                 },

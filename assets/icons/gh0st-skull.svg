@@ -1,2 +1,0 @@
-<!-- Gh0stdeck skull, MIT like the code. Drawn on a 16 px grid (scaled 1.5 to Lucide's 24), so at 16 px the straight edges land on pixels. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="scale(1.5)"><path fill="currentColor" fill-rule="evenodd" d="M6 1H10L14 3V9L12 11V14L11 15H5L4 14V11L2 9V3ZM4 6H5L7 8V9H4ZM12 6H11L9 8V9H12ZM7 10H9L8 11ZM6 12H7V15H6ZM9 12H10V15H9Z"/></g></svg>
