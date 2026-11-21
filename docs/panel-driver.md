@@ -96,10 +96,3 @@ GH0ST_HOST=pi@<device> scripts/ab-test.sh 5 6    # blind A/B of a driver paramet
 ```sh
 sudo ./install.sh uninstall   # M5's driver back, then reboot
 ```
-
-
-- show memory and cpu usage in app switcher
-- lockscreen with password input
-- add mit license
-- remove desktop build from pi image
-- advanced settings (gpu_mem=128) etc
