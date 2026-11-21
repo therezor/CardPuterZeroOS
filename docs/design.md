@@ -338,6 +338,10 @@ dialog, then closes every app.
   hint bar (screen 35) is still to come.
 - The terminal's scroll and find modes keep their own hint bar: it takes
   every key raw, so the SDK's chips don't run there yet.
+- Two-line rows are in gh0st-ui (`note_row`) but not yet in the SDK's
+  `Ui::list`, which keeps one row height.
+- Some sizes still sit in widgets as literals: the card's padding, the
+  toast's insets, the dialog's layout. They belong in `Metrics`.
 
 - Marks for the camera, mic and an SSH session in use. inotify can't tell who
   opened a device, and there is no polling, so they wait for a better source.

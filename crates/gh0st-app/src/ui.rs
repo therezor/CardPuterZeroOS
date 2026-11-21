@@ -4,6 +4,7 @@
 
 use crate::field::TextField;
 use crate::list::{List, Row, Trail};
+use gh0st_ui::theme::Tone;
 use gh0st_ui::font::Font;
 use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::widgets::{self, Trailing};
@@ -140,6 +141,41 @@ impl<'a> Ui<'a> {
         self.y = r.bottom();
     }
 
+    /// A message that fills the rest: an icon in a tone (none: muted), a line,
+    /// a note, and the keys that act on it: `&[("Enter", "scan")]`.
+    pub fn notice(
+        &mut self,
+        icon_name: &str,
+        tone: Option<Tone>,
+        text: &str,
+        note: &str,
+        keys: &[(&str, &str)],
+    ) {
+        let r = self.rest();
+        let keys: Vec<widgets::Hint> = keys
+            .iter()
+            .map(|&(key, label)| widgets::Hint { key, label })
+            .collect();
+        let m = widgets::Message {
+            icon: icon_name,
+            tone,
+            text,
+            note,
+            keys: &keys,
+        };
+        widgets::message(self.c, self.t, r, &m);
+        self.y = r.bottom();
+    }
+
+    /// A labelled bar: how far a job has come, 0 to 100. `None` while that
+    /// isn't known: a segment at `phase` (0 to 255), moved only while shown.
+    pub fn progress(&mut self, label: &str, value: Option<u8>, phase: u8) {
+        let (x, w) = self.inner();
+        let r = Rect::new(x, self.y, w, 23);
+        widgets::progress(self.c, self.t, r, label, value, phase);
+        self.y = r.bottom() + 6;
+    }
+
     /// Rows with `list`'s selection, scrolled to keep it in view. A long list
     /// fills the rest of the page; a short one leaves room below it.
     pub fn list(&mut self, list: &List, rows: &[Row]) {
@@ -161,13 +197,21 @@ impl<'a> Ui<'a> {
         for (i, row) in rows.iter().enumerate().skip(first).take(visible) {
             let r = Rect::new(x, top + (i - first) as i32 * row_h, w, row_h);
             let tint = if row.dim { t.c.muted } else { t.c.accent };
+            if let Some(why) = row.off {
+                widgets::disabled_row(self.c, t, r, row.icon, row.label, why);
+                continue;
+            }
             let trailing = match row.trail {
-                Trail::None => Trailing::None,
+                Trail::None | Trail::Check(false) => Trailing::None,
                 Trail::Link(None) => Trailing::Chevron,
                 Trail::Link(Some(v)) => Trailing::ValueChevron(v),
                 Trail::Info(v) => Trailing::Value(v),
                 Trail::Toggle(on) => Trailing::Toggle(on),
                 Trail::Choice(v) => Trailing::Choice(v),
+                Trail::Level(p) => Trailing::Level(p),
+                Trail::Check(true) => Trailing::Check,
+                Trail::Tag(w, tone) => Trailing::Tag(w, tone),
+                Trail::Signal(level, secure) => Trailing::Signal { level, secure },
             };
             let w_row = widgets::Row {
                 icon: (!row.icon.is_empty()).then_some(row.icon),

@@ -570,8 +570,8 @@ impl Runtime {
         let answer = if yes {
             Answer::Yes(d.take_text())
         } else {
-            // A half-typed password goes too.
-            d.take_text().clear();
+            // A half-typed password goes too, zeroed in place.
+            d.take_text().into_bytes().fill(0);
             Answer::No
         };
         self.dirty = true;
@@ -820,7 +820,10 @@ impl Runtime {
 
     /// Another app or the shell is in front: no keys, no frames.
     pub fn pause_input(&mut self, now: u64) {
-        self.overlay = Overlay::None;
+        // A dialog waits for its answer; the menu and Help close.
+        if !matches!(self.overlay, Overlay::Dialog { .. }) {
+            self.overlay = Overlay::None;
+        }
         self.hold = None;
         self.pressed = None;
         self.taken.clear();
@@ -1449,6 +1452,13 @@ mod tests {
             assert_eq!(d.toast(), Some("Hold to erase"));
             d.keys("down 7").wait(800);
             assert_eq!(*log.borrow(), ["2 Yes(\"\")"]);
+        }
+
+        #[test]
+        fn a_dialog_waits_out_a_pause() {
+            let (mut d, log) = asker();
+            d.keys("5\ntype abc").pause().resume().keys("enter");
+            assert_eq!(*log.borrow(), ["1 Yes(\"abc\")"]);
         }
     }
 }

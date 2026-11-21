@@ -945,7 +945,7 @@ fn selected_text(t: &Terminal, a: Pos, b: Pos, scratch: &mut (Vec<Cell>, Cluster
 }
 
 /// The first run said how Esc works here.
-const TOLD: &str = "gh0st-term.esc_told";
+const TOLD: &str = "gh0st.term.esc_told";
 
 impl Page for Term {
     fn title(&self) -> &str {

@@ -127,8 +127,8 @@ pub struct Bars {
 }
 
 impl Bars {
-    /// No bars: the page has the whole 320x170 screen. Esc, Enter, 8 and
-    /// Fn+H still work.
+    /// No bars: the page has the whole 320x170 screen. Esc, Enter and Fn+H
+    /// still work; with no chip on 8, Help then 8 opens the menu.
     pub fn none() -> Bars {
         Bars {
             top: false,

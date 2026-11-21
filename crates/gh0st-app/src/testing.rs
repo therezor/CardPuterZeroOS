@@ -106,6 +106,18 @@ impl Driver {
         }
     }
 
+    /// Another app comes in front, as Fn+K does: no keys, no frames.
+    pub fn pause(&mut self) -> &mut Driver {
+        self.rt.pause_input(self.now);
+        self
+    }
+
+    /// Back in front.
+    pub fn resume(&mut self) -> &mut Driver {
+        self.rt.resume_input(self.now);
+        self
+    }
+
     /// The toast showing now, if any.
     pub fn toast(&self) -> Option<&str> {
         self.rt.toast_text()

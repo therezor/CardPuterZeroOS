@@ -360,7 +360,7 @@ fn chip_states(t: &Theme) -> Canvas {
             (n("chevron-right", "Next"), "c"),
             (n("search", "Find"), "s"),
             (n("eye", "Show"), "Tab"),
-            (menu(), "Fn 8"),
+            (n("copy", "Copy"), "y"),
         ],
     ];
     let captions = ["", "", "Other keys that run the same chip"];
@@ -651,7 +651,7 @@ fn esc_hold(t: &Theme) -> Canvas {
 
 fn esc_hung(t: &Theme) -> Canvas {
     let mut c = notes_first(t);
-    widgets::banner(&mut c, t, "Not responding. Hold Esc to close it", Tone::Warning);
+    widgets::banner(&mut c, t, "Hold Esc to close the app", Tone::Warning);
     c
 }
 

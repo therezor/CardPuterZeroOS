@@ -1,6 +1,7 @@
 //! A list of rows with a selection: the shape of most settings pages.
 
 use crate::key::Key;
+use gh0st_ui::theme::Tone;
 use std::cell::Cell;
 
 /// What a key did to a [`List`].
@@ -78,6 +79,10 @@ pub(crate) enum Trail<'a> {
     Info(&'a str),
     Toggle(bool),
     Choice(&'a str),
+    Level(u8),
+    Check(bool),
+    Tag(&'a str, Tone),
+    Signal(u8, bool),
 }
 
 /// One row of a list.
@@ -100,6 +105,8 @@ pub struct Row<'a> {
     pub(crate) icon: &'a str,
     pub(crate) trail: Trail<'a>,
     pub(crate) dim: bool,
+    /// Can't be used now, and why: drawn faint, the reason on the right.
+    pub(crate) off: Option<&'a str>,
 }
 
 impl<'a> Row<'a> {
@@ -109,6 +116,7 @@ impl<'a> Row<'a> {
             icon: "",
             trail,
             dim: false,
+            off: None,
         }
     }
 
@@ -135,6 +143,33 @@ impl<'a> Row<'a> {
     /// One of a few values, stepped with Left and Right.
     pub fn choice(label: &'a str, value: &'a str) -> Row<'a> {
         Row::new(label, Trail::Choice(value))
+    }
+
+    /// A level from 0 to 100: a bar and a percent, stepped with Left and
+    /// Right.
+    pub fn level(label: &'a str, percent: u8) -> Row<'a> {
+        Row::new(label, Trail::Level(percent))
+    }
+
+    /// One choice of a list: a check on the one picked.
+    pub fn pick(label: &'a str, picked: bool) -> Row<'a> {
+        Row::new(label, Trail::Check(picked))
+    }
+
+    /// A count or a word in a tone on the right: "3", "New".
+    pub fn tag(label: &'a str, word: &'a str, tone: Tone) -> Row<'a> {
+        Row::new(label, Trail::Tag(word, tone))
+    }
+
+    /// A Wi-Fi network: signal bars 0 to 4, and a lock when it is secured.
+    pub fn signal(label: &'a str, level: u8, secure: bool) -> Row<'a> {
+        Row::new(label, Trail::Signal(level, secure))
+    }
+
+    /// Can't be used now: the row is faint and says why on its right.
+    pub fn disabled(mut self, why: &'a str) -> Row<'a> {
+        self.off = Some(why);
+        self
     }
 
     /// The current value before a link's chevron.

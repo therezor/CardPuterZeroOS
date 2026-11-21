@@ -201,6 +201,9 @@ struct Shell {
     banner: Option<Overlay>,
     /// Over an app: a toast.
     popup: Option<Overlay>,
+    /// The volume or brightness level, shown in the top bar's place while
+    /// `toast` lasts: icon, name, percent.
+    level: Option<(&'static str, &'static str, u8)>,
     /// A panel-sized canvas kept for reuse.
     spare: Option<Canvas>,
     jobs: Vec<(JobKind, Job)>,
@@ -308,6 +311,7 @@ impl Shell {
             esc_down: false,
             banner: None,
             popup: None,
+            level: None,
             spare: None,
             jobs: Vec::new(),
             volume: config.get_int("volume").map(|v| v.clamp(0, 100) as u8),
@@ -728,6 +732,7 @@ impl Shell {
         }
         if self.toast.as_ref().is_some_and(|t| now >= t.1) {
             self.toast = None;
+            self.level = None;
             self.dirty = true;
             if let Some(p) = self.popup.take() {
                 self.spare = Some(p.hide(self.display.as_mut()));
@@ -789,7 +794,7 @@ impl Shell {
         }
         if d.show_hint {
             self.show_banner(
-                "Not responding. Hold Esc to close it",
+                "Hold Esc to close the app",
                 gh0st_ui::theme::Tone::Warning,
             );
         }
@@ -987,8 +992,27 @@ impl Shell {
         widgets::action_bar(c, &t, &[none; 5]);
     }
 
+    /// The volume or brightness level in the top bar's place, over an app
+    /// too, for as long as a toast.
+    fn show_level(&mut self, icon: &'static str, label: &'static str, pct: u8) {
+        if self.app_front() {
+            if let Some(p) = self.popup.take() {
+                self.spare = Some(p.hide(self.display.as_mut()));
+            }
+            let t = self.t;
+            let under = Canvas::new(t.m.width, t.m.height);
+            self.popup = Some(Overlay::show(self.display.as_mut(), under, |c| {
+                widgets::level_bar(c, &t, icon, label, pct)
+            }));
+        }
+        self.level = Some((icon, label, pct));
+        self.toast = Some((String::new(), rt::now_ms() + TOAST_MS));
+        self.dirty = true;
+    }
+
     fn toast(&mut self, text: impl Into<String>) {
         let text = text.into();
+        self.level = None;
         if self.app_front() {
             self.show_popup(&text);
         }
@@ -1139,7 +1163,7 @@ impl Shell {
                     self.config = Config::load(&config::default_path());
                     self.config.set_int("brightness", raw as i64);
                     let _ = self.config.save();
-                    self.toast(format!("Brightness {pct}%"));
+                    self.show_level("sun", "Brightness", pct);
                 }
                 true
             }
@@ -1151,20 +1175,16 @@ impl Shell {
                 };
                 let v = (self.volume.unwrap_or(50) as i32 + step).clamp(0, 100) as u8;
                 self.apply_volume(v);
-                let suffix = if self.muted == Some(true) {
-                    ", muted"
-                } else {
-                    ""
-                };
-                self.toast(format!("Volume {v}%{suffix}"));
+                let label = if self.muted == Some(true) { "Muted" } else { "Volume" };
+                self.show_level("volume-2", label, v);
                 true
             }
             code::MUTE => {
                 let muted = !self.muted.unwrap_or(false);
                 self.apply_mute(muted);
                 match (muted, self.volume) {
-                    (true, _) => self.toast("Muted"),
-                    (false, Some(v)) => self.toast(format!("Volume {v}%")),
+                    (true, v) => self.show_level("volume-x", "Muted", v.unwrap_or(0)),
+                    (false, Some(v)) => self.show_level("volume-2", "Volume", v),
                     (false, None) => self.toast("Sound on"),
                 }
                 true
@@ -1766,6 +1786,13 @@ impl Shell {
     }
 
     fn draw(&mut self) {
+        // A menu or a question belongs to the screen it was opened on.
+        if self.screen != Screen::Home {
+            self.home_menu = None;
+        }
+        if self.screen != Screen::Switcher {
+            self.confirm_all = false;
+        }
         let start = Instant::now();
         let t = self.t;
         let now = rt::now_ms();
@@ -1798,7 +1825,9 @@ impl Shell {
         drop(cards);
         if matches!(self.screen, Screen::Home | Screen::Switcher) {
             self.draw_low_battery();
-            if let Some((text, _)) = &self.toast {
+            if let Some((icon, label, pct)) = self.level {
+                widgets::level_bar(&mut self.canvas, &t, icon, label, pct);
+            } else if let Some((text, _)) = &self.toast {
                 let bottom = t.m.height - t.m.hint_h;
                 let info = gh0st_ui::theme::Tone::Info;
                 widgets::toast(&mut self.canvas, &t, bottom, info, text, None);

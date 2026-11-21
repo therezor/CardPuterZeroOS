@@ -402,10 +402,15 @@ scrolls to keep the selection in view.
 | `Row::toggle(label, on)` | A switch |
 | `Row::choice(label, value)` | The value between arrows, stepped with Left and Right |
 | `Row::info(label, value)` | A value, read only |
+| `Row::level(label, percent)` | A bar and a percent, stepped with Left and Right |
+| `Row::pick(label, picked)` | A check on the one picked, in a list of choices |
+| `Row::tag(label, word, tone)` | A count or a word in a tone: "3", "New" |
+| `Row::signal(label, level, secure)` | Signal bars and a lock, for a network |
 | `Row::text(label)` | Nothing |
 
 `.icon(name)` adds an icon on the left. `.dim()` greys the icon of a row that
-isn't available yet. A long list fills the rest of the page; a short one
+isn't available yet. `.disabled("needs a cable")` draws a row that can't be
+used now, faint, with why on its right. A long list fills the rest of the page; a short one
 leaves room for more below it.
 
 ## Text input
@@ -463,6 +468,8 @@ margins, fonts and colours:
 | `list`, `field` | A list or a text field, as above |
 | `big` | Large centred text, for a number or a word |
 | `message` | An icon and a line, centred, for an empty or waiting state |
+| `notice` | An icon in a tone, a line, a note and the keys that act: empty lists, errors |
+| `progress` | A labelled bar, or a moving segment while the end isn't known |
 | `space` | A gap, in pixels |
 
 For anything else, draw pixels yourself. `ui.area()` is the page's rect in

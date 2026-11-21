@@ -927,6 +927,7 @@ impl Settings {
                     Some(a) => {
                         self.state.moving = Some(a.file.clone());
                         self.refresh(cx);
+                        cx.toast("Up and Down move it; Enter when done");
                     }
                     None => cx.toast("Pin an app to move it"),
                 }
@@ -1509,8 +1510,36 @@ impl Page for Settings {
 
     fn context(&self) -> Option<&str> {
         // One SDK page holds Settings' own stack: name the app above the
-        // first page, as the SDK would.
-        (self.stack.len() > 1).then_some("Settings")
+        // first page, as the SDK would. The country list says how to jump.
+        match self.top().0 {
+            PageId::Country(None) => Some("type a letter"),
+            _ => (self.stack.len() > 1).then_some("Settings"),
+        }
+    }
+
+    /// The page's own letter keys, so Help lists them.
+    fn commands(&self, c: &mut Commands) {
+        for (i, &(key, label)) in self.view.keys.iter().enumerate() {
+            if let Some((spec, _)) = page_key_of(key) {
+                let mut name = label.to_string();
+                if let Some(f) = name.get_mut(..1) {
+                    f.make_ascii_uppercase();
+                }
+                let cmd = gh0st_app::Command::action(PAGE_KEYS + i as u32, name);
+                c.add(cmd.keys(spec).keys_only());
+            }
+        }
+    }
+
+    fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
+        let key = id
+            .checked_sub(PAGE_KEYS)
+            .and_then(|i| self.view.keys.get(i as usize))
+            .and_then(|&(k, _)| page_key_of(k));
+        if let Some((_, key)) = key {
+            self.page_or_list_key(key, cx);
+            self.flush(cx);
+        }
     }
 
     fn bars(&self) -> Bars {
@@ -1604,7 +1633,8 @@ impl Settings {
             Key::Down => self.move_cursor(1, cx),
             Key::Left => self.change(-1, cx),
             Key::Right => self.change(1, cx),
-            Key::Char(d @ '1'..='9') => self.pick(d as usize - '1' as usize, cx),
+            // 4 is Esc and 5 to 8 are the chips and the menu: 1 to 3 pick.
+            Key::Char(d @ '1'..='3') => self.pick(d as usize - '1' as usize, cx),
             // The shell acts on these keys; show the new values.
             Key::Other(codes::VOLUMEUP | codes::VOLUMEDOWN | codes::MUTE) => self.query_volume(cx),
             Key::Other(codes::BRIGHTNESSUP | codes::BRIGHTNESSDOWN) => self.refresh(cx),
@@ -1620,6 +1650,20 @@ impl Settings {
 
 /// What a chip or a dialog answer is for: the one dialog Settings shows.
 const ASK: u32 = 1;
+
+/// Command ids for a page's own keys, by their place in its list.
+const PAGE_KEYS: u32 = 100;
+
+/// A page key as the SDK spells it, and the key it stands for.
+fn page_key_of(key: &str) -> Option<(&'static str, Key)> {
+    Some(match key {
+        "R" => ("r", Key::Char('r')),
+        "S" => ("s", Key::Char('s')),
+        "M" => ("m", Key::Char('m')),
+        "Del" => ("Bksp", Key::Backspace),
+        _ => return None,
+    })
+}
 
 fn page_rows(t: &Theme, view: &View) -> usize {
     match view.body {
