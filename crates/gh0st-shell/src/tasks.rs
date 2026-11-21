@@ -16,6 +16,8 @@ pub const GROUP_RECHECK_MS: u64 = 200;
 pub enum State {
     Front,
     Paused,
+    /// Left running, as Settings > Apps allows.
+    Background,
     /// Sent SIGTERM at this time; SIGKILL follows after the grace.
     Closing { since: u64, killed: bool },
 }
@@ -32,6 +34,13 @@ pub struct Task {
     pub pixels: Option<Canvas>,
     /// When it was last in front, for the switcher's starting card.
     pub used: u64,
+}
+
+impl Task {
+    /// Can come to the front: paused or running behind.
+    pub fn resumable(&self) -> bool {
+        matches!(self.state, State::Paused | State::Background)
+    }
 }
 
 #[derive(Default)]
@@ -71,6 +80,15 @@ impl Tasks {
 
     pub fn any_paused(&self) -> bool {
         self.list.iter().any(|t| t.state != State::Front)
+    }
+
+    /// The background app used last: the one a stray pixel most likely
+    /// came from.
+    pub fn background_mut(&mut self) -> Option<&mut Task> {
+        self.list
+            .iter_mut()
+            .filter(|t| t.state == State::Background)
+            .max_by_key(|t| t.used)
     }
 
     /// The most recently used app, for the switcher's cursor.
@@ -160,6 +178,7 @@ impl Tasks {
                 icon: t.icon.clone(),
                 state: match t.state {
                     State::Closing { .. } => switcher::State::Closing,
+                    State::Background => switcher::State::Running,
                     _ => switcher::State::Paused,
                 },
             })

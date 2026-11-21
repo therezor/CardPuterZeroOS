@@ -117,6 +117,16 @@ pub fn stock_key(file: &str) -> String {
     format!("{key}_{h:08x}")
 }
 
+/// Our per-app setting `leaf` for `file`: `gh0st.app.<file>.<leaf>`, with
+/// the file name's dots and odd bytes made `_` so the key does not nest.
+pub fn app_key(file: &str, leaf: &str) -> String {
+    let id: String = file
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() { b as char } else { '_' })
+        .collect();
+    format!("gh0st.app.{id}.{leaf}")
+}
+
 /// Shown unless switched on in Settings > Apps.
 const HIDDEN_BY_DEFAULT: &[&str] = &["zclaw.desktop"];
 
@@ -404,6 +414,11 @@ mod tests {
         let apps = scan_with(&t.dirs(), &Config::default(), &[], |_| true);
         assert_eq!(apps[1].icon, IconRef::Path(t.0.join("share/images/m.png")));
         assert_eq!(apps[2].icon, IconRef::None, "kept, drawn as a letter");
+    }
+
+    #[test]
+    fn our_app_keys_do_not_nest_on_the_file_name() {
+        assert_eq!(app_key("music.desktop", "icon"), "gh0st.app.music_desktop.icon");
     }
 
     #[test]

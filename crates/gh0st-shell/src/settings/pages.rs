@@ -74,6 +74,45 @@ pub struct AppRow {
     pub file: String,
     pub name: String,
     pub shown: bool,
+    /// A built-in symbol in place of the app's own icon; empty for its own.
+    pub icon: String,
+    /// Keeps running when sent to the background instead of pausing.
+    pub background: bool,
+    pub pinned: bool,
+}
+
+/// Symbols an app's icon can be swapped for, after its own.
+pub const APP_ICONS: &[&str] = &[
+    "square-terminal",
+    "code-xml",
+    "folder",
+    "camera",
+    "globe",
+    "keyboard",
+    "monitor",
+    "shopping-bag",
+    "hard-drive",
+    "shield",
+    "user",
+    "clock",
+    "volume-2",
+    "network",
+    "bluetooth",
+    "usb",
+    "lock",
+    "settings",
+    "gh0st-skull",
+];
+
+pub fn icon_label(icon: &str) -> String {
+    if icon.is_empty() {
+        return "Own".into();
+    }
+    let mut s = icon.replace(['-', '_'], " ");
+    if let Some(f) = s.get_mut(0..1) {
+        f.make_ascii_uppercase();
+    }
+    s
 }
 
 /// What the pages show. `None` means not known yet: a helper is still out.
@@ -209,14 +248,50 @@ pub fn build(id: &PageId, s: &State) -> Page {
                     .map(|a| Item {
                         icon: None,
                         label: a.name.clone(),
-                        value: Value::Toggle(a.shown),
-                        act: Act::Set(Setting::AppShown(a.file.clone())),
+                        value: Value::TextChevron(
+                            match (a.shown, a.background) {
+                                (false, _) => "Hidden",
+                                (true, true) => "Runs in background",
+                                (true, false) => "",
+                            }
+                            .into(),
+                        ),
+                        act: Act::Open(PageId::App(a.file.clone())),
                         danger: false,
                     })
                     .collect(),
             ),
             vec![],
         ),
+        PageId::App(file) => {
+            let a = s.apps.iter().find(|a| a.file == *file).cloned().unwrap_or_default();
+            let f = || a.file.clone();
+            (
+                "App",
+                Body::List(vec![
+                    Item::new(
+                        "layout-grid",
+                        "Show on home",
+                        Value::Toggle(a.shown),
+                        Act::Set(Setting::AppShown(f())),
+                    ),
+                    Item::new(
+                        "palette",
+                        "Icon",
+                        Value::Choice(icon_label(&a.icon)),
+                        Act::Set(Setting::AppIcon(f())),
+                    ),
+                    Item::new(
+                        "arrow-left-right",
+                        "Run in background",
+                        Value::Toggle(a.background),
+                        Act::Set(Setting::AppBackground(f())),
+                    ),
+                    Item::new("pin", "Pinned", Value::Toggle(a.pinned), Act::Set(Setting::AppPinned(f()))),
+                ]),
+                vec![],
+            )
+        }
         PageId::Wifi => (
             "Wi-Fi",
             Body::List(wifi(s)),
@@ -255,9 +330,17 @@ pub fn build(id: &PageId, s: &State) -> Page {
             vec![],
         ),
     };
+    let title = match id {
+        PageId::App(file) => s
+            .apps
+            .iter()
+            .find(|a| a.file == *file)
+            .map_or_else(|| title.to_string(), |a| a.name.clone()),
+        _ => title.into(),
+    };
     Page {
         id: id.clone(),
-        title: title.into(),
+        title,
         body,
         keys,
     }

@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::settings::{bt, net};
-use crate::settings::pages::{self, AppRow, DARK_TIMES, Logs, State as PageState};
+use crate::settings::pages::{self, APP_ICONS, AppRow, DARK_TIMES, Logs, State as PageState};
 use crate::settings::{self, Act, Body, Command, Cursor, Dialog, Page, PageId, Setting, Value};
 use gh0st_core::desktop;
 
@@ -118,6 +118,16 @@ impl Shell {
                 .into_iter()
                 .filter(|a| a.builtin.is_none())
                 .map(|a| AppRow {
+                    icon: self
+                        .config
+                        .get_str(&apps::app_key(&a.file, "icon"))
+                        .unwrap_or("")
+                        .to_string(),
+                    background: self
+                        .config
+                        .get_bool(&apps::app_key(&a.file, "background"))
+                        .unwrap_or(false),
+                    pinned: self.pins.contains(&a.file),
                     file: a.file,
                     name: a.entry.name,
                     shown: a.shown,
@@ -355,6 +365,31 @@ impl Shell {
                 self.write_config(|c| c.set_int(&key, !shown as i64));
                 self.rescan();
             }
+            Setting::AppIcon(file) => {
+                let key = apps::app_key(file, "icon");
+                let now = self.config.get_str(&key).unwrap_or("").to_string();
+                // Its own icon first, then the symbols.
+                let pos = APP_ICONS.iter().position(|i| *i == now).map_or(0, |i| i + 1);
+                let next = cycle(pos, d, APP_ICONS.len() + 1);
+                let icon = next.checked_sub(1).map_or("", |i| APP_ICONS[i]);
+                self.write_config(|c| {
+                    if icon.is_empty() {
+                        c.remove(&key);
+                    } else {
+                        c.set_str(&key, icon);
+                    }
+                });
+                self.rescan();
+            }
+            Setting::AppBackground(file) => {
+                let key = apps::app_key(file, "background");
+                let on = !self.config.get_bool(&key).unwrap_or(false);
+                self.write_config(|c| c.set_bool(&key, on));
+                if on {
+                    self.toast("Runs on when you leave it; it may draw over the screen");
+                }
+            }
+            Setting::AppPinned(file) => self.toggle_pin_of(file),
             _ => self.apply_system(s, d),
         }
         self.refresh_settings();

@@ -39,6 +39,8 @@ const RESCAN_DEBOUNCE_MS: u64 = 300;
 const STATE_DIR: &str = ".local/state/gh0st";
 /// How long a paused app may take to stop before its frame is read anyway.
 const STOP_WAIT_MS: u64 = 100;
+/// How often the shell looks for rows a background app drew over it.
+const GUARD_MS: u64 = 500;
 const VOLUME_STEP: i32 = 10;
 
 mod settings_ui;
@@ -466,7 +468,16 @@ impl Shell {
             .file
             .bytes()
             .fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize));
+        // A symbol picked in Settings > Apps wins over the app's own.
+        let custom = self
+            .config
+            .get_str(&apps::app_key(&a.file, "icon"))
+            .and_then(|n| gh0st_ui::icon::ICON_NAMES.iter().find(|i| **i == n));
         let icon = match &a.icon {
+            _ if custom.is_some() => Icon::Symbol {
+                name: custom.copied().unwrap_or("settings"),
+                tint,
+            },
             IconRef::Symbol(name) => match gh0st_ui::icon::ICON_NAMES
                 .iter()
                 .find(|n| **n == name.as_str())
@@ -538,6 +549,8 @@ impl Shell {
                     })
                     .flatten(),
                 app.then(|| self.esc.next_at()).flatten(),
+                (shell && self.tasks.iter().any(|t| t.state == tasks::State::Background))
+                    .then_some(now + GUARD_MS),
                 (app && (self.banner.is_some() || self.popup.is_some()))
                     .then_some(now + crate::overlay::REFRESH_MS),
                 self.tasks.next_at(now),
@@ -716,6 +729,9 @@ impl Shell {
         if now >= self.clock_at {
             self.refresh_status();
         }
+        if self.screen != Screen::Off {
+            self.guard_background();
+        }
         if self.tab_down.is_some_and(|t| now >= t + LOCK_HOLD_MS) {
             self.tab_down = None;
             self.screen = Screen::Locked;
@@ -764,6 +780,39 @@ impl Shell {
             if self.low.take_shutdown(now) {
                 child::fire(&["systemctl", "poweroff", "-i"]);
             }
+        }
+    }
+
+    /// A background app draws to the same framebuffer. Rows it changed are
+    /// written again from the shell's frame, and its pixels are kept, so it
+    /// shows them when it comes back.
+    fn guard_background(&mut self) {
+        if self.dirty || !self.tasks.iter().any(|t| t.state == tasks::State::Background) {
+            return;
+        }
+        let mut now = self.canvas_for_overlay();
+        self.display.read_into(&mut now);
+        let mut changed = false;
+        if let Some(t) = self.tasks.background_mut() {
+            let px = t
+                .pixels
+                .get_or_insert_with(|| Canvas::new(now.width(), now.height()));
+            for y in 0..now.height() {
+                if now.row(y) == self.canvas.row(y) {
+                    continue;
+                }
+                changed = true;
+                for x in 0..now.width() {
+                    let p = now.get(x, y);
+                    if p != self.canvas.get(x, y) {
+                        px.set(x, y, p);
+                    }
+                }
+            }
+        }
+        self.spare = Some(now);
+        if changed {
+            self.display.flush(&self.canvas, self.canvas.bounds());
         }
     }
 
@@ -1086,10 +1135,16 @@ impl Shell {
         let Some(id) = self.home.selected().map(|e| e.id.clone()) else {
             return;
         };
+        self.toggle_pin_of(&id);
+    }
+
+    fn toggle_pin_of(&mut self, id: &str) {
+        let id = id.to_string();
         let name = self
-            .home
-            .selected()
-            .map(|e| e.name.clone())
+            .apps
+            .iter()
+            .find(|a| a.file == id)
+            .map(|a| a.entry.name.clone())
             .unwrap_or_default();
         if let Some(i) = self.pins.iter().position(|p| *p == id) {
             self.pins.remove(i);
@@ -1186,6 +1241,20 @@ impl Shell {
         let Some(t) = self.tasks.front_mut() else {
             return;
         };
+        let background = self
+            .config
+            .get_bool(&apps::app_key(&t.id, "background"))
+            .unwrap_or(false);
+        if background {
+            self.display.read_into(&mut frame);
+            let id = t.id.clone();
+            t.pixels = Some(frame);
+            t.state = tasks::State::Background;
+            t.used = now;
+            self.take_screen();
+            self.open_switcher(Back::App(id), 0);
+            return;
+        }
         let sent = child::stop(t.pgid);
         if !t.leader_done && child::wait_stopped(t.pgid, STOP_WAIT_MS) == Stopped::Exited {
             t.leader_done = true;
@@ -1217,7 +1286,7 @@ impl Shell {
         let Some(t) = self.tasks.get_mut(id) else {
             return;
         };
-        if t.state != tasks::State::Paused {
+        if !matches!(t.state, tasks::State::Paused | tasks::State::Background) {
             return;
         }
         if let Some(px) = t.pixels.take() {
@@ -1278,7 +1347,7 @@ impl Shell {
     /// Esc on the switcher, or Fn+K again: back to where it was opened.
     fn switcher_back(&mut self) {
         match self.back.clone() {
-            Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.state == tasks::State::Paused) => {
+            Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.resumable()) => {
                 self.pending = Some(Pending::Resume(id));
             }
             Back::Settings if self.settings.is_some() => {
@@ -1313,7 +1382,7 @@ impl Shell {
                         self.dirty = true;
                     }
                     Some(id) => {
-                        if self.tasks.get(&id).is_some_and(|t| t.state == tasks::State::Paused) {
+                        if self.tasks.get(&id).is_some_and(|t| t.resumable()) {
                             self.pending = Some(Pending::Resume(id));
                         }
                     }

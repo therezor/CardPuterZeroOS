@@ -169,6 +169,9 @@ fn sample_state() -> State {
         file: file.into(),
         name: name.into(),
         shown,
+        icon: String::new(),
+        background: file == "music.desktop",
+        pinned: false,
     };
     State {
         brightness: Some(80),
@@ -402,6 +405,7 @@ fn main() {
                 ("sound", s(PageId::Sound, 0)),
                 ("appearance", s(PageId::Appearance, 1)),
                 ("apps", s(PageId::Apps, 4)),
+                ("app", s(PageId::App("music.desktop".into()), 2)),
                 ("wifi", s(PageId::Wifi, 2)),
                 (
                     "wifi-password",

@@ -15,6 +15,8 @@ const GLIDE_MS: u64 = 80;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
     Paused,
+    /// Allowed to keep running in the background.
+    Running,
     /// Sent SIGTERM; waiting for its group to go.
     Closing,
 }
@@ -244,6 +246,7 @@ impl Switcher {
                     label: &app.name,
                     note: match app.state {
                         State::Paused => "Paused",
+                        State::Running => "Running",
                         State::Closing => "Closing\u{2026}",
                     },
                     visual: home::visual(t, &app.icon, &app.name, Size::Large),

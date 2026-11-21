@@ -21,6 +21,8 @@ pub enum PageId {
     Sound,
     Appearance,
     Apps,
+    /// One app's settings, by `.desktop` file name.
+    App(String),
     System,
     /// Regions, then the cities of one region.
     TimeZone(Option<String>),
@@ -41,6 +43,9 @@ pub enum Setting {
     Clock,
     /// Shown on home, by `.desktop` file name.
     AppShown(String),
+    AppIcon(String),
+    AppBackground(String),
+    AppPinned(String),
     WifiRadio,
     Bluetooth,
     NetworkTime,
