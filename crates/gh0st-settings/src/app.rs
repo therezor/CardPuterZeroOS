@@ -181,6 +181,9 @@ pub struct Settings {
     embed: Option<Embed>,
     /// The step is done once the helper or job now running succeeds.
     finish_pending: bool,
+    /// Done or Skip was pressed while a change was still being made: go on
+    /// once it is, as closing the step would stop it halfway.
+    finish_when_idle: bool,
 }
 
 impl Settings {
@@ -197,6 +200,7 @@ impl Settings {
             gpu_asked: false,
             embed: None,
             finish_pending: false,
+            finish_when_idle: false,
         }
     }
 
@@ -213,7 +217,36 @@ impl Settings {
     fn finish(&mut self, cx: &mut Cx) {
         if self.embed.is_some() {
             self.finish_pending = false;
+            self.finish_when_idle = false;
             cx.done();
+        }
+    }
+
+    /// A change is still being made: a helper, a time zone, a radio, a join.
+    /// Closing the step now would stop it halfway.
+    fn changing(&self) -> bool {
+        self.jobs.values().any(|(kind, _)| {
+            matches!(
+                kind,
+                NetJob::Helper(_)
+                    | NetJob::TimeSet(_)
+                    | NetJob::SetRadio
+                    | NetJob::WifiUnblock
+                    | NetJob::BtPower
+                    | NetJob::BtUnblock
+                    | NetJob::Join { .. }
+                    | NetJob::Forget(_)
+            )
+        })
+    }
+
+    /// Done or Skip: on now, or once the change in hand is made.
+    fn finish_soon(&mut self, cx: &mut Cx) {
+        if self.changing() {
+            self.finish_when_idle = true;
+            cx.toast("One moment");
+        } else {
+            self.finish(cx);
         }
     }
 
@@ -297,8 +330,14 @@ impl Settings {
         let per = page_rows(cx.theme(), &self.view);
         let len = self.view.len();
         let info = matches!(self.view.body, Body::Info(_));
+        // In setup the radio is on already: the cursor starts, and stays,
+        // on the networks, so Enter can't turn Wi-Fi off.
+        let wifi_step = self.embed.is_some() && id == PageId::Wifi;
         let cur = self.cursor_mut();
         if !info {
+            if wifi_step && cur.selected == 0 && len > 1 {
+                cur.selected = 1;
+            }
             cur.fit(len, per);
         }
     }
@@ -307,7 +346,13 @@ impl Settings {
         let per = page_rows(cx.theme(), &self.view);
         let len = self.view.len();
         let info = matches!(self.view.body, Body::Info(_));
-        self.cursor_mut().step(d, len, per, info);
+        let wifi_step = self.embed.is_some() && self.top().0 == PageId::Wifi;
+        let cur = self.cursor_mut();
+        cur.step(d, len, per, info);
+        // Setup's network step keeps off the Wi-Fi switch (see refresh).
+        if wifi_step && cur.selected == 0 && len > 1 {
+            cur.selected = 1;
+        }
     }
 
     /// Digit `n` picks the nth row on screen and acts on it.
@@ -1642,6 +1687,9 @@ impl Settings {
             self.query_net(cx, false);
         }
         self.refresh(cx);
+        if self.finish_when_idle && !self.changing() {
+            self.finish(cx);
+        }
     }
 }
 
@@ -1766,7 +1814,7 @@ impl Page for Settings {
         let key = match key {
             Key::Soft(n) => match self.chips().into_iter().find(|c| c.0 == n) {
                 Some((_, _, ChipDo::Key(k))) => k,
-                Some((_, _, ChipDo::Finish)) => return self.finish(cx),
+                Some((_, _, ChipDo::Finish)) => return self.finish_soon(cx),
                 None => return,
             },
             k => k,
@@ -1778,6 +1826,10 @@ impl Page for Settings {
     /// Esc goes up a page. On the first page it leaves the app, like any
     /// other.
     fn back(&mut self, cx: &mut Cx) -> bool {
+        if self.embed.is_some() && self.stack.len() == 1 && self.changing() {
+            cx.toast("One moment");
+            return false;
+        }
         if self.state.moving.take().is_some() {
             self.refresh(cx);
             return false;
@@ -1825,7 +1877,10 @@ impl Settings {
             Key::Left => self.change(-1, cx),
             Key::Right => self.change(1, cx),
             // 4 is Esc and 5 to 8 are the chips and the menu: 1 to 3 pick.
-            Key::Char(d @ '1'..='3') => self.pick(d as usize - '1' as usize, cx),
+            // Not in setup, where a stray digit would flip a privacy row.
+            Key::Char(d @ '1'..='3') if self.embed.is_none() => {
+                self.pick(d as usize - '1' as usize, cx)
+            }
             // The shell acts on these keys; show the new values.
             Key::Other(codes::VOLUMEUP | codes::VOLUMEDOWN | codes::MUTE) => self.query_volume(cx),
             Key::Other(codes::BRIGHTNESSUP | codes::BRIGHTNESSDOWN) => self.refresh(cx),

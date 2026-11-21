@@ -35,6 +35,10 @@ impl DateTime {
     }
 
     fn submit(&mut self, cx: &mut Cx) {
+        // Network time may have set the clock since this opened.
+        if synced() {
+            return cx.done();
+        }
         let text = format!("{} {}", self.form.value(0), self.form.value(1));
         let Some((y, mon, d, h, min)) = pages::parse_date_time(&text) else {
             let bad_date = pages::parse_date_time(&format!("{} 00:00", self.form.value(0)));

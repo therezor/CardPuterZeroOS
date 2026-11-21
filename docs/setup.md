@@ -242,6 +242,10 @@ check their own password, and waits longer after each wrong try.
   fake `pkexec`, `nmcli` and `timedatectl` first on `PATH`. It checks every helper call,
   `user-create` before `setup-finish`, the password on stdin only, and none in
   `setup.state`. `tests/embed.rs` checks the embedded steps' chips and Esc.
+  A second script takes the tour and passes every lesson by its keys.
+- In setup's steps, digits don't pick rows, the network step's cursor keeps off the
+  Wi-Fi switch, and Done, Skip and Esc wait for a change in hand to finish: closing a
+  step stops its jobs.
 - Still to add: a Wi-Fi join, a bad name, passwords that differ, and resuming at each
   step.
 - The image's checks: the marker, no UID 1000, the unit enabled; the QEMU smoke test sees

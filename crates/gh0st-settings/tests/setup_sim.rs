@@ -61,13 +61,47 @@ enter
 wait 2500
 ";
 
+/// The notice, the welcome's Enter, then every lesson passed by its keys:
+/// typing, the dot onto the ring, Tab past the symbols, the Light chip, a
+/// switch and a choice, the menu's Next lesson, and the held Erase chip.
+const TOUR: &str = "\
+wait 300
+enter
+wait 300
+enter
+wait 300
+type Hello
+wait 1200
+c
+c
+x
+enter
+wait 1200
+tab
+wait 300
+7
+wait 1200
+7
+f
+enter
+wait 1200
+8
+wait 200
+enter
+wait 1200
+down 7
+wait 900
+up 7
+wait 1500
+";
+
 fn write_exe(path: &Path, text: &str) {
     std::fs::write(path, text).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-fn scratch() -> PathBuf {
-    let d = std::env::temp_dir().join(format!("gh0st-setup-sim-{}", std::process::id()));
+fn scratch(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("gh0st-setup-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     for sub in ["bin", "root/etc", "boot", "home", "frames"] {
         std::fs::create_dir_all(d.join(sub)).unwrap();
@@ -94,14 +128,17 @@ fn scratch() -> PathBuf {
     d
 }
 
-#[test]
-fn setup_walks_every_step_and_hands_over() {
+fn have_tz() -> bool {
     let tz = Path::new("/usr/share/zoneinfo");
-    if !tz.join("zone.tab").exists() || !tz.join("iso3166.tab").exists() {
+    let ok = tz.join("zone.tab").exists() && tz.join("iso3166.tab").exists();
+    if !ok {
         eprintln!("skipped: no tz database on this host");
-        return;
     }
-    let d = scratch();
+    ok
+}
+
+/// Runs setup under --sim with `keys`; returns the fakes' log.
+fn run(d: &Path, keys: &str) -> String {
     let mut child = Command::new(env!("CARGO_BIN_EXE_gh0st-settings"))
         .args(["--setup", "--sim"])
         .arg(d.join("frames"))
@@ -116,15 +153,37 @@ fn setup_walks_every_step_and_hands_over() {
         .spawn()
         .unwrap();
     use std::io::Write;
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(KEYS.as_bytes())
-        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    input.write_all(keys.as_bytes()).unwrap();
+    drop(input);
     assert!(child.wait().unwrap().success());
+    std::fs::read_to_string(d.join("log")).unwrap_or_default()
+}
 
-    let log = std::fs::read_to_string(d.join("log")).unwrap();
+fn state(d: &Path) -> String {
+    std::fs::read_to_string(d.join("root/var/lib/cpzeroos/setup.state")).unwrap()
+}
+
+#[test]
+fn the_tour_passes_each_lesson_by_its_keys() {
+    if !have_tz() {
+        return;
+    }
+    let d = scratch("tour");
+    run(&d, TOUR);
+    // The notice, the welcome and seven lessons: step 9 is Country.
+    let s = state(&d);
+    assert!(s.contains("step=9\n") && s.contains("tour=1"), "{s}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn setup_walks_every_step_and_hands_over() {
+    if !have_tz() {
+        return;
+    }
+    let d = scratch("flow");
+    let log = run(&d, KEYS);
     let helper: Vec<&str> = log
         .lines()
         .filter_map(|l| l.strip_prefix("argv: /usr/libexec/gh0st-helper "))
@@ -145,10 +204,7 @@ fn setup_walks_every_step_and_hands_over() {
         !log.lines()
             .any(|l| l.starts_with("argv:") && l.contains("hunter22"))
     );
-    let state = std::fs::read_to_string(d.join("root/var/lib/cpzeroos/setup.state")).unwrap();
-    assert!(
-        state.contains("name=alex") && !state.contains("hunter22"),
-        "{state}"
-    );
+    let s = state(&d);
+    assert!(s.contains("name=alex") && !s.contains("hunter22"), "{s}");
     let _ = std::fs::remove_dir_all(&d);
 }
