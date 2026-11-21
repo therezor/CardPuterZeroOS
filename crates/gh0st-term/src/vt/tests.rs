@@ -226,3 +226,25 @@ fn a_huge_osc_is_cut_not_kept() {
     feed(&mut v, "ok");
     assert_eq!(screen(&v), ["ok"]);
 }
+
+#[test]
+fn a_narrower_screen_rewraps_the_prompt_line() {
+    let mut v = vt(10, 3);
+    feed(&mut v, "$ echo hello");
+    assert_eq!(screen(&v), ["$ echo hel", "lo", ""]);
+    v.t.resize(20, 3);
+    assert_eq!(screen(&v), ["$ echo hello", "", ""]);
+    assert_eq!(v.t.cursor(), (12, 0));
+    v.t.resize(6, 3);
+    assert_eq!(screen(&v), ["$ echo", " hello", ""]);
+    assert_eq!(v.t.cursor(), (0, 2));
+}
+
+#[test]
+fn osc_52_copies_but_never_answers_a_read() {
+    let mut v = vt(10, 1);
+    feed(&mut v, "\x1b]52;c;aGVsbG8gd29ybGQ=\x07");
+    assert_eq!(v.t.clipboard.as_deref(), Some("hello world"));
+    feed(&mut v, "\x1b]52;c;?\x07");
+    assert!(v.t.replies.is_empty());
+}

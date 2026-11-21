@@ -208,6 +208,7 @@ pub fn code_for_char(c: char) -> Option<u16> {
     US_ROWS
         .iter()
         .find_map(|&(start, row)| row.find(c).map(|i| start + i as u16))
+        .or_else(|| SYM_DEFAULT.iter().find(|&&(_, s)| s == c).map(|&(k, _)| k))
 }
 
 /// A key by name, as a key script writes it: `enter`, `esc`, `fn`, `a`...
@@ -233,6 +234,12 @@ pub fn code_for_name(name: &str) -> Option<u16> {
         "brightup" => code::BRIGHTNESSUP,
         "brightdown" => code::BRIGHTNESSDOWN,
         "print" => code::PRINT,
+        "help" => 138,
+        "pageup" => 104,
+        "pagedown" => 109,
+        "delete" => code::DELETE,
+        "minus" => 12,
+        "equal" => 13,
         _ => {
             let mut cs = name.chars();
             match (cs.next(), cs.next()) {

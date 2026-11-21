@@ -251,6 +251,33 @@ pub const CARDPUTER: Metrics = Metrics {
     softkey_x: [49, 105, 161, 217, 273],
 };
 
+/// A terminal zoom level: a face and its bold, if baked. Without one the
+/// terminal draws bold by striking the glyph twice.
+#[derive(Clone, Copy)]
+pub struct TermFace {
+    pub regular: Font,
+    pub bold: Option<Font>,
+}
+
+const fn term_face(regular: Font, bold: Option<Font>) -> TermFace {
+    TermFace { regular, bold }
+}
+
+/// Terminus, a bitmap face: crisp at every size. Cells 6x12, 8x14, 8x16.
+pub const TERM_TERMINUS: &[TermFace] = &[
+    term_face(&font::TERMINUS_12, Some(&font::TERMINUS_12_BOLD)),
+    term_face(&font::TERMINUS_14, Some(&font::TERMINUS_14_BOLD)),
+    term_face(&font::TERMINUS_16, Some(&font::TERMINUS_16_BOLD)),
+];
+
+/// JetBrains Mono, anti-aliased. Cells 5x11, 6x14, 7x16, 8x18.
+pub const TERM_JETBRAINS: &[TermFace] = &[
+    term_face(&font::MONO_8, None),
+    term_face(&font::MONO_10, Some(&font::MONO_10_BOLD)),
+    term_face(&font::MONO_12, None),
+    term_face(&font::MONO_13, None),
+];
+
 pub const FONTS: Fonts = Fonts {
     small: &font::SANS_13,
     small_bold: &font::SANS_13_BOLD,

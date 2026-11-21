@@ -194,6 +194,63 @@ impl Grid {
     }
 }
 
+/// Rewraps `rows` at `cols`: rows joined by autowrap become one line again
+/// and wrap at the new width. Returns the rows and where the cursor lands.
+pub fn reflow(rows: &[Row], cols: usize, cursor: (usize, usize)) -> (Vec<Row>, (usize, usize)) {
+    // Logical lines, each with the cursor's offset if it is on it.
+    let mut lines: Vec<(Vec<Cell>, Option<usize>)> = Vec::new();
+    let mut line = Vec::new();
+    let mut at = None;
+    for (y, r) in rows.iter().enumerate() {
+        if y == cursor.1 {
+            at = Some(line.len() + cursor.0);
+        }
+        let n = if r.wrapped { r.cells.len() } else { r.used() };
+        line.extend_from_slice(&r.cells[..n]);
+        if !r.wrapped || y + 1 == rows.len() {
+            lines.push((std::mem::take(&mut line), at.take()));
+        }
+    }
+    let mut out: Vec<Row> = Vec::new();
+    let mut cur = (0, 0);
+    for (cells, at) in lines {
+        let mut row = Row::new(0, Cell::BLANK);
+        let mut i = 0;
+        while i < cells.len() {
+            let w = if cells[i].is_wide() { 2 } else { 1 };
+            if row.cells.len() + w > cols {
+                row.cells.resize(cols, Cell::BLANK);
+                row.wrapped = true;
+                out.push(std::mem::replace(&mut row, Row::new(0, Cell::BLANK)));
+            }
+            if at == Some(i) {
+                cur = (row.cells.len(), out.len());
+            }
+            row.cells.push(cells[i]);
+            if w == 2 {
+                row.cells
+                    .push(cells.get(i + 1).copied().unwrap_or(Cell::BLANK));
+            }
+            i += w;
+        }
+        if let Some(a) = at.filter(|&a| a >= cells.len()) {
+            // Past the text: count on from its end.
+            let past = row.cells.len() + (a - cells.len());
+            cur = (past % cols, out.len() + past / cols);
+        }
+        row.cells.resize(cols, Cell::BLANK);
+        out.push(row);
+    }
+    // Blank rows below the cursor carry nothing.
+    while out.len() > cur.1 + 1 && out.last().is_some_and(|r| r.used() == 0) {
+        out.pop();
+    }
+    while out.len() <= cur.1 {
+        out.push(Row::new(cols, Cell::BLANK));
+    }
+    (out, cur)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +287,50 @@ mod tests {
         assert_eq!(g.text(0), "a  bcd");
         g.delete_cells(0, 0, 3, &Pen::DEFAULT);
         assert_eq!(g.text(0), "bcd");
+    }
+
+    fn wrapped(lines: &[(&str, bool)], cols: usize) -> Vec<Row> {
+        lines
+            .iter()
+            .map(|(s, w)| {
+                let mut r = Row::new(cols, Cell::BLANK);
+                for (x, ch) in s.chars().enumerate() {
+                    r.cells[x] = Cell::new(ch, &Pen::DEFAULT);
+                }
+                r.wrapped = *w;
+                r
+            })
+            .collect()
+    }
+
+    fn texts(rows: &[Row]) -> Vec<String> {
+        let g = Grid {
+            cols: rows[0].cells.len(),
+            dirty: vec![false; rows.len()],
+            rows: rows.to_vec(),
+        };
+        (0..rows.len()).map(|y| g.text(y)).collect()
+    }
+
+    #[test]
+    fn reflow_joins_and_rewraps() {
+        let rows = wrapped(&[("abcd", true), ("ef", false), ("$ ", false)], 4);
+        let (out, cur) = reflow(&rows, 6, (2, 2));
+        assert_eq!(texts(&out), ["abcdef", "$"]);
+        assert_eq!(cur, (2, 1));
+        let (out, cur) = reflow(&out, 3, cur);
+        assert_eq!(texts(&out), ["abc", "def", "$"]);
+        // "def" ends its line, so only the first row wraps.
+        assert!(out[0].wrapped && !out[1].wrapped && !out[2].wrapped);
+        assert_eq!(cur, (2, 2));
+    }
+
+    #[test]
+    fn reflow_keeps_the_cursor_on_its_char() {
+        let rows = wrapped(&[("hello wor", true), ("ld", false)], 9);
+        let (out, cur) = reflow(&rows, 5, (1, 1));
+        assert_eq!(texts(&out), ["hello", " worl", "d"]);
+        assert_eq!(out[cur.1].cells[cur.0].ch(), 'd');
     }
 
     #[test]

@@ -112,6 +112,7 @@ pub mod event {
     pub const TITLE: u8 = 1;
     pub const BELL: u8 = 2;
     pub const CWD: u8 = 4;
+    pub const CLIPBOARD: u8 = 8;
 }
 
 pub struct Terminal {
@@ -132,6 +133,8 @@ pub struct Terminal {
     pub title: String,
     /// The working directory the shell last reported (OSC 7).
     pub cwd: Option<String>,
+    /// Text a program copied (OSC 52), for the app to take.
+    pub clipboard: Option<String>,
     pub history: History,
     pub clusters: Clusters,
     /// Bytes for the PTY: answers to device queries.
@@ -166,6 +169,7 @@ impl Terminal {
             tabs: tab_stops(cols),
             title: String::new(),
             cwd: None,
+            clipboard: None,
             history: History::new(history),
             clusters: Clusters::default(),
             replies: Vec::new(),
@@ -197,38 +201,56 @@ impl Terminal {
         (self.cur.x, self.cur.y)
     }
 
-    /// New size. Rows that no longer fit above the cursor go to history.
+    /// New size. The main screen reflows: lines joined by autowrap wrap
+    /// again at the new width. Rows that no longer fit above the cursor go
+    /// to history. The alternate screen is cut or padded; its program
+    /// redraws on SIGWINCH.
     pub fn resize(&mut self, cols: usize, rows: usize) {
         let (cols, rows) = (cols.max(2), rows.max(1));
         if cols == self.cols && rows == self.rows {
             return;
         }
-        if rows < self.rows {
-            let over = (self.cur.y + 1).saturating_sub(rows);
-            if over > 0 {
-                for i in 0..over {
-                    self.history.push(&self.main.rows[i], &self.clusters);
-                }
-                self.main.rows.rotate_left(over);
-                if !self.alt_active {
-                    self.cur.y -= over;
-                }
+        let saved = if self.alt_active {
+            self.saved_main.map(|s| s.cur)
+        } else {
+            Some(self.cur)
+        };
+        let at = saved.map_or((0, 0), |c| (c.x, c.y));
+        let (mut out, (mut x, mut y)) = grid::reflow(&self.main.rows, cols, at);
+        if out.len() > rows {
+            let over = out.len() - rows;
+            for r in &out[..over.min(y)] {
+                self.history.push(r, &self.clusters);
             }
+            out.drain(..over.min(y));
+            y -= over.min(y);
+            out.truncate(rows);
         }
-        self.main.resize(cols, rows);
+        out.resize_with(rows, || grid::Row::new(cols, Cell::BLANK));
+        x = x.min(cols - 1);
+        y = y.min(rows - 1);
+        self.main.rows = out;
+        self.main.cols = cols;
+        self.main.dirty = vec![true; rows];
         self.alt.resize(cols, rows);
+        if self.alt_active {
+            if let Some(s) = &mut self.saved_main {
+                s.cur.x = x;
+                s.cur.y = y;
+            }
+            self.cur.x = self.cur.x.min(cols - 1);
+            self.cur.y = self.cur.y.min(rows - 1);
+        } else {
+            self.cur.x = x;
+            self.cur.y = y;
+        }
         self.cols = cols;
         self.rows = rows;
         self.top = 0;
         self.bot = rows - 1;
         self.tabs = tab_stops(cols);
-        self.cur.x = self.cur.x.min(cols - 1);
-        self.cur.y = self.cur.y.min(rows - 1);
         self.cur.wrap_next = false;
-        for s in [&mut self.saved_main, &mut self.saved_alt]
-            .into_iter()
-            .flatten()
-        {
+        if let Some(s) = &mut self.saved_alt {
             s.cur.x = s.cur.x.min(cols - 1);
             s.cur.y = s.cur.y.min(rows - 1);
         }
@@ -711,6 +733,17 @@ impl Terminal {
                     self.events |= event::CWD;
                 }
             }
+            // Copy only. A read ("?") gets no answer: a remote host must
+            // never see the local clipboard.
+            b"52" => {
+                let data = params.get(2).copied().unwrap_or_default();
+                if data != b"?" {
+                    if let Some(text) = base64(data).and_then(|b| String::from_utf8(b).ok()) {
+                        self.clipboard = Some(text);
+                        self.events |= event::CLIPBOARD;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -763,6 +796,30 @@ fn file_url_path(url: &[u8]) -> Option<String> {
         i += 1;
     }
     String::from_utf8(out).ok()
+}
+
+fn base64(s: &[u8]) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0);
+    for &c in s.iter().filter(|&&c| c != b'=' && !c.is_ascii_whitespace()) {
+        acc = acc << 6 | val(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
 }
 
 fn dec_graphics(c: char) -> char {

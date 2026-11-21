@@ -1,22 +1,42 @@
-//! The terminal page: tabs of PTYs, keys in, cells out.
+//! The terminal page: tabs of PTYs, keys in, cells out, and view mode for
+//! everything that isn't typing: scroll, pan, zoom, search, copy, tabs.
 
-use crate::keys;
+use crate::keys::{self, HELP};
 use crate::pty::{self, Pty};
-use crate::render::{self, Colors, Cursor, Look};
-use crate::vt::{Vt, event};
+use crate::render::{self, Colors, Cursor, Look, Span};
+use crate::view::{Family, Pos, Src, View};
+use crate::vt::cell::{Cell, Clusters};
+use crate::vt::{Terminal, Vt, event};
+use gh0st_app::gfx::widgets::{self, Hint};
+use gh0st_app::gfx::{Rect, Theme};
 use gh0st_app::prelude::*;
 use gh0st_app::{KeyState, RawKey};
+use gh0st_core::keys::code;
+use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
 
-/// History budget for all tabs together, in bytes.
-const HISTORY: usize = 1 << 20;
 /// Most bytes read from one PTY per loop turn, so keys stay answered under
 /// a flood.
 const READ_MAX: usize = 64 * 1024;
 /// About one panel refresh: under a flood the latest state is drawn at most
 /// this often.
 const FRAME_MS: u64 = 20;
+/// Synchronized output may hold the screen this long at most.
+const SYNC_MS: u64 = 150;
+const PAGEUP: u16 = 104;
+const PAGEDOWN: u16 = 109;
+
+/// Settings keys, in the shared config.
+mod key {
+    pub const FONT: &str = "gh0st.term.font";
+    pub const ZOOM: &str = "gh0st.term.zoom";
+    pub const MODE: &str = "gh0st.term.mode";
+    pub const WINDOW: &str = "gh0st.term.window";
+    pub const BAR: &str = "gh0st.term.bar";
+    pub const HISTORY: &str = "gh0st.term.history_kb";
+    pub const ALT_ESC: &str = "gh0st.term.alt_esc";
+}
 
 /// What `gh0st-term` was started with.
 pub struct Options {
@@ -54,6 +74,50 @@ struct Tab {
     pty: Option<Pty>,
     watch: Option<Watch>,
     pid: i32,
+    view: View,
+    /// Synchronized output began: the hold ends at this timer.
+    sync: Option<Timer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Mode {
+    Typing,
+    /// Keys scroll, pan, zoom and manage tabs.
+    View,
+    /// Typing a search.
+    Find(String),
+    /// Lines from the anchor to the head are selected.
+    Select {
+        anchor: Pos,
+        head: Pos,
+    },
+    /// Every view-mode key, on one screen.
+    Help,
+}
+
+/// View mode's keys, for the help screen.
+const HELP_KEYS: &[(&str, &str)] = &[
+    ("↑↓ F X", "scroll"),
+    ("←→ Z C", "pan"),
+    ("PgUp/Dn", "page"),
+    ("g G", "top, end"),
+    ("- =", "zoom"),
+    ("m", "fit, window"),
+    ("b", "top bar"),
+    ("/ n N", "find"),
+    ("v", "copy lines"),
+    ("p", "paste"),
+    ("t w", "new, close tab"),
+    ("1-9 Tab", "go to tab"),
+    ("k", "Home key"),
+    ("q Esc", "typing"),
+];
+
+/// A search match: the row and its columns.
+#[derive(Clone, Copy)]
+struct Hit {
+    pos: Pos,
+    cols: (usize, usize),
 }
 
 pub struct Term {
@@ -63,10 +127,28 @@ pub struct Term {
     buf: Vec<u8>,
     out: Vec<u8>,
     title: String,
-    look: Option<Look>,
-    size: (usize, usize),
+    family: Family,
+    zoom: usize,
+    /// Window mode's grid; None is fit mode.
+    window: Option<(usize, usize)>,
+    window_size: (usize, usize),
+    bar: bool,
+    alt_esc: bool,
+    history: usize,
+    area: Rect,
+    mode: Mode,
+    query: String,
+    hit: Option<Hit>,
+    clipboard: String,
     /// The command of `-e` ended: the next key quits.
     waiting: bool,
+    scratch: RefCell<(Vec<Cell>, Clusters)>,
+}
+
+fn parse_size(s: &str) -> Option<(usize, usize)> {
+    let (c, r) = s.split_once('x')?;
+    let (c, r) = (c.trim().parse().ok()?, r.trim().parse().ok()?);
+    ((20..=300).contains(&c) && (5..=200).contains(&r)).then_some((c, r))
 }
 
 impl Term {
@@ -78,35 +160,121 @@ impl Term {
             buf: vec![0; 16 * 1024],
             out: Vec::new(),
             title: "Terminal".into(),
-            look: None,
-            size: (80, 24),
+            family: Family::Terminus,
+            zoom: 0,
+            window: None,
+            window_size: (80, 24),
+            bar: true,
+            alt_esc: true,
+            history: 1 << 20,
+            area: Rect::new(0, 0, 320, 152),
+            mode: Mode::Typing,
+            query: String::new(),
+            hit: None,
+            clipboard: String::new(),
             waiting: false,
+            scratch: RefCell::new((Vec::new(), Clusters::default())),
         }
     }
 
-    /// The grid that fits the content area at the current face.
-    fn fit(&self, t: &gh0st_app::gfx::Theme) -> (usize, usize) {
-        let look = self.look.unwrap_or_else(|| Look::mono(t));
-        let area = self.bars().content(t);
+    fn load(&mut self, cx: &mut Cx) {
+        let s = cx.settings();
+        self.family = Family::from_key(s.get_str(key::FONT).unwrap_or(""));
+        self.zoom = s.get_int(key::ZOOM).unwrap_or(0).max(0) as usize;
+        self.zoom = self.zoom.min(self.family.faces().len() - 1);
+        if let Some(w) = s.get_str(key::WINDOW).and_then(parse_size) {
+            self.window_size = w;
+        }
+        self.window = (s.get_str(key::MODE) == Some("window")).then_some(self.window_size);
+        self.bar = s.get_bool(key::BAR).unwrap_or(true);
+        self.alt_esc = s.get_bool(key::ALT_ESC).unwrap_or(true);
+        if let Some(kb) = s.get_int(key::HISTORY) {
+            self.history = (kb.clamp(64, 16 * 1024) as usize) << 10;
+        }
+    }
+
+    fn save(&self, cx: &mut Cx) {
+        let s = cx.settings();
+        s.set_str(key::FONT, self.family.key());
+        s.set_int(key::ZOOM, self.zoom as i64);
+        s.set_str(
+            key::MODE,
+            if self.window.is_some() {
+                "window"
+            } else {
+                "fit"
+            },
+        );
+        s.set_bool(key::BAR, self.bar);
+    }
+
+    fn look(&self) -> Look {
+        Look::of(&self.family.faces()[self.zoom])
+    }
+
+    /// The grid size: the window's, or what fits the content area.
+    fn grid_size(&self) -> (usize, usize) {
+        let look = self.look();
+        self.window.unwrap_or((
+            (self.area.w / look.cw).max(2) as usize,
+            (self.area.h / look.ch).max(1) as usize,
+        ))
+    }
+
+    /// Cells on screen.
+    fn vis(&self) -> (usize, usize) {
+        let look = self.look();
+        let (cols, rows) = self.grid_size();
         (
-            (area.w / look.cw).max(2) as usize,
-            (area.h / look.ch).max(1) as usize,
+            ((self.area.w / look.cw).max(1) as usize).min(cols),
+            ((self.area.h / look.ch).max(1) as usize).min(rows),
         )
     }
 
+    fn tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.cur)
+    }
+
+    /// Size, face or bars changed: every tab takes the new grid.
+    fn relayout(&mut self, cx: &mut Cx) {
+        let t = *cx.theme();
+        self.area = self.bars().content(&t);
+        let (cols, rows) = self.grid_size();
+        for tab in &mut self.tabs {
+            tab.vt.t.resize(cols, rows);
+            if let Some(p) = &tab.pty {
+                let _ = p.resize(cols as u16, rows as u16);
+            }
+            tab.view.window = self.window;
+            tab.view.snap();
+        }
+        self.track();
+        cx.redraw();
+    }
+
+    /// Keeps the current tab's window on its cursor.
+    fn track(&mut self) {
+        let grid = self.grid_size();
+        let vis = self.vis();
+        if let Some(tab) = self.tabs.get_mut(self.cur) {
+            let c = tab.vt.t.cursor();
+            tab.view.follow_cursor(c, grid, vis);
+        }
+    }
+
     fn open_tab(&mut self, cx: &mut Cx) -> io::Result<()> {
-        let (cols, rows) = self.size;
+        let (cols, rows) = self.grid_size();
         let (argv, arg0, cwd) = match &self.opts.command {
-            Some(c) => (c.clone(), None, None),
-            None => {
+            Some(c) if self.tabs.is_empty() => (c.clone(), None, None),
+            _ => {
                 let sh = pty::shell();
                 let name = std::path::Path::new(&sh)
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "sh".into());
+                // A new tab starts where the shell in front last was.
                 let cwd = self
-                    .tabs
-                    .get(self.cur)
+                    .tab()
                     .and_then(|t| t.vt.t.cwd.clone())
                     .map(PathBuf::from)
                     .filter(|p| p.is_dir())
@@ -123,7 +291,7 @@ impl Term {
         )?;
         let watch = cx.watch(pty.fd());
         cx.adopt(pty.pid);
-        let budget = HISTORY / (self.tabs.len() + 1);
+        let budget = self.history / (self.tabs.len() + 1);
         for t in &mut self.tabs {
             t.vt.t.history.set_max(budget);
         }
@@ -132,15 +300,19 @@ impl Term {
             pid: pty.pid,
             pty: Some(pty),
             watch: Some(watch),
+            view: View::new(self.family, self.zoom, self.window),
+            sync: None,
         });
         self.cur = self.tabs.len() - 1;
         self.retitle();
+        cx.redraw();
         Ok(())
     }
 
-    /// The child hung up or ended. A `-e` command with sysplause stays on
-    /// screen until a key; otherwise the tab goes.
+    /// Drops tab `i`: its PTY closes and its session hangs up. A `-e`
+    /// command with sysplause stays on screen until a key instead.
     fn close_tab(&mut self, i: usize, cx: &mut Cx) {
+        let last = self.tabs.len() == 1;
         let Some(tab) = self.tabs.get_mut(i) else {
             return;
         };
@@ -148,9 +320,10 @@ impl Term {
             cx.unwatch(w);
         }
         tab.pty = None;
-        if self.opts.command.is_some() && self.opts.sysplause {
+        if self.opts.command.is_some() && self.opts.sysplause && last {
             tab.vt.feed(b"\r\n\x1b[0m-- press any key --");
             self.waiting = true;
+            self.mode = Mode::Typing;
             cx.redraw();
             return;
         }
@@ -159,13 +332,25 @@ impl Term {
             cx.quit();
             return;
         }
-        let budget = HISTORY / self.tabs.len();
+        let budget = self.history / self.tabs.len();
         for t in &mut self.tabs {
             t.vt.t.history.set_max(budget);
         }
-        self.cur = self.cur.min(self.tabs.len() - 1);
+        if self.cur > i || self.cur >= self.tabs.len() {
+            self.cur = self.cur.saturating_sub(1);
+        }
         self.retitle();
         cx.redraw();
+    }
+
+    fn switch(&mut self, i: usize, cx: &mut Cx) {
+        if i < self.tabs.len() && i != self.cur {
+            self.cur = i;
+            self.hit = None;
+            self.retitle();
+            self.track();
+            cx.redraw();
+        }
     }
 
     /// Reads what tab `i` printed, up to the per-turn cap. True if the
@@ -202,12 +387,26 @@ impl Term {
             }
             t.replies.clear();
         }
-        if t.events & event::TITLE != 0 && i == self.cur {
+        if let Some(text) = t.clipboard.take() {
+            self.clipboard = text;
+            cx.toast("Copied");
+        }
+        let events = std::mem::take(&mut t.events);
+        // Synchronized output: draw when it ends, or after SYNC_MS.
+        match (t.modes.sync, tab.sync) {
+            (true, None) => tab.sync = Some(cx.after(SYNC_MS)),
+            (false, Some(timer)) => {
+                cx.cancel(timer);
+                tab.sync = None;
+            }
+            _ => {}
+        }
+        let held = tab.sync.is_some();
+        if events & event::TITLE != 0 && i == self.cur {
             self.retitle();
         }
-        let t = &mut self.tabs[i].vt.t;
-        t.events = 0;
-        if total > 0 && i == self.cur && !t.modes.sync {
+        if i == self.cur && (total > 0 || hup) && !held {
+            self.track();
             cx.redraw();
         }
         hup
@@ -215,17 +414,350 @@ impl Term {
 
     fn retitle(&mut self) {
         let name = self
-            .tabs
-            .get(self.cur)
+            .tab()
             .map(|t| t.vt.t.title.as_str())
             .filter(|s| !s.is_empty())
             .unwrap_or("Terminal");
         self.title = if self.tabs.len() > 1 {
-            format!("[{}/{}] {name}", self.cur + 1, self.tabs.len())
+            format!("{}/{} {name}", self.cur + 1, self.tabs.len())
         } else {
             name.to_string()
         };
     }
+
+    fn zoom_to(&mut self, zoom: usize, cx: &mut Cx) {
+        let zoom = zoom.min(self.family.faces().len() - 1);
+        if zoom == self.zoom {
+            return;
+        }
+        self.zoom = zoom;
+        self.relayout(cx);
+        self.save(cx);
+        let look = self.look();
+        let (c, r) = self.grid_size();
+        cx.toast(&format!("{}x{} cells, {c}x{r}", look.cw, look.ch));
+    }
+
+    fn set_window(&mut self, on: bool, cx: &mut Cx) {
+        self.window = on.then_some(self.window_size);
+        self.relayout(cx);
+        self.save(cx);
+        let (c, r) = self.grid_size();
+        let name = if on { "Window" } else { "Fit" };
+        cx.toast(&format!("{name}: {c}x{r}"));
+    }
+
+    /// Writes bytes to the program in front, back at the cursor.
+    fn send(&mut self, bytes: &[u8], cx: &mut Cx) {
+        let Some(tab) = self.tabs.get_mut(self.cur) else {
+            return;
+        };
+        if !tab.view.live() || !tab.view.follow {
+            tab.view.snap();
+            self.track();
+            cx.redraw();
+        }
+        if let Some(w) = self.tab().and_then(|t| t.watch) {
+            cx.write(w, bytes);
+        }
+    }
+
+    fn scroll(&mut self, up: bool, n: usize, cx: &mut Cx) {
+        let vis = self.vis();
+        if let Some(tab) = self.tabs.get_mut(self.cur) {
+            tab.view.scroll(up, n, &tab.vt.t, vis.1);
+            cx.redraw();
+        }
+    }
+
+    fn view_key(&mut self, k: &RawKey, cx: &mut Cx) {
+        let vis = self.vis();
+        let page = vis.1.saturating_sub(1).max(1);
+        let ch = k.text.map(|c| c.to_ascii_lowercase());
+        match (k.code, ch) {
+            (code::UP, _) | (code::F, _) => self.scroll(true, 1, cx),
+            (code::DOWN, _) | (code::X, _) => self.scroll(false, 1, cx),
+            (PAGEUP, _) => self.scroll(true, page, cx),
+            (PAGEDOWN, _) => self.scroll(false, page, cx),
+            (code::LEFT, _) | (code::Z, _) | (code::RIGHT, _) | (code::C, _) => {
+                let left = matches!(k.code, code::LEFT | code::Z);
+                let step = (vis.0 / 2).max(1) as isize;
+                let cols = self.grid_size().0;
+                if let Some(tab) = self.tabs.get_mut(self.cur) {
+                    tab.view.pan(if left { -step } else { step }, cols, vis.0);
+                    cx.redraw();
+                }
+            }
+            (_, Some('-')) => self.zoom_to(self.zoom.saturating_sub(1), cx),
+            (_, Some('=' | '+')) => self.zoom_to(self.zoom + 1, cx),
+            (_, Some('m')) => self.set_window(self.window.is_none(), cx),
+            (_, Some('b')) => {
+                self.bar = !self.bar;
+                self.relayout(cx);
+                self.save(cx);
+            }
+            (_, Some('t')) => match self.open_tab(cx) {
+                Ok(()) => self.mode = Mode::Typing,
+                Err(e) => cx.toast(&format!("No new tab: {e}")),
+            },
+            (_, Some('w')) => {
+                let i = self.cur;
+                self.close_tab(i, cx);
+            }
+            (code::TAB, _) => {
+                let next = (self.cur + 1) % self.tabs.len().max(1);
+                self.switch(next, cx);
+            }
+            (_, Some(d @ '1'..='9')) => self.switch(d as usize - '1' as usize, cx),
+            (_, Some('g')) if k.shift => self.scroll(false, usize::MAX / 2, cx),
+            (_, Some('g')) => self.scroll(true, usize::MAX / 2, cx),
+            (_, Some('/')) => {
+                self.mode = Mode::Find(String::new());
+                cx.redraw();
+            }
+            (_, Some('n')) => self.find_next(!k.shift, cx),
+            (_, Some('v')) => self.start_select(cx),
+            (_, Some('p')) => {
+                self.mode = Mode::Typing;
+                self.paste(cx);
+            }
+            (_, Some('h')) => {
+                self.mode = Mode::Help;
+                cx.redraw();
+            }
+            (_, Some('k')) => {
+                let app = self.tab().is_some_and(|t| t.vt.t.modes.app_cursor);
+                self.mode = Mode::Typing;
+                self.send(if app { b"\x1bOH" } else { b"\x1b[H" }, cx);
+            }
+            (code::ESC | code::ENTER, _) | (_, Some('q')) => self.leave_view(cx),
+            _ => {}
+        }
+    }
+
+    fn leave_view(&mut self, cx: &mut Cx) {
+        self.mode = Mode::Typing;
+        self.hit = None;
+        if let Some(tab) = self.tabs.get_mut(self.cur) {
+            tab.view.snap();
+        }
+        self.track();
+        cx.redraw();
+    }
+
+    fn find_key(&mut self, k: &RawKey, cx: &mut Cx) {
+        let Mode::Find(q) = &mut self.mode else {
+            return;
+        };
+        match k.code {
+            code::ESC => self.mode = Mode::View,
+            code::ENTER => {
+                if !q.is_empty() {
+                    self.query = std::mem::take(q);
+                }
+                self.mode = Mode::View;
+                self.hit = None;
+                self.find_next(true, cx);
+            }
+            code::BACKSPACE => {
+                q.pop();
+            }
+            _ => {
+                if let Some(c) = k.text.filter(|c| !c.is_control()) {
+                    q.push(c);
+                }
+            }
+        }
+        cx.redraw();
+    }
+
+    /// Finds the query in an older (`back`) or newer row than the last
+    /// hit, starting from the bottom.
+    fn find_next(&mut self, back: bool, cx: &mut Cx) {
+        if self.query.is_empty() {
+            return;
+        }
+        let vis = self.vis();
+        let needle = self.query.to_lowercase();
+        let Some(tab) = self.tabs.get_mut(self.cur) else {
+            return;
+        };
+        let t = &tab.vt.t;
+        let mut scratch = self.scratch.borrow_mut();
+        let start = self.hit.map(|h| h.pos);
+        let mut pos = start.unwrap_or(Pos::Grid(t.rows - 1));
+        let mut first = start.is_none();
+        let mut found = None;
+        loop {
+            if !first {
+                let next = if back { pos.up(t) } else { pos.down(t) };
+                if next == pos {
+                    break;
+                }
+                pos = next;
+            }
+            first = false;
+            let (text, cols) = row_text(t, pos.src(t), &mut scratch);
+            if let Some(b) = text.to_lowercase().find(&needle) {
+                let at = text[..b].chars().count();
+                let n = needle.chars().count();
+                let c0 = cols.get(at).copied().unwrap_or(0);
+                let c1 = cols.get(at + n).copied().unwrap_or(t.cols);
+                found = Some(Hit {
+                    pos,
+                    cols: (c0, c1),
+                });
+                break;
+            }
+        }
+        drop(scratch);
+        match found {
+            Some(h) => {
+                self.hit = Some(h);
+                let tab = &mut self.tabs[self.cur];
+                tab.view.reveal(h.pos, &tab.vt.t, vis.1);
+            }
+            None => cx.toast(&format!("No more \"{}\"", self.query)),
+        }
+        cx.redraw();
+    }
+
+    fn start_select(&mut self, cx: &mut Cx) {
+        let Some(tab) = self.tab() else {
+            return;
+        };
+        let t = &tab.vt.t;
+        let at = match self.hit {
+            Some(h) => h.pos,
+            None if tab.view.live() => Pos::Grid(t.cursor().1),
+            None => tab.view.top,
+        };
+        self.mode = Mode::Select {
+            anchor: at,
+            head: at,
+        };
+        cx.redraw();
+    }
+
+    fn select_key(&mut self, k: &RawKey, cx: &mut Cx) {
+        let Mode::Select { anchor, head } = self.mode.clone() else {
+            return;
+        };
+        let vis = self.vis();
+        let Some(tab) = self.tabs.get_mut(self.cur) else {
+            return;
+        };
+        let t = &tab.vt.t;
+        let ch = k.text.map(|c| c.to_ascii_lowercase());
+        let head = match (k.code, ch) {
+            (code::UP, _) | (code::F, _) => head.up(t),
+            (code::DOWN, _) | (code::X, _) => head.down(t),
+            (code::ESC, _) => {
+                self.mode = Mode::View;
+                cx.redraw();
+                return;
+            }
+            (code::ENTER, _) | (_, Some('y')) => {
+                let text = selected_text(t, anchor, head, &mut self.scratch.borrow_mut());
+                let lines = text.lines().count().max(1);
+                self.clipboard = text;
+                self.mode = Mode::View;
+                cx.toast(&format!("Copied {lines} lines"));
+                cx.redraw();
+                return;
+            }
+            _ => return,
+        };
+        tab.view.reveal(head, t, vis.1);
+        self.mode = Mode::Select { anchor, head };
+        cx.redraw();
+    }
+
+    fn paste(&mut self, cx: &mut Cx) {
+        if self.clipboard.is_empty() {
+            cx.toast("Nothing copied");
+            return;
+        }
+        let Some(tab) = self.tab() else {
+            return;
+        };
+        let mut out = Vec::new();
+        keys::paste(&self.clipboard, &tab.vt.t.modes, &mut out);
+        self.send(&out, cx);
+    }
+
+    fn hints(&self) -> Vec<(&'static str, &'static str)> {
+        match &self.mode {
+            Mode::Typing => Vec::new(),
+            Mode::View => vec![
+                ("↑↓", "scroll"),
+                ("-=", "zoom"),
+                ("/", "find"),
+                ("h", "keys"),
+            ],
+            Mode::Help => vec![("any key", "back")],
+            Mode::Find(_) => vec![("Enter", "find"), ("Esc", "cancel")],
+            Mode::Select { .. } => vec![("↑↓", "extend"), ("y", "copy"), ("Esc", "cancel")],
+        }
+    }
+}
+
+/// The text of one row on screen, and the column each char starts at.
+fn row_text(t: &Terminal, src: Src, scratch: &mut (Vec<Cell>, Clusters)) -> (String, Vec<usize>) {
+    let cells: &[Cell] = match src {
+        Src::Grid(y) => &t.grid().rows[y].cells,
+        Src::Hist(i, sub) => {
+            scratch.1.clear();
+            t.history
+                .line(i)
+                .cells(t.cols, sub, &mut scratch.0, &mut scratch.1);
+            &scratch.0
+        }
+    };
+    let clusters = match src {
+        Src::Grid(_) => &t.clusters,
+        Src::Hist(..) => &scratch.1,
+    };
+    let mut text = String::new();
+    let mut cols = Vec::new();
+    for (x, c) in cells.iter().enumerate().filter(|(_, c)| !c.is_spacer()) {
+        let before = text.chars().count();
+        clusters.push_text(c, &mut text);
+        for _ in before..text.chars().count() {
+            cols.push(x);
+        }
+    }
+    let trimmed = text.trim_end().len();
+    text.truncate(trimmed);
+    (text, cols)
+}
+
+/// Rows from `a` to `b`, either way round, as text. Rows that autowrap
+/// joined stay one line.
+fn selected_text(t: &Terminal, a: Pos, b: Pos, scratch: &mut (Vec<Cell>, Clusters)) -> String {
+    let (mut p, end) = if a.key() <= b.key() { (a, b) } else { (b, a) };
+    let mut out = String::new();
+    loop {
+        let src = p.src(t);
+        let (text, _) = row_text(t, src, scratch);
+        out.push_str(&text);
+        let joined = match src {
+            Src::Grid(y) => t.grid().rows[y].wrapped,
+            Src::Hist(i, sub) => sub + 1 < t.history.line(i).rows(t.cols),
+        };
+        if p == end {
+            break;
+        }
+        if !joined {
+            out.push('\n');
+        }
+        let next = p.down(t);
+        if next == p {
+            break;
+        }
+        p = next;
+    }
+    out
 }
 
 impl Page for Term {
@@ -233,10 +765,14 @@ impl Page for Term {
         &self.title
     }
 
+    fn bars(&self) -> Bars {
+        if self.bar { Bars::top() } else { Bars::none() }
+    }
+
     fn start(&mut self, cx: &mut Cx) {
+        self.load(cx);
         let t = *cx.theme();
-        self.look = Some(Look::mono(&t));
-        self.size = self.fit(&t);
+        self.area = self.bars().content(&t);
         if let Err(e) = self.open_tab(cx) {
             eprintln!("gh0st-term: {e}");
             cx.quit();
@@ -261,24 +797,68 @@ impl Page for Term {
         self.close_tab(i, cx);
     }
 
+    fn timer(&mut self, timer: Timer, cx: &mut Cx) {
+        for (i, tab) in self.tabs.iter_mut().enumerate() {
+            if tab.sync == Some(timer) {
+                tab.sync = None;
+                if i == self.cur {
+                    self.track();
+                    cx.redraw();
+                }
+                return;
+            }
+        }
+    }
+
     fn raw_keys(&self) -> bool {
         true
     }
 
     fn raw(&mut self, k: &RawKey, cx: &mut Cx) {
+        if k.state == KeyState::Release {
+            return;
+        }
         if self.waiting {
             if k.state == KeyState::Press {
                 cx.quit();
             }
             return;
         }
-        let Some(tab) = self.tabs.get(self.cur) else {
+        if k.code == HELP {
+            if k.state == KeyState::Press {
+                match self.mode {
+                    Mode::Typing => self.mode = Mode::View,
+                    _ => self.leave_view(cx),
+                }
+                cx.redraw();
+            }
             return;
-        };
-        self.out.clear();
-        keys::encode(k, &tab.vt.t.modes, true, &mut self.out);
-        if let (false, Some(w)) = (self.out.is_empty(), tab.watch) {
-            cx.write(w, &self.out);
+        }
+        match self.mode {
+            Mode::Help => {
+                self.mode = Mode::View;
+                cx.redraw();
+            }
+            Mode::View => self.view_key(k, cx),
+            Mode::Find(_) => self.find_key(k, cx),
+            Mode::Select { .. } => self.select_key(k, cx),
+            Mode::Typing => {
+                if k.shift && matches!(k.code, PAGEUP | PAGEDOWN) {
+                    let page = self.vis().1.saturating_sub(1).max(1);
+                    self.scroll(k.code == PAGEUP, page, cx);
+                    return;
+                }
+                let Some(modes) = self.tab().map(|t| t.vt.t.modes) else {
+                    return;
+                };
+                self.out.clear();
+                keys::encode(k, &modes, self.alt_esc, &mut self.out);
+                if !self.out.is_empty() {
+                    let out = std::mem::take(&mut self.out);
+                    self.send(&out, cx);
+                    self.out = out;
+                }
+            }
         }
     }
 
@@ -297,37 +877,135 @@ impl Page for Term {
     }
 
     fn draw(&self, ui: &mut Ui) {
-        let t = *ui.theme();
+        let th: Theme = *ui.theme();
         let area = ui.area();
-        let Some(tab) = self.tabs.get(self.cur) else {
+        let Some(tab) = self.tab() else {
             return;
         };
-        let look = self.look.unwrap_or_else(|| Look::mono(&t));
-        let pal = Colors::of(&t);
-        let term = &tab.vt.t;
-        let g = term.grid();
-        let (cx, cy) = term.cursor();
-        let x0 = area.x + (area.w - g.cols as i32 * look.cw).max(0) / 2;
+        let look = self.look();
+        let pal = Colors::of(&th);
+        let t = &tab.vt.t;
+        let (vis_cols, vis_rows) = self.vis();
+        let x0 = area.x + (area.w - vis_cols as i32 * look.cw).max(0) / 2;
+        let (cx, cy) = t.cursor();
+        let view = &tab.view;
+        let typing = self.mode == Mode::Typing;
+        let show_cursor = t.modes.show_cursor && !self.waiting && view.live();
+        let sel = match self.mode {
+            Mode::Select { anchor, head } => {
+                let (a, b) = (anchor.key().min(head.key()), anchor.key().max(head.key()));
+                Some((a, b))
+            }
+            _ => None,
+        };
+        let rows = view.rows(t, vis_rows);
+        let mut scratch = self.scratch.borrow_mut();
+        scratch.1.clear();
         let c = ui.canvas();
-        for (y, r) in g.rows.iter().enumerate() {
-            let cursor = (y == cy && term.modes.show_cursor && !self.waiting).then_some(Cursor {
-                col: cx,
-                shape: term.shape,
-            });
-            let top = area.y + y as i32 * look.ch;
-            render::row(
-                c,
-                area,
-                &look,
-                &pal,
-                x0,
-                top,
-                &r.cells,
-                &term.clusters,
-                0,
-                g.cols,
-                cursor,
-            );
+        for (v, &src) in rows.iter().enumerate() {
+            let span = Span {
+                x: x0,
+                y: area.y + v as i32 * look.ch,
+                first: view.pan_x,
+                n: vis_cols,
+            };
+            let pos = match src {
+                Src::Grid(y) => Pos::Grid(y),
+                Src::Hist(i, sub) => Pos::Hist(t.history.id(i), sub),
+            };
+            let marked = match (sel, self.hit) {
+                (Some((a, b)), _) if pos.key() >= a && pos.key() <= b => Some((0, t.cols)),
+                (None, Some(h)) if h.pos == pos => Some(h.cols),
+                _ => None,
+            };
+            match src {
+                Src::Grid(y) => {
+                    let cursor = (show_cursor && y == cy).then_some(Cursor {
+                        col: cx,
+                        shape: t.shape,
+                    });
+                    let cells = &t.grid().rows[y].cells;
+                    render::row(
+                        c,
+                        area,
+                        &look,
+                        &pal,
+                        &span,
+                        cells,
+                        &t.clusters,
+                        cursor,
+                        marked,
+                    );
+                }
+                Src::Hist(i, sub) => {
+                    let (cells, clusters) = &mut *scratch;
+                    t.history.line(i).cells(t.cols, sub, cells, clusters);
+                    render::row(c, area, &look, &pal, &span, cells, clusters, None, marked);
+                }
+            }
         }
+        // How far back: a mark on the right edge.
+        if let Some(d) = view.depth(t) {
+            let h = (area.h / 8).max(4);
+            let y = area.y + ((area.h - h) as f32 * (1.0 - d)) as i32;
+            c.fill(Rect::new(area.right() - 2, y, 2, h), pal.accent);
+        }
+        // Window mode: a line on each edge with cells beyond it.
+        if self.window.is_some() {
+            let (cols, grows) = self.grid_size();
+            let top_row = match view.top {
+                Pos::Grid(y) => y,
+                Pos::Hist(..) => 0,
+            };
+            let bottom = area.y + vis_rows as i32 * look.ch;
+            if view.pan_x > 0 {
+                c.fill(Rect::new(area.x, area.y, 1, bottom - area.y), pal.accent);
+            }
+            if view.pan_x + vis_cols < cols {
+                c.fill(
+                    Rect::new(area.right() - 1, area.y, 1, bottom - area.y),
+                    pal.accent,
+                );
+            }
+            if view.live() && top_row + vis_rows < grows {
+                c.fill(Rect::new(area.x, bottom - 1, area.w, 1), pal.accent);
+            }
+        }
+        if !typing {
+            let hints = self.hints();
+            let hints: Vec<Hint> = hints
+                .iter()
+                .map(|&(key, label)| Hint { key, label })
+                .collect();
+            let pages = (self.tabs.len() > 1).then_some((self.cur, self.tabs.len()));
+            widgets::hint_bar(c, &th, &hints, pages);
+            if self.mode == Mode::Help {
+                help(c, &th, area);
+            }
+            if let Mode::Find(q) = &self.mode {
+                let r = Rect::new(0, th.m.height - 2 * th.m.hint_h, th.m.width, th.m.hint_h);
+                c.fill(r, th.c.surface);
+                let text = format!("Find: {q}_");
+                let line = Rect::new(r.x + th.m.pad, r.y, r.w - th.m.pad, r.h);
+                widgets::text_in(c, th.f.small, line, &text, th.c.fg);
+            }
+        }
+    }
+}
+
+/// The help screen: view mode's keys in two columns over the content.
+fn help(c: &mut gh0st_app::gfx::Canvas, th: &Theme, area: Rect) {
+    let r = Rect::new(area.x, area.y, area.w, area.h - th.m.hint_h);
+    c.fill(r, th.c.surface);
+    let per = HELP_KEYS.len().div_ceil(2);
+    let line = th.m.line_h;
+    let col_w = r.w / 2;
+    for (i, (keys, what)) in HELP_KEYS.iter().enumerate() {
+        let x = r.x + th.m.pad + (i / per) as i32 * col_w;
+        let y = r.y + 4 + (i % per) as i32 * line;
+        let k = Rect::new(x, y, 58, line);
+        widgets::text_in(c, th.f.small_bold, k, keys, th.c.accent);
+        let w = Rect::new(x + 60, y, col_w - th.m.pad - 60, line);
+        widgets::text_in(c, th.f.small, w, what, th.c.fg);
     }
 }

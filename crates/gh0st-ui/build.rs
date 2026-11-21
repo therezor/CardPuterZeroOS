@@ -37,6 +37,33 @@ const MONO: &[(u32, u32)] = &[
     (0x2500, 0x25ff),
 ];
 
+/// The terminal's faces: the mono set plus Greek and a few signs. The
+/// terminal draws box drawing and blocks itself, so they join at any size.
+const TERM: &[(u32, u32)] = &[
+    (0x20, 0x7e),
+    (0xa0, 0x17f),
+    (0x370, 0x3ff),
+    (0x400, 0x45f),
+    (0x490, 0x491),
+    (0x2010, 0x2027),
+    (0x2030, 0x203a),
+    (0x20ac, 0x20ac),
+    (0x2190, 0x2195),
+    (0x25a0, 0x25ff),
+];
+
+/// Terminus bitmap faces, OFL. The BDF files are kept as published (the
+/// licence reserves the name for unmodified fonts); only the glyphs in
+/// `TERM` are baked.
+const BDF_FACES: &[(&str, &str)] = &[
+    ("TERMINUS_12", "terminus/ter-u12n.bdf"),
+    ("TERMINUS_12_BOLD", "terminus/ter-u12b.bdf"),
+    ("TERMINUS_14", "terminus/ter-u14n.bdf"),
+    ("TERMINUS_14_BOLD", "terminus/ter-u14b.bdf"),
+    ("TERMINUS_16", "terminus/ter-u16n.bdf"),
+    ("TERMINUS_16_BOLD", "terminus/ter-u16b.bdf"),
+];
+
 struct Face {
     name: &'static str,
     file: &'static str,
@@ -64,6 +91,32 @@ const FACES: &[Face] = &[
         10.0,
         700.0,
         MONO,
+        false,
+    ),
+    // Terminal zoom levels. JetBrains Mono advances 0.6 em, so these ems
+    // give whole 5, 7 and 8 px cells.
+    face(
+        "MONO_8",
+        "JetBrainsMono.ttf",
+        25.0 / 3.0,
+        400.0,
+        TERM,
+        false,
+    ),
+    face(
+        "MONO_12",
+        "JetBrainsMono.ttf",
+        35.0 / 3.0,
+        400.0,
+        TERM,
+        false,
+    ),
+    face(
+        "MONO_13",
+        "JetBrainsMono.ttf",
+        40.0 / 3.0,
+        400.0,
+        TERM,
         false,
     ),
 ];
@@ -173,7 +226,130 @@ fn bake_fonts(dir: &Path, out: &Path) {
         )
         .unwrap();
     }
+    for &(name, file) in BDF_FACES {
+        let text = std::fs::read_to_string(dir.join(file)).expect("bdf file");
+        bake_bdf(name, &text, out, &mut src);
+    }
     std::fs::write(out.join("fonts.rs"), src).unwrap();
+}
+
+/// One BDF glyph: its code point, advance, box and rows of bits, MSB first.
+struct BdfGlyph {
+    cp: u32,
+    adv: i32,
+    w: i32,
+    h: i32,
+    xo: i32,
+    yo: i32,
+    rows: Vec<u64>,
+}
+
+fn parse_bdf(text: &str) -> (i32, i32, Vec<BdfGlyph>) {
+    let (mut ascent, mut descent) = (0, 0);
+    let mut glyphs = Vec::new();
+    let mut lines = text.lines();
+    let num = |s: Option<&str>| s.and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
+    while let Some(line) = lines.next() {
+        let mut it = line.split_whitespace();
+        match it.next() {
+            Some("FONT_ASCENT") => ascent = num(it.next()),
+            Some("FONT_DESCENT") => descent = num(it.next()),
+            Some("STARTCHAR") => {
+                let mut g = BdfGlyph {
+                    cp: u32::MAX,
+                    adv: 0,
+                    w: 0,
+                    h: 0,
+                    xo: 0,
+                    yo: 0,
+                    rows: Vec::new(),
+                };
+                let mut bitmap = false;
+                for line in lines.by_ref() {
+                    let mut it = line.split_whitespace();
+                    match it.next() {
+                        Some("ENCODING") => g.cp = num(it.next()) as u32,
+                        Some("DWIDTH") => g.adv = num(it.next()),
+                        Some("BBX") => {
+                            g.w = num(it.next());
+                            g.h = num(it.next());
+                            g.xo = num(it.next());
+                            g.yo = num(it.next());
+                        }
+                        Some("BITMAP") => bitmap = true,
+                        Some("ENDCHAR") => break,
+                        Some(hex) if bitmap && g.w > 0 => {
+                            let bytes = (g.w as usize).div_ceil(8);
+                            let v = u64::from_str_radix(hex, 16).unwrap_or(0);
+                            // Left-align the row so bit 63 is the first pixel.
+                            g.rows.push(v << (64 - bytes * 8));
+                        }
+                        _ => {}
+                    }
+                }
+                glyphs.push(g);
+            }
+            _ => {}
+        }
+    }
+    glyphs.sort_by_key(|g| g.cp);
+    (ascent, descent, glyphs)
+}
+
+/// Bakes a bitmap face into the same tables as an outline one: full
+/// coverage where a bit is set, trimmed to the pixels in use.
+fn bake_bdf(name: &str, text: &str, out: &Path, src: &mut String) {
+    let (ascent, descent, all) = parse_bdf(text);
+    let mut nibbles: Vec<u8> = Vec::new();
+    let mut glyphs = String::new();
+    for g in all
+        .iter()
+        .filter(|g| TERM.iter().any(|&(lo, hi)| (lo..=hi).contains(&g.cp)))
+    {
+        let on = |x: i32, y: i32| g.rows[y as usize] & (1u64 << (63 - x)) != 0;
+        let mut b: Option<(i32, i32, i32, i32)> = None;
+        for y in 0..g.h.min(g.rows.len() as i32) {
+            for x in 0..g.w {
+                if on(x, y) {
+                    let (x0, y0, x1, y1) = b.unwrap_or((x, y, x, y));
+                    b = Some((x0.min(x), y0.min(y), x1.max(x), y1.max(y)));
+                }
+            }
+        }
+        let off = nibbles.len();
+        let (w, h, left, top) = match b {
+            Some((x0, y0, x1, y1)) => {
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        nibbles.push(if on(x, y) { 15 } else { 0 });
+                    }
+                }
+                // The box's top row sits yo + h above the baseline.
+                (x1 - x0 + 1, y1 - y0 + 1, g.xo + x0, -(g.yo + g.h) + y0)
+            }
+            None => (0, 0, 0, 0),
+        };
+        writeln!(
+            glyphs,
+            "    g({}, {w}, {h}, {left}, {top}, {}, {off}),",
+            g.cp,
+            g.adv * 64
+        )
+        .unwrap();
+    }
+    let bits: Vec<u8> = nibbles
+        .chunks(2)
+        .map(|p| p[0] << 4 | p.get(1).copied().unwrap_or(0))
+        .collect();
+    let file = format!("font_{}.bin", name.to_lowercase());
+    std::fs::write(out.join(&file), &bits).unwrap();
+    let line = ascent + descent;
+    writeln!(
+        src,
+        "pub static {name}: BakedFont = BakedFont {{\n    ascent: {ascent},\n    descent: {d},\n    line: {line},\n    em: {line}.0,\n    glyphs: &[\n{glyphs}    ],\n    bits: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{file}\")),\n}};\n",
+        d = -descent,
+    )
+    .unwrap();
 }
 
 fn x_height(font: &FontRef) -> Option<f32> {
