@@ -147,7 +147,7 @@ fn device_reports() {
     feed(&mut v, "\x1b[3;4H\x1b[6n\x1b[c\x1b[?2026$p");
     assert_eq!(
         String::from_utf8_lossy(&v.t.replies),
-        "\x1b[3;4R\x1b[?62;22c\x1b[?2026;2$y"
+        "\x1b[3;4R\x1b[?62;4;22c\x1b[?2026;2$y"
     );
 }
 
@@ -315,4 +315,89 @@ fn a_cancelled_sequence_returns_to_text() {
 
 fn feed_bytes(v: &mut Vt, b: &[u8]) {
     v.feed(b);
+}
+
+/// A 12x24 px green block: two cells by two at 6x12.
+const BLOCK: &str = "\x1bPq\"1;1;12;24#1;2;0;100;0#1!12~-!12~-!12~-!12~\x1b\\";
+
+#[test]
+fn sixel_is_in_the_device_attributes_and_cells_have_a_pixel_size() {
+    let mut v = vt(10, 4);
+    feed(&mut v, "\x1b[c\x1b[16t\x1b[14t\x1b[?2;1;0S");
+    let (cw, ch) = cell_px();
+    let want = format!(
+        "\x1b[?62;4;22c\x1b[6;{ch};{cw}t\x1b[4;{};{}t\x1b[?2;0;{};{}S",
+        4 * ch,
+        10 * cw,
+        10 * cw,
+        4 * ch
+    );
+    assert_eq!(String::from_utf8_lossy(&v.t.replies), want);
+}
+
+#[test]
+fn a_sixel_image_lands_at_the_cursor_and_the_cursor_goes_below_it() {
+    assert_eq!(cell_px(), (6, 12));
+    let mut v = vt(10, 5);
+    feed(&mut v, "\r\n  ");
+    feed(&mut v, BLOCK);
+    let img = &v.t.grid().images[0];
+    assert_eq!((img.row, img.col, img.cols, img.rows), (1, 2, 2, 2));
+    assert_eq!(img.pixels.get(11, 23), Some(cell::rgb565(0, 255, 0)));
+    assert_eq!(v.t.cursor(), (2, 3));
+    // Nothing of the image was printed as text.
+    assert!(screen(&v).iter().all(|r| r.is_empty()), "{:?}", screen(&v));
+}
+
+#[test]
+fn sixel_data_split_anywhere_decodes_the_same() {
+    let mut whole = vt(10, 5);
+    feed(&mut whole, BLOCK);
+    let mut bytes = vt(10, 5);
+    for b in BLOCK.bytes() {
+        bytes.feed(&[b]);
+    }
+    let (a, b) = (&whole.t.grid().images[0], &bytes.t.grid().images[0]);
+    assert_eq!((a.pixels.w, a.pixels.h), (b.pixels.w, b.pixels.h));
+    assert_eq!(a.pixels.px, b.pixels.px);
+    assert_eq!(whole.t.cursor(), bytes.t.cursor());
+    feed(&mut bytes, "x");
+    assert_eq!(screen(&bytes)[2], "x");
+}
+
+#[test]
+fn text_over_an_image_hides_it_there_and_covering_it_all_drops_it() {
+    let mut v = vt(10, 5);
+    feed(&mut v, BLOCK);
+    feed(&mut v, "\x1b[1;1Ha");
+    let img = &v.t.grid().images[0];
+    assert!(!img.shows(0, 0) && img.shows(0, 1) && img.shows(1, 0));
+    // What yazi does to erase one: spaces over its cells.
+    feed(&mut v, "\x1b[1;1H  \x1b[2;1H  ");
+    assert!(v.t.grid().images.is_empty());
+}
+
+#[test]
+fn images_scroll_with_the_text_and_go_with_a_clear() {
+    let mut v = vt(10, 3);
+    feed(&mut v, BLOCK);
+    // The image's two rows, then the cursor's: nothing scrolled yet.
+    assert_eq!(v.t.grid().images[0].row, 0);
+    feed(&mut v, "\n");
+    assert_eq!(v.t.grid().images[0].row, -1);
+    feed(&mut v, "\n");
+    assert!(v.t.grid().images.is_empty(), "scrolled off the top");
+    feed(&mut v, BLOCK);
+    assert_eq!(v.t.grid().images.len(), 1);
+    feed(&mut v, "\x1b[2J");
+    assert!(v.t.grid().images.is_empty());
+}
+
+#[test]
+fn a_huge_sixel_is_cut_to_the_screen() {
+    let mut v = vt(4, 2);
+    feed(&mut v, "\x1bPq\"1;1;9999;9999#1!9999~\x1b\\");
+    let img = &v.t.grid().images[0];
+    let (cw, ch) = cell_px();
+    assert!(img.pixels.w <= 4 * cw && img.pixels.h <= 2 * ch);
 }

@@ -1,7 +1,8 @@
-//! Box drawing, blocks, braille and powerline arrows, drawn as rects in the
-//! cell. A font's glyphs for these rarely fit the cell exactly, and lines
+//! Box drawing, blocks, braille and powerline arrows and caps, drawn as
+//! rects in the cell. A font's glyphs for these rarely fit the cell exactly, and lines
 //! must join with the next cell at every size.
 
+use gh0st_app::gfx::color::mix;
 use gh0st_app::gfx::{Canvas, Rect};
 
 /// Weights per direction: up, right, down, left. 1 light, 2 heavy, 3 double.
@@ -138,6 +139,7 @@ pub fn draw(c: &mut Canvas, r: Rect, cp: u32, fg: u16, bg: u16) -> bool {
         0x2580..=0x259f => block(c, r, cp, fg, bg),
         0x2800..=0x28ff => braille(c, r, cp - 0x2800, fg),
         0xe0b0..=0xe0b3 => arrow(c, r, cp, fg),
+        0xe0b4..=0xe0b7 => cap(c, r, cp, fg, bg),
         _ => false,
     }
 }
@@ -335,6 +337,56 @@ fn arrow(c: &mut Canvas, r: Rect, cp: u32, fg: u16) -> bool {
     true
 }
 
+/// Powerline's rounded caps: half an ellipse, flat on one edge of the cell.
+/// The solid ones blend their curve into the background.
+fn cap(c: &mut Canvas, r: Rect, cp: u32, fg: u16, bg: u16) -> bool {
+    let flat_right = cp >= 0xe0b6;
+    let solid = cp % 2 == 0;
+    let mid = r.h as f32 / 2.0;
+    // Columns from the flat edge, so one loop draws either side.
+    let mut at = |i: i32, y: i32, w: i32, color: u16| {
+        let x = if flat_right {
+            r.right() - i - w
+        } else {
+            r.x + i
+        };
+        c.fill(Rect::new(x, r.y + y, w, 1), color);
+    };
+    let reach: Vec<f32> = (0..r.h)
+        .map(|y| {
+            let t = (y as f32 + 0.5 - mid) / mid;
+            r.w as f32 * (1.0 - t * t).max(0.0).sqrt()
+        })
+        .collect();
+    let edge = |y: i32| {
+        (reach[y as usize] - 0.5)
+            .round()
+            .clamp(0.0, (r.w - 1) as f32) as i32
+    };
+    for y in 0..r.h {
+        let w = reach[y as usize];
+        if solid {
+            let full = w.floor() as i32;
+            at(0, y, full, fg);
+            if full < r.w {
+                at(full, y, 1, mix(bg, fg, ((w - full as f32) * 255.0) as u8));
+            }
+        } else {
+            // Join each row's edge to its neighbours', or the flat top and
+            // bottom of the curve break into dots.
+            let next = [y - 1, y + 1]
+                .into_iter()
+                .filter(|&n| (0..r.h).contains(&n))
+                .map(edge)
+                .max()
+                .unwrap_or(0);
+            let x = edge(y);
+            at(x, y, (next - x).max(1), fg);
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +421,18 @@ mod tests {
         let top = cell(0x2580);
         assert_eq!(top.get(0, 0), 0xffff);
         assert_eq!(top.get(0, 11), 0);
+    }
+
+    #[test]
+    fn a_rounded_cap_is_flat_on_one_edge_and_bulges_to_the_other() {
+        // U+E0B6 is flat on the right: the right column is full height.
+        let c = cell(0xe0b6);
+        assert!((0..12).all(|y| c.get(5, y) == 0xffff));
+        assert_eq!(c.get(0, 0), 0);
+        assert_eq!(c.get(1, 6), 0xffff);
+        let c = cell(0xe0b4);
+        assert!((0..12).all(|y| c.get(0, y) == 0xffff));
+        assert_eq!(c.get(5, 0), 0);
     }
 
     #[test]

@@ -275,11 +275,74 @@ fn bake_fonts(dir: &Path, out: &Path) {
         )
         .unwrap();
     }
+    let nerd = std::fs::read(dir.join(NERD)).expect("nerd font");
+    let nerd = FontRef::try_from_slice(&nerd).expect("valid nerd font");
     for &(name, file) in BDF_FACES {
         let text = std::fs::read_to_string(dir.join(file)).expect("bdf file");
         bake_bdf(name, &text, out, &mut src);
+        if !name.ends_with("_BOLD") {
+            bake_term_icons(&nerd, name, &text, out, &mut src);
+        }
     }
     std::fs::write(out.join("fonts.rs"), src).unwrap();
+}
+
+/// The terminal's Nerd Font icons, subset to the ones yazi's theme uses
+/// (`nerd/README.md`).
+const NERD: &str = "nerd/SymbolsNerdFont-icons.ttf";
+
+/// Bakes the icons for one Terminus size as `{name}_ICONS`. Each fits a box
+/// two cells wide, as programs follow an icon with a space and the terminal
+/// draws it across both. Anti-aliased: at 11 px, 1-bit icons fall apart.
+fn bake_term_icons(font: &FontRef, name: &str, bdf: &str, out: &Path, src: &mut String) {
+    let (ascent, descent, glyphs) = parse_bdf(bdf);
+    let cw = glyphs.iter().find(|g| g.cp == 'M' as u32).expect("M").adv;
+    let ch = ascent + descent;
+    // A pixel clear of the text on each side, and of the row below.
+    let (bw, bh) = ((2 * cw - 2) as f32, (ch - 1) as f32);
+    let mut ids: Vec<(u32, ab_glyph::GlyphId)> =
+        font.codepoint_ids().map(|(id, c)| (c as u32, id)).collect();
+    ids.sort_by_key(|&(cp, _)| cp);
+    let mut nibbles: Vec<u8> = Vec::new();
+    let mut table = String::new();
+    for (cp, id) in ids {
+        let at = |s: f32| {
+            font.outline_glyph(id.with_scale_and_position(PxScale::from(s), point(0.0, 0.0)))
+        };
+        let Some(g) = at(ch as f32) else { continue };
+        let b = g.px_bounds();
+        let fit = (bw / b.width()).min(bh / b.height()).min(1.0);
+        let g = at(ch as f32 * fit).expect("outline");
+        let b = g.px_bounds();
+        let (w, h) = (b.width() as usize, b.height() as usize);
+        let mut cov = vec![0f32; w * h];
+        g.draw(|x, y, c| cov[y as usize * w + x as usize] = c);
+        let off = nibbles.len();
+        for c in cov {
+            nibbles.push((c.clamp(0.0, 1.0).powf(1.0 / COVERAGE_GAMMA) * 15.0).round() as u8);
+        }
+        // Centred in the box; `top` is from the baseline, at `ascent`.
+        let left = (2 * cw - w as i32) / 2;
+        let top = (ch - h as i32) / 2 - ascent;
+        writeln!(
+            table,
+            "    g({cp}, {w}, {h}, {left}, {top}, {}, {off}),",
+            2 * cw * 64
+        )
+        .unwrap();
+    }
+    let bits: Vec<u8> = nibbles
+        .chunks(2)
+        .map(|p| p[0] << 4 | p.get(1).copied().unwrap_or(0))
+        .collect();
+    let file = format!("font_{}_icons.bin", name.to_lowercase());
+    std::fs::write(out.join(&file), &bits).unwrap();
+    writeln!(
+        src,
+        "pub static {name}_ICONS: BakedFont = BakedFont {{\n    ascent: {ascent},\n    descent: {d},\n    line: {ch},\n    em: {ch}.0,\n    glyphs: &[\n{table}    ],\n    bits: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{file}\")),\n}};\n",
+        d = -descent,
+    )
+    .unwrap();
 }
 
 /// One BDF glyph: its code point, advance, box and rows of bits, MSB first.

@@ -1,7 +1,8 @@
-//! The visible screen: rows of cells, which rows changed, and the moves a
-//! terminal makes on them.
+//! The visible screen: rows of cells, the images over them, which rows
+//! changed, and the moves a terminal makes on them.
 
 use super::cell::{Cell, Pen};
+use super::sixel::Image;
 
 #[derive(Clone, Debug)]
 pub struct Row {
@@ -41,6 +42,9 @@ pub struct Grid {
     pub cols: usize,
     /// Rows changed since the last draw.
     pub dirty: Vec<bool>,
+    /// Sixel images, oldest first. Text written over a cell hides the
+    /// image there; an image with nothing left showing goes.
+    pub images: Vec<Image>,
 }
 
 impl Grid {
@@ -49,6 +53,7 @@ impl Grid {
             rows: (0..rows).map(|_| Row::new(cols, Cell::BLANK)).collect(),
             cols,
             dirty: vec![true; rows],
+            images: Vec::new(),
         }
     }
 
@@ -77,7 +82,56 @@ impl Grid {
         for r in &mut self.rows {
             r.reset(fill);
         }
+        self.images.clear();
         self.mark_all();
+    }
+
+    /// Text covers cells `x0..x1` of row `y`: images there stop showing.
+    #[inline]
+    pub fn punch(&mut self, y: usize, x0: usize, x1: usize) {
+        if !self.images.is_empty() {
+            self.images.retain_mut(|i| i.punch(y, x0, x1));
+        }
+    }
+
+    /// Rows `top..=bot` moved by `by`. Images inside them move too, and
+    /// ones that leave the screen go. One that straddles the region's edge
+    /// would be cut in two, so it goes.
+    fn move_images(&mut self, top: usize, bot: usize, by: isize) {
+        let whole = top == 0 && bot + 1 == self.rows.len();
+        let (top, bot) = (top as isize, bot as isize);
+        self.images.retain_mut(|i| {
+            let (a, b) = i.span();
+            if b <= top || a > bot {
+                return true;
+            }
+            if !whole && (a < top || b > bot + 1) {
+                return false;
+            }
+            i.row += by;
+            let (a, b) = i.span();
+            if whole {
+                b > 0 && a <= bot
+            } else {
+                a >= top && b <= bot + 1
+            }
+        });
+    }
+
+    /// Adds `img`, over whatever images it covers. The oldest go while the
+    /// images would hold more than `max` bytes.
+    pub fn add_image(&mut self, img: Image, max: usize) {
+        let (a, b) = img.span();
+        let (x0, x1) = (img.col, img.col + img.cols);
+        for y in a.max(0)..b.min(self.rows.len() as isize) {
+            self.punch(y as usize, x0, x1);
+            self.mark(y as usize);
+        }
+        let mut total: usize = self.images.iter().map(Image::bytes).sum::<usize>() + img.bytes();
+        while total > max && !self.images.is_empty() {
+            total -= self.images.remove(0).bytes();
+        }
+        self.images.push(img);
     }
 
     /// Moves rows `top..=bot` up by `n`; blank rows come in at the bottom.
@@ -87,6 +141,9 @@ impl Grid {
         let fill = Cell::blank(pen);
         for r in &mut self.rows[bot + 1 - n..=bot] {
             r.reset(fill);
+        }
+        if !self.images.is_empty() {
+            self.move_images(top, bot, -(n as isize));
         }
         self.mark_range(top, bot);
     }
@@ -98,6 +155,9 @@ impl Grid {
         let fill = Cell::blank(pen);
         for r in &mut self.rows[top..top + n] {
             r.reset(fill);
+        }
+        if !self.images.is_empty() {
+            self.move_images(top, bot, n as isize);
         }
         self.mark_range(top, bot);
     }
@@ -111,6 +171,7 @@ impl Grid {
         self.unsplit(y, x0);
         self.unsplit(y, x1 - 1);
         self.rows[y].cells[x0..x1].fill(Cell::blank(pen));
+        self.punch(y, x0, x1);
         self.mark(y);
     }
 
@@ -151,6 +212,7 @@ impl Grid {
         if cells[cols - 1].is_wide() {
             cells[cols - 1] = Cell::blank(&cells[cols - 1].pen());
         }
+        self.punch(y, x, cols);
         self.mark(y);
     }
 
@@ -166,6 +228,7 @@ impl Grid {
         let cells = &mut self.rows[y].cells;
         cells[x..].rotate_left(n);
         cells[cols - n..].fill(Cell::blank(pen));
+        self.punch(y, x, cols);
         self.mark(y);
     }
 
@@ -184,6 +247,8 @@ impl Grid {
         self.rows.resize_with(rows, || Row::new(cols, Cell::BLANK));
         self.cols = cols;
         self.dirty = vec![true; rows];
+        // The program redraws on SIGWINCH, images too.
+        self.images.clear();
     }
 
     /// Text of row `y`, for tests and copy.
@@ -317,6 +382,7 @@ mod tests {
             cols: rows[0].cells.len(),
             dirty: vec![false; rows.len()],
             rows: rows.to_vec(),
+            images: Vec::new(),
         };
         (0..rows.len()).map(|y| g.text(y)).collect()
     }

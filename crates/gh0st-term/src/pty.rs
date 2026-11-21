@@ -38,12 +38,15 @@ fn check(r: libc::c_int) -> io::Result<libc::c_int> {
     if r < 0 { Err(last()) } else { Ok(r) }
 }
 
+/// The size in cells and in pixels, which programs that draw images
+/// divide to get the cell size.
 fn winsize(cols: u16, rows: u16) -> libc::winsize {
+    let (cw, ch) = crate::vt::cell_px();
     libc::winsize {
         ws_row: rows,
         ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
+        ws_xpixel: cols.saturating_mul(cw as u16),
+        ws_ypixel: rows.saturating_mul(ch as u16),
     }
 }
 

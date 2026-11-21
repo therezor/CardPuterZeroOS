@@ -5,10 +5,12 @@
 pub mod cell;
 pub mod grid;
 pub mod history;
+pub mod sixel;
 #[cfg(test)]
 mod tests;
 
 use cell::{Cell, Clusters, Color, Pen, attr};
+use gh0st_app::gfx::theme::TERM_IMAGE_CELL;
 use grid::Grid;
 use history::History;
 use unicode_width::UnicodeWidthChar;
@@ -20,6 +22,11 @@ const OSC_MAX: usize = 4096;
 const TITLE_MAX: usize = 256;
 /// REP can't be told to fill more than a screen.
 const REP_MAX: usize = 64 * 1024;
+
+/// The cell size programs are told, for laying out images.
+pub fn cell_px() -> (usize, usize) {
+    (TERM_IMAGE_CELL.0 as usize, TERM_IMAGE_CELL.1 as usize)
+}
 
 /// The parser and the terminal it drives.
 ///
@@ -52,11 +59,35 @@ impl Vt {
 
     pub fn feed(&mut self, mut b: &[u8]) {
         while !b.is_empty() {
+            if self.in_seq
+                && let Some(d) = self.t.sixel.as_mut()
+            {
+                // Sixel data goes to the decoder in runs: through vte it
+                // would be a call a byte. vte sees only the byte that ends
+                // it, and unhooks.
+                let n = b
+                    .iter()
+                    .position(|&c| matches!(c, 0x1b | 0x18 | 0x1a))
+                    .unwrap_or(b.len());
+                d.feed(&b[..n]);
+                b = &b[n..];
+                if b.is_empty() {
+                    break;
+                }
+                self.t.done = false;
+                self.parser.advance(&mut self.t, &b[..1]);
+                b = &b[1..];
+                if self.t.done {
+                    self.in_seq = false;
+                }
+                continue;
+            }
             if self.in_seq {
                 self.t.done = false;
                 let n = self.parser.advance_until_terminated(&mut self.t, b);
                 b = &b[n..];
-                if self.t.done {
+                // A sixel start stops vte too, with the sequence still on.
+                if self.t.done && self.t.sixel.is_none() {
                     self.in_seq = false;
                 }
                 continue;
@@ -210,6 +241,8 @@ pub struct Modes {
     pub focus: bool,
     /// Synchronized output (2026): hold the draw until it ends.
     pub sync: bool,
+    /// DECSDM (80): sixel images go at the top left and don't scroll.
+    pub sixel_display: bool,
 }
 
 impl Default for Modes {
@@ -226,6 +259,7 @@ impl Default for Modes {
             bracketed_paste: false,
             focus: false,
             sync: false,
+            sixel_display: false,
         }
     }
 }
@@ -273,6 +307,8 @@ pub struct Terminal {
     /// A sequence just ended and vte is back in its ground state.
     done: bool,
     last: Option<char>,
+    /// A sixel image under way, between DCS q and ST.
+    sixel: Option<Box<sixel::Decoder>>,
 }
 
 fn tab_stops(cols: usize) -> Vec<bool> {
@@ -309,6 +345,7 @@ impl Terminal {
             events: 0,
             done: false,
             last: None,
+            sixel: None,
         }
     }
 
@@ -365,6 +402,7 @@ impl Terminal {
         self.main.rows = out;
         self.main.cols = cols;
         self.main.dirty = vec![true; rows];
+        self.main.images.clear();
         self.alt.resize(cols, rows);
         if self.alt_active {
             if let Some(s) = &mut self.saved_main {
@@ -534,6 +572,7 @@ impl Terminal {
             g.insert_cells(y, x, width, &pen);
         }
         g.unsplit(y, x);
+        g.punch(y, x, x + width);
         if width == 2 {
             g.unsplit(y, x + 1);
             g.rows[y].cells[x] = Cell::wide(c, &pen);
@@ -742,6 +781,34 @@ impl Terminal {
         self.saved_alt = None;
     }
 
+    /// Puts a decoded image at the cursor. The screen scrolls to fit it and
+    /// the cursor ends on the row below, in the column it started. In sixel
+    /// display mode it goes at the top left and the cursor stays.
+    fn place(&mut self, d: sixel::Decoder) {
+        let transparent = d.transparent;
+        let Some(px) = d.finish() else {
+            return;
+        };
+        let cell = cell_px();
+        // A screen of pixels per screen, at most.
+        let max = self.cols * cell.0 * self.rows * cell.1 * 2;
+        let (row, col) = if self.modes.sixel_display {
+            (0, 0)
+        } else {
+            let y0 = self.cur.y as isize;
+            let mut scrolled = 0;
+            for _ in 0..px.h.div_ceil(cell.1) {
+                if self.cur.y == self.bot {
+                    scrolled += 1;
+                }
+                self.index();
+            }
+            (y0 - scrolled, self.cur.x)
+        };
+        let img = sixel::Image::new(px, transparent, row, col, cell);
+        self.grid_mut().add_image(img, max);
+    }
+
     fn reply(&mut self, s: &str) {
         self.replies.extend_from_slice(s.as_bytes());
     }
@@ -808,6 +875,7 @@ impl Terminal {
             }
             47 => self.set_alt(on, false),
             66 => self.modes.app_keypad = on,
+            80 => self.modes.sixel_display = on,
             1004 => self.modes.focus = on,
             1047 => {
                 if !on && self.alt_active {
@@ -852,6 +920,7 @@ impl Terminal {
             25 => m.show_cursor,
             47 | 1047 | 1049 => self.alt_active,
             66 => m.app_keypad,
+            80 => m.sixel_display,
             1004 => m.focus,
             2004 => m.bracketed_paste,
             2026 => m.sync,
@@ -1044,6 +1113,7 @@ impl Terminal {
             for (cell, &b) in g.rows[y].cells[x..x + n].iter_mut().zip(s) {
                 *cell = Cell::new(b as char, &pen);
             }
+            g.punch(y, x, x + n);
             g.dirty[y] = true;
             self.last = Some(s[n - 1] as char);
             if x + n >= cols {
@@ -1062,6 +1132,37 @@ impl Perform for Terminal {
         self.done
     }
 
+    fn hook(&mut self, params: &Params, inter: &[u8], _ignore: bool, action: char) {
+        if action != 'q' || !inter.is_empty() {
+            return;
+        }
+        let (cw, ch) = cell_px();
+        let x = if self.modes.sixel_display {
+            0
+        } else {
+            self.cur.x
+        };
+        let transparent = arg(params, 1, 0) == 1;
+        let d = sixel::Decoder::new((self.cols - x) * cw, self.rows * ch, transparent);
+        self.sixel = Some(Box::new(d));
+        // Stops vte: the data is `Vt::feed`'s to hand over.
+        self.done = true;
+    }
+
+    fn put(&mut self, byte: u8) {
+        if let Some(d) = &mut self.sixel {
+            d.feed(&[byte]);
+        }
+    }
+
+    /// ST arrives as ESC then a backslash, and the backslash ends the
+    /// sequence, as for OSC.
+    fn unhook(&mut self) {
+        if let Some(d) = self.sixel.take() {
+            self.place(*d);
+        }
+    }
+
     fn print(&mut self, c: char) {
         let line = self.charsets[self.gl] == Charset::Line;
         // The common case, plain ASCII mid-line, without the checks a wide
@@ -1078,6 +1179,7 @@ impl Perform for Terminal {
                 g.unsplit(y, x);
             }
             g.rows[y].cells[x] = Cell::new(c, &pen);
+            g.punch(y, x, x + 1);
             g.dirty[y] = true;
             self.last = Some(c);
             if x + 1 >= cols {
@@ -1163,7 +1265,8 @@ impl Perform for Terminal {
             }
             ('c', []) => {
                 if arg(params, 0, 0) == 0 {
-                    self.reply("\x1b[?62;22c");
+                    // 4: sixel.
+                    self.reply("\x1b[?62;4;22c");
                 }
             }
             ('c', [b'>']) => self.reply("\x1b[>1;10;0c"),
@@ -1214,6 +1317,27 @@ impl Perform for Terminal {
                 self.modes.blink = s == 0 || s % 2 == 1;
                 self.mark_cursor();
             }
+            ('t', []) => {
+                let (cw, ch) = cell_px();
+                let s = match arg(params, 0, 0) {
+                    14 => format!("\x1b[4;{};{}t", self.rows * ch, self.cols * cw),
+                    16 => format!("\x1b[6;{ch};{cw}t"),
+                    18 => format!("\x1b[8;{};{}t", self.rows, self.cols),
+                    _ => return,
+                };
+                self.reply(&s);
+            }
+            ('S', [b'?']) => {
+                // XTSMGRAPHICS: what sixel can use. Reads only; a set
+                // gets the same answer.
+                let (cw, ch) = cell_px();
+                let s = match arg(params, 0, 0) {
+                    1 => "\x1b[?1;0;256S".to_string(),
+                    2 => format!("\x1b[?2;0;{};{}S", self.cols * cw, self.rows * ch),
+                    i => format!("\x1b[?{i};1;0S"),
+                };
+                self.reply(&s);
+            }
             ('r', []) => {
                 let top = n(0) - 1;
                 let bot = arg(params, 1, self.rows).min(self.rows) - 1;
@@ -1252,6 +1376,7 @@ impl Perform for Terminal {
                 for r in &mut g.rows {
                     r.cells.fill(Cell::new('E', &pen));
                 }
+                g.images.clear();
                 g.mark_all();
             }
             _ => {}
