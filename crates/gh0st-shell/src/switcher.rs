@@ -342,8 +342,8 @@ impl Switcher {
         widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         self.meters(c, t);
-        // 5 closes the app in front of you, at once; 6 closes them all,
-        // after asking.
+        // 5 closes the app in front of you, at once; 7 closes them all,
+        // after asking. Apart, so neither is pressed for the other.
         use widgets::{Chip, Look};
         let none = Chip::default();
         let danger = |icon, word| Chip {
@@ -353,7 +353,7 @@ impl Switcher {
         };
         let close = if self.selected > 0 { danger("circle-x", "Close") } else { none };
         let all = if self.apps.is_empty() { none } else { danger("copy-x", "All") };
-        widgets::action_bar(c, t, &[none, close, all, none, none]);
+        widgets::action_bar(c, t, &[none, close, none, all, none]);
     }
 
     /// CPU and memory, side by side across the cards' width. The top bar's

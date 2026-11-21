@@ -183,7 +183,7 @@ fn settings(t: &Theme, sel: usize, slots: Slots) -> Canvas {
 
 /// Settings' own keys: Enter opens, Esc goes back, n finds.
 fn link_slots() -> Slots<'static> {
-    [NONE, n("search", "Find"), NONE, NONE, menu()]
+    [NONE, NONE, n("search", "Find"), NONE, menu()]
 }
 
 fn roles(t: &Theme) -> Canvas {
@@ -429,8 +429,8 @@ fn rows_b(t: &Theme) -> Canvas {
     let slots = [
         NONE,
         n("refresh-cw", "Scan"),
-        l("trash-2", "Forget", Look::Danger),
         NONE,
+        l("trash-2", "Forget", Look::Danger),
         menu(),
     ];
     widgets::action_bar(&mut c, t, &slots);
@@ -635,7 +635,7 @@ fn notes_first(t: &Theme) -> Canvas {
         let rw = row("pencil", a, s, Trailing::Value(v));
         widgets::list_row(&mut c, t, rows_from(t, area.y, t.m.row_h, i), &rw, i == 0);
     }
-    widgets::action_bar(&mut c, t, &[NONE, n("plus", "New"), NONE, NONE, menu()]);
+    widgets::action_bar(&mut c, t, &[NONE, NONE, n("plus", "New"), NONE, menu()]);
     c
 }
 
@@ -742,8 +742,8 @@ fn reader(t: &Theme) -> Canvas {
     let slots = [
         NONE,
         n("chevron-up", "PgUp"),
-        n("chevron-down", "PgDn"),
         NONE,
+        n("chevron-down", "PgDn"),
         menu(),
     ];
     widgets::action_bar(&mut c, t, &slots);
@@ -772,7 +772,7 @@ fn find(t: &Theme) -> Canvas {
 }
 
 fn level_row(t: &Theme) -> Canvas {
-    let slots = [NONE, n("minus", "Less"), n("plus", "More"), NONE, menu()];
+    let slots = [NONE, n("minus", "Less"), NONE, n("plus", "More"), menu()];
     settings(t, 3, slots)
 }
 
@@ -780,8 +780,8 @@ fn choice_row(t: &Theme) -> Canvas {
     let slots = [
         NONE,
         n("chevron-left", "Prev"),
-        n("chevron-right", "Next"),
         NONE,
+        n("chevron-right", "Next"),
         menu(),
     ];
     settings(t, 2, slots)
@@ -836,9 +836,9 @@ fn home(t: &Theme) -> Canvas {
     }
     widgets::scrollbar(&mut c, t, area, 0, 2, 3);
     let slots = [
+        n("arrow-left-right", "Apps"),
         NONE,
         n("search", "Find"),
-        n("arrow-left-right", "Apps"),
         NONE,
         menu(),
     ];
@@ -890,8 +890,8 @@ fn switcher(t: &Theme) -> Canvas {
     let slots = [
         NONE,
         l("circle-x", "Close", Look::Danger),
-        l("copy-x", "All", Look::Danger),
         NONE,
+        l("copy-x", "All", Look::Danger),
         NONE,
     ];
     widgets::action_bar(&mut c, t, &slots);
@@ -948,7 +948,7 @@ fn terminal(t: &Theme, scroll: bool) -> Canvas {
         }
     }
     if scroll {
-        let slots = [NONE, n("search", "Find"), n("copy", "Copy"), NONE, menu()];
+        let slots = [NONE, n("search", "Find"), NONE, n("copy", "Copy"), menu()];
         widgets::action_bar(&mut c, t, &slots);
     } else {
         let text = "Fn Esc sends Esc. Fn h: help";
@@ -1040,9 +1040,9 @@ fn main() {
         ("04-top-b", "top bar: app item, overflow, battery", top_b, false),
         ("05-chips", "chip states", chip_states, true),
         ("06-list", "Enter opens, Esc back: no chips for them", |t| settings(t, 0, link_slots()), true),
-        ("08-list-choice", "choice row: 5 Prev, 6 Next", choice_row, false),
+        ("08-list-choice", "choice row: 5 Prev, 7 Next", choice_row, false),
         ("09-picker", "Enter on a choice opens the full list", picker, false),
-        ("10-list-level", "level row: 5 Less, 6 More", level_row, false),
+        ("10-list-level", "level row: 5 Less, 7 More", level_row, false),
         ("12-rows-a", "rows: value, check, tag, disabled, armed", rows_a, true),
         ("13-rows-b", "rows: sections, two lines, signal", rows_b, false),
         ("14-typing", "typing: a key-hint bar replaces the chips", form, true),
@@ -1064,8 +1064,8 @@ fn main() {
         ("33-error", "error state", error, false),
         ("34-reader", "long text: PgUp, PgDn", reader, false),
         ("35-find", "find while typing", find, false),
-        ("36-home", "home: Find, Apps, Menu", home, true),
-        ("37-switcher", "switcher: 5 closes one, 6 all", switcher, false),
+        ("36-home", "home: 4 Apps, 6 Find, 8 Menu", home, true),
+        ("37-switcher", "switcher: 5 closes one, 7 all", switcher, false),
         ("37b-close-all", "Close all asks first", close_all, false),
         ("38-term-typing", "terminal: Esc as everywhere, Fn Esc sends Esc", |t| terminal(t, false), false),
         ("39-term-scroll", "terminal scroll mode: chips", |t| terminal(t, true), false),

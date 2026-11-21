@@ -1234,11 +1234,11 @@ impl Shell {
             return;
         }
         match k.ch {
-            Some('s' | '5') => {
+            Some('s' | '6') => {
                 self.home.start_search();
                 self.dirty = true;
             }
-            Some('6') => {
+            Some('4') => {
                 let at = self.last_used_card();
                 self.open_switcher(Back::Home, at);
             }
@@ -1773,7 +1773,7 @@ impl Shell {
             Some(keys::Nav::Right) => self.switcher.move_by(1, now),
             _ if (k.is(code::BACKSPACE) || k.ch == Some('5')) && k.state == State::Press => {
                 // Del or 5 on an app closes it; on Home, Del asks to close
-                // every app, as 6 does.
+                // every app, as 7 does.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
                     Some(id) => {
                         self.tasks.close(&id, now);
@@ -1786,7 +1786,7 @@ impl Shell {
                     None => {}
                 }
             }
-            _ if k.ch == Some('6') && k.state == State::Press => {
+            _ if k.ch == Some('7') && k.state == State::Press => {
                 if !self.switcher.apps().is_empty() {
                     self.confirm_all = true;
                 }

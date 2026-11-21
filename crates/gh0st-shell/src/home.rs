@@ -18,7 +18,8 @@ use std::rc::Rc;
 
 pub use gh0st_core::apps::Layout;
 
-/// Home's chips: 5 Find, 6 Apps, and the menu on 8, lit while it is open.
+/// Home's chips: Apps on 4 (home has no Esc to keep it for), Find in the
+/// middle on 6, the menu on 8, lit while it is open.
 pub fn chips(menu_open: bool) -> [widgets::Chip<'static>; 5] {
     use widgets::{Chip, Look};
     let none = Chip::default();
@@ -36,7 +37,7 @@ pub fn chips(menu_open: bool) -> [widgets::Chip<'static>; 5] {
     if menu_open {
         return [none, none, none, none, menu];
     }
-    [none, chip("search", "Find"), chip("arrow-left-right", "Apps"), none, menu]
+    [chip("arrow-left-right", "Apps"), none, chip("search", "Find"), none, menu]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

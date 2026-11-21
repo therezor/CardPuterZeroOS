@@ -152,9 +152,14 @@ screen's bottom edge, right above its key, and pressing that key runs it.
 
 | Key | Holds |
 |---|---|
-| 4 | nothing. It is Esc, for template apps. |
+| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here. |
 | 5, 6, 7 | the page's own actions |
 | 8 | the menu, an icon-only ≡ chip |
+
+Chips spread across the bar, so a key is easy to find without looking. One
+chip sits in the middle, on 6. Two go apart, on 5 and 7; of a pair (Prev and
+Next, Less and More) the one that goes back is on the left. Three take 5, 6
+and 7.
 
 **No chip repeats Enter or Esc.** There is no Back, Open, Exit, Cancel, Save
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
@@ -179,7 +184,7 @@ icons on a full bar.
 | pressed | `fg` fill | while its key is down |
 | busy | the word and "…" | working: no second press |
 
-Rows change the chips. On a choice row, 5 and 6 read Prev and Next and z and
+Rows change the chips. On a choice row, 5 and 7 read Prev and Next and z and
 c do the same; on a level row they read Less and More.
 
 ![A choice row](design/08-list-choice.png)
@@ -309,12 +314,13 @@ menu, then the page.
 
 ![Home](design/36-home.png)
 
-Home: 5 Find, 6 Apps, 8 the home menu (pin, layout). Enter opens the app.
+Home: 4 Apps, 6 Find, 8 the home menu (pin, layout). Enter opens the app.
 
 ![The switcher](design/37-switcher.png)
 
-The switcher: 5 Close closes the selected app at once. 6 All asks first, in a
-dialog, then closes every app.
+The switcher: 5 Close closes the selected app at once. 7 All asks first, in a
+dialog, then closes every app. They sit apart, so one is never pressed for
+the other.
 
 ## Words
 

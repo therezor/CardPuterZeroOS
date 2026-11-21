@@ -307,7 +307,8 @@ fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
 }
 
 /// The chips over keys 5 to 7, and the key each stands for: the page's own,
-/// then the selected row's. Enter and Esc get none.
+/// then the selected row's. Enter and Esc get none. One chip sits in the
+/// middle on 6; two go apart on 5 and 7, a pair's back one on the left.
 pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Chip, Key)> {
     let mut v = Vec::new();
     match id {
@@ -315,10 +316,10 @@ pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Ch
             let scan = if *id == PageId::Wifi { 'r' } else { 's' };
             v.push((5, Chip::new("refresh-cw", "Scan"), Key::Char(scan)));
             let forget = Chip::new("trash-2", "Forget").danger();
-            v.push((6, forget, Key::Backspace));
+            v.push((7, forget, Key::Backspace));
         }
         PageId::Apps if !moving => {
-            v.push((5, Chip::new("arrow-up-down", "Move"), Key::Char('m')));
+            v.push((6, Chip::new("arrow-up-down", "Move"), Key::Char('m')));
         }
         _ => {}
     }
@@ -328,9 +329,9 @@ pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Ch
         _ => None,
     };
     if let Some(((i1, w1), (i2, w2))) = pair {
-        v.retain(|c| c.0 > 6);
+        v.clear();
         v.push((5, Chip::new(i1, w1), Key::Left));
-        v.push((6, Chip::new(i2, w2), Key::Right));
+        v.push((7, Chip::new(i2, w2), Key::Right));
     }
     v
 }

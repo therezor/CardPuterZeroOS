@@ -536,7 +536,9 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color) {
     // Centred, so the padding is even on both sides.
     let x = inner.x + (inner.w - chip_ink_w(t, ch)) / 2;
     let s = IconSize::Tiny as i32;
-    let iy = inner.y + (inner.h - s) / 2;
+    // A row lower than centred: Lucide's ink starts a row above the
+    // capitals and ends on their baseline.
+    let iy = inner.y + (inner.h - s) / 2 + 1;
     if word.is_empty() {
         icon::draw(c, ch.icon, IconSize::Tiny, x, iy, ink);
         return;
