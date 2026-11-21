@@ -27,8 +27,17 @@ The binary is about 1 MB, static, with its fonts and icons built in.
   Enter or a digit opens one.
 - Runs apps the way stock does, from the same `.desktop` files and with the
   same environment. Holding Esc for 3 seconds closes a stuck app.
-- Shows the clock, battery and network in the top bar. It reads them from
-  sysfs when the kernel reports a change, so nothing polls.
+- Fn+K pauses the app in front and opens the switcher: Home, then every open
+  app. A paused app is stopped, not left running, and comes back showing
+  what it showed. Del closes one. Keys typed elsewhere never reach it.
+- Shows the skull, a slot for each open app, the network, battery and clock
+  in the top bar. It reads them from sysfs when the kernel reports a change,
+  so nothing polls.
+- Settings is part of the shell: Wi-Fi, network, Bluetooth, display, sound,
+  look, which apps show, time zone, SSH, password, logs, about. Root actions
+  go through a small helper that takes four fixed verbs.
+- Brightness, volume, mute and screenshot keys work everywhere and show a
+  toast, over apps too.
 - Turns the screen off after the stock `dark_time` and locks when Tab is held
   for 3 seconds.
 - Counts down and powers off at 3% battery, even over a running app.
@@ -85,8 +94,9 @@ as PNGs.
 
 ## Status
 
-The shell runs on the device. Still to build: Settings, multitasking (Fn+H to
-leave an app open) and the terminal, which lives in its own repository.
+The shell, the switcher and Settings run on the device. Still to build:
+letting chosen apps keep running in the background, and the terminal, which
+lives in its own repository.
 
 ## Licenses
 
