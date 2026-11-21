@@ -423,11 +423,12 @@ impl Home {
             Mode::Search => widgets::search_bar(c, t, &self.query),
             Mode::Nav => {
                 widgets::action_bar(c, t, &chips(false));
+                // Which page of the grid: a scrollbar in the right margin, as
+                // lists have, now that the keycaps fill the bar.
                 if let Layout::Grid = self.layout {
                     let per = self.per_screen();
                     let (page, count) = (self.top / per, self.shown.len().div_ceil(per));
-                    let cy = t.m.height - t.m.hint_h / 2;
-                    widgets::page_dots(c, t, t.m.width - t.m.pad, cy, page, count);
+                    widgets::scrollbar(c, t, self.geo.grid, page, 1, count);
                 }
             }
         }
