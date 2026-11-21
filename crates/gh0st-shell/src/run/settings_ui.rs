@@ -1,5 +1,7 @@
 //! Settings as a screen of the shell: the page stack, its keys, and what
-//! each setting writes. Every write loads config.json fresh, changes one key
+//! each setting writes. It behaves like an app: a dock slot and a switcher
+//! card while open, Esc on the root page goes home and leaves it open, and
+//! holding Esc closes it. Every write loads config.json fresh, changes one key
 //! and saves, so stock apps' keys survive, and applies at once.
 
 use super::*;
@@ -15,6 +17,10 @@ pub(super) struct SettingsUi {
     pub page: Page,
     pub state: PageState,
     pub dialog: Option<(Dialog, Ask)>,
+    /// When it opened, for its place in the dock.
+    pub opened: u64,
+    /// When it was last in front, for the switcher's starting card.
+    pub used: u64,
 }
 
 /// What a dialog's answer is for.
@@ -87,7 +93,16 @@ impl SettingsUi {
 }
 
 impl Shell {
+    /// Opens Settings, or brings it back where it was left.
     pub(super) fn open_settings(&mut self) {
+        let now = rt::now_ms();
+        self.esc = EscHold::default();
+        if let Some(ui) = self.settings.as_mut() {
+            ui.used = now;
+            self.screen = Screen::Settings;
+            self.refresh_settings();
+            return;
+        }
         let mut state = PageState::default();
         self.fill_local(&mut state);
         let page = pages::build(&PageId::Root, &state);
@@ -96,6 +111,8 @@ impl Shell {
             page,
             state,
             dialog: None,
+            opened: now,
+            used: now,
         });
         self.screen = Screen::Settings;
         self.dirty = true;
@@ -104,10 +121,24 @@ impl Shell {
         self.query_sys();
     }
 
-    fn close_settings(&mut self) {
-        self.settings = None;
-        self.screen = Screen::Home;
-        self.dirty = true;
+    /// Esc held past the hint: Settings closes, like an app.
+    pub(super) fn settings_esc_hold(&mut self, now: u64) {
+        if self.settings.as_ref().is_some_and(|u| u.dialog.is_some()) {
+            self.esc = EscHold::default();
+            return;
+        }
+        let d = self.esc.update(now, self.esc_down);
+        if d.show_hint || d.hide_hint {
+            self.dirty = true;
+        }
+        if d.terminate {
+            self.settings = None;
+            self.esc = EscHold::default();
+            self.esc_armed = false;
+            self.swallow_release = Some(code::ESC);
+            self.screen = Screen::Home;
+            self.dirty = true;
+        }
     }
 
     /// What the shell knows without asking a helper.
@@ -204,15 +235,15 @@ impl Shell {
             return;
         }
         if k.is(code::ESC) {
-            if armed(&mut self.esc_armed) {
+            // A release after the hold hint is the start of closing, not Back.
+            if armed(&mut self.esc_armed) && !self.esc.hint_visible() {
                 self.settings_back();
             }
             return;
         }
         if k.is(code::HOME) {
             if armed(&mut self.home_armed) {
-                let at = self.tasks.last_used().map_or(0, |i| i + 1);
-                self.open_switcher(Back::Settings, at);
+                self.open_switcher(Back::Settings, 0);
             }
             return;
         }
@@ -320,7 +351,8 @@ impl Shell {
             return;
         };
         if ui.stack.len() <= 1 {
-            self.close_settings();
+            self.screen = Screen::Home;
+            self.dirty = true;
             return;
         }
         ui.stack.pop();

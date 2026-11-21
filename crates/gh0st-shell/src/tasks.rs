@@ -37,6 +37,8 @@ pub struct Task {
     pub pixels: Option<Canvas>,
     /// When it was last in front, for the switcher's starting card.
     pub used: u64,
+    /// When it started: Settings takes its place in the dock by this.
+    pub opened: u64,
 }
 
 impl Task {
@@ -92,11 +94,6 @@ impl Tasks {
             .iter_mut()
             .filter(|t| t.state == State::Background)
             .max_by_key(|t| t.used)
-    }
-
-    /// The most recently used app, for the switcher's cursor.
-    pub fn last_used(&self) -> Option<usize> {
-        (0..self.list.len()).max_by_key(|&i| self.list[i].used)
     }
 
     /// The reaper saw `pid` exit.
@@ -203,6 +200,7 @@ mod tests {
             leader_done: false,
             pixels: None,
             used,
+            opened: used,
         }
     }
 
@@ -212,7 +210,6 @@ mod tests {
         // No process has these ids, so their groups count as gone.
         t.add(task("a", 999_991, 5));
         t.add(task("b", 999_992, 9));
-        assert_eq!(t.last_used(), Some(1));
         assert!(t.sweep(0).is_empty(), "leaders still running");
         t.exited(999_991);
         assert_eq!(t.next_at(100), Some(100 + GROUP_RECHECK_MS));

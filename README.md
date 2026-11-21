@@ -35,7 +35,9 @@ The binary is about 1 MB, static, with its fonts and icons built in.
   so nothing polls.
 - Settings is part of the shell: Wi-Fi, network, Bluetooth, display, sound,
   look, which apps show, time zone, SSH, password, logs, about. Root actions
-  go through a small helper that takes four fixed verbs.
+  go through a small helper that takes four fixed verbs. It acts like an
+  app: it has a slot and a switcher card while open, Esc on its first page
+  goes home and leaves it open, and holding Esc closes it.
 - Brightness, volume, mute and screenshot keys work everywhere and show a
   toast, over apps too.
 - Turns the screen off after the stock `dark_time` and locks when Tab is held

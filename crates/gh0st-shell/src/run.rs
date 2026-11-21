@@ -7,7 +7,7 @@
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::overlay::Overlay;
 use crate::sim::Script;
-use crate::switcher::Switcher;
+use crate::switcher::{self, Card, Switcher};
 use crate::tasks::{self, Task, Tasks};
 use gh0st_core::apps::{self, App, Dirs, IconRef};
 use gh0st_core::backlight::Backlight;
@@ -549,7 +549,9 @@ impl Shell {
                         false => self.next_frame(now),
                     })
                     .flatten(),
-                app.then(|| self.esc.next_at()).flatten(),
+                (app || self.screen == Screen::Settings)
+                    .then(|| self.esc.next_at())
+                    .flatten(),
                 (shell
                     && self
                         .tasks
@@ -693,7 +695,8 @@ impl Shell {
             self.screen = Screen::Home;
             self.take_screen();
         } else {
-            self.switcher.set_apps(self.tasks.cards());
+            let cards = self.cards();
+            self.switcher.set_apps(cards);
             self.sync_grab();
             self.dirty = true;
         }
@@ -736,6 +739,9 @@ impl Shell {
         }
         if self.screen != Screen::Off {
             self.guard_background();
+        }
+        if self.screen == Screen::Settings {
+            self.settings_esc_hold(now);
         }
         if self.tab_down.is_some_and(|t| now >= t + LOCK_HOLD_MS) {
             self.tab_down = None;
@@ -963,7 +969,7 @@ impl Shell {
                 State::Press => self.home_armed = true,
                 State::Release if self.home_armed => {
                     self.home_armed = false;
-                    let at = self.tasks.last_used().map_or(0, |i| i + 1);
+                    let at = self.last_used_card();
                     self.open_switcher(Back::Home, at);
                 }
                 _ => {}
@@ -1243,6 +1249,7 @@ impl Shell {
             leader_done: false,
             pixels: None,
             used: now,
+            opened: now,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -1342,7 +1349,8 @@ impl Shell {
         self.reload_config();
         self.refresh_status();
         self.rescan();
-        self.switcher.set_apps(self.tasks.cards());
+        let cards = self.cards();
+        self.switcher.set_apps(cards);
         self.refresh_settings();
         self.sync_grab();
         self.dirty = true;
@@ -1357,10 +1365,55 @@ impl Shell {
 
     fn open_switcher(&mut self, back: Back, at: usize) {
         self.back = back;
-        self.switcher.set_apps(self.tasks.cards());
+        let cards = self.cards();
+        self.switcher.set_apps(cards);
         self.switcher.select(at);
         self.screen = Screen::Switcher;
         self.dirty = true;
+    }
+
+    /// The dock and the switcher: open apps and Settings, in the order they
+    /// opened.
+    fn cards(&mut self) -> Vec<Card> {
+        let mut cards = self.tasks.cards();
+        if let Some(at) = self.settings_slot() {
+            let settings = self
+                .apps
+                .iter()
+                .find(|a| a.builtin == Some(apps::Builtin::Settings))
+                .cloned();
+            let icon = match settings {
+                Some(a) => self.entry_for(&a).icon,
+                None => Icon::Letter { tint: 0 },
+            };
+            cards.insert(
+                at,
+                Card {
+                    id: apps::SETTINGS_ID.into(),
+                    name: "Settings".into(),
+                    icon,
+                    state: switcher::State::Open,
+                },
+            );
+        }
+        cards
+    }
+
+    /// Where Settings sits among the cards, while it is open.
+    fn settings_slot(&self) -> Option<usize> {
+        let opened = self.settings.as_ref()?.opened;
+        Some(self.tasks.iter().filter(|t| t.opened <= opened).count())
+    }
+
+    /// The card used last, for the switcher's cursor. 0 is Home.
+    fn last_used_card(&self) -> usize {
+        let mut used: Vec<u64> = self.tasks.iter().map(|t| t.used).collect();
+        if let (Some(at), Some(ui)) = (self.settings_slot(), self.settings.as_ref()) {
+            used.insert(at, ui.used);
+        }
+        (0..used.len())
+            .max_by_key(|&i| used[i])
+            .map_or(0, |i| i + 1)
     }
 
     /// Esc on the switcher, or Fn+K again: back to where it was opened.
@@ -1369,10 +1422,7 @@ impl Shell {
             Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.resumable()) => {
                 self.pending = Some(Pending::Resume(id));
             }
-            Back::Settings if self.settings.is_some() => {
-                self.screen = Screen::Settings;
-                self.dirty = true;
-            }
+            Back::Settings if self.settings.is_some() => self.open_settings(),
             _ => {
                 self.screen = Screen::Home;
                 self.dirty = true;
@@ -1396,10 +1446,10 @@ impl Shell {
             if armed(&mut self.enter_armed) {
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
                     None => {
-                        self.settings = None;
                         self.screen = Screen::Home;
                         self.dirty = true;
                     }
+                    Some(id) if id == apps::SETTINGS_ID => self.open_settings(),
                     Some(id) => {
                         if self.tasks.get(&id).is_some_and(|t| t.resumable()) {
                             self.pending = Some(Pending::Resume(id));
@@ -1430,10 +1480,15 @@ impl Shell {
             _ if k.is(code::BACKSPACE) && k.state == State::Press => {
                 // Del on an app closes it; on Home, every app.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
+                    Some(id) if id == apps::SETTINGS_ID => self.settings = None,
                     Some(id) => self.tasks.close(&id, now),
-                    None => self.tasks.close_all(now),
+                    None => {
+                        self.tasks.close_all(now);
+                        self.settings = None;
+                    }
                 }
-                self.switcher.set_apps(self.tasks.cards());
+                let cards = self.cards();
+                self.switcher.set_apps(cards);
             }
             _ => return,
         }
@@ -1445,13 +1500,14 @@ impl Shell {
         let t = self.t;
         let now = rt::now_ms();
         let clock = self.clock.clone();
-        let dock: Vec<Visual> = self
-            .tasks
+        let cards = self.cards();
+        let dock: Vec<Visual> = cards
             .iter()
-            .map(|task| home::visual(&t, &task.icon, &task.name, Size::Tiny))
+            .map(|c| home::visual(&t, &c.icon, &c.name, Size::Tiny))
             .collect();
         let front = match self.screen {
             Screen::Switcher => Some(self.switcher.selected()),
+            Screen::Settings => self.settings_slot().map(|i| i + 1),
             _ => Some(0),
         };
         let status = status_of(&clock, self.battery, self.net, &dock, front);
@@ -1459,11 +1515,20 @@ impl Shell {
             Screen::Locked => widgets::lock_screen(&mut self.canvas, &t, &clock, &status),
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
             Screen::Settings => {
-                settings_ui::draw(&mut self.canvas, &t, &status, self.settings.as_ref())
+                settings_ui::draw(&mut self.canvas, &t, &status, self.settings.as_ref());
+                if self.esc.hint_visible() {
+                    widgets::banner(
+                        &mut self.canvas,
+                        &t,
+                        "Hold ESC to close Settings",
+                        t.c.warning,
+                    );
+                }
             }
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
         drop(dock);
+        drop(cards);
         if matches!(
             self.screen,
             Screen::Home | Screen::Switcher | Screen::Settings

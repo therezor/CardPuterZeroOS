@@ -1,5 +1,6 @@
-//! The app switcher: Home, then every open app in launch order, as cards
-//! across the body. No snapshots: a card is the app's badge, name and state.
+//! The app switcher: Home, then every open app and Settings in the order
+//! they opened, as cards across the body. No snapshots: a card is the app's
+//! badge, name and state.
 //! The bar's dock is the same list in the same order, and its fill follows
 //! the cursor.
 
@@ -19,6 +20,8 @@ pub enum State {
     Running,
     /// Sent SIGTERM; waiting for its group to go.
     Closing,
+    /// Settings: part of the shell, so neither paused nor running.
+    Open,
 }
 
 #[derive(Clone)]
@@ -253,6 +256,7 @@ impl Switcher {
                         State::Paused => "Paused",
                         State::Running => "Running",
                         State::Closing => "Closing\u{2026}",
+                        State::Open => "",
                     },
                     visual: home::visual(t, &app.icon, &app.name, Size::Large),
                 },
