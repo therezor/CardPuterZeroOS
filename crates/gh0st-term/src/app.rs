@@ -1,6 +1,6 @@
 //! The terminal page: tabs of PTYs, keys in, cells out, and scroll mode for
 //! everything that isn't typing: scroll, pan, zoom, search, copy, tabs.
-//! Every key outside typing is a command, so the app menu, the Keys screen
+//! Every key outside typing is a command, so the app menu, Help
 //! and the hint bar come from one list.
 
 use crate::keys;
@@ -130,7 +130,7 @@ mod cmd {
     pub const CANCEL: u32 = 52;
 }
 
-/// Names of the modes on the Keys screen.
+/// Names of the modes in Help.
 const TYPING: &str = "Typing";
 const SCROLLING: &str = "Scroll mode";
 const FINDING: &str = "Find";
@@ -1101,7 +1101,7 @@ impl Page for Term {
         c.add(up_down(cmd::PROMPT, "Previous, next prompt").keys("u i"));
         c.add(on(Command::choice(cmd::ENDS, "Oldest line, live", "").keys("g G").keys_only()));
         c.add(on(Command::action(cmd::HOME, "Send Home").keys("k").keys_only()));
-        c.add(on(Command::action(cmd::KEYS, "Keys").keys("h").keys_only().hint("keys")));
+        c.add(on(Command::action(cmd::KEYS, "Help").keys("h").keys_only().hint("help")));
         c.add(on(Command::action(cmd::DONE, "Back to typing").keys("Esc q").keys_only().hint("done")));
 
         let f = |c: Command| c.keys_only().mode(FINDING, find);

@@ -52,9 +52,13 @@ Delete. Not measured on the device yet; the same source disagrees with
 - Fn+R and Fn+T make the text smaller and larger while typing.
 - Shift+Fn+L (Shift+PgUp) enters scroll mode a page back. Shift+Fn+M pages
   forward.
-- Holding Esc for 3 s closes the terminal, as it closes any app.
+- **Esc is the OS's here too**, as in every app (`design.md`): a tap goes
+  back, and on the terminal's first screen a 0.7 s hold closes it. A
+  program gets Esc from **Fn+Esc**, or Ctrl+[. The first run says so.
+- If the terminal hangs, holding Esc 3 s makes the shell close it.
 
-**Fn+Esc or Fn+H opens the menu.** Rows, most used first:
+**Fn+H opens Help, and 8 there opens the menu**, since every other key goes
+to the program. Rows, most used first:
 
 | Group | Row | Key |
 |---|---|---|

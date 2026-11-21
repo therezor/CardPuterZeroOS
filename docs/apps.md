@@ -123,17 +123,18 @@ Shell to app:
 - `X-Gh0st-Bars=top`, `bottom`, `both` or `none` in the `.desktop` file draws
   the bars from the first frame, before the app has sent anything.
 
-### Soft keys
+### Chips
 
-The screen sits right above the number keys 4 to 8, so the five bottom slots
-belong to those keys. Stock apps follow the same convention. Camera maps 4 to
-back, 5 to zoom out, 6 to the shutter, 7 to zoom in and 8 to the gallery. The
-keys send plain `KEY_4` to `KEY_8`, and the app reads them itself like every
-other key.
+The screen sits right above the number keys 4 to 8, so the bottom bar's
+slots belong to those keys. `design.md` has the rules; in short:
 
-- Slot 4 is back by convention. ESC does the same.
-- In text entry the digits must type. Switch the bottom bar to `hints`, or
-  turn it off, while a text field has focus.
+- 4 is Esc and has no chip, as in the template apps. 5, 6 and 7 hold the
+  page's actions. 8 is the app's menu.
+- No chip repeats Enter or Esc.
+- The keys send plain `KEY_4` to `KEY_8`, and the app reads them itself like
+  every other key.
+- In text entry the digits must type. Show key hints instead of chips while
+  a text field has focus.
 - Slot centres follow the keys. Stock puts them at x = 49, 105, 161, 217 and
   273. Ours are in `theme.rs`.
 
@@ -176,15 +177,16 @@ other key.
 ## The app menu
 
 Every app has one menu, and every SDK app gets it built from its commands
-(`sdk.md`, Commands). Fn+Esc opens it, and so does Fn+H, which sends
-`KEY_HELP` (138). The OS acts on neither and no terminal program reads them,
-so they mean the same thing in every app. Apps off the SDK should draw one
-that behaves the same.
+(`sdk.md`, Commands). Key 8 opens it, from a chip that is always there.
+Fn+H, which sends `KEY_HELP` (138), opens Help: every key of the page. The
+OS acts on neither. Apps off the SDK should draw both and have them behave
+the same.
 
 **Opening and closing**
-- Fn+Esc or Fn+H opens the menu over the app and closes it again.
-- Esc closes it without acting. Never open a menu with plain Esc: Esc is
-  back, and terminal programs need it.
+- 8 opens the menu over the app and closes it again; its chip is lit while
+  it is open. While a field has focus 8 types, so Help, then 8, opens it.
+- Esc steps back one level: from Help to the menu, from the menu to the
+  page. Never open a menu with plain Esc: Esc is back.
 - It opens at the top, on the most used row. Right after a setting was
   changed in place, it opens on that setting, to change it again.
 - F and X (or Fn with them) move, wrapping at the ends.
@@ -197,7 +199,7 @@ that behaves the same.
   shows the new value, so a setting can be tried and tried again.
 - A row's key shows in a pill on the right. Pressing it while the menu is
   open picks the row.
-- A row that loses work asks first: the first Enter shows "Enter again".
+- A row that loses work asks first: the first press shows "Press again".
   Close app always asks.
 - A dimmed row can't be used now, as Paste with nothing copied.
 
@@ -206,13 +208,13 @@ that behaves the same.
   scrolling. Group them under short headings.
 - Settings the user changes often go in the menu as toggles and choices.
   The rest stay on the app's settings page, opened from the menu.
-- The SDK adds Keys and Close app last.
+- The SDK adds Help and Close app last.
 
-**The Keys screen**
-- Keys opens a screen with every key of the page in front, grouped by the
-  mode it works in, and the keys that work in every app. F and X scroll it,
-  and Esc goes back to the menu.
-- It comes from the same list as the menu and the hint bar, so they never
+**Help**
+- Help lists the chips on screen, what Esc and Enter do, every key of the
+  page grouped by the mode it works in, and the keys that work in every app.
+  F and X scroll it; Esc goes back to the menu, or to the page.
+- It comes from the same list as the menu and the chips, so they never
   disagree. An app with modes names each one: Typing, Scroll mode, Find.
 
 **Keys**
@@ -225,7 +227,7 @@ that behaves the same.
 |---|---|
 | `s` | Settings |
 | `n` | Find |
-| `h` | Keys |
+| `Fn h` | Help |
 | `r`, `t` | Smaller, larger (text size) |
 | `v`, `p` | Copy, paste |
 | `o`, `w` | New, close (tab, document) |
@@ -235,9 +237,11 @@ that behaves the same.
 
 - Exit normally. The shell returns when the whole process group is gone, so
   a background child keeps the app open.
-- When the user holds ESC, the shell shows a hint at 0.5 s, sends SIGTERM to
-  the group at 3 s, and sends SIGKILL 3 s later. Apps should exit cleanly on
-  SIGTERM.
+- On an app's first page, Esc held 0.7 s closes it: the app does this
+  itself, after a "Hold to exit" toast. SDK apps get it for free.
+- For an app that doesn't answer, the shell shows a banner at 1.5 s, sends
+  SIGTERM to the group at 3 s, and SIGKILL 3 s later. Apps should exit
+  cleanly on SIGTERM.
 - The shell repaints the whole panel when the app is gone, and when it is
   paused.
 

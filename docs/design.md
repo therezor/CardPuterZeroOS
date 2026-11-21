@@ -334,6 +334,11 @@ dialog, then closes every app.
 
 ## Not built yet
 
+- Home's Find still types into the bottom bar; the field at the top with a
+  hint bar (screen 35) is still to come.
+- The terminal's scroll and find modes keep their own hint bar: it takes
+  every key raw, so the SDK's chips don't run there yet.
+
 - Marks for the camera, mic and an SSH session in use. inotify can't tell who
   opened a device, and there is no polling, so they wait for a better source.
 - Fn and a digit (F4 to F8) is unmeasured on the device.
