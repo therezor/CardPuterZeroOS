@@ -1,117 +1,156 @@
 # CardPuterZeroOS
 
-A lean OS for the M5Stack CardputerZero. Its shell is Gh0stdeck, a Rust
-replacement for the stock C++/LVGL launcher (APPLaunch). Stock apps and the
-Store keep working.
+The CardputerZero OS it should have shipped with. Faster, private, a cleaner UI
+and more features. Fully compatible with CardputerZero apps.
 
-<img src="docs/screenshots/home.png" width="640" alt="Gh0stdeck home screen on the device">
+<img src="docs/screenshots/home.png" width="640" alt="The home screen on a CardputerZero">
 
-## Measured on the device
+CardPuterZeroOS is Linux, built on Debian, the same base as the stock OS. So
+every CardputerZero app runs as it is, and so does the Store. Today it installs
+on the stock image and replaces its launcher. Its own lean Debian 13 image is
+next.
 
-One minute idle on the home screen, measured with `scripts/measure.sh` on a
-CardputerZero (CM0, 512 MB):
+## Why switch
 
-| | Stock APPLaunch 0.6.105 | Gh0stdeck |
+**Light on the battery.** When you're not using it, the home screen does
+almost nothing. The CPU sleeps, apps get the memory, and the battery isn't
+spent on an idle menu.
+
+**The screen never tears.** On stock, every app tears as it scrolls. Our panel
+driver sends each frame in step with the screen, at a steady 50 frames a
+second. Stock apps get this too.
+
+**Jump between apps.** Fn+K pauses the app you're in and shows every open
+app, with how much memory each one uses. Go back to one where you left it, or
+close it with Del.
+
+**Find any app in a keystroke.** Press S and type. Pin your favourites with P.
+Show apps as a grid or a list, in the Mint, Nord or Paper theme.
+
+**Settings and a terminal, built in.** Wi-Fi, Bluetooth, display, sound, look,
+time zone, SSH and logs, all from the keyboard. The terminal has tabs, zoom and
+history you can search. Both are new and not yet tested on the device.
+
+**Your apps keep working.** Apps install and launch the way they always have.
+Hold Esc for 3 seconds to close one that hangs.
+
+**Safe to try.** One command installs it. One command puts stock back.
+
+<img src="docs/screenshots/switcher.png" width="380" alt="The app switcher"> <img src="docs/screenshots/settings.png" width="380" alt="Settings, Appearance page">
+
+## Compared with stock
+
+Measured on a CardputerZero. The first four rows are the launcher alone, over
+one minute idle on the home screen. Stock is APPLaunch 0.6.105.
+
+| | Stock OS | CardPuterZeroOS |
 |---|---|---|
-| Memory (PSS) | 9.6 MB | 1.3 MB |
-| Threads | 14 | 1 |
-| Wakeups | 35,026 | 24 |
+| Launcher memory | 9.6 MB | 1.3 MB |
 | CPU time | 5,430 ms | 10 ms |
+| Wakeups | 35,026 | 24 |
+| Threads | 14 | 1 |
+| Full-screen redraws | 40 fps, tearing | 50.8 fps, no tearing |
+| CardputerZero apps and the Store | Yes | Yes |
 
-The binary is about 1 MB, static, with its fonts and icons built in.
+## Coming with the CardPuterZeroOS image
 
-## What it does
+The image is not built yet. Today you get the launcher and the panel driver on
+top of stock, with stock's defaults. These change once the image ships.
 
-- Shows every installed app as a 4x2 grid or a list. Settings picks which.
-- Moves with F, Z, X, C or the Fn arrows. S starts a search, P pins an app,
-  Enter or a digit opens one.
-- Runs apps the way stock does, from the same `.desktop` files and with the
-  same environment. Holding Esc for 3 seconds closes a stuck app.
-- Fn+K pauses the app in front and opens the switcher: Home, then every open
-  app. A paused app is stopped, not left running, and comes back showing
-  what it showed. Del closes one. Keys typed elsewhere never reach it. Each
-  card shows the app's memory, and CPU for an app running in the background.
-  Two bars under the cards show the system's CPU and memory.
-- Shows the mark, a slot for each open app, the network, battery and clock
-  in the top bar. It reads them from sysfs when the kernel reports a change,
-  so nothing polls.
-- Settings is an app, `gh0st-settings`, built on the app SDK: Wi-Fi,
-  network, Bluetooth, display, sound, look, which apps show, time zone, SSH,
-  password, logs, about. Root actions go through a small helper that takes
-  four fixed verbs. Fn+K pauses it like any app, and Esc on its first page
-  closes it. The shell reads config.json again whenever it takes the screen
-  back, so home follows what Settings changed.
-- Brightness, volume, mute and screenshot keys work everywhere and show a
-  toast, over apps too.
-- Tab opens the task manager from home. Turns the screen off after the stock `dark_time` and locks when Tab is held
-  for 3 seconds.
-- Counts down and powers off at 3% battery, even over a running app.
+| | Stock image | CardPuterZeroOS image |
+|---|---|---|
+| SSH | On by default | Off until you turn it on |
+| Logs | Kept on the SD card | Off unless you turn them on in Settings |
+| Cloud remote access | `rpi-connect` installed | Not installed |
+| Your device on the network | Announced by name over mDNS | Not announced |
+| Joining a network | Sends the name `cardputerzero` | Sends no name |
+| Update checks | Run on timers | Only when you ask |
+| Incoming connections | Accepted | Blocked by a firewall |
 
-It also fixes the panel driver. The stock driver sends frames without waiting
-for the panel's refresh, and the panel is mounted rotated, so every app tore.
-`os/kernel/panel-mipi-dbi-m` tracks the TE signal on GPIO5 and starts each send
-where it can't cross the panel's scan. It sends lines in the panel's own scan
-order and runs the panel at 50.6 Hz. Home animations wait on a present ioctl and
-lock to the refresh, at 50 fps even for full-screen redraws.
+The stock column comes from our audit of the stock image, in
+[docs/distro-plan.md](docs/distro-plan.md).
+
+Also planned: a PIN on the lock screen, per-app limits on network and files,
+signed updates and a faster boot. The full list is in [docs/roadmap.md](docs/roadmap.md).
+
+## Keys
+
+| Key | Does |
+|---|---|
+| F, Z, X, C or the Fn arrows | Move |
+| Enter or a digit | Open an app |
+| S | Search |
+| P | Pin an app |
+| Fn+K, or Tab at home | Switch apps |
+| Del, in the switcher | Close an app |
+| Hold Esc for 3 seconds | Close a stuck app |
+| Hold Tab for 3 seconds | Lock the screen |
+
+The brightness, volume, mute and screenshot keys work everywhere, over apps
+too. At 3% battery the device counts down and powers off.
 
 ## Install
 
 From a Mac or Linux machine with Rust and SSH access to the device:
 
 ```sh
-GH0ST_HOST=rezor@cardputer.local scripts/deploy.sh            # install
-GH0ST_HOST=rezor@cardputer.local scripts/deploy.sh rollback   # back to stock
+GH0ST_HOST=<user>@<device> scripts/deploy.sh            # install
+GH0ST_HOST=<user>@<device> scripts/deploy.sh rollback   # back to stock
 ```
 
-The deploy script installs `/usr/bin/gh0st` next to the stock package. A
-systemd drop-in makes the stock `APPLaunch.service` start Gh0stdeck, so
-applaunch upgrades and the first-boot wizard keep working.
+The script installs `/usr/bin/gh0st` next to the stock launcher. A systemd
+drop-in makes the stock `APPLaunch.service` start ours, so launcher upgrades
+and the first-boot wizard keep working.
 
 The panel driver builds on the device, against the running kernel:
 
 ```sh
-cd os/kernel/panel-mipi-dbi-m && sudo ./install.sh             # then reboot
-sudo ./install.sh uninstall                                   # M5's driver back
+cd os/kernel/panel-mipi-dbi-m && sudo ./install.sh   # then reboot
+sudo ./install.sh uninstall                         # M5Stack's driver back
 ```
 
-## Build
+## Status
+
+The launcher, the app switcher and the panel driver run on the device. Settings
+and the terminal run in the simulator and are not yet tested on the device.
+
+## For developers
+
+The launcher is Gh0stdeck, written in Rust. It is one static binary of about
+1 MB, with its fonts and icons built in, and it runs on one thread. It reads
+the battery, network and clock when the kernel reports a change, so nothing
+polls. How the panel driver times frames is in
+[docs/panel-driver.md](docs/panel-driver.md).
 
 ```sh
 cargo test --workspace
-cargo build --release --target aarch64-unknown-linux-musl     # static binary
+cargo build --release --target aarch64-unknown-linux-musl   # static binary
 ```
 
 The release build links with the `rust-lld` that ships with rustup, so it
 needs no cross compiler. `cargo run -p gh0st -- shell --sim DIR` runs the
-shell on any host: keys come from a script on stdin and frames land in DIR
-as PNGs.
+shell on any host. Keys come from a script on stdin, and frames land in DIR
+as PNGs. The screenshots above, apart from the home screen, come from the
+simulator.
 
-## Layout
+Apps for CardPuterZeroOS use the app SDK. The guide is [docs/sdk.md](docs/sdk.md),
+and [docs/apps.md](docs/apps.md) covers what the launcher gives any app.
 
-- `crates/gh0st-ui`: RGB565 drawing, fonts and icons baked at build time,
-  widgets, themes.
-- `crates/gh0st-core`: config, `.desktop` parsing, keyboard map, the event
+- `crates/gh0st-ui`: drawing, fonts, icons, widgets, themes.
+- `crates/gh0st-core`: config, `.desktop` parsing, the keyboard map, the event
   loop and child processes.
 - `crates/gh0st-shell`: the home screen and the shell process.
-- `crates/gh0st-app`: the app SDK. The guide is `docs/sdk.md`.
-- `crates/gh0st-settings`: Settings, an app built on the SDK.
-- `crates/gh0st-term`: the terminal, an app built on the SDK. The guide is
-  `docs/terminal.md`.
+- `crates/gh0st-app`: the app SDK.
+- `crates/gh0st-settings`: Settings.
+- `crates/gh0st-term`: the terminal. The guide is
+  [docs/terminal.md](docs/terminal.md).
 - `crates/gh0st`: the `gh0st` binary.
-- `os/kernel/panel-mipi-dbi-m`: the patched panel driver and its overlay.
+- `os/kernel/panel-mipi-dbi-m`: the panel driver and its overlay.
 - `docs/`: hardware facts, the panel driver, the app contract, the distro plan.
-
-## Status
-
-The shell and the switcher run on the device. Settings as a separate app is
-built and runs in the sim; it is not yet tested on the device. So is the
-terminal: tabs, zoom, a window over a larger grid, history with search and
-copy. An app can be allowed to keep running in the background. One on the
-shell link stops drawing and reading keys while another is in front; one off
-it still shares that app's keyboard and panel.
 
 ## Licenses
 
-The Rust code is MIT, see [LICENSE](LICENSE). The panel driver is GPL-2.0, from M5Stack and Noralf
-Trønnes. Inter, JetBrains Mono and Terminus are under the SIL Open Font License, and
-the Lucide icons under ISC. The mark is the Tabler "components" icon, MIT.
+The Rust code is MIT, see [LICENSE](LICENSE). The panel driver is GPL-2.0, from
+M5Stack and Noralf Trønnes. Inter, JetBrains Mono and Terminus are under the
+SIL Open Font License, and the Lucide icons under ISC. The mark is the Tabler
+"components" icon, MIT.
