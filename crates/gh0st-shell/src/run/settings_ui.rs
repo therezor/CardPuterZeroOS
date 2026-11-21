@@ -5,7 +5,9 @@
 use super::*;
 use crate::settings::{bt, net};
 use crate::settings::pages::{self, APP_ICONS, AppRow, DARK_TIMES, Logs, State as PageState};
-use crate::settings::{self, Act, Body, Command, Cursor, Dialog, Page, PageId, Setting, Value};
+use crate::settings::{
+    self, Act, Body, Command, ConnField, Cursor, Dialog, Page, PageId, Setting, Value,
+};
 use gh0st_core::desktop;
 
 pub(super) struct SettingsUi {
@@ -25,6 +27,9 @@ pub(super) enum Ask {
     PasswordNew(String),
     PasswordRepeat(String, String),
     Forget(String),
+    /// A new value for a field of connection `.0`.
+    ConnField(String, ConnField),
+    ConnForget(String),
 }
 
 /// pkexec runs the root helper by this path (see packaging/polkit).
@@ -61,6 +66,11 @@ pub(super) enum NetJob {
     /// After the helper unblocks the radio, power it on.
     BtUnblock,
     Password,
+    ConnQuery,
+    /// A profile change; reconnect after it when the profile is in use.
+    ConnModify { name: String, reconnect: bool },
+    ConnUp(String),
+    ConnDelete(String),
 }
 
 impl SettingsUi {
@@ -266,6 +276,9 @@ impl Shell {
                     && self.settings.as_ref().is_some_and(|ui| ui.state.zones.is_empty());
                 if zones {
                     self.start_job(JobKind::Net(NetJob::Zones), &["timedatectl", "list-timezones"]);
+                }
+                if let PageId::Conn(name) = &id {
+                    self.query_conn(name);
                 }
                 if let Some(ui) = self.settings.as_mut() {
                     ui.stack.push((id, Cursor::default()));
@@ -549,6 +562,42 @@ impl Shell {
                 wipe(&mut new);
             }
             Ask::Forget(ssid) => self.forget(&ssid),
+            Ask::ConnForget(name) => self.start_job(
+                JobKind::Net(NetJob::ConnDelete(name.clone())),
+                &["nmcli", "connection", "delete", "id", &name],
+            ),
+            Ask::ConnField(name, field) => {
+                let Some(c) = self.open_conn().filter(|c| c.name == name) else {
+                    return;
+                };
+                let v = text.trim().to_string();
+                match field {
+                    ConnField::Address if net::valid_ipv4(&v, true) => {
+                        let v = if v.contains('/') { v } else { format!("{v}/24") };
+                        self.modify(&c, &[("ipv4.method", "manual"), ("ipv4.addresses", &v)], true);
+                    }
+                    ConnField::Gateway if v.is_empty() || net::valid_ipv4(&v, false) => {
+                        self.modify(&c, &[("ipv4.gateway", &v)], true);
+                    }
+                    ConnField::Dns => {
+                        let list: Vec<&str> =
+                            v.split([',', ' ']).filter(|s| !s.is_empty()).collect();
+                        if list.iter().all(|s| net::valid_ipv4(s, false)) {
+                            let joined = list.join(",");
+                            // Typed servers replace the ones DHCP offers.
+                            let ignore = if joined.is_empty() { "no" } else { "yes" };
+                            self.modify(
+                                &c,
+                                &[("ipv4.dns", &joined), ("ipv4.ignore-auto-dns", ignore)],
+                                true,
+                            );
+                        } else {
+                            self.toast("Not an IPv4 address");
+                        }
+                    }
+                    _ => self.toast("Not an IPv4 address"),
+                }
+            }
             Ask::HiddenPassword(ssid) => {
                 let argv = [
                     "nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid, "hidden",
@@ -583,6 +632,19 @@ impl Shell {
         };
         let id = ui.top().0.clone();
         match id {
+            PageId::Wifi if k.nav(true) == Some(keys::Nav::Right) => {
+                if let Some((Act::Run(Command::Join(ssid)), _)) = self.selected_act() {
+                    let known = self.settings.as_ref().is_some_and(|ui| ui.state.profiles.contains(&ssid));
+                    if known {
+                        self.query_conn(&ssid);
+                        if let Some(ui) = self.settings.as_mut() {
+                            ui.stack.push((PageId::Conn(ssid), Cursor::default()));
+                        }
+                        self.refresh_settings();
+                    }
+                }
+                true
+            }
             PageId::Wifi if k.ch == Some('r') => {
                 self.query_net(true);
                 self.toast("Scanning\u{2026}");
@@ -647,6 +709,33 @@ impl Shell {
         let mut argv = vec!["pkexec", HELPER];
         argv.extend_from_slice(args);
         self.start_job(JobKind::Net(NetJob::Helper(done)), &argv);
+    }
+
+    fn query_conn(&mut self, name: &str) {
+        self.start_job(JobKind::Net(NetJob::ConnQuery), &["nmcli", "-t", "connection", "show", name]);
+    }
+
+    /// The connection page on top, if that is where Settings is.
+    fn open_conn(&self) -> Option<pages::Conn> {
+        let ui = self.settings.as_ref()?;
+        let PageId::Conn(name) = &ui.top().0 else {
+            return None;
+        };
+        ui.state.conn.clone().filter(|c| c.name == *name)
+    }
+
+    /// `nmcli connection modify` with `props` as property, value pairs.
+    fn modify(&mut self, c: &pages::Conn, props: &[(&str, &str)], reconnect: bool) {
+        let mut argv = vec!["nmcli", "connection", "modify", c.name.as_str()];
+        for (k, v) in props {
+            argv.push(k);
+            argv.push(v);
+        }
+        let job = NetJob::ConnModify {
+            name: c.name.clone(),
+            reconnect: reconnect && c.active,
+        };
+        self.start_job(JobKind::Net(job), &argv);
     }
 
     fn forget(&mut self, ssid: &str) {
@@ -797,6 +886,30 @@ impl Shell {
                 self.toast(if j.ok() { done.clone() } else { helper_failure(&out) });
                 self.query_sys();
             }
+            NetJob::ConnModify { name, reconnect } => {
+                if !j.ok() {
+                    self.toast(net::failure(&out, false));
+                } else if *reconnect {
+                    self.start_job(
+                        JobKind::Net(NetJob::ConnUp(name.clone())),
+                        &["nmcli", "--wait", "30", "connection", "up", name],
+                    );
+                    self.toast("Reconnecting\u{2026}");
+                }
+                self.query_conn(name);
+            }
+            NetJob::ConnUp(name) => {
+                self.toast(if j.ok() { format!("{name} is up") } else { net::failure(&out, false) });
+                self.query_conn(name);
+                requery = true;
+            }
+            NetJob::ConnDelete(name) => {
+                self.toast(if j.ok() { format!("Forgot {name}") } else { net::failure(&out, false) });
+                if let Some(ui) = self.settings.as_mut() {
+                    ui.stack.retain(|(p, _)| !matches!(p, PageId::Conn(_)));
+                }
+                requery = true;
+            }
             NetJob::Password => self.toast(if j.ok() {
                 "Password changed".to_string()
             } else {
@@ -822,7 +935,9 @@ impl Shell {
                     st.wifi_on = on;
                 }
             }
+            NetJob::ConnQuery if j.ok() => st.conn = Some(net::parse_conn(&out)),
             NetJob::Profiles if j.ok() => {
+                st.conns = net::parse_conns(&out);
                 st.profiles = net::parse_profiles(&out);
                 for n in &mut st.networks {
                     n.known = st.profiles.contains(&n.ssid);
@@ -896,6 +1011,49 @@ impl Shell {
                 let argv = ["timedatectl", "set-ntp", if on { "false" } else { "true" }];
                 self.start_job(JobKind::Net(NetJob::TimeSet(None)), &argv);
             }
+            Setting::ConnAuto => {
+                if let Some(c) = self.open_conn() {
+                    let v = if c.autoconnect { "no" } else { "yes" };
+                    self.modify(&c, &[("connection.autoconnect", v)], false);
+                }
+            }
+            Setting::ConnMethod => {
+                if let Some(c) = self.open_conn() {
+                    if c.manual {
+                        let props = [("ipv4.method", "auto"), ("ipv4.addresses", ""), ("ipv4.gateway", "")];
+                        self.modify(&c, &props, true);
+                    } else if c.current.is_empty() {
+                        // Manual needs an address; ask for one.
+                        self.ask_conn_field(&c, ConnField::Address);
+                    } else {
+                        // Keep what DHCP gave, now fixed.
+                        let gw = self
+                            .settings
+                            .as_ref()
+                            .and_then(|ui| ui.state.ifaces.iter().find(|i| i.connection == c.name))
+                            .map(|i| i.gateway.clone())
+                            .unwrap_or_default();
+                        let props = [
+                            ("ipv4.method", "manual"),
+                            ("ipv4.addresses", c.current.as_str()),
+                            ("ipv4.gateway", gw.as_str()),
+                        ];
+                        self.modify(&c, &props, true);
+                    }
+                }
+            }
+            Setting::ConnMac => {
+                if let Some(c) = self.open_conn() {
+                    let i = net::MACS.iter().position(|(k, _)| *k == c.mac).unwrap_or(0);
+                    let (next, _) = net::MACS[cycle(i, d, net::MACS.len())];
+                    let prop = if c.wifi {
+                        "802-11-wireless.cloned-mac-address"
+                    } else {
+                        "802-3-ethernet.cloned-mac-address"
+                    };
+                    self.modify(&c, &[(prop, next)], true);
+                }
+            }
             Setting::Ssh => {
                 let on = self.settings.as_ref().is_some_and(|ui| ui.state.ssh);
                 let (arg, done) = if on { ("off", "SSH off") } else { ("on", "SSH on") };
@@ -938,6 +1096,32 @@ impl Shell {
                 }
             }
             Command::Device(mac) => self.bt_enter(mac),
+            Command::ConnEdit(field) => {
+                if let Some(c) = self.open_conn() {
+                    self.ask_conn_field(&c, field);
+                }
+            }
+            Command::ConnUp => {
+                if let Some(c) = self.open_conn() {
+                    self.start_job(
+                        JobKind::Net(NetJob::ConnUp(c.name.clone())),
+                        &["nmcli", "--wait", "30", "connection", "up", &c.name],
+                    );
+                    self.toast("Reconnecting\u{2026}");
+                }
+            }
+            Command::ConnForget => {
+                if let Some(c) = self.open_conn() {
+                    self.ask(
+                        Dialog::Confirm {
+                            title: format!("Forget \u{201c}{}\u{201d}?", c.name),
+                            line: "Its password and settings go.".into(),
+                            yes: "forget",
+                        },
+                        Ask::ConnForget(c.name),
+                    );
+                }
+            }
             Command::SetZone(zone) => {
                 let known = self.settings.as_ref().is_some_and(|ui| ui.state.zones.contains(&zone));
                 if known {
@@ -964,6 +1148,24 @@ impl Shell {
             ),
             _ => self.toast("Not available yet"),
         }
+    }
+
+    fn ask_conn_field(&mut self, c: &pages::Conn, field: ConnField) {
+        let (title, placeholder, now) = match field {
+            ConnField::Address => ("Address", "192.168.1.50/24", &c.address),
+            ConnField::Gateway => ("Gateway", "192.168.1.1", &c.gateway),
+            ConnField::Dns => ("DNS", "1.1.1.1, 9.9.9.9", &c.dns),
+        };
+        self.ask(
+            Dialog::Text {
+                title: title.into(),
+                placeholder,
+                text: now.clone(),
+                masked: false,
+                secret: false,
+            },
+            Ask::ConnField(c.name.clone(), field),
+        );
     }
 
     /// Enter on a network: a saved one comes up, an open one joins, a

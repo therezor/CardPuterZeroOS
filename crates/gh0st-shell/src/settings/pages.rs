@@ -2,7 +2,7 @@
 //! filled by the shell (config, sysfs, the helpers' output); here it only
 //! becomes rows.
 
-use super::{Act, Body, Command, Item, Line, Page, PageId, Setting, Value};
+use super::{Act, Body, Command, ConnField, Item, Line, Page, PageId, Setting, Value};
 use crate::home::Layout;
 
 /// Screen-off choices, in seconds. 0 is never.
@@ -48,6 +48,24 @@ pub struct Network {
     pub active: bool,
     /// 802.1X: wants a user name too, so it is joined from a terminal.
     pub enterprise: bool,
+}
+
+/// A saved connection's settings.
+#[derive(Clone, Debug, Default)]
+pub struct Conn {
+    pub name: String,
+    pub wifi: bool,
+    pub autoconnect: bool,
+    /// Manual IPv4 rather than DHCP.
+    pub manual: bool,
+    pub address: String,
+    pub gateway: String,
+    pub dns: String,
+    /// `cloned-mac-address`; empty is NetworkManager's default.
+    pub mac: String,
+    pub active: bool,
+    /// The address in use now, whatever gave it.
+    pub current: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -132,6 +150,10 @@ pub struct State {
     pub networks: Vec<Network>,
     /// Saved Wi-Fi profiles, by name.
     pub profiles: Vec<String>,
+    /// Every saved Wi-Fi and wired profile, as (name, type).
+    pub conns: Vec<(String, String)>,
+    /// The profile open on a connection page.
+    pub conn: Option<Conn>,
     pub ifaces: Vec<Iface>,
     pub bt_on: bool,
     pub bt_scanning: bool,
@@ -297,7 +319,8 @@ pub fn build(id: &PageId, s: &State) -> Page {
             Body::List(wifi(s)),
             vec![("R", "scan"), ("Del", "forget")],
         ),
-        PageId::Network => ("Network", Body::Info(network(s)), vec![]),
+        PageId::Network => ("Network", Body::List(network(s)), vec![]),
+        PageId::Conn(name) => ("Connection", Body::List(conn(s, name)), vec![]),
         PageId::Bluetooth => (
             "Bluetooth",
             Body::List(bluetooth(s)),
@@ -336,6 +359,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
             .iter()
             .find(|a| a.file == *file)
             .map_or_else(|| title.to_string(), |a| a.name.clone()),
+        PageId::Conn(name) => name.clone(),
         _ => title.into(),
     };
     Page {
@@ -417,7 +441,11 @@ fn wifi(s: &State) -> Vec<Item> {
                     secure: n.secure,
                 }
             },
-            act: Act::Run(Command::Join(n.ssid.clone())),
+            act: if n.active && n.known {
+                Act::Open(PageId::Conn(n.ssid.clone()))
+            } else {
+                Act::Run(Command::Join(n.ssid.clone()))
+            },
             danger: false,
         });
     }
@@ -431,30 +459,103 @@ fn wifi(s: &State) -> Vec<Item> {
     out
 }
 
-fn network(s: &State) -> Vec<Line> {
-    let mut out = Vec::new();
-    for i in &s.ifaces {
-        let head = if i.connection.is_empty() {
-            format!("{} \u{00b7} {}", i.name, i.state)
-        } else {
-            format!("{} \u{00b7} {}", i.name, i.connection)
-        };
-        out.push(Line::Section(head));
-        for (k, v) in [
-            ("IPv4", &i.ipv4),
-            ("Gateway", &i.gateway),
-            ("DNS", &i.dns),
-            ("MAC", &i.mac),
-        ] {
-            if !v.is_empty() {
-                out.push(Line::Readout(k.into(), v.clone()));
+/// One row per device. Enter opens its connection: the active one, or for a
+/// wired port with no cable, the saved wired profile.
+fn network(s: &State) -> Vec<Item> {
+    s.ifaces
+        .iter()
+        .map(|i| {
+            let wifi = i.name.starts_with("wl");
+            let profile = if !i.connection.is_empty() {
+                Some(i.connection.clone())
+            } else if !wifi {
+                s.conns
+                    .iter()
+                    .find(|(_, t)| t == "802-3-ethernet")
+                    .map(|(n, _)| n.clone())
+            } else {
+                None
+            };
+            let value = if i.ipv4.is_empty() {
+                i.state.clone()
+            } else {
+                i.ipv4.split('/').next().unwrap_or(&i.ipv4).to_string()
+            };
+            Item {
+                icon: Some(if wifi { "wifi" } else { "ethernet-port" }),
+                label: if i.connection.is_empty() {
+                    i.name.clone()
+                } else {
+                    format!("{} \u{00b7} {}", i.name, i.connection)
+                },
+                value: if profile.is_some() {
+                    Value::TextChevron(value)
+                } else {
+                    Value::Text(value)
+                },
+                act: profile.map_or(Act::None, |p| Act::Open(PageId::Conn(p))),
+                danger: false,
             }
+        })
+        .collect()
+}
+
+fn conn(s: &State, name: &str) -> Vec<Item> {
+    let Some(c) = s.conn.as_ref().filter(|c| c.name == name) else {
+        return vec![Item::new("", "Reading\u{2026}", Value::None, Act::None)];
+    };
+    let shown = |v: &str, fallback: &str| {
+        if v.is_empty() {
+            fallback.to_string()
+        } else {
+            v.to_string()
         }
-    }
-    if out.is_empty() {
-        out.push(Line::Section("No network devices".into()));
-    }
-    out
+    };
+    let auto_ip = !c.manual;
+    let address = if auto_ip { shown(&c.current, "Automatic") } else { shown(&c.address, "None") };
+    vec![
+        Item::new(
+            "check",
+            "Connect on its own",
+            Value::Toggle(c.autoconnect),
+            Act::Set(Setting::ConnAuto),
+        ),
+        Item::new(
+            "network",
+            "IPv4",
+            Value::Choice(if c.manual { "Manual" } else { "Automatic" }.into()),
+            Act::Set(Setting::ConnMethod),
+        ),
+        Item::new(
+            "",
+            "Address",
+            Value::TextChevron(address),
+            Act::Run(Command::ConnEdit(ConnField::Address)),
+        ),
+        Item::new(
+            "",
+            "Gateway",
+            Value::TextChevron(shown(&c.gateway, if auto_ip { "Automatic" } else { "None" })),
+            Act::Run(Command::ConnEdit(ConnField::Gateway)),
+        ),
+        Item::new(
+            "",
+            "DNS",
+            Value::TextChevron(shown(&c.dns, "Automatic")),
+            Act::Run(Command::ConnEdit(ConnField::Dns)),
+        ),
+        Item::new(
+            "shield",
+            "MAC address",
+            Value::Choice(super::net::mac_label(&c.mac).into()),
+            Act::Set(Setting::ConnMac),
+        ),
+        Item::new("arrow-left-right", "Reconnect", Value::None, Act::Run(Command::ConnUp)),
+        Item {
+            danger: true,
+            ..Item::new("power", "Forget", Value::None, Act::Run(Command::ConnForget))
+        },
+    ]
 }
 
 fn bluetooth(s: &State) -> Vec<Item> {

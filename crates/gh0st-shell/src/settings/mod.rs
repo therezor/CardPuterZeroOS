@@ -26,6 +26,8 @@ pub enum PageId {
     System,
     /// Regions, then the cities of one region.
     TimeZone(Option<String>),
+    /// A saved connection's settings, by profile name.
+    Conn(String),
     Privacy,
     About,
 }
@@ -49,6 +51,9 @@ pub enum Setting {
     WifiRadio,
     Bluetooth,
     NetworkTime,
+    ConnAuto,
+    ConnMethod,
+    ConnMac,
     Ssh,
     Logs,
 }
@@ -61,9 +66,20 @@ pub enum Command {
     Device(String),
     BtScan,
     SetZone(String),
+    /// Type a new value for a connection field.
+    ConnEdit(ConnField),
+    ConnUp,
+    ConnForget,
     Password,
     Restart,
     PowerOff,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnField {
+    Address,
+    Gateway,
+    Dns,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,6 +309,9 @@ fn hints<'a>(page: &'a Page, item: Option<&Item>) -> Vec<Hint<'a>> {
                 Command::Device(_) => "connect",
                 Command::BtScan => "scan",
                 Command::SetZone(_) => "set",
+                Command::ConnEdit(_) => "edit",
+                Command::ConnUp => "reconnect",
+                Command::ConnForget => "forget",
                 _ => "run",
             },
         )),

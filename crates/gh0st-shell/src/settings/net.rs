@@ -112,6 +112,66 @@ pub fn parse_profiles(out: &str) -> Vec<String> {
         .collect()
 }
 
+/// `nmcli -t -f NAME,TYPE connection show`: every profile as (name, type).
+pub fn parse_conns(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let f = fields(l);
+            Some((f.first()?.clone(), f.get(1)?.clone()))
+        })
+        .filter(|(_, t)| t == "802-11-wireless" || t == "802-3-ethernet")
+        .collect()
+}
+
+/// `nmcli -t connection show NAME`: the settings Settings can change.
+pub fn parse_conn(out: &str) -> super::pages::Conn {
+    let mut c = super::pages::Conn::default();
+    for line in out.lines() {
+        let f = fields(line);
+        let (Some(key), Some(v)) = (f.first(), f.get(1)) else {
+            continue;
+        };
+        let v = v.clone();
+        match key.as_str() {
+            "connection.id" => c.name = v,
+            "connection.type" => c.wifi = v == "802-11-wireless",
+            "connection.autoconnect" => c.autoconnect = v == "yes",
+            "ipv4.method" => c.manual = v == "manual",
+            "ipv4.addresses" => c.address = v,
+            "ipv4.gateway" if v != "--" => c.gateway = v,
+            "ipv4.dns" => c.dns = v,
+            "802-11-wireless.cloned-mac-address" | "802-3-ethernet.cloned-mac-address" => c.mac = v,
+            "GENERAL.STATE" => c.active = v == "activated",
+            "IP4.ADDRESS[1]" => c.current = v,
+            _ => {}
+        }
+    }
+    c
+}
+
+/// MAC policies, as nmcli spells them; empty is NetworkManager's default.
+pub const MACS: &[(&str, &str)] = &[
+    ("", "Default"),
+    ("permanent", "Device"),
+    ("stable", "Stable"),
+    ("random", "Random"),
+];
+
+pub fn mac_label(v: &str) -> &'static str {
+    MACS.iter().find(|(k, _)| *k == v).map_or("Default", |(_, l)| l)
+}
+
+/// Checks a typed IPv4 address with optional prefix, or a list of them.
+pub fn valid_ipv4(s: &str, prefix: bool) -> bool {
+    let (ip, len) = match s.split_once('/') {
+        Some((ip, len)) if prefix => (ip, Some(len)),
+        Some(_) => return false,
+        None => (s, None),
+    };
+    let ok_ip = ip.split('.').count() == 4 && ip.split('.').all(|p| p.parse::<u8>().is_ok());
+    ok_ip && len.is_none_or(|l| l.parse::<u8>().is_ok_and(|n| n <= 32))
+}
+
 /// `nmcli -t -f WIFI radio`.
 pub fn parse_radio(out: &str) -> Option<bool> {
     match out.trim() {
@@ -240,6 +300,32 @@ mod tests {
         assert_eq!(d[0].dns, "1.1.1.1, 9.9.9.9");
         assert_eq!(d[1].state, "unavailable");
         assert!(d[1].connection.is_empty() && d[1].gateway.is_empty());
+    }
+
+    #[test]
+    fn a_connection_reads_its_settings() {
+        let out = "connection.id:Mostly Harmless\nconnection.type:802-11-wireless\nconnection.autoconnect:yes\n802-11-wireless.cloned-mac-address:stable\nipv4.method:manual\nipv4.dns:1.1.1.1,9.9.9.9\nipv4.addresses:192.168.0.50/24\nipv4.gateway:192.168.0.1\nGENERAL.STATE:activated\nIP4.ADDRESS[1]:192.168.0.50/24\n";
+        let c = parse_conn(out);
+        assert!(c.wifi && c.autoconnect && c.manual && c.active);
+        assert_eq!(c.address, "192.168.0.50/24");
+        assert_eq!(c.dns, "1.1.1.1,9.9.9.9");
+        assert_eq!(mac_label(&c.mac), "Stable");
+        assert_eq!(
+            parse_conns("Home:802-11-wireless:wlan0\nlo:loopback:lo\nWired connection 1:802-3-ethernet:\n"),
+            [
+                ("Home".to_string(), "802-11-wireless".to_string()),
+                ("Wired connection 1".to_string(), "802-3-ethernet".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn typed_addresses_are_checked() {
+        assert!(valid_ipv4("192.168.0.50/24", true));
+        assert!(!valid_ipv4("192.168.0.50/33", true));
+        assert!(!valid_ipv4("192.168.0/24", true));
+        assert!(valid_ipv4("192.168.0.1", false));
+        assert!(!valid_ipv4("192.168.0.1/24", false));
     }
 
     #[test]

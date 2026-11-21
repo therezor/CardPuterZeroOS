@@ -9,7 +9,7 @@
 //! Both env vars are optional.
 
 use gh0st_shell::home::{self, Entry, Home, Icon, Layout, Size};
-use gh0st_shell::settings::pages::{self, AppRow, Device, Iface, Logs, Network, State};
+use gh0st_shell::settings::pages::{self, AppRow, Conn, Device, Iface, Logs, Network, State};
 use gh0st_shell::settings::{self, Cursor, Dialog, PageId};
 use gh0st_shell::switcher::{self, Card, Switcher};
 use gh0st_ui::Canvas;
@@ -193,6 +193,22 @@ fn sample_state() -> State {
         wifi_on: true,
         wifi_busy: None,
         profiles: vec!["HomeNet".into()],
+        conns: vec![
+            ("HomeNet".into(), "802-11-wireless".into()),
+            ("Wired connection 1".into(), "802-3-ethernet".into()),
+        ],
+        conn: Some(Conn {
+            name: "HomeNet".into(),
+            wifi: true,
+            autoconnect: true,
+            manual: false,
+            address: String::new(),
+            gateway: String::new(),
+            dns: "1.1.1.1,9.9.9.9".into(),
+            mac: "stable".into(),
+            active: true,
+            current: "192.168.1.42/24".into(),
+        }),
         networks: vec![
             net("HomeNet", 3, true, true, true),
             net("Office-5G", 4, true, false, false),
@@ -424,6 +440,7 @@ fn main() {
                     ),
                 ),
                 ("network", s(PageId::Network, 0)),
+                ("connection", s(PageId::Conn("HomeNet".into()), 1)),
                 ("bluetooth", s(PageId::Bluetooth, 1)),
                 ("system", s(PageId::System, 2)),
                 ("timezone", s(PageId::TimeZone(Some("Europe".into())), 2)),
