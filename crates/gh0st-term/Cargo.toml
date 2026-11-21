@@ -1,0 +1,21 @@
+[package]
+name = "gh0st-term"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The terminal for the CardputerZero, a gh0st app"
+
+[[bin]]
+name = "gh0st-term"
+path = "src/main.rs"
+
+[dependencies]
+gh0st-app.workspace = true
+gh0st-core.workspace = true
+libc.workspace = true
+# The DEC parser state machine, without the std feature: its OSC buffer is
+# then a fixed array, so a hostile host can't grow it without bound.
+vte = { version = "0.15", default-features = false }
+# wcwidth: CJK and emoji take two cells, combining marks none.
+unicode-width = "0.2"
