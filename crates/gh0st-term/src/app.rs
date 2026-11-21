@@ -65,21 +65,19 @@ impl Options {
 /// How the grid relates to the screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Layout {
-    /// The grid is what fits at the smallest size of the face. Zoom only
-    /// makes the text bigger; the screen follows the cursor and pans.
+    /// The grid is a fixed size, 80x24 by default. Zoom only makes the
+    /// text bigger; the screen follows the cursor and pans over the grid.
     Magnify,
     /// The grid is what fits at the current size; zoom reflows it.
     Fit,
-    /// The grid is a fixed size, 80x24 by default; the screen pans.
-    Window,
 }
 
 impl Layout {
     fn from_key(s: &str) -> Layout {
-        match s {
-            "fit" => Layout::Fit,
-            "window" => Layout::Window,
-            _ => Layout::Magnify,
+        if s == "fit" {
+            Layout::Fit
+        } else {
+            Layout::Magnify
         }
     }
 
@@ -87,7 +85,6 @@ impl Layout {
         match self {
             Layout::Magnify => "magnify",
             Layout::Fit => "fit",
-            Layout::Window => "window",
         }
     }
 
@@ -95,7 +92,6 @@ impl Layout {
         match self {
             Layout::Magnify => "Magnify",
             Layout::Fit => "Fit",
-            Layout::Window => "Window",
         }
     }
 }
@@ -133,7 +129,7 @@ const HELP_KEYS: &[(&str, &str)] = &[
     ("PgUp/Dn", "page"),
     ("g G", "top, end"),
     ("r t", "zoom out, in"),
-    ("m", "magnify, fit, win"),
+    ("m", "magnify, fit"),
     ("b", "top bar"),
     ("n", "find"),
     ("v", "copy lines"),
@@ -245,8 +241,7 @@ impl Term {
         };
         match self.layout {
             Layout::Fit => fits(self.look()),
-            Layout::Magnify => fits(Look::of(&self.family.faces()[0])),
-            Layout::Window => self.window_size,
+            Layout::Magnify => self.window_size,
         }
     }
 
@@ -507,12 +502,11 @@ impl Term {
         cx.toast(&format!("{}x{} cells, {c}x{r}", look.cw, look.ch));
     }
 
-    /// Magnify, fit, window, and round again.
+    /// Magnify or fit.
     fn next_layout(&mut self, cx: &mut Cx) {
         self.layout = match self.layout {
             Layout::Magnify => Layout::Fit,
-            Layout::Fit => Layout::Window,
-            Layout::Window => Layout::Magnify,
+            Layout::Fit => Layout::Magnify,
         };
         self.relayout(cx);
         cx.settings().set_str(key::MODE, self.layout.key());

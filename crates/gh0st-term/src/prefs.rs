@@ -16,7 +16,7 @@ pub mod key {
 }
 
 pub const WINDOWS: &[&str] = &["80x24", "100x30", "120x40", "132x43"];
-pub const MODES: &[&str] = &["magnify", "fit", "window"];
+pub const MODES: &[&str] = &["magnify", "fit"];
 pub const HISTORY_KB: &[i64] = &[256, 1024, 4096];
 pub const CURSORS: &[&str] = &["block", "underline", "bar"];
 
@@ -78,15 +78,8 @@ impl Page for Prefs {
                 },
             ),
             Row::choice("Cell size", &cell),
-            Row::choice(
-                "Grid",
-                match s.mode.as_str() {
-                    "fit" => "Fit",
-                    "window" => "Window",
-                    _ => "Magnify",
-                },
-            ),
-            Row::choice("Window", &s.window_size),
+            Row::choice("Grid", if s.mode == "fit" { "Fit" } else { "Magnify" }),
+            Row::choice("Magnify grid", &s.window_size),
             Row::toggle("Top bar", s.bar),
             Row::choice("History", &history),
             Row::choice("Cursor", &s.cursor),

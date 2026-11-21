@@ -5,8 +5,8 @@ CLI page and runs `Terminal=true` apps (`apps.md`).
 
 ## On the screen
 
-Three layouts, `m` in view mode steps through them. The table gives what
-fits at each size.
+Two layouts; `m` in view mode switches. The table gives what fits on the
+screen at each size.
 
 | Face | Cells | Fits, top bar on | Fits, top bar off |
 |---|---|---|---|
@@ -22,15 +22,13 @@ Terminus is a bitmap face and stays crisp at every size. JetBrains Mono is
 anti-aliased. Box drawing, blocks, braille and powerline arrows are drawn per
 cell, so lines join at any size.
 
-- **Magnify** (default). Programs see what fits at the face's smallest size,
-  53x12 with Terminus. Zooming in makes the text bigger and the grid stays:
-  the screen shows part of it, follows the cursor, and pans. A line on an
-  edge says more is beyond it. Nothing reflows and full-screen programs
-  don't redraw.
+- **Magnify** (default). Programs see a fixed grid, 80x24 by default
+  (Settings: Magnify grid). The screen shows part of it, follows the cursor,
+  and pans. Zooming changes only the text size: nothing reflows and
+  full-screen programs don't redraw. A line on an edge says more is beyond
+  it.
 - **Fit.** Programs see what fits at the current size. A zoom reflows the
   text: lines that autowrapped join and wrap again at the new width.
-- **Window.** Programs see a fixed grid, 80x24 by default (Settings). The
-  screen pans over it as in magnify.
 
 ## Keys
 
@@ -51,11 +49,11 @@ Delete. Not measured on the device yet; the same source disagrees with
 | Key | Does |
 |---|---|
 | ↑ ↓, F X | Scroll |
-| ← →, Z C | Pan, in magnify and window |
+| ← →, Z C | Pan, in magnify |
 | PgUp PgDn | Page |
 | g, G | Oldest line, back to the cursor |
 | r, t | Zoom out, in (- and = too) |
-| m | Magnify, fit, window |
+| m | Magnify or fit |
 | b | Top bar on or off |
 | n | Find: type, then Enter or ↑ for older, ↓ for newer, Esc when done |
 | u, i | Previous, next shell prompt |
@@ -81,7 +79,7 @@ View mode `s`, saved in `~/.config/cardputerzero/config.json`:
 |---|---|---|
 | `gh0st.term.font` | `terminus`, `jetbrains` | `terminus` |
 | `gh0st.term.zoom` | index into the face's sizes | 0 |
-| `gh0st.term.mode` | `magnify`, `fit`, `window` | `magnify` |
+| `gh0st.term.mode` | `magnify`, `fit` | `magnify` |
 | `gh0st.term.window` | `80x24`, `100x30`, `120x40`, `132x43` | `80x24` |
 | `gh0st.term.bar` | top bar | on |
 | `gh0st.term.history_kb` | history for all tabs together | 1024 |
