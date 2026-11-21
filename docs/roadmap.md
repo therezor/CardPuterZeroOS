@@ -104,7 +104,7 @@ apply" until the running value matches the file.
 |---|---|---|---|
 | GPU memory | `gpu_mem` in `config.txt`: 16, 32, 64, 96, 128, 192 or 256 MB | `gpu-mem 64` | Restart |
 | Wi-Fi country | `cfg80211.ieee80211_regdom` in `cmdline.txt` | `regdom XX` | Restart |
-| CPU mode | The governor: schedutil, powersave or performance, kept by a udev rule after stock's | `cpu balanced`, `battery` or `performance` | Now |
+| CPU mode | The governor: schedutil, powersave or performance, kept by a udev rule after stock's | `cpu balanced`, `power-saver` or `performance` | Now |
 | Device name | The hostname and its `/etc/hosts` line | `hostname NAME` | Now |
 
 **Privacy page.** Today it has one row, Logs.

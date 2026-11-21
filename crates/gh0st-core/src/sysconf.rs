@@ -191,17 +191,17 @@ pub fn hosts_with_name(hosts: &str, name: &str) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CpuMode {
     Balanced,
-    Battery,
+    PowerSaver,
     Performance,
 }
 
 impl CpuMode {
-    pub const ALL: [CpuMode; 3] = [CpuMode::Balanced, CpuMode::Battery, CpuMode::Performance];
+    pub const ALL: [CpuMode; 3] = [CpuMode::Balanced, CpuMode::PowerSaver, CpuMode::Performance];
 
     pub fn label(self) -> &'static str {
         match self {
             CpuMode::Balanced => "Balanced",
-            CpuMode::Battery => "Battery",
+            CpuMode::PowerSaver => "Power Saver",
             CpuMode::Performance => "Performance",
         }
     }
@@ -210,7 +210,7 @@ impl CpuMode {
     pub fn verb(self) -> &'static str {
         match self {
             CpuMode::Balanced => "balanced",
-            CpuMode::Battery => "battery",
+            CpuMode::PowerSaver => "power-saver",
             CpuMode::Performance => "performance",
         }
     }
@@ -218,7 +218,7 @@ impl CpuMode {
     pub fn governor(self) -> &'static str {
         match self {
             CpuMode::Balanced => "schedutil",
-            CpuMode::Battery => "powersave",
+            CpuMode::PowerSaver => "powersave",
             CpuMode::Performance => "performance",
         }
     }

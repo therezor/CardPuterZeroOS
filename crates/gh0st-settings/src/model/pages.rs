@@ -812,7 +812,7 @@ fn gpu_note(mb: u32) -> &'static str {
 fn cpu_note(m: CpuMode) -> &'static str {
     match m {
         CpuMode::Balanced => "Follows the load",
-        CpuMode::Battery => "Holds 600 MHz",
+        CpuMode::PowerSaver => "Holds 600 MHz",
         CpuMode::Performance => "Holds 1 GHz",
     }
 }

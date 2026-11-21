@@ -88,7 +88,7 @@ pub enum Command {
     PowerOff,
     /// Wi-Fi country, by ISO code.
     SetCountry(String),
-    /// An option of a choice, in the helper's word: "64", "battery".
+    /// An option of a choice, in the helper's word: "64", "power-saver".
     Choose(Choice, String),
     DeviceName,
 }

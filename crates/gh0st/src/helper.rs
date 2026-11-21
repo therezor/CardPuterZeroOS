@@ -6,7 +6,7 @@
 //!     gh0st-helper ssh on|off                    password
 //!     gh0st-helper gpu-mem 16|32|64|96|128|192|256   password, restart
 //!     gh0st-helper regdom XX                     password, restart
-//!     gh0st-helper cpu balanced|battery|performance   password
+//!     gh0st-helper cpu balanced|power-saver|performance   password
 //!     gh0st-helper hostname NAME                 password
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper power off|reboot
@@ -246,7 +246,7 @@ pub fn main(args: &[String]) -> i32 {
     let Some(v) = parse(args) else {
         eprintln!(
             "usage: gh0st-helper logs off|ram|persistent | ssh on|off | gpu-mem 16..256 | \
-             regdom XX | cpu balanced|battery|performance | hostname NAME | \
+             regdom XX | cpu balanced|power-saver|performance | hostname NAME | \
              rfkill bluetooth|wlan on|off | power off|reboot"
         );
         return 2;
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(parse(&args("power reboot")), Some(Verb::Power(true)));
         assert_eq!(parse(&args("gpu-mem 64")), Some(Verb::GpuMem(64)));
         assert_eq!(parse(&args("regdom GB")), Some(Verb::Regdom("GB".into())));
-        assert_eq!(parse(&args("cpu battery")), Some(Verb::Cpu(CpuMode::Battery)));
+        assert_eq!(parse(&args("cpu power-saver")), Some(Verb::Cpu(CpuMode::PowerSaver)));
         assert_eq!(
             parse(&args("hostname RZR-ZERO")),
             Some(Verb::Hostname("RZR-ZERO".into()))
