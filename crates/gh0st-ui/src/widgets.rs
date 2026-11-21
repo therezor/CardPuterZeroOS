@@ -531,10 +531,12 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color) {
     } else {
         ch.word
     };
+    // Inside the top edge, above the tick at the foot.
+    let inner = Rect::new(r.x, r.y + 1, r.w, r.h - 1 - TICK_H);
     // Centred, so the padding is even on both sides.
-    let x = r.x + (r.w - chip_ink_w(t, ch)) / 2;
+    let x = inner.x + (inner.w - chip_ink_w(t, ch)) / 2;
     let s = IconSize::Tiny as i32;
-    let iy = r.y + (r.h - s) / 2;
+    let iy = inner.y + (inner.h - s) / 2;
     if word.is_empty() {
         icon::draw(c, ch.icon, IconSize::Tiny, x, iy, ink);
         return;
@@ -544,15 +546,13 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color) {
         icon::draw(c, ch.icon, IconSize::Tiny, x, iy, ink);
         lx += s + 3;
     }
-    // Capitals centre on the chip less its bottom row: descenders get the
-    // spare row below.
-    let tr = Rect::new(lx, r.y, r.right() - lx, r.h - 1);
+    let tr = Rect::new(lx, inner.y, inner.right() - lx, inner.h);
     text_in(c, t.f.small_bold, tr, word, ink);
 }
 
-/// One chip centred on `cx`, top at `top`, `w` wide. `line_to` draws the
-/// line from its foot down toward the key.
-pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32, line_to: Option<i32>) {
+/// One chip: a tab centred on `cx`, its top at `top`, `w` wide, open at the
+/// foot. In the action bar the foot is the screen's edge, right over the key.
+pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     // A word is never cut: short of room, a chip drops its icon first.
     let tight = chip_ink_w(t, ch) + 2 * t.m.chip_pad_min > w;
     let bare;
@@ -564,45 +564,53 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32, lin
     };
     let r = Rect::new(cx - w / 2, top, w, t.m.chip_h);
     let k = &t.c;
-    let rad = t.m.chip_r;
-    let (fill, ink, line, ring) = match ch.look {
-        Look::Normal => (k.surface, k.fg, k.muted, Some(k.border)),
-        Look::Main => (k.accent, k.accent_fg, k.accent, None),
-        Look::On => (mix(k.bg, k.accent, 80), k.accent, k.accent, None),
-        Look::Danger | Look::Hold(_) => (k.surface, k.critical, k.critical, Some(k.critical)),
-        Look::DangerMain => (k.critical, k.bg, k.critical, None),
-        Look::Disabled => (k.bg, k.disabled(), k.border, Some(k.border)),
-        Look::Pressed => (k.fg, k.bg, k.fg, None),
-        Look::Busy => (k.surface, k.muted, k.muted, Some(k.border)),
+    let (fill, ink, edge, tick) = match ch.look {
+        Look::Normal => (k.surface, k.fg, Some(k.border), k.muted),
+        Look::Main => (k.accent, k.accent_fg, None, k.accent_fg),
+        Look::On => (mix(k.bg, k.accent, 80), k.accent, None, k.accent),
+        Look::Danger | Look::Hold(_) => (k.surface, k.critical, Some(k.critical), k.critical),
+        Look::DangerMain => (k.critical, k.bg, None, k.bg),
+        Look::Disabled => (k.bg, k.disabled(), Some(k.border), k.border),
+        Look::Pressed => (k.fg, k.bg, None, k.bg),
+        Look::Busy => (k.surface, k.muted, Some(k.border), k.muted),
     };
-    c.round_rect(r, rad, fill);
-    if let Some(ring) = ring {
-        c.stroke_round_rect(r, rad, ring);
+    c.fill(r, fill);
+    if let Some(e) = edge {
+        tab_edge(c, r, e);
     }
+    // The tick points at the key: centred on it, at the screen's edge.
+    let tick_r = Rect::new(cx - 1, r.bottom() - TICK_H, 2, TICK_H);
+    c.fill(tick_r, tick);
     chip_ink(c, t, r, ch, ink);
     if let Look::Hold(pc) = ch.look {
         let old = c.clip();
         let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
         c.set_clip(part.intersect(&old));
-        c.round_rect(r, rad, k.critical);
+        c.fill(r, k.critical);
+        c.fill(tick_r, k.bg);
         chip_ink(c, t, r, ch, k.bg);
         c.set_clip(old);
     }
-    if let Some(bottom) = line_to {
-        c.fill(Rect::new(cx - 1, r.bottom(), 2, bottom - r.bottom()), line);
-    }
 }
 
-/// The action bar: a chip above each of keys 4 to 8 that has one, with a
-/// line down toward its key. No fill behind them.
+/// The tick at a chip's foot, over the centre of its key.
+const TICK_H: i32 = 3;
+
+/// Top and sides; the foot stays open.
+fn tab_edge(c: &mut Canvas, r: Rect, color: Color) {
+    c.hline(r.x, r.right(), r.y, color);
+    c.vline(r.x, r.y, r.bottom(), color);
+    c.vline(r.right() - 1, r.y, r.bottom(), color);
+}
+
+/// The action bar: a tab over each of keys 4 to 8 that has one, standing on
+/// the screen's bottom edge right above its key. No fill behind them.
 pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
-    let h = t.m.height;
     c.fill(hint_rect(t), t.c.bg);
-    let line = 2;
-    let top = h - line - t.m.chip_h;
+    let top = t.m.height - t.m.chip_h;
     let w = bar_widths(t, chips);
     for (i, ch) in chips.iter().enumerate().filter(|(_, ch)| !ch.is_empty()) {
-        chip(c, t, t.m.softkey_x[i], top, ch, w[i], Some(h));
+        chip(c, t, t.m.softkey_x[i], top, ch, w[i]);
     }
 }
 

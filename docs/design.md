@@ -147,8 +147,8 @@ lights.
 
 ![Chip states](design/05-chips.png)
 
-The screen sits right over the number row. A chip drawn above 5, 6 or 7 runs
-when you press that key, and a short line runs from the chip down toward it.
+The screen sits right over the number row. A chip is a tab standing on the
+screen's bottom edge, right above its key, and pressing that key runs it.
 
 | Key | Holds |
 |---|---|
@@ -160,8 +160,10 @@ when you press that key, and a short line runs from the chip down toward it.
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
 needs saying, a dialog or message names them in key pills.
 
-**What a chip is.** A 17 px box, corners of 3 px, a 12 px icon and one word in
-Label style, 7 px clear on each side. A word is never cut. When two
+**What a chip is.** A 19 px tab with square corners, edged on its top and
+sides and open at the foot, where the screen ends. A short tick at its foot
+sits over the centre of its key. A 12 px icon and one word in Label style,
+7 px clear on each side. A word is never cut. When two
 neighbours crowd each other they share the squeeze, down to 4 px each side;
 past that a chip drops its icon. Words of five letters or fewer keep their
 icons on a full bar.

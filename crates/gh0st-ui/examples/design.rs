@@ -373,9 +373,11 @@ fn chip_states(t: &Theme) -> Canvas {
         let cy = y + if captions[ri].is_empty() { 0 } else { 11 };
         let chips: Slots = r.map(|(ch, _)| ch);
         let w = widgets::bar_widths(t, &chips);
+        // The screen's edge each row stands on.
+        c.hline(0, t.m.width, cy + t.m.chip_h, t.c.border);
         for (i, (ch, cap)) in r.iter().enumerate() {
             let cx = t.m.softkey_x[i];
-            widgets::chip(&mut c, t, cx, cy, ch, w[i], None);
+            widgets::chip(&mut c, t, cx, cy, ch, w[i]);
             let cr = Rect::new(cx - 28, cy + t.m.chip_h + 1, 56, 13);
             widgets::text_centre(&mut c, t.f.small, cr, cap, t.c.muted);
         }

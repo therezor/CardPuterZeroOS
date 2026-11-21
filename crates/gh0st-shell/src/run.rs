@@ -1540,7 +1540,8 @@ impl Shell {
             t.state = tasks::State::Background;
             t.used = now;
             self.take_screen();
-            self.open_switcher(Back::App(id), 0);
+            let at = self.card_of(&id);
+            self.open_switcher(Back::App(id), at);
             return;
         }
         let sent = child::stop(t.pgid);
@@ -1565,7 +1566,8 @@ impl Shell {
             eprintln!("gh0st shell: paused {} at {}", t.name, now - self.t0);
         }
         self.take_screen();
-        self.open_switcher(Back::App(id), 0);
+        let at = self.card_of(&id);
+        self.open_switcher(Back::App(id), at);
     }
 
     /// Brings a paused app back: its last frame on the panel, the keyboard
@@ -1691,6 +1693,15 @@ impl Shell {
     /// The dock and the switcher: open apps, in the order they opened.
     fn cards(&self) -> Vec<Card> {
         self.tasks.cards()
+    }
+
+    /// The card of app `id`, so the switcher opens on the app it was opened
+    /// over. 0 is Home.
+    fn card_of(&self, id: &str) -> usize {
+        self.cards()
+            .iter()
+            .position(|c| c.id == id)
+            .map_or(0, |i| i + 1)
     }
 
     /// The card used last, for the switcher's cursor. 0 is Home.
