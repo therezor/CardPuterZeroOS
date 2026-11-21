@@ -624,7 +624,7 @@ pub fn search_bar(c: &mut Canvas, t: &Theme, query: &str) {
     // Centred on the query's capitals, as a chip's icon is on its word.
     let s = IconSize::Small as i32;
     let cap_top = r.y + 1 + (r.h - 1 - t.f.body.cap()) / 2;
-    let iy = cap_top + t.f.body.cap() / 2 - s / 2 + 1;
+    let iy = cap_top + t.f.body.cap() / 2 - s / 2;
     icon::draw(c, "search", IconSize::Small, x, iy, t.c.accent);
     let tx = x + s + 6;
     let right = r.right() - t.m.pad;
@@ -1220,14 +1220,23 @@ pub fn scrim(c: &mut Canvas, t: &Theme, r: Rect) {
 pub fn card(c: &mut Canvas, t: &Theme, r: Rect, title: &str, edge: Color) -> Rect {
     c.round_rect(r, t.m.radius_large, t.c.surface);
     c.stroke_round_rect(r, t.m.radius_large, edge);
-    let head = Rect::new(r.x + 12, r.y + 6, r.w - 24, 18);
+    let head = card_head(t, r);
     text_in(c, t.f.body_bold, head, title, t.c.fg);
-    Rect::new(
-        r.x + 12,
-        head.bottom() + 4,
-        r.w - 24,
-        r.bottom() - head.bottom() - 10,
-    )
+    let y = head.bottom() + t.m.card_gap;
+    Rect::new(r.x + 12, y, r.w - 24, r.bottom() - 1 - t.m.card_pad - y)
+}
+
+/// The title's line, placed so its capitals start `card_pad` below the edge.
+fn card_head(t: &Theme, r: Rect) -> Rect {
+    let lead = (18 - t.f.body_bold.cap()) / 2;
+    Rect::new(r.x + 12, r.y + 1 + t.m.card_pad - lead, r.w - 24, 18)
+}
+
+/// How tall a card is for a body `body_h` high: the same space from the
+/// edge to the title's capitals as from the body's foot to the edge.
+pub fn card_h(t: &Theme, body_h: i32) -> i32 {
+    let lead = (18 - t.f.body_bold.cap()) / 2;
+    1 + t.m.card_pad - lead + 18 + t.m.card_gap + body_h + t.m.card_pad + 1
 }
 
 /// A short line in a card that floats above `bottom`, with its tone's icon.

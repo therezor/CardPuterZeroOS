@@ -970,10 +970,14 @@ impl Shell {
         } else {
             format!("{n} apps close. Work they haven't saved is lost.")
         };
-        let r = Rect::new(22, 30, t.m.width - 44, 92);
+        let w = t.m.width - 44;
+        let lines = wrap_words(t.f.body, &line, w - 24);
+        let body_h = lines.len() as i32 * 18 + t.m.card_gap + t.m.pill_h;
+        let h = widgets::card_h(&t, body_h);
+        let r = Rect::new(22, body.y + (body.h - h) / 2, w, h);
         let inner = widgets::card(c, &t, r, "Close all apps?", t.c.critical);
         let mut y = inner.y;
-        for l in wrap_words(t.f.body, &line, inner.w) {
+        for l in lines {
             widgets::text_in(c, t.f.body, Rect::new(inner.x, y, inner.w, 18), &l, t.c.soft());
             y += 18;
         }
@@ -987,7 +991,7 @@ impl Shell {
                 label: "close all",
             },
         ];
-        widgets::key_row(c, &t, inner.x, r.bottom() - 6 - t.m.pill_h, &hints);
+        widgets::key_row(c, &t, inner.x, inner.bottom() - t.m.pill_h, &hints);
         let none = widgets::Chip::default();
         widgets::action_bar(c, &t, &[none; 5]);
     }

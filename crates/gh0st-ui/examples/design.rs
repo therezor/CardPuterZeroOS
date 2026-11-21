@@ -125,6 +125,19 @@ fn wrap(f: Font, s: &str, w: i32) -> Vec<String> {
     lines
 }
 
+/// A card with a question, centred over the content, keys at its foot:
+/// the same space above its title as below its keys. Returns the body.
+fn ask_card(c: &mut Canvas, t: &Theme, title: &str, edge: Color, text: &str, keys: &[(&str, &str)]) -> Rect {
+    let w = t.m.width - 44;
+    let lines = wrap(t.f.body, text, w - 24).len() as i32;
+    let h = widgets::card_h(t, lines * 18 + t.m.card_gap + t.m.pill_h);
+    let b = widgets::body(t);
+    let body = widgets::card(c, t, Rect::new(22, b.y + (b.h - h) / 2, w, h), title, edge);
+    para(c, t, body, text);
+    widgets::key_row(c, t, body.x, body.bottom() - t.m.pill_h, &hints(keys));
+    body
+}
+
 fn para(c: &mut Canvas, t: &Theme, r: Rect, text: &str) {
     for (i, line) in wrap(t.f.body, text, r.w).iter().enumerate() {
         let lr = Rect::new(r.x, r.y + i as i32 * 18, r.w, 18);
@@ -477,12 +490,15 @@ fn wifi_behind(c: &mut Canvas, t: &Theme) {
     }
 }
 
-/// Field, then a 6 px gap, a 15 px line, and 6 px again to the card's edge.
+/// A field and a line under it.
 fn join_card(c: &mut Canvas, t: &Theme) -> Rect {
     scrim(c, t);
     let title = "Join \u{201c}Office-5G\u{201d}";
-    let body = widgets::card(c, t, Rect::new(22, 34, 276, 80), title, t.c.accent);
-    let fr = Rect::new(body.x, body.y + 2, body.w, 22);
+    let h = widgets::card_h(t, 22 + t.m.card_gap + 15);
+    let b = widgets::body(t);
+    let r = Rect::new(22, b.y + (b.h - h) / 2, t.m.width - 44, h);
+    let body = widgets::card(c, t, r, title, t.c.accent);
+    let fr = Rect::new(body.x, body.y, body.w, 22);
     widgets::text_field(c, t, fr, "hunter22", true, true, "");
     fr
 }
@@ -492,7 +508,7 @@ fn dialog_typing(t: &Theme) -> Canvas {
     wifi_behind(&mut c, t);
     let fr = join_card(&mut c, t);
     let note = "Password for a WPA2 network";
-    let nr = Rect::new(fr.x, fr.bottom() + 6, fr.w, 15);
+    let nr = Rect::new(fr.x, fr.bottom() + t.m.card_gap, fr.w, 15);
     text_in(&mut c, t.f.small, nr, note, t.c.muted);
     let h = hints(&[("Esc", "cancel"), ("Tab", "show"), ("Enter", "join")]);
     widgets::hint_bar(&mut c, t, &h, Some(HELP));
@@ -503,9 +519,9 @@ fn dialog_busy(t: &Theme) -> Canvas {
     let mut c = frame(t);
     wifi_behind(&mut c, t);
     let fr = join_card(&mut c, t);
-    let nr = Rect::new(fr.x, fr.bottom() + 6, 80, 15);
+    let nr = Rect::new(fr.x, fr.bottom() + t.m.card_gap, 80, 15);
     text_in(&mut c, t.f.small, nr, "Joining\u{2026}", t.c.muted);
-    let bar = Rect::new(100, fr.bottom() + 12, 186, 3);
+    let bar = Rect::new(100, nr.y + 6, 186, 3);
     c.round_rect(bar, 1, t.c.border);
     c.round_rect(Rect::new(bar.x + 90, bar.y, 60, bar.h), 1, t.c.accent);
     widgets::action_bar(&mut c, t, &[NONE; 5]);
@@ -515,14 +531,12 @@ fn dialog_busy(t: &Theme) -> Canvas {
 fn dialog_danger(t: &Theme) -> Canvas {
     let mut c = settings(t, 0, [NONE; 5]);
     scrim(&mut c, t);
-    let r = Rect::new(22, 30, 276, 92);
-    let body = widgets::card(&mut c, t, r, "Erase everything?", t.c.critical);
     let text = "Apps, files and settings are deleted. This can't be undone.";
-    para(&mut c, t, body, text);
-    widgets::key_row(&mut c, t, body.x, body.y + 40, &hints(&[("Esc", "cancel")]));
+    let crit = t.c.critical;
+    let body = ask_card(&mut c, t, "Erase everything?", crit, text, &[("Esc", "cancel")]);
     let hint = "hold 7 to erase";
     let hx = body.right() - t.f.small.measure(hint);
-    let hr = Rect::new(hx, body.y + 40, body.w, t.m.pill_h);
+    let hr = Rect::new(hx, body.bottom() - t.m.pill_h, body.w, t.m.pill_h);
     text_in(&mut c, t.f.small, hr, hint, t.c.muted);
     let slots = [NONE, NONE, NONE, l("trash-2", "Erase", Look::Hold(40)), NONE];
     widgets::action_bar(&mut c, t, &slots);
@@ -532,11 +546,9 @@ fn dialog_danger(t: &Theme) -> Canvas {
 fn dialog_three(t: &Theme) -> Canvas {
     let mut c = notes_first(t);
     scrim(&mut c, t);
-    let r = Rect::new(22, 30, 276, 92);
-    let body = widgets::card(&mut c, t, r, "Save changes?", t.c.accent);
-    para(&mut c, t, body, "Packing list has edits you haven't saved.");
-    let h = hints(&[("Esc", "cancel"), ("Enter", "save")]);
-    widgets::key_row(&mut c, t, body.x, body.y + 40, &h);
+    let text = "Packing list has edits you haven't saved.";
+    let keys = [("Esc", "cancel"), ("Enter", "save")];
+    ask_card(&mut c, t, "Save changes?", t.c.accent, text, &keys);
     let slots = [NONE, NONE, l("trash-2", "Discard", Look::Danger), NONE, NONE];
     widgets::action_bar(&mut c, t, &slots);
     c
@@ -901,11 +913,9 @@ fn switcher(t: &Theme) -> Canvas {
 fn close_all(t: &Theme) -> Canvas {
     let mut c = switcher_base(t);
     scrim(&mut c, t);
-    let r = Rect::new(22, 30, 276, 92);
-    let body = widgets::card(&mut c, t, r, "Close all apps?", t.c.critical);
-    para(&mut c, t, body, "Terminal and Settings close. Work you haven't saved is lost.");
-    let h = hints(&[("Esc", "cancel"), ("Enter", "close all")]);
-    widgets::key_row(&mut c, t, body.x, body.y + 40, &h);
+    let text = "Terminal and Settings close. Work you haven't saved is lost.";
+    let keys = [("Esc", "cancel"), ("Enter", "close all")];
+    ask_card(&mut c, t, "Close all apps?", t.c.critical, text, &keys);
     widgets::action_bar(&mut c, t, &[NONE; 5]);
     c
 }

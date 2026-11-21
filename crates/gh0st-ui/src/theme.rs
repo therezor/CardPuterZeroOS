@@ -135,6 +135,10 @@ pub struct Metrics {
     /// A key pill in the hint bar, a card or a message.
     pub pill_h: i32,
     pub toast_h: i32,
+    /// A card's space from its edge to the ink, top and bottom, and between
+    /// its blocks: title, text, field, keys.
+    pub card_pad: i32,
+    pub card_gap: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -463,6 +467,8 @@ pub const CARDPUTER: Metrics = Metrics {
     chip_pad_min: 4,
     pill_h: 15,
     toast_h: 20,
+    card_pad: 10,
+    card_gap: 6,
 };
 
 /// How far dim terminal text fades toward its background, of 255.

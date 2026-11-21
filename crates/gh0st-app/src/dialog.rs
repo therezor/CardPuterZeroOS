@@ -220,18 +220,22 @@ impl Dialog {
         } else {
             wrap(t, &self.line, w - 24)
         };
-        let field_h = if self.field.is_some() { 22 + 6 } else { 0 };
-        // The keys line goes in the card unless a field has the hint bar.
-        let keys_h = if self.field.is_some() { 0 } else { t.m.pill_h + 6 };
         let lines_h = lines.len().min(3) as i32 * 18;
-        let h = 6 + 18 + 4 + field_h + lines_h + keys_h + 6;
+        // The blocks, top to bottom: a field, text, and, unless a field has
+        // the hint bar, the keys.
+        let field_h = if self.field.is_some() { 22 } else { 0 };
+        let keys_h = if self.field.is_some() { 0 } else { t.m.pill_h };
+        let blocks = [field_h, lines_h, keys_h];
+        let gaps = blocks.iter().filter(|&&b| b > 0).count().saturating_sub(1) as i32;
+        let body_h = blocks.iter().sum::<i32>() + gaps * t.m.card_gap;
+        let h = widgets::card_h(t, body_h);
         let r = Rect::new(22, area.y + (area.h - h).max(0) / 2, w, h);
         let body = widgets::card(c, t, r, &self.title, edge);
         let mut y = body.y;
         if let Some(f) = &self.field {
-            let fr = Rect::new(body.x, y + 2, body.w, 22);
+            let fr = Rect::new(body.x, y, body.w, 22);
             widgets::text_field(c, t, fr, &f.text, f.masked, true, &f.placeholder);
-            y = fr.bottom() + 6;
+            y = fr.bottom() + t.m.card_gap;
         }
         let ink = if self.field.is_some() { t.c.muted } else { t.c.soft() };
         let font = if self.field.is_some() { t.f.small } else { t.f.body };
@@ -240,7 +244,7 @@ impl Dialog {
             y += 18;
         }
         if self.field.is_none() {
-            let y = r.bottom() - 6 - t.m.pill_h;
+            let y = body.bottom() - t.m.pill_h;
             let mut hints = vec![Hint {
                 key: "Esc",
                 label: &self.no,
