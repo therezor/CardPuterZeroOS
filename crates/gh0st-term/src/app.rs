@@ -219,7 +219,7 @@ impl Term {
             out: Vec::new(),
             title: "Terminal".into(),
             family: Family::Terminus,
-            zoom: 1,
+            zoom: 0,
             layout: Layout::Magnify,
             window_size: (80, 24),
             bar: true,

@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 /// mid tones a little, which stands in for the hinting ab_glyph does not do.
 const COVERAGE_GAMMA: f32 = 1.25;
 
+/// Mono text on the panel blurs where a stem spans two pixels at half
+/// coverage. Coverage below this goes to nothing and above one minus it to
+/// full, so stems keep a hard core and only a thin fringe.
+const MONO_SHARPEN: f32 = 0.2;
+
 const TEXT: &[(u32, u32)] = &[
     (0x20, 0x7e),
     (0xa0, 0x17f),
@@ -73,6 +78,13 @@ struct Face {
     /// Scale the em so the x-height lands on a whole pixel. Crisper tops on
     /// lower-case letters. Off for mono, where the cell width must stay exact.
     snap_x_height: bool,
+}
+
+impl Face {
+    /// Mono faces are sharpened; Inter keeps its smooth edges.
+    fn sharpen(&self) -> f32 {
+        if self.snap_x_height { 0.0 } else { MONO_SHARPEN }
+    }
 }
 
 /// Inter steps in whole-pixel x-heights: 13 px gives a 7 px x-height, 15 gives
@@ -146,6 +158,37 @@ fn main() {
     bake_icons(&root.join("icons"), &out);
 }
 
+/// Where to place a mono face's glyphs within a pixel so the most stems
+/// and bars land on whole pixels: the offset, in eighths, that leaves the
+/// least half-covered pixels over ASCII. Hinting does this in a font
+/// renderer; ab_glyph has none.
+fn grid_fit(font: &FontRef, scale: PxScale) -> ab_glyph::Point {
+    let blur = |dx: f32, dy: f32| -> f32 {
+        let mut sum = 0.0;
+        for ch in '!'..='~' {
+            let glyph = font.glyph_id(ch).with_scale_and_position(scale, point(dx, dy));
+            if let Some(o) = font.outline_glyph(glyph) {
+                o.draw(|_, _, c| {
+                    let c = c.clamp(0.0, 1.0);
+                    sum += c * (1.0 - c);
+                });
+            }
+        }
+        sum
+    };
+    let mut best = (f32::MAX, point(0.0, 0.0));
+    for i in 0..8 {
+        for j in 0..8 {
+            let (dx, dy) = (i as f32 / 8.0, j as f32 / 8.0);
+            let b = blur(dx, dy);
+            if b < best.0 {
+                best = (b, point(dx, dy));
+            }
+        }
+    }
+    best.1
+}
+
 fn bake_fonts(dir: &Path, out: &Path) {
     let mut src = String::new();
     for f in FACES {
@@ -165,6 +208,11 @@ fn bake_fonts(dir: &Path, out: &Path) {
         let scale = PxScale::from(em * font.height_unscaled() / upem);
         let scaled = font.as_scaled(scale);
 
+        let at = if f.snap_x_height {
+            point(0.0, 0.0)
+        } else {
+            grid_fit(&font, scale)
+        };
         let mut bits: Vec<u8> = Vec::new();
         let mut nibbles: Vec<u8> = Vec::new();
         let mut glyphs = String::new();
@@ -178,7 +226,7 @@ fn bake_fonts(dir: &Path, out: &Path) {
                     continue;
                 }
                 let adv = (scaled.h_advance(id) * 64.0).round() as u32;
-                let glyph = id.with_scale_and_position(scale, point(0.0, 0.0));
+                let glyph = id.with_scale_and_position(scale, at);
                 let (w, h, left, top, off) = match font.outline_glyph(glyph) {
                     Some(outline) => {
                         let b = outline.px_bounds();
@@ -186,8 +234,10 @@ fn bake_fonts(dir: &Path, out: &Path) {
                         let mut cov = vec![0f32; w * h];
                         outline.draw(|x, y, c| cov[y as usize * w + x as usize] = c);
                         let off = nibbles.len();
+                        let t = f.sharpen();
                         for c in cov {
-                            let c = c.clamp(0.0, 1.0).powf(1.0 / COVERAGE_GAMMA);
+                            let c = ((c - t) / (1.0 - 2.0 * t)).clamp(0.0, 1.0);
+                            let c = c.powf(1.0 / COVERAGE_GAMMA);
                             nibbles.push((c * 15.0).round() as u8);
                         }
                         (w, h, b.min.x as i32, b.min.y as i32, off)

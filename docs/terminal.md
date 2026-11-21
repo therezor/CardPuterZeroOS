@@ -10,15 +10,17 @@ screen at each size.
 
 | Face | Cells | Fits, top bar on | Fits, top bar off |
 |---|---|---|---|
-| Terminus 12 | 6x12 | 53x12 | 53x14 |
-| Terminus 14 (default) | 8x14 | 40x10 | 40x12 |
+| Terminus 12 (default) | 6x12 | 53x12 | 53x14 |
+| Terminus 14 | 8x14 | 40x10 | 40x12 |
 | Terminus 16 | 8x16 | 40x9 | 40x10 |
 | JetBrains Mono 10 | 6x14 | 53x10 | 53x12 |
 | JetBrains Mono 12 | 7x16 | 45x9 | 45x10 |
 | JetBrains Mono 13 | 8x18 | 40x8 | 40x9 |
 
 Terminus is a bitmap face and stays crisp at every size. JetBrains Mono is
-anti-aliased. Box drawing, blocks, braille and powerline arrows are drawn per
+anti-aliased; the bake places each face where most stems land on whole
+pixels and sharpens the edges, as hinting would. Below 6x14 it still blurred
+past reading, so it starts there. Box drawing, blocks, braille and powerline arrows are drawn per
 cell, so lines join at any size.
 
 - **Magnify** (default). Programs see a fixed grid, 80x24 by default
