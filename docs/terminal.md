@@ -13,17 +13,18 @@ screen at each size.
 | Terminus 12 (default) | 6x12 | 53x12 | 53x14 |
 | Terminus 14 | 8x14 | 40x10 | 40x12 |
 | Terminus 16 | 8x16 | 40x9 | 40x10 |
-| JetBrains Mono 10 | 6x14 | 53x10 | 53x12 |
-| JetBrains Mono 12 | 7x16 | 45x9 | 45x10 |
-| JetBrains Mono 13 | 8x18 | 40x8 | 40x9 |
+| Fixed 5x8 | 5x8 | 64x19 | 64x21 |
+| Fixed 6x10 | 6x10 | 53x15 | 53x17 |
+| Fixed 7x13 | 7x13 | 45x11 | 45x13 |
+| Fixed 9x15 | 9x15 | 35x10 | 35x11 |
 
-Terminus is a bitmap face and stays crisp at every size. JetBrains Mono is
-anti-aliased; the bake places each face where most stems land on whole
-pixels, nudges each glyph up to half a pixel to fit its own stems (m has
-three in six pixels), and sharpens the edges, as hinting would. With
-anti-aliasing off, m came out crisp but r, h, b and o broke at 6x14. Below 6x14 it still blurred
-past reading, so it starts there. Box drawing, blocks, braille and powerline arrows are drawn per
-cell, so lines join at any size.
+Both families are bitmap faces, so every pixel is either on or off and
+text stays sharp. Fixed is xterm's own font: public domain, with the widest
+coverage of any bitmap face, at sizes between Terminus's. Anti-aliased faces
+blurred on the panel: nothing hints them, so stems straddle pixels (m has
+three in six pixels). JetBrains Mono was the second family until
+2026-11-21; a saved `jetbrains` reads as Terminus. Box drawing, blocks,
+braille and powerline arrows are drawn per cell, so lines join at any size.
 
 - **Magnify** (default). Programs see a fixed grid, 80x24 by default
   (Settings: Magnify grid). The screen shows part of it, follows the cursor,
@@ -101,7 +102,7 @@ The menu's More settings, or `s` in scroll mode. Saved in `~/.config/cardputerze
 
 | Key | Values | Default |
 |---|---|---|
-| `gh0st.term.font` | `terminus`, `jetbrains` | `terminus` |
+| `gh0st.term.font` | `terminus`, `fixed` | `terminus` |
 | `gh0st.term.zoom` | index into the face's sizes | 0 |
 | `gh0st.term.mode` | `magnify`, `fit` | `magnify` |
 | `gh0st.term.window` | `80x24`, `100x30`, `120x40`, `132x43` | `80x24` |

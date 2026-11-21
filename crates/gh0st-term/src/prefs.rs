@@ -74,7 +74,7 @@ impl Page for Prefs {
                 "Font",
                 match family {
                     Family::Terminus => "Terminus",
-                    Family::JetBrains => "JetBrains Mono",
+                    Family::Fixed => "Fixed",
                 },
             ),
             Row::choice("Cell size", &cell),
@@ -102,7 +102,7 @@ impl Page for Prefs {
         match i {
             0 => {
                 let next = if Family::from_key(&cur.font) == Family::Terminus {
-                    Family::JetBrains
+                    Family::Fixed
                 } else {
                     Family::Terminus
                 };

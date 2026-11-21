@@ -8,34 +8,35 @@ use gh0st_app::gfx::theme::{self, TermFace};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
     Terminus,
-    JetBrains,
+    Fixed,
 }
 
 impl Family {
     pub fn faces(self) -> &'static [TermFace] {
         match self {
             Family::Terminus => theme::TERM_TERMINUS,
-            Family::JetBrains => theme::TERM_JETBRAINS,
+            Family::Fixed => theme::TERM_FIXED,
         }
     }
 
     pub fn key(self) -> &'static str {
         match self {
             Family::Terminus => "terminus",
-            Family::JetBrains => "jetbrains",
+            Family::Fixed => "fixed",
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Family::Terminus => "Terminus",
-            Family::JetBrains => "JetBrains Mono",
+            Family::Fixed => "Fixed",
         }
     }
 
     pub fn from_key(s: &str) -> Family {
-        if s == "jetbrains" {
-            Family::JetBrains
+        // "jetbrains" was the anti-aliased face, now gone: Terminus.
+        if s == "fixed" {
+            Family::Fixed
         } else {
             Family::Terminus
         }

@@ -286,12 +286,14 @@ pub const TERM_TERMINUS: &[TermFace] = &[
     term_face(&font::TERMINUS_16, Some(&font::TERMINUS_16_BOLD)),
 ];
 
-/// JetBrains Mono, anti-aliased, grid-fitted and sharpened at bake time.
-/// Cells 6x14, 7x16, 8x18. At 5x11 it blurred past reading.
-pub const TERM_JETBRAINS: &[TermFace] = &[
-    term_face(&font::MONO_10, Some(&font::MONO_10_BOLD)),
-    term_face(&font::MONO_12, None),
-    term_face(&font::MONO_13, None),
+/// Fixed, xterm's bitmap face: crisp, and the widest coverage of any.
+/// Cells 5x8, 6x10, 7x13, 9x15, between Terminus's sizes. Anti-aliased
+/// faces blurred on the panel, as nothing hints them.
+pub const TERM_FIXED: &[TermFace] = &[
+    term_face(&font::FIXED_5X8, None),
+    term_face(&font::FIXED_6X10, None),
+    term_face(&font::FIXED_7X13, Some(&font::FIXED_7X13_BOLD)),
+    term_face(&font::FIXED_9X15, Some(&font::FIXED_9X15_BOLD)),
 ];
 
 pub const FONTS: Fonts = Fonts {

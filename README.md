@@ -113,5 +113,5 @@ it still shares that app's keyboard and panel.
 ## Licenses
 
 The Rust code is MIT, see [LICENSE](LICENSE). The panel driver is GPL-2.0, from M5Stack and Noralf
-Trønnes. Inter, JetBrains Mono and Terminus are under the SIL Open Font License, and
-the Lucide icons under ISC. The mark is the Tabler "components" icon, MIT.
+Trønnes. Inter, JetBrains Mono and Terminus are under the SIL Open Font License, Fixed
+(xterm's font) is public domain, and the Lucide icons are under ISC. The mark is the Tabler "components" icon, MIT.

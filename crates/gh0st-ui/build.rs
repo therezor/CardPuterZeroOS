@@ -57,9 +57,10 @@ const TERM: &[(u32, u32)] = &[
     (0x25a0, 0x25ff),
 ];
 
-/// Terminus bitmap faces, OFL. The BDF files are kept as published (the
-/// licence reserves the name for unmodified fonts); only the glyphs in
-/// `TERM` are baked.
+/// The terminal's bitmap faces. Terminus is OFL: its BDF files are kept as
+/// published (the licence reserves the name for unmodified fonts). Fixed,
+/// xterm's own font, is public domain: its files are cut to the glyphs in
+/// `TERM`. Only the glyphs in `TERM` are baked from either.
 const BDF_FACES: &[(&str, &str)] = &[
     ("TERMINUS_12", "terminus/ter-u12n.bdf"),
     ("TERMINUS_12_BOLD", "terminus/ter-u12b.bdf"),
@@ -67,6 +68,12 @@ const BDF_FACES: &[(&str, &str)] = &[
     ("TERMINUS_14_BOLD", "terminus/ter-u14b.bdf"),
     ("TERMINUS_16", "terminus/ter-u16n.bdf"),
     ("TERMINUS_16_BOLD", "terminus/ter-u16b.bdf"),
+    ("FIXED_5X8", "fixed/5x8.bdf"),
+    ("FIXED_6X10", "fixed/6x10.bdf"),
+    ("FIXED_7X13", "fixed/7x13.bdf"),
+    ("FIXED_7X13_BOLD", "fixed/7x13B.bdf"),
+    ("FIXED_9X15", "fixed/9x15.bdf"),
+    ("FIXED_9X15_BOLD", "fixed/9x15B.bdf"),
 ];
 
 struct Face {
@@ -103,24 +110,6 @@ const FACES: &[Face] = &[
         10.0,
         700.0,
         MONO,
-        false,
-    ),
-    // Terminal zoom levels. JetBrains Mono advances 0.6 em, so these ems
-    // give whole 7 and 8 px cells.
-    face(
-        "MONO_12",
-        "JetBrainsMono.ttf",
-        35.0 / 3.0,
-        400.0,
-        TERM,
-        false,
-    ),
-    face(
-        "MONO_13",
-        "JetBrainsMono.ttf",
-        40.0 / 3.0,
-        400.0,
-        TERM,
         false,
     ),
 ];

@@ -647,8 +647,8 @@ impl Term {
             }
             cmd::FONT => {
                 let next = match self.family {
-                    Family::Terminus => Family::JetBrains,
-                    Family::JetBrains => Family::Terminus,
+                    Family::Terminus => Family::Fixed,
+                    Family::Fixed => Family::Terminus,
                 };
                 self.set_font(next, cx);
             }

@@ -196,7 +196,7 @@ Settings: what comes next.
 
 **A3a. The terminal.** `gh0st-term`, built in the sim on 2026-11-21 (branch
 `terminal`): tabs, fit or a window over a larger grid, Terminus and
-JetBrains Mono at seven sizes, history with search, prompt jumps and line
+Fixed at seven sizes, history with search, prompt jumps and line
 copy, and running behind other apps on the shell link. The guide is
 `terminal.md`. Done when its budgets hold on the device:
 - no wakeup at idle with the top bar off, one a minute with it on;
