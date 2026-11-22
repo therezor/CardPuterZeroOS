@@ -91,5 +91,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ github.ref_name }}"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --prerelease --title "$tag" --notes "Gh0st OS $tag"
+          # os.yml may have made the release first.
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --prerelease --title "Gh0st OS $tag" \
+              --notes "Flash the .img.xz (scripts/flash.sh, or bmaptool with the .bmap). Updates come from the stable apt suite: docs/updates.md." ||
+            true
           gh release upload "$tag" os/out/debs/*.deb --clobber

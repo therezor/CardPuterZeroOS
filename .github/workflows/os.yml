@@ -1,18 +1,20 @@
 # Builds the CPZeroOS release image on an arm64 runner and runs the tier 1
-# checks. Same script as on the Mac (os/build.sh). Signing and publishing
-# the apt repo come later (roadmap M6).
+# checks. Same script as on the Mac (os/build.sh). A v* tag also attaches
+# the image to its release; apt.yml publishes the tag's packages.
 name: os
 
 on:
   push:
     branches: [main, image]
+    tags: ['v*']
     paths: [os/**, crates/**, packaging/**, Cargo.lock, .github/workflows/os.yml]
   pull_request:
     paths: [os/**, crates/**, packaging/**, Cargo.lock, .github/workflows/os.yml]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # A tag's run attaches the image to the release.
+  contents: write
 
 jobs:
   image:
@@ -39,3 +41,15 @@ jobs:
             os/out/*.sha256
             os/out/*.packages.tsv
           retention-days: 14
+      - name: Release the image
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          # apt.yml may have made the release first.
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --prerelease --title "Gh0st OS $tag" \
+              --notes "Flash the .img.xz (scripts/flash.sh, or bmaptool with the .bmap). Updates come from the stable apt suite: docs/updates.md." ||
+            true
+          gh release upload "$tag" os/out/*.img.xz os/out/*.bmap os/out/*.sha256 --clobber
