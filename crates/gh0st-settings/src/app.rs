@@ -2101,15 +2101,21 @@ fn about() -> Vec<(String, String)> {
     }
     let used =
         |(used, total): (u64, u64)| format!("{} of {} used", size(used << 20), size(total << 20));
-    let home = std::env::var_os("HOME").map_or("/home".into(), PathBuf::from);
+    let root = Path::new("/");
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|h| h.is_dir())
+        .unwrap_or_else(|| root.into());
     if let Some(space) = system::storage(&home) {
         out.push(("Storage".into(), used(space)));
     }
     // With /home on its own partition, the system's space is apart from it.
     let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
-    if dev(Path::new("/")) != dev(&home) {
-        if let Some(space) = system::storage(Path::new("/")) {
-            out.push(("System".into(), used(space)));
+    if let (Some(r), Some(h)) = (dev(root), dev(&home)) {
+        if r != h {
+            if let Some(space) = system::storage(root) {
+                out.push(("System".into(), used(space)));
+            }
         }
     }
     if let Some(b) = system::battery() {

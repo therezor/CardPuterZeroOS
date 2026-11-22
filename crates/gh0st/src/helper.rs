@@ -576,25 +576,35 @@ fn act(v: Verb) -> Result<(), String> {
             run(&["systemctl", "restart", "systemd-journald"])
         }
         Verb::Ssh(on) => {
-            // Started or stopped first, so a failed start leaves it off.
-            // Then the boot link alone: Debian's SysV sync is a Perl run
-            // (2.6 s on the CM0) and a manager reload takes 1.25 s.
-            // is-enabled reads the links on disk, and boot loads them.
-            let (now, link) = if on {
-                ("start", "enable")
-            } else {
-                ("stop", "disable")
+            // The boot link without Debian's SysV sync (a Perl run, 2.6 s
+            // on the CM0) or a manager reload (1.25 s). Boot reads the
+            // links on disk; the running manager keeps the old one, which
+            // matters only if multi-user.target is started again.
+            let link = |verb: &str| {
+                let ok = Command::new("systemctl")
+                    .args(["--no-reload", verb, "ssh"])
+                    .env("SYSTEMCTL_SKIP_SYSV", "1")
+                    .status()
+                    .is_ok_and(|s| s.success());
+                if ok {
+                    Ok(())
+                } else {
+                    Err(format!("systemctl {verb} ssh failed"))
+                }
             };
-            run(&["systemctl", now, "ssh"])?;
-            let status = Command::new("systemctl")
-                .args(["--no-reload", link, "ssh"])
-                .env("SYSTEMCTL_SKIP_SYSV", "1")
-                .status()
-                .map_err(|e| format!("systemctl: {e}"))?;
-            if status.success() {
-                Ok(())
+            if on {
+                // Started first, so a failed start leaves it off; and
+                // stopped again if the link fails, so it never runs
+                // without coming back at boot.
+                run(&["systemctl", "start", "ssh"])?;
+                link("enable").inspect_err(|_| {
+                    let _ = run(&["systemctl", "stop", "ssh"]);
+                })
             } else {
-                Err(format!("systemctl {link} ssh failed"))
+                // Both, so a failed stop still leaves it off after a boot.
+                let unlinked = link("disable");
+                run(&["systemctl", "stop", "ssh"])?;
+                unlinked
             }
         }
         Verb::GpuMem(mb) => write_boot(&sysconf::boot_dir().join(sysconf::CONFIG), |t| {
