@@ -38,6 +38,7 @@ fn top<'a>(icon: &'a str, title: &'a str) -> Status<'a> {
         }),
         net: Net::Wifi(3),
         bluetooth: false,
+        notices: 0,
     }
 }
 

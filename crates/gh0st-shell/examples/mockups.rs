@@ -96,6 +96,7 @@ fn status<'a>(dock: &'a [Visual<'a>], front: Option<usize>, title: &'a str) -> S
         }),
         net: Net::Wifi(3),
         bluetooth: true,
+        notices: 0,
     }
 }
 

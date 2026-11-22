@@ -79,6 +79,8 @@ pub struct Status<'a> {
     pub net: Net,
     /// The controller is up.
     pub bluetooth: bool,
+    /// Notifications waiting: a bell and the count. 0 draws nothing.
+    pub notices: u8,
 }
 
 /// The shell's mark, where pt35 has its skull.
@@ -185,6 +187,12 @@ fn draw_status(c: &mut Canvas, t: &Theme, s: &Status, bluetooth: bool) -> bool {
             icon::draw(c, "wifi-off", IconSize::Tiny, x, inner.y + 2, t.c.muted);
             x -= 8;
         }
+    }
+    if s.notices > 0 {
+        let n = Count::new(s.notices);
+        x = text_right(c, t.f.small_bold, x, inner, n.as_str(), t.c.accent) - 13;
+        icon::draw(c, "bell", IconSize::Tiny, x, inner.y + 2, t.c.accent);
+        x -= 8;
     }
     if bluetooth {
         x -= 12;
@@ -379,6 +387,32 @@ impl Percent {
         buf[len] = b'0' + p % 10;
         buf[len + 1] = b'%';
         Percent { buf, len: len + 2 }
+    }
+
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
+}
+
+/// A count of up to 9, then "9+", without allocating.
+struct Count {
+    buf: [u8; 2],
+    len: usize,
+}
+
+impl Count {
+    fn new(n: u8) -> Count {
+        if n > 9 {
+            Count {
+                buf: *b"9+",
+                len: 2,
+            }
+        } else {
+            Count {
+                buf: [b'0' + n, 0],
+                len: 1,
+            }
+        }
     }
 
     fn as_str(&self) -> &str {
@@ -1708,6 +1742,7 @@ mod tests {
             battery: Some(Battery { percent, charging }),
             net: Net::Wifi(3),
             bluetooth: true,
+            notices: 0,
         };
         status_bar(&mut c, t, &s);
         c

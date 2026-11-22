@@ -1126,6 +1126,7 @@ impl Runtime {
                 battery: self.bar.battery,
                 net: self.bar.net,
                 bluetooth: self.bar.bluetooth,
+                notices: 0,
             };
             widgets::status_bar(&mut self.canvas, &t, &s);
         }

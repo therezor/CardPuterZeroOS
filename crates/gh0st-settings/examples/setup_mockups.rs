@@ -51,6 +51,7 @@ fn top(c: &mut Canvas, t: &Theme, icon: &str, title: &str, context: &str, net: N
         }),
         net,
         bluetooth: false,
+        notices: 0,
     };
     widgets::status_bar(c, t, &s);
 }

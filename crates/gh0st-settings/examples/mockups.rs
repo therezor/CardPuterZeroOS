@@ -194,6 +194,7 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
         }),
         net: Net::Wifi(3),
         bluetooth: st.bt_on,
+        notices: 0,
     };
     widgets::status_bar(&mut c, t, &status);
     model::draw(&mut c, t, &page, cur);

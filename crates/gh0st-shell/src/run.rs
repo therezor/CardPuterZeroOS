@@ -2620,6 +2620,7 @@ fn status_of<'a>(
             Net::Ethernet => widgets::Net::Ethernet,
         },
         bluetooth: false,
+        notices: 0,
     }
 }
 
