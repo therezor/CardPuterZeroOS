@@ -1609,6 +1609,10 @@ impl Settings {
             NetJob::Helper(call) => {
                 match auth_step(code, &out) {
                     Step::Done => {
+                        // The row flips now, not after the re-query.
+                        if call.args.first().map(String::as_str) == Some("ssh") {
+                            self.state.ssh = call.args.get(1).map(String::as_str) == Some("on");
+                        }
                         cx.toast(&call.done);
                         if call.restart {
                             self.offer_restart(cx);

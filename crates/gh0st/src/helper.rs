@@ -576,8 +576,26 @@ fn act(v: Verb) -> Result<(), String> {
             run(&["systemctl", "restart", "systemd-journald"])
         }
         Verb::Ssh(on) => {
-            let verb = if on { "enable" } else { "disable" };
-            run(&["systemctl", verb, "--now", "ssh"])
+            // Started or stopped first, so a failed start leaves it off.
+            // Then the boot link alone: Debian's SysV sync is a Perl run
+            // (2.6 s on the CM0) and a manager reload takes 1.25 s.
+            // is-enabled reads the links on disk, and boot loads them.
+            let (now, link) = if on {
+                ("start", "enable")
+            } else {
+                ("stop", "disable")
+            };
+            run(&["systemctl", now, "ssh"])?;
+            let status = Command::new("systemctl")
+                .args(["--no-reload", link, "ssh"])
+                .env("SYSTEMCTL_SKIP_SYSV", "1")
+                .status()
+                .map_err(|e| format!("systemctl: {e}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("systemctl {link} ssh failed"))
+            }
         }
         Verb::GpuMem(mb) => write_boot(&sysconf::boot_dir().join(sysconf::CONFIG), |t| {
             sysconf::set_gpu_mem(t, mb)
