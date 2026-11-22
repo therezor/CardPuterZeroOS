@@ -5,6 +5,7 @@ mod command;
 mod dialog;
 mod field;
 mod form;
+pub mod helper;
 mod key;
 mod list;
 mod menu;

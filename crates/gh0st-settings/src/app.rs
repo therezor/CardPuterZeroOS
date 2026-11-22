@@ -24,8 +24,9 @@ use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-/// pkexec runs the root helper by this path (see packaging/polkit).
-const HELPER: &str = "/usr/libexec/gh0st-helper";
+use gh0st_app::helper::{self, Outcome};
+
+const HELPER: &str = helper::PATH;
 const LOGGING_DIR: &str = "/etc/systemd/journald.conf.d";
 const GOVERNOR: &str = "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor";
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
@@ -92,32 +93,6 @@ impl HelperCall {
             done: done.into(),
             restart: false,
         }
-    }
-}
-
-/// What a finished helper run means for the user.
-#[derive(Debug, PartialEq, Eq)]
-enum Step {
-    Done,
-    /// Ask for the password, with this title.
-    Ask(&'static str),
-    Locked(u64),
-    Failed(String),
-}
-
-/// Reads the helper's exit codes (see `gh0st/src/helper.rs`).
-fn auth_step(code: Option<i32>, out: &str) -> Step {
-    match code {
-        Some(0) => Step::Done,
-        Some(10) => Step::Ask("Password"),
-        Some(11) => Step::Ask("Wrong password"),
-        Some(12) => Step::Locked(
-            out.lines()
-                .find_map(|l| l.trim().strip_prefix("gh0st-helper: locked "))
-                .and_then(|n| n.trim().parse().ok())
-                .unwrap_or(0),
-        ),
-        _ => Step::Failed(helper_failure(out)),
     }
 }
 
@@ -1578,7 +1553,7 @@ impl Settings {
             NetJob::BtScan => self.query_bt(cx),
             NetJob::WifiUnblock => {
                 if !ok {
-                    cx.toast(&helper_failure(&out));
+                    cx.toast(&helper::failure(&out));
                 }
                 self.state.wifi_on = true;
                 self.run(cx, NetJob::SetRadio, &["nmcli", "radio", "wifi", "on"]);
@@ -1587,7 +1562,7 @@ impl Settings {
                 if ok {
                     self.run(cx, NetJob::BtPower, &["bluetoothctl", "power", "on"]);
                 } else {
-                    cx.toast(&helper_failure(&out));
+                    cx.toast(&helper::failure(&out));
                     self.query_bt(cx);
                 }
             }
@@ -1598,7 +1573,7 @@ impl Settings {
                     // SAFETY: the app is single-threaded.
                     (true, Some(z)) => unsafe { std::env::set_var("TZ", z) },
                     (true, None) => {}
-                    (false, _) => cx.toast(&helper_failure(&out)),
+                    (false, _) => cx.toast(&helper::failure(&out)),
                 }
                 if ok && zone.is_some() && self.finish_pending {
                     self.finish(cx);
@@ -1607,8 +1582,8 @@ impl Settings {
                 self.query_sys(cx);
             }
             NetJob::Helper(call) => {
-                match auth_step(code, &out) {
-                    Step::Done => {
+                match helper::outcome(code, &out) {
+                    Outcome::Done => {
                         // The row flips now, not after the re-query.
                         if call.args.first().map(String::as_str) == Some("ssh") {
                             self.state.ssh = call.args.get(1).map(String::as_str) == Some("on");
@@ -1621,12 +1596,12 @@ impl Settings {
                             self.finish(cx);
                         }
                     }
-                    Step::Ask(title) => self.ask_password(cx, call.clone(), title),
-                    Step::Locked(secs) => {
+                    Outcome::Ask(title) => self.ask_password(cx, call.clone(), title),
+                    Outcome::Locked(secs) => {
                         self.finish_pending = false;
                         cx.toast(&format!("Too many tries. Wait {secs} s"));
                     }
-                    Step::Failed(why) => {
+                    Outcome::Failed(why) => {
                         self.finish_pending = false;
                         cx.toast(&why);
                     }
@@ -2033,17 +2008,6 @@ fn logs_level() -> Logs {
     }
 }
 
-fn helper_failure(out: &str) -> String {
-    if out.contains("Not authorized") || out.contains("dismissed") || out.contains("polkit") {
-        return "Not allowed: polkit rule missing".into();
-    }
-    out.lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .map(|l| l.trim_start_matches("gh0st-helper: ").to_string())
-        .unwrap_or_else(|| "Failed".into())
-}
-
 fn password_failure(out: &str) -> String {
     if out.contains("Authentication token manipulation") || out.contains("Authentication failure") {
         "Wrong current password".into()
@@ -2152,32 +2116,6 @@ fn size(b: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn helper_codes_become_steps() {
-        assert_eq!(auth_step(Some(0), ""), Step::Done);
-        assert_eq!(auth_step(Some(10), ""), Step::Ask("Password"));
-        assert_eq!(auth_step(Some(11), ""), Step::Ask("Wrong password"));
-        assert_eq!(
-            auth_step(Some(12), "gh0st-helper: locked 40\n"),
-            Step::Locked(40)
-        );
-        assert_eq!(
-            auth_step(
-                Some(1),
-                "gh0st-helper: the kernel has no powersave governor\n"
-            ),
-            Step::Failed("the kernel has no powersave governor".into())
-        );
-        assert_eq!(
-            auth_step(
-                Some(126),
-                "Error executing command as another user: Not authorized\n"
-            ),
-            Step::Failed("Not allowed: polkit rule missing".into())
-        );
-        assert_eq!(auth_step(None, ""), Step::Failed("Failed".into()));
-    }
 
     #[test]
     fn choices_wrap_both_ways() {
