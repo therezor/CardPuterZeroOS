@@ -84,15 +84,17 @@ impl Device {
         })
     }
 
-    /// Takes every key for the shell alone, or gives them back.
-    pub fn grab(&mut self, on: bool) {
+    /// Takes every key for the shell alone, or gives them back. False when
+    /// that failed: taking fails with EBUSY while an app holds the grab.
+    pub fn grab(&mut self, on: bool) -> bool {
         if on == self.grabbed {
-            return;
+            return true;
         }
         // SAFETY: EVIOCGRAB takes an int by value on a descriptor we own.
         if unsafe { libc::ioctl(self.fd(), EVIOCGRAB as _, on as libc::c_int) } == 0 {
             self.grabbed = on;
         }
+        on == self.grabbed
     }
 
     /// Empties the queue of every reader that is not reading, such as a

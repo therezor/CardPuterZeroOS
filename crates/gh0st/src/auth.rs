@@ -14,18 +14,12 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::process::{Command, Stdio};
 
+use gh0st_core::password::{CHKPWD, boottime, chkpwd_input, lock_wait};
+pub(crate) use gh0st_core::password::{user_name, wipe};
+
 const DIR: &str = "/run/gh0st-helper";
-const CHKPWD: &str = "/usr/sbin/unix_chkpwd";
 const GRACE_SECS: u64 = 300;
-const FREE_TRIES: u32 = 3;
-const FIRST_WAIT: u64 = 5;
-const MAX_WAIT: u64 = 300;
 const MAX_PASSWORD: usize = 512;
-/// Counts suspend too, and `/run` starts empty each boot.
-#[cfg(target_os = "linux")]
-const CLOCK: libc::clockid_t = libc::CLOCK_BOOTTIME;
-#[cfg(not(target_os = "linux"))]
-const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Auth {
@@ -87,18 +81,6 @@ impl State {
     }
 }
 
-/// Seconds left before another try is allowed.
-fn lock_wait(fails: u32, last: u64, now: u64) -> u64 {
-    if fails < FREE_TRIES {
-        return 0;
-    }
-    let wait = FIRST_WAIT
-        .checked_shl(fails - FREE_TRIES)
-        .unwrap_or(MAX_WAIT)
-        .min(MAX_WAIT);
-    (last + wait).saturating_sub(now)
-}
-
 fn grace_valid(g: &Grace, uid: u32, ppid: i32, start: u64, now: u64) -> bool {
     g.uid == uid && g.ppid == ppid && g.start == start && now >= g.at && now - g.at < GRACE_SECS
 }
@@ -108,38 +90,6 @@ fn grace_valid(g: &Grace, uid: u32, ppid: i32, start: u64, now: u64) -> bool {
 fn stat_starttime(stat: &str) -> Option<u64> {
     let rest = &stat[stat.rfind(')')? + 1..];
     rest.split_whitespace().nth(19)?.parse().ok()
-}
-
-fn boottime() -> u64 {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: ts is a valid timespec for the call to fill.
-    unsafe { libc::clock_gettime(CLOCK, &mut ts) };
-    ts.tv_sec as u64
-}
-
-pub(crate) fn user_name(uid: u32) -> Option<String> {
-    // SAFETY: getpwuid returns NULL or a pointer to static storage, read at
-    // once; the helper is single-threaded.
-    unsafe {
-        let pw = libc::getpwuid(uid);
-        if pw.is_null() {
-            return None;
-        }
-        std::ffi::CStr::from_ptr((*pw).pw_name)
-            .to_str()
-            .ok()
-            .map(String::from)
-    }
-}
-
-pub(crate) fn wipe(buf: &mut [u8]) {
-    for b in buf.iter_mut() {
-        // SAFETY: b is a valid &mut u8; volatile so the zeroing stays.
-        unsafe { std::ptr::write_volatile(b, 0) };
-    }
 }
 
 /// One line from stdin, without its newline. Stops at a newline so a
@@ -173,9 +123,7 @@ fn chkpwd(user: &str, password: &[u8]) -> bool {
         return false;
     };
     if let Some(mut stdin) = child.stdin.take() {
-        let mut msg = Vec::with_capacity(password.len() + 1);
-        msg.extend_from_slice(password);
-        msg.push(0);
+        let mut msg = chkpwd_input(password);
         let _ = stdin.write_all(&msg);
         wipe(&mut msg);
     }
@@ -280,17 +228,6 @@ fn check_as(uid: u32, user: &str, ppid: i32) -> std::io::Result<Auth> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn three_tries_then_a_doubling_wait() {
-        assert_eq!(lock_wait(2, 100, 100), 0);
-        assert_eq!(lock_wait(3, 100, 100), 5);
-        assert_eq!(lock_wait(3, 100, 104), 1);
-        assert_eq!(lock_wait(3, 100, 105), 0);
-        assert_eq!(lock_wait(4, 100, 100), 10);
-        assert_eq!(lock_wait(9, 100, 100), 300, "capped");
-        assert_eq!(lock_wait(80, 100, 100), 300, "no overflow");
-    }
 
     #[test]
     fn grace_holds_for_one_process_for_five_minutes() {

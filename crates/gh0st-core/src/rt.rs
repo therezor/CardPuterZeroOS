@@ -217,6 +217,50 @@ pub fn clock_text(h24: bool) -> (String, u64) {
     )
 }
 
+/// Today as the lock screen says it: "Sunday 22 November".
+pub fn date_text() -> String {
+    // SAFETY: as in local_hms.
+    let (wday, day, mon) = unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        (tm.tm_wday as usize, tm.tm_mday as u32, tm.tm_mon as usize)
+    };
+    date_format(wday, day, mon)
+}
+
+/// `wday` 0 is Sunday, `mon` 0 is January, as in `struct tm`.
+pub fn date_format(wday: usize, day: u32, mon: usize) -> String {
+    const DAYS: [&str; 7] = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ];
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    format!(
+        "{} {day} {}",
+        DAYS.get(wday).unwrap_or(&""),
+        MONTHS.get(mon).unwrap_or(&"")
+    )
+}
+
 pub fn clock_format(h: u32, m: u32, h24: bool) -> String {
     if h24 {
         format!("{h:02}:{m:02}")
@@ -235,6 +279,12 @@ mod tests {
         let woke = wait(&mut [], Some(start + 30)).unwrap();
         assert!(!woke);
         assert!(now_ms() >= start + 29);
+    }
+
+    #[test]
+    fn dates_read_in_words() {
+        assert_eq!(date_format(0, 22, 10), "Sunday 22 November");
+        assert_eq!(date_format(6, 1, 0), "Saturday 1 January");
     }
 
     #[test]
