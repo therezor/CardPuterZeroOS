@@ -1543,15 +1543,18 @@ fn trailing_w(t: &Theme, tr: &Trailing) -> i32 {
 pub struct Lock<'a> {
     pub clock: &'a str,
     pub date: &'a str,
-    /// Characters typed, when a password is asked. `None`: Enter unlocks.
-    pub typed: Option<usize>,
+    /// The password field, once Tab then Enter opened it: the characters
+    /// typed. `None` is the resting screen, where no key types, so keys
+    /// pressed in a pocket go nowhere.
+    pub field: Option<usize>,
     /// The field takes keys: not while the check runs or a wait counts down.
     pub ready: bool,
     /// One line under the field: "Wrong password", "Try again in 5 s".
     pub note: Option<(Tone, &'a str)>,
 }
 
-/// The lock screen: the time, large, the date, and how to get back in. The
+/// The lock screen: the time, large, the date, and how to get back in: Tab
+/// then Enter, then the password when one is asked. The
 /// top bar keeps the battery and the network; the caller passes no dock and
 /// no clock, since the open apps stay private and the time is here.
 pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
@@ -1580,7 +1583,7 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
     y += 2 * g;
     let fw = t.m.lock_field_w;
     let field = Rect::new((t.m.width - fw) / 2, y, fw, t.m.field_h);
-    let note_y = match l.typed {
+    let note_y = match l.field {
         Some(n) => {
             let dots = "*".repeat(n);
             text_field(
@@ -1623,7 +1626,7 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
         }
         text_in(c, t.f.small, Rect::new(x, nr.y, tw, nr.h), text, col);
     }
-    match l.typed {
+    match l.field {
         Some(_) if l.ready => hint_bar(
             c,
             t,
@@ -1634,17 +1637,23 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
                 },
                 Hint {
                     key: "Esc",
-                    label: "clear",
+                    label: "back",
                 },
             ],
             None,
         ),
         Some(_) => hint_bar(c, t, &[], None),
         None => {
-            let hints = [Hint {
-                key: "Enter",
-                label: "unlock",
-            }];
+            let hints = [
+                Hint {
+                    key: "Tab",
+                    label: "then",
+                },
+                Hint {
+                    key: "Enter",
+                    label: "unlock",
+                },
+            ];
             let w = key_row_w(t, &hints);
             key_row(
                 c,

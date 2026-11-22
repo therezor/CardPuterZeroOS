@@ -219,6 +219,7 @@ says once how to reach Esc and help.
 | Fn and H | help: every key on this page |
 | Fn and K | switch apps |
 | Tab, held 3 s on home or in the switcher | lock |
+| Tab, then Enter, on the lock screen | unlock, or the password |
 | Fn and J | screenshot |
 | Fn and Esc | the Esc key itself, for vim and the like |
 
@@ -325,31 +326,40 @@ the other.
 
 ## The lock screen
 
+The device lives in a pocket, so no key typed by accident may reach an app or
+the password. The lock screen rests until Tab, then Enter, are pressed in
+turn. Nothing else does anything there.
+
 The top bar shows the battery and the network, but no open apps (what runs
 stays private) and no clock. The time sits large in the middle instead, with
 the date under it in Caption.
 
-- **With a password.** A password field sits under the date, focused, so the
-  bottom bar shows key hints: Enter unlock, Esc clear. Each key shows a dot.
-  A wrong password empties the field and says "Wrong password" under it in
-  `critical`. From the fourth wrong try the field waits: "Try again in 5 s",
-  counting down. The wait doubles each time, up to 5 minutes.
-- **Without one.** "Enter unlock" in a key pill. When the account has no
-  password, a note in Caption says "No password set".
+- **At rest.** "Tab then Enter unlock" in key pills. Tab, then Enter within
+  2 s, unlocks, or opens the password field when one is asked. Any other key
+  in between starts over. When the account has no password, a note in
+  Caption says "No password set".
+- **The password field.** Focused, so the bottom bar shows key hints: Enter
+  unlock, Esc back. Each key shows a dot. A wrong password empties the field,
+  gives it a `critical` edge and says "Wrong password" under it. From the
+  fourth wrong try the field waits: "Try again in 5 s", counting down. The
+  wait doubles each time, up to 5 minutes. Esc, or 10 s without a key, wipes
+  it and goes back to rest.
 
-It asks for the password when Settings > System > Unlock with password is on
-and the account has one.
+It asks for the password when Settings > System > Unlock with password is on,
+the account has one, and the device was locked for real: by hand, at start, or
+dark longer than Lock after (Settings > System, 5 minutes by default). After a
+shorter dark, Tab then Enter goes straight back.
 
 It locks:
 
 - when Tab is held 3 s on home or in the switcher;
-- from Lock in the home menu;
-- at start, when it asks for a password;
-- on wake, when the screen was dark longer than Lock after (Settings > System,
-  5 minutes by default).
+- from Lock in the home menu, or 6 Lock in the switcher;
+- at start, when a password is asked;
+- whenever the screen goes dark.
 
-The brightness, volume and screenshot keys work on it, and the low battery
-banner shows. Toasts from apps don't.
+At rest it goes dark again after 10 s without a key, so a pocket keeps it lit
+only briefly. The brightness, volume and screenshot keys work on it, and the
+low battery banner shows. Toasts from apps don't.
 
 ## Dark
 
@@ -358,9 +368,9 @@ backlight dims to 10% for 5 s, then goes off. A key during the dim brings it
 back, and the page gets that key as usual.
 
 While dark, the app in front is paused as Fn+K pauses it, unless it may run in
-the background. The shell draws nothing and runs no timer. The first key only
-wakes the screen: no app sees it. An app can ask to stay awake (`sdk.md`,
-`keep_awake`), for a player or a clock.
+the background. The shell draws nothing and runs no timer. A key wakes the
+screen on the lock screen at rest: no app sees it. An app can ask to stay
+awake (`sdk.md`, `keep_awake`), for a player or a clock.
 
 ## Words
 

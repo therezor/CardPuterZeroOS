@@ -1824,7 +1824,7 @@ impl Shell {
                 let lock = widgets::Lock {
                     clock: &clock,
                     date: "",
-                    typed: None,
+                    field: None,
                     ready: true,
                     note: None,
                 };

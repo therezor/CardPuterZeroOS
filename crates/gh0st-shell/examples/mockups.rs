@@ -253,14 +253,14 @@ fn terminal(t: &Theme) -> Canvas {
     c
 }
 
-/// The lock screen: `typed` dots, or None when Enter unlocks.
-fn lock(t: &Theme, typed: Option<usize>, ready: bool, note: Option<(Tone, &str)>) -> Canvas {
+/// The lock screen: the field with that many dots, or None at rest.
+fn lock(t: &Theme, field: Option<usize>, ready: bool, note: Option<(Tone, &str)>) -> Canvas {
     let mut s = status(&[], None, "");
     s.clock = "";
     let l = widgets::Lock {
         clock: "14:32",
         date: "Sunday 22 November",
-        typed,
+        field,
         ready,
         note,
     };
@@ -334,7 +334,7 @@ fn main() {
             ("home-grid", home(&t, stock, Layout::Grid, None)),
             ("home-list", home(&t, stock, Layout::List, None)),
             ("switcher", switcher_scene(&t, stock, 2, 1)),
-            ("lock", lock(&t, Some(0), true, None)),
+            ("lock", lock(&t, None, true, None)),
         ];
         if palette.name == "Mint" {
             scenes.extend([
@@ -374,7 +374,7 @@ fn main() {
                     "lock-no-password",
                     lock(&t, None, true, Some((Tone::Info, "No password set"))),
                 ),
-                ("lock-enter", lock(&t, None, true, None)),
+                ("lock-field", lock(&t, Some(0), true, None)),
                 ("home-menu-lock", home_menu(&t, stock)),
             ]);
         }
