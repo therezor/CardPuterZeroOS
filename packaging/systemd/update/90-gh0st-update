@@ -1,0 +1,7 @@
+#!/bin/sh
+# NetworkManager dispatcher: a network came up, so a daily check that found
+# none, or only a metered one, runs now. Nothing polls (docs/updates.md).
+[ "$2" = up ] || exit 0
+[ -e /var/lib/gh0st/update/pending ] || exit 0
+systemctl is-enabled --quiet gh0st-update-daily.timer || exit 0
+exec systemctl start --no-block gh0st-update-daily.service

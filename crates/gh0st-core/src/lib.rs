@@ -20,4 +20,5 @@ pub mod rt;
 pub mod script;
 pub mod status;
 pub mod sysconf;
+pub mod update;
 pub mod usage;

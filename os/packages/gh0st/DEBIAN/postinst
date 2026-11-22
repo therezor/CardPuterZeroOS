@@ -1,0 +1,8 @@
+#!/bin/sh
+# Units change with an upgrade: systemd reads them again, and the update
+# engine's folders exist before anything starts it.
+set -e
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    systemd-tmpfiles --create gh0st-update.conf || true
+fi

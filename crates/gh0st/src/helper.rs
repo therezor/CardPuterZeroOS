@@ -20,6 +20,12 @@
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper usb-power on|off
 //!     gh0st-helper power off|reboot
+//!     gh0st-helper update-check
+//!     gh0st-helper update-install                password
+//!     gh0st-helper update-stop
+//!     gh0st-helper update-auto on|off            password
+//!     gh0st-helper update-channel stable|edge    password
+//!     gh0st-helper apt-clean
 //!     gh0st-helper user-create NAME              setup only, the new password
 //!     gh0st-helper setup-finish                  setup only
 //!
@@ -56,6 +62,10 @@ const SETUP_STATE: &str = "/var/lib/cpzeroos/setup.state";
 const SETUP_HOME: &str = "/var/lib/cpzeroos/setup-home";
 const LINGER_DIR: &str = "/var/lib/systemd/linger";
 const USER_UID: u32 = 1000;
+/// Our repo's stable source, from cpzeroos-base. Edge is the same with
+/// another suite, in its own file, so the URL lives in one place.
+const STABLE_SOURCES: &str = "/etc/apt/sources.list.d/cpzeroos.sources";
+const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/cpzeroos-edge.sources";
 /// The device user's groups. One the system lacks is left out, so
 /// `useradd` doesn't fail on it.
 const USER_GROUPS: [&str; 11] = [
@@ -90,6 +100,15 @@ pub enum Verb {
     Power(bool),
     UserCreate(String),
     SetupFinish,
+    /// The update engine (docs/updates.md) runs in its own units; these
+    /// only start, stop and set them up.
+    UpdateCheck,
+    UpdateInstall,
+    UpdateStop,
+    UpdateAuto(bool),
+    /// True for edge.
+    UpdateChannel(bool),
+    AptClean,
 }
 
 impl Verb {
@@ -111,12 +130,18 @@ impl Verb {
             | Verb::Mac(_)
             | Verb::ScanMac(_)
             | Verb::DhcpHostname(_)
-            | Verb::Ip6Privacy(_) => true,
+            | Verb::Ip6Privacy(_)
+            | Verb::UpdateInstall
+            | Verb::UpdateAuto(_)
+            | Verb::UpdateChannel(_) => true,
             Verb::Rfkill(..)
             | Verb::UsbPower(_)
             | Verb::Power(_)
             | Verb::UserCreate(_)
-            | Verb::SetupFinish => false,
+            | Verb::SetupFinish
+            | Verb::UpdateCheck
+            | Verb::UpdateStop
+            | Verb::AptClean => false,
         }
     }
 
@@ -161,6 +186,13 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["usb-power", s] => Verb::UsbPower(on(s)?),
         ["power", "off"] => Verb::Power(false),
         ["power", "reboot"] => Verb::Power(true),
+        ["update-check"] => Verb::UpdateCheck,
+        ["update-install"] => Verb::UpdateInstall,
+        ["update-stop"] => Verb::UpdateStop,
+        ["update-auto", s] => Verb::UpdateAuto(on(s)?),
+        ["update-channel", "stable"] => Verb::UpdateChannel(false),
+        ["update-channel", "edge"] => Verb::UpdateChannel(true),
+        ["apt-clean"] => Verb::AptClean,
         _ => return None,
     })
 }
@@ -649,7 +681,88 @@ fn act(v: Verb) -> Result<(), String> {
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
         Verb::UsbPower(on) => usb_power(on),
         Verb::Power(reboot) => run(&["systemctl", if reboot { "reboot" } else { "poweroff" }]),
+        Verb::UpdateCheck => run(&[
+            "systemctl",
+            "start",
+            "--no-block",
+            "gh0st-update-check.service",
+        ]),
+        Verb::UpdateInstall => run(&[
+            "systemctl",
+            "start",
+            "--no-block",
+            "gh0st-update-install.service",
+        ]),
+        Verb::UpdateStop => {
+            // An install hears SIGTERM itself and stops only while it
+            // downloads; once dpkg runs it finishes.
+            let _ = run(&[
+                "systemctl",
+                "kill",
+                "--kill-whom=main",
+                "--signal=TERM",
+                "gh0st-update-install.service",
+            ]);
+            run(&[
+                "systemctl",
+                "stop",
+                "--no-block",
+                "gh0st-update-check.service",
+                "gh0st-update-daily.service",
+            ])
+        }
+        Verb::UpdateAuto(on) => run(&[
+            "systemctl",
+            if on { "enable" } else { "disable" },
+            "--now",
+            "gh0st-update-daily.timer",
+        ]),
+        Verb::UpdateChannel(edge) => {
+            set_channel(edge)?;
+            run(&[
+                "systemctl",
+                "start",
+                "--no-block",
+                "gh0st-update-check.service",
+            ])
+        }
+        Verb::AptClean => run(&["apt-get", "clean"]),
     }
+}
+
+/// Edge adds a second source: the stable one with `Suites: edge`.
+fn set_channel(edge: bool) -> Result<(), String> {
+    if !edge {
+        return match std::fs::remove_file(EDGE_SOURCES) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(format!("{EDGE_SOURCES}: {e}"))
+            }
+            _ => Ok(()),
+        };
+    }
+    let stable =
+        std::fs::read_to_string(STABLE_SOURCES).map_err(|e| format!("{STABLE_SOURCES}: {e}"))?;
+    let text = edge_sources(&stable).ok_or("the CPZeroOS source has no Suites line")?;
+    write_conf(EDGE_SOURCES, &text)
+}
+
+/// The stable stanza with its suite swapped.
+fn edge_sources(stable: &str) -> Option<String> {
+    let mut found = false;
+    let mut out = String::from("# Settings > System > Updates > Channel: every build of main.\n");
+    for line in stable.lines() {
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        if line.starts_with("Suites:") {
+            found = true;
+            out.push_str("Suites: edge\n");
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    found.then_some(out)
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -660,7 +773,8 @@ pub fn main(args: &[String]) -> i32 {
              swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | set-time EPOCH | ntp on|off | \
              mac random|stable|device | scan-mac random|device | dhcp-hostname on|off | \
              ip6-privacy on|off | rfkill bluetooth|wlan on|off | usb-power on|off | \
-             power off|reboot | \
+             power off|reboot | update-check | update-install | update-stop | \
+             update-auto on|off | update-channel stable|edge | apt-clean | \
              user-create NAME | setup-finish"
         );
         return 2;
@@ -754,6 +868,16 @@ mod tests {
             Some(Verb::UserCreate("alex".into()))
         );
         assert_eq!(parse(&args("setup-finish")), Some(Verb::SetupFinish));
+        assert_eq!(parse(&args("update-check")), Some(Verb::UpdateCheck));
+        assert_eq!(
+            parse(&args("update-auto off")),
+            Some(Verb::UpdateAuto(false))
+        );
+        assert_eq!(
+            parse(&args("update-channel edge")),
+            Some(Verb::UpdateChannel(true))
+        );
+        assert_eq!(parse(&args("apt-clean")), Some(Verb::AptClean));
         for bad in [
             "",
             "logs",
@@ -805,6 +929,12 @@ mod tests {
             "user-create ../x",
             "user-create alex extra",
             "setup-finish now",
+            "update-check now",
+            "update-install all",
+            "update-auto daily",
+            "update-channel testing",
+            "update-channel",
+            "apt-clean all",
         ] {
             assert_eq!(parse(&args(bad)), None, "{bad:?}");
         }
@@ -833,9 +963,24 @@ mod tests {
             ("power off", false),
             ("user-create alex", false),
             ("setup-finish", false),
+            ("update-check", false),
+            ("update-stop", false),
+            ("apt-clean", false),
+            ("update-install", true),
+            ("update-auto on", true),
+            ("update-channel edge", true),
         ] {
             assert_eq!(parse(&args(verb)).unwrap().gated(), gated, "{verb}");
         }
+    }
+
+    #[test]
+    fn edge_is_the_stable_source_with_its_suite_swapped() {
+        let stable = "# CPZeroOS\nTypes: deb\nURIs: https://x/apt\nSuites: stable\nComponents: main\nSigned-By: /k.pgp\n";
+        let edge = edge_sources(stable).unwrap();
+        assert!(edge.contains("URIs: https://x/apt\nSuites: edge\nComponents: main\n"));
+        assert!(!edge.contains("stable"));
+        assert_eq!(edge_sources("Types: deb\n"), None);
     }
 
     #[test]

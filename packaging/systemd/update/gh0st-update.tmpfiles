@@ -1,0 +1,7 @@
+# The update engine's files and the system notices (docs/updates.md). The
+# Updates app and the shell watch these folders with inotify, so they must
+# exist from boot.
+d /run/gh0st-update 0755 root root -
+d /var/lib/gh0st 0755 root root -
+d /var/lib/gh0st/update 0755 root root -
+d /var/lib/gh0st/notify 0755 root root -

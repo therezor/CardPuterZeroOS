@@ -18,3 +18,10 @@ install -D -m 644 "$pk/polkit/50-gh0st.rules" "$dest/usr/share/polkit-1/rules.d/
 install -D -m 644 "$pk/polkit/org.cpzero.gh0st.policy" \
     "$dest/usr/share/polkit-1/actions/org.cpzero.gh0st.policy"
 install -d "$dest/usr/share/APPLaunch/applications"
+# The update engine: its units, folders and network trigger (docs/updates.md).
+up=$pk/systemd/update
+install -D -m 644 -t "$dest/usr/lib/systemd/system" \
+    "$up/gh0st-update-check.service" "$up/gh0st-update-daily.service" \
+    "$up/gh0st-update-daily.timer" "$up/gh0st-update-install.service"
+install -D -m 644 "$up/gh0st-update.tmpfiles" "$dest/usr/lib/tmpfiles.d/gh0st-update.conf"
+install -D -m 755 "$up/90-gh0st-update" "$dest/usr/lib/NetworkManager/dispatcher.d/90-gh0st-update"

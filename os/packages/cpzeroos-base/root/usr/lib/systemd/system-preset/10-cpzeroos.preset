@@ -6,4 +6,6 @@ enable bluetooth.service
 enable fb_load.service
 enable cpzeroos-grow-data.service
 enable gh0st-setup.service
+# The daily update check (Settings > System > Updates turns it off).
+enable gh0st-update-daily.timer
 disable *

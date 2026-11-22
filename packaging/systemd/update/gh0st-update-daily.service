@@ -1,0 +1,12 @@
+# The daily check: from gh0st-update-daily.timer, or from the NetworkManager
+# dispatcher when a network comes back and a check is owed. It skips a
+# metered network and waits for the next one.
+[Unit]
+Description=Daily check for updates
+After=network.target NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh0st update check --auto
+Nice=10
+IOSchedulingClass=idle

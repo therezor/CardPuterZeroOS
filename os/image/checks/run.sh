@@ -65,7 +65,12 @@ for kind in system user; do
         grep -E '^[+-][^+-]' "$build/units-$kind.diff"
     fi
 done
-if grep -q '\.timer enabled' "$R/units-system.txt"; then bad "a timer is enabled"; else ok "no timers enabled"; fi
+# One timer: the daily update check, which the user can turn off.
+if grep '\.timer enabled' "$R/units-system.txt" | grep -qv '^gh0st-update-daily\.timer '; then
+    bad "a timer other than the daily update check is enabled"
+else
+    ok "only the update check's timer"
+fi
 
 # Per-device identity is made on the device.
 list=$build/rootfs.list

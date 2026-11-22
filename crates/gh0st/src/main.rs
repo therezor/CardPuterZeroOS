@@ -5,6 +5,7 @@ use std::path::Path;
 
 mod auth;
 mod helper;
+mod update;
 
 fn main() {
     let mut args = std::env::args();
@@ -27,8 +28,12 @@ fn main() {
             let rest: Vec<String> = args.collect();
             std::process::exit(helper::main(&rest))
         }
+        "update" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(update::main(&rest))
+        }
         _ => {
-            eprintln!("usage: gh0st <shell|helper|version>");
+            eprintln!("usage: gh0st <shell|helper|update|version>");
             std::process::exit(2);
         }
     }

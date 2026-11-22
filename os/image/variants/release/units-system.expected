@@ -6,6 +6,7 @@ cryptdisks-early.service masked
 cryptdisks.service masked
 fb_load.service enabled
 gh0st-setup.service enabled
+gh0st-update-daily.timer enabled
 hwclock.service masked
 sudo.service masked
 systemd-backlight@backlight:backlight.service masked

@@ -1,0 +1,17 @@
+# Installs what the last check found: gh0st-helper update-install, after the
+# user's password. Its own unit, so closing the Updates app or restarting
+# the shell never cuts dpkg off. SIGTERM reaches only the engine, which stops
+# a download but lets dpkg finish; shutdown waits for it.
+[Unit]
+Description=Install updates
+After=network.target NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh0st update install
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+KillMode=mixed
+TimeoutStartSec=infinity
+TimeoutStopSec=30min

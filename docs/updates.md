@@ -28,10 +28,11 @@ This replaces "updates only when the user asks" from 2026-11-20.
 ## How it fits together
 
 ```
-daily timer ──────────┐
-network up (pending) ─┼─> gh0st-update-check.service ──> gh0st update check
-Updates app, Settings ┘   gh0st-update-install.service ─> gh0st update install
-   (through gh0st-helper)                                   └─ apt-get, Status-Fd 3
+daily timer ─────────┬──> gh0st-update-daily.service ──> gh0st update check --auto
+network up (pending) ┘
+Updates app, Settings ──> gh0st-update-check.service ──> gh0st update check
+   (gh0st-helper)    └──> gh0st-update-install.service ─> gh0st update install
+                                                           └─ apt-get, Status-Fd 3
                      writes ─> /var/lib/gh0st/update/state     what is new
                                /run/gh0st-update/progress      how far along
                                /var/lib/gh0st/notify/          the notice
@@ -105,16 +106,21 @@ They are read by the engine, the app, Settings and the shell
 A tmpfiles.d entry makes the three directories at boot, so the inotify
 watches always have a target.
 
-**Units.** In the gh0st package:
+**Units.** In `packaging/systemd/update`, installed by the gh0st package:
 
-- `gh0st-update-check.service` and `gh0st-update-install.service`: oneshot,
-  `Nice=10` (install 5), `IOSchedulingClass=idle`.
-- `gh0st-update-check.timer`: daily, `Persistent=true`, up to an hour of
-  random delay. It is the image's only enabled timer, and turning daily
-  checks off disables it.
+- `gh0st-update-check.service`: a check by hand. `gh0st-update-daily.service`:
+  the daily one, which skips a metered network. Both oneshot, `Nice=10`,
+  idle IO.
+- `gh0st-update-install.service`: `Nice=5`. `KillMode=mixed`, so SIGTERM
+  reaches only the engine, and shutdown waits up to 30 minutes for dpkg.
+- `gh0st-update-daily.timer`: daily, `Persistent=true`, up to an hour of
+  random delay, coalesced to the hour. It is the image's only enabled timer,
+  and turning daily checks off disables it.
 - NetworkManager dispatcher `90-gh0st-update`: on `up`, a pending check
   starts. A day without a network catches up when one joins, without
   polling.
+- tmpfiles.d `gh0st-update.conf` makes the folders at boot. The package's
+  postinst reloads systemd and makes them at once.
 
 **Helper verbs.**
 
@@ -234,8 +240,14 @@ own root tree (`rootfs.tar`), with a throwaway Ed25519 key:
   without its modules) is held back whole, so nothing breaks.
 - The first `apt-get update` fetches 10.2 MB, nearly all of it Debian's main
   Packages. Later ones fetch diffs.
-- `apt-get update` reports percent 0 in Status-Fd. Its progress comes from
-  "Retrieving file N of M" instead.
+- `apt-get update`'s Status-Fd percent lags far behind, then jumps. The
+  engine takes the larger of it and "Retrieving file N of M".
+- The engine itself (`gh0st update check`, then `install`) ran there as
+  root: 14 updates found in 4 s, the notice posted, the download and dpkg
+  phases reported, the cache cleaned, and "Restart to finish" posted for
+  libc6.
 
 The captured output is the engine's parser fixtures, in
 `crates/gh0st/src/update/testdata`. The device test is still to come.
+`apt-get update --error-on=any` makes a failed source fail the run, so an
+offline or unsigned check never passes on old lists.

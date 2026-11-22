@@ -1,0 +1,13 @@
+# Settings > System > Updates > Check daily, on by default. The image's only
+# timer: one wake a day, coalesced with others, caught up after a boot.
+[Unit]
+Description=Check for updates once a day
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+AccuracySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

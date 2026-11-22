@@ -1,0 +1,11 @@
+# A check for updates the user asked for: gh0st-helper update-check, or a
+# channel change. The engine and its files: docs/updates.md.
+[Unit]
+Description=Check for updates
+After=network.target NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh0st update check
+Nice=10
+IOSchedulingClass=idle
