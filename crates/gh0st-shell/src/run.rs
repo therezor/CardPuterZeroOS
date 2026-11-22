@@ -1123,9 +1123,15 @@ impl Shell {
     fn go_dark(&mut self) {
         if let Some(bl) = &self.backlight {
             let raw = self.dimmed.take().or_else(|| bl.get());
-            self.saved_raw = raw.filter(|&r| r > 0);
-            let _ = bl.set(0);
+            self.saved_raw = raw.filter(|&r| r > 1);
+            let _ = bl.off();
         }
+        // The backlight never goes fully out (see Backlight::off), so the
+        // panel shows black, not the last frame.
+        self.canvas
+            .fill(self.canvas.bounds(), gh0st_ui::color::rgb(0, 0, 0));
+        self.display.flush_all(&self.canvas);
+        self.full_flush = true;
         self.lock.rest();
         self.home_menu = None;
         self.confirm_all = false;

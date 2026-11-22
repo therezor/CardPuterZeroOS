@@ -32,6 +32,14 @@ impl Backlight {
         read(&self.dir.join("brightness"))
     }
 
+    /// As dark as the panel goes. On the CardputerZero the m5stack
+    /// pwm-backlight switches its PWM off at 0, and the LED then runs at
+    /// full: 0 draws as much as 90. The lowest level, 1, is a 1% duty and
+    /// the least current of all. Measured 2026-11-22.
+    pub fn off(&self) -> std::io::Result<()> {
+        self.set(1)
+    }
+
     pub fn set(&self, raw: u32) -> std::io::Result<()> {
         std::fs::write(self.dir.join("brightness"), raw.min(self.max).to_string())
     }

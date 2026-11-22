@@ -41,6 +41,11 @@ Measured on the device unless marked.
   ran while the TE wait was broken (see Frame pacing), so redo them.
 - Backlight: `/sys/class/backlight/backlight`, max 100, group `video` writable.
   Stock leaves it at 0 after its idle timeout, so the shell must turn it on.
+  The driver is `m5stack,pwm-backlight` on M5IOE1's pwm-3 (50 us period,
+  levels 0 to 5500 ns). At 0 it switches the PWM off, and the LED then runs
+  at full: battery current 385 mA at 0, 381 mA at 90, 340 mA at 5, 336 mA at
+  1, on home, discharging. So dark writes 1 and a black frame. Measured
+  2026-11-22.
 - Battery: `bq27220-0`, `type=Battery`, with no interrupt in the device tree.
   The kernel polls it every 360 s (`poll_interval`). Nothing tells the kernel
   about the charger: no expander input, USB event or log line follows the
