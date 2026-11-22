@@ -6,6 +6,7 @@
 #   os/build.sh check release     tier 1 checks
 #   os/build.sh smoke             first boot of the image in QEMU
 #   os/build.sh relock release    accept the packages and units of the last build
+#   os/build.sh publish edge      add the built debs to the apt site in os/out/apt
 #   os/build.sh shell             a shell in the container
 # Work happens on the Docker volume cpzeroos-work, never on the bind-mounted
 # repo: macOS filesystems lose ownership and sparseness.
@@ -34,7 +35,7 @@ git -C "$root" diff --quiet HEAD || CPZ_GIT_REV=$CPZ_GIT_REV.dirty
 export SOURCE_DATE_EPOCH CPZ_GIT_REV
 
 envs=
-for v in SOURCE_DATE_EPOCH CPZ_GIT_REV GH0ST_LOG TRACE; do
+for v in SOURCE_DATE_EPOCH CPZ_GIT_REV GH0ST_LOG TRACE REPO_PREV REPO_KEY REPO_KEEP REPO_DAYS REPO_MAX_MB; do
     envs="$envs -e $v"
 done
 

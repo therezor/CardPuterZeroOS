@@ -245,6 +245,7 @@ case ${1:-} in
     check) "$OS/image/checks/run.sh" "${2:?variant}" ;;
     smoke) "$OS/image/checks/smoke.sh" ;;
     relock) step_relock "${2:-}" ;;
+    publish) "$OS/repo/publish.sh" "${2:?suite: stable or edge}" /out/apt "$WORK/repo-ours" "$WORK/repo-vendor" ;;
     shell) exec bash ;;
-    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|shell" ;;
+    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|shell" ;;
 esac

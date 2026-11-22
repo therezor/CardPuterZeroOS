@@ -1,0 +1,85 @@
+Reading package lists...
+Building dependency tree...
+Reading state information...
+Calculating upgrade...
+The following packages will be upgraded:
+  base-files gh0st gh0st-term libc-bin libc6 libfreetype6 libnghttp2-14
+  libssl3t64 openssl openssl-provider-legacy rsync sudo tzdata wireless-regdb
+14 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+Need to get 11.0 MB/12.3 MB of archives.
+After this operation, 58.4 kB of additional disk space will be used.
+Get:1 file:/work/spike/site2 edge/main arm64 gh0st arm64 0.1.0+202611221733.35a14dd.dirty [745 kB]
+Get:2 file:/work/spike/site2 edge/main arm64 gh0st-term arm64 0.1.0+202611221733.35a14dd.dirty [643 kB]
+Get:3 https://deb.debian.org/debian trixie/main arm64 libc6 arm64 2.41-12+deb13u5 [2489 kB]
+Get:4 https://deb.debian.org/debian trixie/main arm64 base-files arm64 13.8+deb13u8 [88.3 kB]
+Get:5 https://deb.debian.org/debian trixie/main arm64 libc-bin arm64 2.41-12+deb13u5 [553 kB]
+Get:6 https://deb.debian.org/debian trixie/main arm64 openssl-provider-legacy arm64 3.5.9-1~deb13u1 [320 kB]
+Get:7 https://deb.debian.org/debian trixie/main arm64 libssl3t64 arm64 3.5.9-1~deb13u1 [2775 kB]
+Get:8 https://deb.debian.org/debian trixie/main arm64 rsync arm64 3.5.0+ds1-0+deb13u2 [480 kB]
+Get:9 https://deb.debian.org/debian trixie/main arm64 sudo arm64 1.9.16p2-3+deb13u5 [1993 kB]
+Get:10 https://deb.debian.org/debian trixie/main arm64 tzdata all 2026f-0+deb13u1 [268 kB]
+Get:11 https://deb.debian.org/debian trixie/main arm64 libfreetype6 arm64 2.13.3+dfsg-1+deb13u2 [422 kB]
+Get:12 https://deb.debian.org/debian trixie/main arm64 libnghttp2-14 arm64 1.64.0-1.1+deb13u2 [71.6 kB]
+Get:13 https://deb.debian.org/debian trixie/main arm64 openssl arm64 3.5.9-1~deb13u1 [1484 kB]
+Get:14 https://deb.debian.org/debian trixie/main arm64 wireless-regdb all 2026.09.03-1~deb13u1 [12.5 kB]
+Preconfiguring packages ...
+Fetched 11.0 MB in 31s (352 kB/s)
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 16745 files and directories currently installed.)
+Preparing to unpack .../libc6_2.41-12+deb13u5_arm64.deb ...
+Unpacking libc6:arm64 (2.41-12+deb13u5) over (2.41-12+deb13u4) ...
+Setting up libc6:arm64 (2.41-12+deb13u5) ...
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 16745 files and directories currently installed.)
+Preparing to unpack .../base-files_13.8+deb13u8_arm64.deb ...
+Unpacking base-files (13.8+deb13u8) over (13.8+deb13u7) ...
+Setting up base-files (13.8+deb13u8) ...
+Installing new version of config file /etc/debian_version ...
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 16745 files and directories currently installed.)
+Preparing to unpack .../libc-bin_2.41-12+deb13u5_arm64.deb ...
+Unpacking libc-bin (2.41-12+deb13u5) over (2.41-12+deb13u4) ...
+Setting up libc-bin (2.41-12+deb13u5) ...
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 16745 files and directories currently installed.)
+Preparing to unpack .../openssl-provider-legacy_3.5.9-1~deb13u1_arm64.deb ...
+Unpacking openssl-provider-legacy (3.5.9-1~deb13u1) over (3.5.7-1~deb13u3) ...
+Setting up openssl-provider-legacy (3.5.9-1~deb13u1) ...
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 16745 files and directories currently installed.)
+Preparing to unpack .../libssl3t64_3.5.9-1~deb13u1_arm64.deb ...
+Unpacking libssl3t64:arm64 (3.5.9-1~deb13u1) over (3.5.7-1~deb13u3) ...
+Setting up libssl3t64:arm64 (3.5.9-1~deb13u1) ...
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 16745 files and directories currently installed.)
+Preparing to unpack .../0-rsync_3.5.0+ds1-0+deb13u2_arm64.deb ...
+Unpacking rsync (3.5.0+ds1-0+deb13u2) over (3.5.0+ds1-0+deb13u1) ...
+Preparing to unpack .../1-sudo_1.9.16p2-3+deb13u5_arm64.deb ...
+Unpacking sudo (1.9.16p2-3+deb13u5) over (1.9.16p2-3+deb13u2) ...
+Preparing to unpack .../2-tzdata_2026f-0+deb13u1_all.deb ...
+Unpacking tzdata (2026f-0+deb13u1) over (2026c-0+deb13u1) ...
+Preparing to unpack .../3-gh0st_0.1.0+202611221733.35a14dd.dirty_arm64.deb ...
+Unpacking gh0st (0.1.0+202611221733.35a14dd.dirty) over (0.1.0+202611221517.6651938) ...
+Preparing to unpack .../4-gh0st-term_0.1.0+202611221733.35a14dd.dirty_arm64.deb ...
+Unpacking gh0st-term (0.1.0+202611221733.35a14dd.dirty) over (0.1.0+202611221517.6651938) ...
+Preparing to unpack .../5-libfreetype6_2.13.3+dfsg-1+deb13u2_arm64.deb ...
+Unpacking libfreetype6:arm64 (2.13.3+dfsg-1+deb13u2) over (2.13.3+dfsg-1+deb13u1) ...
+Preparing to unpack .../6-libnghttp2-14_1.64.0-1.1+deb13u2_arm64.deb ...
+Unpacking libnghttp2-14:arm64 (1.64.0-1.1+deb13u2) over (1.64.0-1.1+deb13u1) ...
+Preparing to unpack .../7-openssl_3.5.9-1~deb13u1_arm64.deb ...
+Unpacking openssl (3.5.9-1~deb13u1) over (3.5.7-1~deb13u3) ...
+Preparing to unpack .../8-wireless-regdb_2026.09.03-1~deb13u1_all.deb ...
+Unpacking wireless-regdb (2026.09.03-1~deb13u1) over (2026.05.30-1~deb13u1) ...
+Setting up wireless-regdb (2026.09.03-1~deb13u1) ...
+Setting up libnghttp2-14:arm64 (1.64.0-1.1+deb13u2) ...
+Setting up tzdata (2026f-0+deb13u1) ...
+
+Current default time zone: 'Etc/UTC'
+Local time is now:      Sun Nov 22 17:44:04 UTC 2026.
+Universal Time is now:  Sun Nov 22 17:44:04 UTC 2026.
+Run 'dpkg-reconfigure tzdata' if you wish to change it.
+
+Setting up libfreetype6:arm64 (2.13.3+dfsg-1+deb13u2) ...
+Setting up sudo (1.9.16p2-3+deb13u5) ...
+invoke-rc.d: could not determine current runlevel
+Setting up gh0st (0.1.0+202611221733.35a14dd.dirty) ...
+Setting up openssl (3.5.9-1~deb13u1) ...
+Setting up rsync (3.5.0+ds1-0+deb13u2) ...
+invoke-rc.d: could not determine current runlevel
+Setting up gh0st-term (0.1.0+202611221733.35a14dd.dirty) ...
+Processing triggers for systemd (257.13-1~deb13u1) ...
+Processing triggers for libc-bin (2.41-12+deb13u5) ...

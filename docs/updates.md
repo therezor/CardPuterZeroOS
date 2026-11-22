@@ -136,7 +136,7 @@ watches always have a target.
 | Never checked | Not checked yet | check | |
 | Checking | a moving bar, the source | | 5 Stop |
 | Up to date | the version, when it last checked | check | |
-| Ready | the count and size, what is in it | install | 5 Check, 6 List |
+| Ready | the count and size, then a row each for Gh0st OS, Security and System | install | 5 Check, 6 List |
 | Downloading | a bar, MB of MB, the steps | | 5 Stop |
 | Installing | a bar, the package, n of m | | |
 | Done | what changed | restart | |
@@ -219,3 +219,23 @@ and the stock app debs.
   (`Pin: release o=CPZeroOS`, 990).
 - **Limits.** Pages takes 1 GB per site. CI fails the publish past 800 MB.
   Past that, the pool moves to release assets.
+
+## Tested
+
+The spike on 2026-11-22 ran in a container made from the release image's
+own root tree (`rootfs.tar`), with a throwaway Ed25519 key:
+
+- The image's apt (sqv) checks the Ed25519 signature.
+- gh0st upgrades itself. `/usr/libexec/gh0st-helper` stays a hard link to the
+  new `/usr/bin/gh0st`. No conffile asks a question, and `dpkg --audit` is clean.
+- A rebuilt kernel set with the same version keeps the bytes already in the
+  pool.
+- A new kernel set moves as one. A half-published set (the meta package
+  without its modules) is held back whole, so nothing breaks.
+- The first `apt-get update` fetches 10.2 MB, nearly all of it Debian's main
+  Packages. Later ones fetch diffs.
+- `apt-get update` reports percent 0 in Status-Fd. Its progress comes from
+  "Retrieving file N of M" instead.
+
+The captured output is the engine's parser fixtures, in
+`crates/gh0st/src/update/testdata`. The device test is still to come.

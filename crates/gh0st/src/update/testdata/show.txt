@@ -1,0 +1,284 @@
+Package: libc6
+Source: glibc
+Version: 2.41-12+deb13u5
+Installed-Size: 23770
+Maintainer: GNU Libc Maintainers <debian-glibc@lists.debian.org>
+Architecture: arm64
+Depends: libgcc-s1
+Recommends: libidn2-0 (>= 2.0.5~)
+Suggests: glibc-doc, debconf | debconf-2.0, libc-l10n, locales, libnss-nis, libnss-nisplus
+Breaks: base-files (<< 13.3~), chrony (<< 4.2-3~), dhcpcd (<< 1:10.1.0-7~), fakechroot (<< 2.19-3.5), firefox (<< 91~), firefox-esr (<< 91~), gnumach-image-1.8-486 (<< 2:1.8+git20210923~), gnumach-image-1.8-486-dbg (<< 2:1.8+git20210923~), gnumach-image-1.8-xen-486 (<< 2:1.8+git20210923~), gnumach-image-1.8-xen-486-dbg (<< 2:1.8+git20210923~), hurd (<< 1:0.9.git20220301-2), libamdhip64-5 (<< 5.7.1-5+b1), libhiprtc-builtins5 (<< 5.7.1-5+b1), librccl1 (<< 5.4.3-3+b1), libswupdate0.1 (<< 2024.12.1+dfsg-1+b3), locales (<< 2.41), locales-all (<< 2.41), lua-swupdate (<< 2024.12.1+dfsg-1+b3), nscd (<< 2.41), pd-scaf (<< 1:0.14.1+darcs20180201-6+b4), postgresql-15-pllua (<< 1:2.0.12-4), postgresql-17-pllua (<< 1:2.0.12-3+b2), python3-iptables (<< 1.0.0-2), python3-mrgingham (<< 1.25-1), python3-onnxruntime (<< 1.20.1+dfsg-2~), sysvinit (<< 3.09-2~), sysvinit-core (<< 3.09-2~), tinydns (<< 1:1.05-14), uwsgi-plugin-pypy3 (<< 0.0.2+b1), valgrind (<< 1:3.19.0-1~)
+Description: GNU C Library: Shared libraries
+Description-md5: fc3001b0b90a1c8e6690b283a619d57f
+Multi-Arch: same
+Homepage: https://www.gnu.org/software/libc/libc.html
+Tag: role::shared-lib
+Section: libs
+Priority: optional
+Filename: pool/main/g/glibc/libc6_2.41-12+deb13u5_arm64.deb
+Size: 2488872
+MD5sum: 1e84f6e2cba8aca38cc0c64689710562
+SHA256: 0966fc3da1a26cc57647c68b5736f791b6e7eb498173a7993f63b6c89b4ed4f5
+
+Package: base-files
+Version: 13.8+deb13u8
+Essential: yes
+Installed-Size: 498
+Maintainer: Santiago Vila <sanvila@debian.org>
+Architecture: arm64
+Replaces: base, dpkg (<= 1.15.0), miscutils
+Provides: base, usr-is-merged
+Pre-Depends: awk
+Breaks: debian-security-support (<< 2019.04.25), initscripts (<< 2.88dsf-13.3), sendfile (<< 2.1b.20080616-5.2~)
+Description: Debian base system miscellaneous files
+Description-md5: 6d16337f57b84c4747f56438355b2395
+Multi-Arch: foreign
+Tag: admin::configuring, admin::filesystem, admin::install, admin::login,
+ role::app-data, suite::debian
+Section: admin
+Priority: required
+Filename: pool/main/b/base-files/base-files_13.8+deb13u8_arm64.deb
+Size: 88320
+MD5sum: 9873fa1e3cfbf719387672b370c3a12a
+SHA256: 893616b7ce203a05a0528652f7d754cc5e3de7e8eff3b396f95383a5b8b1c668
+
+Package: libc-bin
+Source: glibc
+Version: 2.41-12+deb13u5
+Essential: yes
+Installed-Size: 2250
+Maintainer: GNU Libc Maintainers <debian-glibc@lists.debian.org>
+Architecture: arm64
+Depends: libc6 (>> 2.41), libc6 (<< 2.42)
+Recommends: manpages
+Breaks: dh-lua (<< 27+nmu1~)
+Description: GNU C Library: Binaries
+Description-md5: 23bffd7c48b5ed8394d07f8132ceb64c
+Multi-Arch: foreign
+Homepage: https://www.gnu.org/software/libc/libc.html
+Tag: role::shared-lib
+Section: libs
+Priority: required
+Filename: pool/main/g/glibc/libc-bin_2.41-12+deb13u5_arm64.deb
+Size: 552664
+MD5sum: d12f3c1a80ee4617a41b7f150383816a
+SHA256: 889850625c686a6d0b26a8baee5fb96f33e9f3305882f3a6751bb4c9433063e1
+
+Package: openssl-provider-legacy
+Source: openssl
+Version: 3.5.9-1~deb13u1
+Installed-Size: 422
+Maintainer: Debian OpenSSL Team <pkg-openssl-devel@alioth-lists.debian.net>
+Architecture: arm64
+Replaces: libssl3 (<< 3.3.1-5), libssl3t64 (<< 3.3.1-5)
+Depends: libc6 (>= 2.17), libssl3t64 (>= 3.0.3)
+Breaks: libssl3 (<< 3.3.1-5), libssl3t64 (<< 3.3.1-5)
+Description: Secure Sockets Layer toolkit - cryptographic utility
+Description-md5: 6ae6f8ddd6448e07b5d86dc9b813dddd
+Multi-Arch: foreign
+Homepage: https://openssl-library.org
+Section: utils
+Priority: optional
+Filename: pool/main/o/openssl/openssl-provider-legacy_3.5.9-1~deb13u1_arm64.deb
+Size: 319708
+MD5sum: 7baa4ac46ba92e5b5582cbaf6d4bdf78
+SHA256: 007165f42b5cecf71674a047480f96035e290c2f0c5102030cb186481bb8dc84
+
+Package: libssl3t64
+Source: openssl
+Version: 3.5.9-1~deb13u1
+Installed-Size: 8025
+Maintainer: Debian OpenSSL Team <pkg-openssl-devel@alioth-lists.debian.net>
+Architecture: arm64
+Replaces: libssl3
+Provides: libssl3 (= 3.5.9-1~deb13u1)
+Depends: libc6 (>= 2.38), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4), openssl-provider-legacy
+Breaks: freeradius (<< 3.2.7+dfsg-1+deb13u1), libssl3 (<< 3.5.9-1~deb13u1), openssh-client (<< 1:9.4p1), openssh-server (<< 1:9.4p1), python3-m2crypto (<< 0.38.0-4)
+Description: Secure Sockets Layer toolkit - shared libraries
+Description-md5: 88547c6206c7fbc4fcc7d09ce100d210
+Multi-Arch: same
+Homepage: https://openssl-library.org
+Section: libs
+Priority: optional
+Filename: pool/main/o/openssl/libssl3t64_3.5.9-1~deb13u1_arm64.deb
+Size: 2775368
+MD5sum: 0988cbdab2c2df300491b245a5693af3
+SHA256: 18edc2b123e8e81efcc14ea5502454b4505285aa9d3325c22315e9304acb25ca
+
+Package: rsync
+Version: 3.5.0+ds1-0+deb13u2
+Installed-Size: 1018
+Maintainer: Samuel Henrique <samueloph@debian.org>
+Architecture: arm64
+Depends: libacl1 (>= 2.2.23), libc6 (>= 2.38), liblz4-1 (>= 0.0~r130), libpopt0 (>= 1.14), libssl3t64 (>= 3.0.0), libxxhash0 (>= 0.8.0), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4)
+Pre-Depends: init-system-helpers (>= 1.54~)
+Suggests: openssh-client, openssh-server, python3, python3-braceexpand
+Description: fast, versatile, remote (and local) file-copying tool
+Description-md5: 3bf40f318d2abfed74fa472aaff46d5f
+Multi-Arch: foreign
+Homepage: https://rsync.samba.org/
+Tag: admin::backup, admin::file-distribution, implemented-in::c,
+ interface::commandline, interface::daemon, network::client,
+ network::server, protocol::ip, protocol::ipv6, role::program,
+ use::comparing, use::downloading, use::synchronizing, works-with::file
+Section: net
+Priority: optional
+Filename: pool/main/r/rsync/rsync_3.5.0+ds1-0+deb13u2_arm64.deb
+Size: 479932
+MD5sum: db9152bd1d65b7685bc56ccc21768950
+SHA256: 6c9e5a493bfa1aa4ee508d0fa37cc94f36fd051eebcce80922dc70a74911cd55
+
+Package: sudo
+Version: 1.9.16p2-3+deb13u5
+Installed-Size: 7062
+Maintainer: Debian Sudo Maintainers <sudo@packages.debian.org>
+Architecture: arm64
+Replaces: sudo-ldap
+Depends: libapparmor1 (>= 2.7.0~beta1+bzr1772), libaudit1 (>= 1:2.2.1), libc6 (>= 2.38), libpam0g (>= 0.99.7.1), libselinux1 (>= 3.1~), libssl3t64 (>= 3.0.0), zlib1g (>= 1:1.2.0.2), libpam-modules
+Pre-Depends: init-system-helpers (>= 1.54~)
+Conflicts: sudo-ldap
+Description: Provide limited super user privileges to specific users
+Description-md5: acd82d558698567df941afe9b1ac35df
+Multi-Arch: foreign
+Homepage: https://www.sudo.ws/
+Tag: admin::login, admin::user-management, implemented-in::c,
+ interface::commandline, role::program, scope::utility,
+ security::authentication, use::login
+Section: admin
+Priority: optional
+Filename: pool/main/s/sudo/sudo_1.9.16p2-3+deb13u5_arm64.deb
+Size: 1993080
+MD5sum: 2a3efbee3d36b03eeecbc14804bc26d8
+SHA256: b6ef66c7e41df53b927c3f482a6e201add10165ad69cfc856852738d699633e2
+
+Package: tzdata
+Version: 2026f-0+deb13u1
+Installed-Size: 1360
+Maintainer: GNU Libc Maintainers <debian-glibc@lists.debian.org>
+Architecture: all
+Replaces: tzdata-legacy (= 2023c-8), tzdata-legacy (= 2023c-9)
+Provides: tzdata-trixie
+Depends: debconf (>= 0.5) | debconf-2.0
+Breaks: tzdata-legacy (= 2023c-8), tzdata-legacy (= 2023c-9)
+Description: time zone and daylight-saving time data
+Description-md5: a77a3cc9a67658dd7cfdc6547391b8f8
+Multi-Arch: foreign
+Homepage: https://www.iana.org/time-zones
+Tag: role::app-data, use::timekeeping
+Section: localization
+Priority: required
+Filename: pool/main/t/tzdata/tzdata_2026f-0+deb13u1_all.deb
+Size: 267528
+MD5sum: 8e63158e853a273a594efaccda39d716
+SHA256: 2c1c561091402883430d0d47c57a3c0aa00b44afc8a6239265065a87211a5c11
+
+Package: gh0st
+Version: 0.1.0+202611221733.35a14dd.dirty
+Architecture: arm64
+Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Section: x11
+Priority: optional
+Depends: cpzeroos-panel-modules, xdg-user-dirs, network-manager, wireplumber,
+ bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd
+Description: Gh0stdeck, the CardputerZero shell and Settings
+ The home screen, switcher and OS bars (gh0st shell), Settings
+ (gh0st-settings) and its root helper. Static binaries; the Depends are the
+ commands they run: nmcli, wpctl, bluetoothctl, rfkill, pkexec, vcgencmd,
+ unix_chkpwd, passwd, and systemd's systemctl, timedatectl and hostnamectl.
+Description-md5: 
+Installed-Size: 2952
+Filename: pool/main/g/gh0st/gh0st_0.1.0+202611221733.35a14dd.dirty_arm64.deb
+Size: 744972
+SHA256: a16a0e41b023eb6150bc54bd6e159c04615bd9c394ee15be3fd10f28cecfe171
+
+Package: gh0st-term
+Version: 0.1.0+202611221733.35a14dd.dirty
+Architecture: arm64
+Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Section: x11
+Priority: optional
+Depends: gh0st
+Description: the Gh0stdeck terminal
+ A terminal app for the CardputerZero: tabs, history, bitmap fonts.
+Description-md5: 
+Installed-Size: 1736
+Filename: pool/main/g/gh0st-term/gh0st-term_0.1.0+202611221733.35a14dd.dirty_arm64.deb
+Size: 642732
+SHA256: 985071dcf08038f6bd42c12f07240d421fd950b2af39540da9caa31b712f7b3a
+
+Package: libfreetype6
+Source: freetype
+Version: 2.13.3+dfsg-1+deb13u2
+Installed-Size: 972
+Maintainer: Hugh McMaster <hmc@debian.org>
+Architecture: arm64
+Depends: libbrotli1 (>= 0.6.0), libbz2-1.0, libc6 (>= 2.33), libpng16-16t64 (>= 1.6.46), zlib1g (>= 1:1.1.4)
+Description: FreeType 2 font engine, shared library files
+Description-md5: a1e3ee2cc4e84cd6907bcd99545e0796
+Multi-Arch: same
+Homepage: https://freetype.org
+Tag: role::shared-lib
+Section: libs
+Priority: optional
+Filename: pool/main/f/freetype/libfreetype6_2.13.3+dfsg-1+deb13u2_arm64.deb
+Size: 422360
+MD5sum: bdf343d4ec08dc43eed5f7230461af1a
+SHA256: e743a5b04183fcc2fc8347abadcecb30c82528012bd446f8168195bd1552721a
+
+Package: libnghttp2-14
+Source: nghttp2
+Version: 1.64.0-1.1+deb13u2
+Installed-Size: 229
+Maintainer: Tomasz Buchert <tomasz@debian.org>
+Architecture: arm64
+Depends: libc6 (>= 2.17)
+Description: library implementing HTTP/2 protocol (shared library)
+Description-md5: e959c1ba3df5439ba338e7e50ed40e05
+Multi-Arch: same
+Homepage: https://nghttp2.org/
+Tag: role::shared-lib
+Section: libs
+Priority: optional
+Filename: pool/main/n/nghttp2/libnghttp2-14_1.64.0-1.1+deb13u2_arm64.deb
+Size: 71608
+MD5sum: 20da26308cd2cd9f86e29c1b685a7ab8
+SHA256: 968f022ccb34f89c7ac4df0567b4d916f05f9235ad39fe2cf1ab6a12bacf5d80
+
+Package: openssl
+Version: 3.5.9-1~deb13u1
+Installed-Size: 2567
+Maintainer: Debian OpenSSL Team <pkg-openssl-devel@alioth-lists.debian.net>
+Architecture: arm64
+Depends: libc6 (>= 2.34), libssl3t64 (>= 3.5.0)
+Suggests: ca-certificates
+Description: Secure Sockets Layer toolkit - cryptographic utility
+Description-md5: 9b6de2bb6e1d9016aeb0f00bcf6617bd
+Multi-Arch: foreign
+Homepage: https://openssl-library.org
+Tag: implemented-in::c, interface::commandline, protocol::ssl, role::program,
+ scope::utility, security::cryptography, security::integrity,
+ use::checking
+Section: utils
+Priority: optional
+Filename: pool/main/o/openssl/openssl_3.5.9-1~deb13u1_arm64.deb
+Size: 1484280
+MD5sum: 1aece3b8a760dabcc1966ad76e91441d
+SHA256: fe9c979716871f260fa50a920298036896677dd0a74a34c5589c18635cdef4b5
+
+Package: wireless-regdb
+Version: 2026.09.03-1~deb13u1
+Installed-Size: 39
+Maintainer: Debian kernel team <debian-kernel@lists.debian.org>
+Architecture: all
+Description: wireless regulatory database for Linux
+Description-md5: 92fb1412745a980e27d0623da2d4c26d
+Multi-Arch: foreign
+Homepage: https://wireless.wiki.kernel.org/en/developers/regulatory/wireless-regdb
+Tag: admin::hardware, role::app-data
+Section: net
+Priority: optional
+Filename: pool/main/w/wireless-regdb/wireless-regdb_2026.09.03-1~deb13u1_all.deb
+Size: 12548
+MD5sum: 2ed5f02638de7ccfeb3fa8c7db5126d1
+SHA256: a38e446ad81bc015c15d99e17af6c76ad1bafe507d2f28b869cbbbba86f94d55
+
