@@ -739,7 +739,8 @@ fn bluetooth(s: &State) -> Vec<Item> {
 }
 
 /// The private defaults, each switchable. Settings > Privacy and setup's
-/// privacy step show the same rows.
+/// privacy step show the same rows. SSH and Bluetooth stay on their own
+/// pages, System and Bluetooth, not here too.
 pub fn privacy(s: &State) -> Vec<Item> {
     let set = |icon, label, on, what| Item::new(icon, label, Value::Toggle(on), Act::Set(what));
     vec![
@@ -779,8 +780,6 @@ pub fn privacy(s: &State) -> Vec<Item> {
             Value::TextChevron(s.logs.label().into()),
             Act::Open(PageId::Choose(Choice::Logs)),
         ),
-        set("square-terminal", "SSH", s.ssh, Setting::Ssh),
-        set("bluetooth", "Bluetooth", s.bt_on, Setting::Bluetooth),
     ]
 }
 
@@ -1473,8 +1472,6 @@ mod tests {
                 "IPv6 privacy address",
                 "Network time",
                 "Keep logs",
-                "SSH",
-                "Bluetooth"
             ]
         );
         let on: Vec<Value> = (0..5).map(|i| p.item(i).unwrap().value.clone()).collect();
