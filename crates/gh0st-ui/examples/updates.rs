@@ -342,7 +342,7 @@ fn u_install(t: &Theme) -> Canvas {
         "Installing 12 updates",
         "libc6 · 5 of 12",
         Some(48),
-        "Keep it on. Stop is gone once installing starts.",
+        "Keep it on until it is done.",
         Some(2),
         [NONE, NONE, NONE, NONE, menu()],
     )

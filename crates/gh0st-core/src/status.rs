@@ -11,6 +11,8 @@ pub enum Net {
     /// Signal 0-4 bars.
     Wifi(u8),
     Ethernet,
+    /// wlan0 is an access point. Shown over a cable, so it is never missed.
+    Hotspot,
 }
 
 /// Bluetooth is on while the first controller is up, which is what BlueZ
@@ -62,13 +64,18 @@ pub fn bluetooth() -> bool {
     false
 }
 
-/// A cable with link wins over Wi-Fi, as on pt35.
+/// The hotspot first, then a cable with link, then Wi-Fi, as on pt35.
 pub fn network(sys_net: &Path, proc_wireless: &Path) -> Net {
+    network_with(sys_net, proc_wireless, is_ap)
+}
+
+pub fn network_with(sys_net: &Path, proc_wireless: &Path, ap: impl Fn(&str) -> bool) -> Net {
     let Ok(rd) = std::fs::read_dir(sys_net) else {
         return Net::None;
     };
     let mut wifi_up = false;
     let mut cable = false;
+    let mut hotspot = false;
     for e in rd.flatten() {
         let p = e.path();
         let up = std::fs::read_to_string(p.join("operstate"))
@@ -78,12 +85,18 @@ pub fn network(sys_net: &Path, proc_wireless: &Path) -> Net {
             continue;
         }
         if p.join("wireless").exists() {
-            wifi_up = true;
+            if e.file_name().to_str().is_some_and(&ap) {
+                hotspot = true;
+            } else {
+                wifi_up = true;
+            }
         } else {
             cable = true;
         }
     }
-    if cable {
+    if hotspot {
+        Net::Hotspot
+    } else if cable {
         Net::Ethernet
     } else if wifi_up {
         Net::Wifi(
@@ -95,6 +108,54 @@ pub fn network(sys_net: &Path, proc_wireless: &Path) -> Net {
     } else {
         Net::None
     }
+}
+
+/// Whether `iface` is an access point, from the wireless extensions'
+/// SIOCGIWMODE: one ioctl, no privilege, no tool to run.
+#[cfg(target_os = "linux")]
+pub fn is_ap(iface: &str) -> bool {
+    /// `struct iwreq`: the name, then a 16-byte union whose first field is
+    /// the mode.
+    #[repr(C)]
+    struct IwReq {
+        name: [u8; 16],
+        mode: u32,
+        rest: [u8; 12],
+    }
+    const SIOCGIWMODE: u32 = 0x8B07;
+    const IW_MODE_MASTER: u32 = 3;
+    let bytes = iface.as_bytes();
+    if bytes.len() >= 16 {
+        return false;
+    }
+    let mut req = IwReq {
+        name: [0; 16],
+        mode: 0,
+        rest: [0; 12],
+    };
+    req.name[..bytes.len()].copy_from_slice(bytes);
+    // SAFETY: a plain socket call; the fd is closed below.
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return false;
+    }
+    // SAFETY: req is an iwreq for the kernel to fill.
+    let ok = unsafe { libc::ioctl(fd, SIOCGIWMODE as _, &mut req) } == 0;
+    // SAFETY: fd is ours and open.
+    unsafe { libc::close(fd) };
+    ok && req.mode == IW_MODE_MASTER
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn is_ap(_: &str) -> bool {
+    false
+}
+
+/// The hotspot is up: wlan0 is an access point with link.
+pub fn hotspot() -> bool {
+    let up =
+        std::fs::read_to_string("/sys/class/net/wlan0/operstate").is_ok_and(|s| s.trim() == "up");
+    up && is_ap("wlan0")
 }
 
 /// Bars from `/proc/net/wireless` link quality, out of 70 on brcmfmac.
@@ -248,6 +309,10 @@ mod tests {
         assert_eq!(network(&root, &w), Net::Wifi(3));
         iface("eth0", "up", false);
         assert_eq!(network(&root, &w), Net::Ethernet);
+        let ap = |n: &str| n == "wlan0";
+        assert_eq!(network_with(&root, &w, ap), Net::Hotspot, "over the cable");
+        iface("eth0", "down", false);
+        assert_eq!(network_with(&root, &w, ap), Net::Hotspot, "not Wi-Fi bars");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

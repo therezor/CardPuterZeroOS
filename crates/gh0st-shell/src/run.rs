@@ -1255,9 +1255,13 @@ impl Shell {
 
     /// Wi-Fi off through NetworkManager, which our polkit rule allows. Only
     /// a radio that is on, so the wake never turns on one the user left off.
+    /// Never the hotspot: it is meant to work with the device in a pocket.
     fn wifi_sleep(&mut self) {
         self.wifi_done = true;
-        if self.backlight.is_none() || !rfkill::wlan_on(Path::new("/sys/class/rfkill")) {
+        if self.backlight.is_none()
+            || !rfkill::wlan_on(Path::new("/sys/class/rfkill"))
+            || status::hotspot()
+        {
             return;
         }
         if self.debug {
@@ -2991,6 +2995,7 @@ fn status_of<'a>(
             Net::None => widgets::Net::None,
             Net::Wifi(l) => widgets::Net::Wifi(l),
             Net::Ethernet => widgets::Net::Ethernet,
+            Net::Hotspot => widgets::Net::Hotspot,
         },
         bluetooth: false,
         notices: 0,

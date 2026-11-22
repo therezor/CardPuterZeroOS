@@ -4,6 +4,7 @@
 
 use super::{Act, Body, Choice, Command, ConnField, Item, Line, Page, PageId, Setting, Value};
 use gh0st_core::apps::Layout;
+use gh0st_core::hotspot::{self, Security};
 use gh0st_core::sysconf::{self, CpuMode, GpuMem, NmPrivacy};
 
 /// Screen-off choices, in seconds. 0 is never.
@@ -147,6 +148,40 @@ pub fn icon_label(icon: &str) -> String {
     s
 }
 
+/// The hotspot as Settings knows it. `name` is `None` until the helper has
+/// made the profile, which it does the first time it turns on.
+#[derive(Clone, Default)]
+pub struct Hotspot {
+    /// wlan0 is an access point.
+    pub on: bool,
+    /// "Starting…" while the helper works.
+    pub busy: Option<&'static str>,
+    pub name: Option<String>,
+    pub psk: Option<String>,
+    pub security: Security,
+    /// Clients joined, from iw, while on.
+    pub clients: Option<usize>,
+}
+
+impl Drop for Hotspot {
+    fn drop(&mut self) {
+        if let Some(psk) = &mut self.psk {
+            // SAFETY: zeroes keep the string valid UTF-8.
+            gh0st_core::password::wipe(unsafe { psk.as_bytes_mut() });
+        }
+    }
+}
+
+impl std::fmt::Debug for Hotspot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Hotspot")
+            .field("on", &self.on)
+            .field("name", &self.name)
+            .field("security", &self.security)
+            .finish_non_exhaustive()
+    }
+}
+
 /// What the pages show. `None` means not known yet: a helper is still out.
 #[derive(Clone, Debug, Default)]
 pub struct State {
@@ -169,6 +204,7 @@ pub struct State {
     /// The profile open on a connection page.
     pub conn: Option<Conn>,
     pub ifaces: Vec<Iface>,
+    pub hotspot: Hotspot,
     pub bt_on: bool,
     pub bt_scanning: bool,
     pub devices: Vec<Device>,
@@ -463,6 +499,8 @@ pub fn build(id: &PageId, s: &State) -> Page {
             vec![("R", "scan"), ("Del", "forget")],
         ),
         PageId::Network => ("Network", Body::List(network(s)), vec![]),
+        PageId::Hotspot => ("Hotspot", Body::List(hotspot(s)), vec![("R", "reload")]),
+        PageId::HotspotQr => ("Join the hotspot", hotspot_qr(s), vec![]),
         PageId::Conn(name) => ("Connection", Body::List(conn(s, name)), vec![]),
         PageId::Bluetooth => (
             "Bluetooth",
@@ -524,7 +562,9 @@ fn root(s: &State) -> Vec<Item> {
     let link = |icon, label: &str, value: String, page| {
         Item::new(icon, label, Value::TextChevron(value), Act::Open(page))
     };
-    let wifi = if !s.wifi_on {
+    let wifi = if s.hotspot.on {
+        "Hotspot".into()
+    } else if !s.wifi_on {
         "Off".into()
     } else {
         s.active_ssid().unwrap_or("Not connected").into()
@@ -536,6 +576,12 @@ fn root(s: &State) -> Vec<Item> {
     };
     vec![
         link("wifi", "Wi-Fi", wifi, PageId::Wifi),
+        link(
+            "radio-tower",
+            "Hotspot",
+            on_off(s.hotspot.on),
+            PageId::Hotspot,
+        ),
         link(
             "network",
             "Network",
@@ -570,6 +616,15 @@ fn wifi(s: &State) -> Vec<Item> {
         Value::Toggle(s.wifi_on),
         Act::Set(Setting::WifiRadio),
     )];
+    if s.hotspot.on {
+        out.push(Item::new(
+            "radio-tower",
+            "Hotspot is on",
+            Value::Chevron,
+            Act::Open(PageId::Hotspot),
+        ));
+        return out;
+    }
     if !s.wifi_on {
         return out;
     }
@@ -601,7 +656,81 @@ fn wifi(s: &State) -> Vec<Item> {
         act: Act::Run(Command::JoinHidden),
         danger: false,
     });
+    out.push(Item::new(
+        "battery-full",
+        "Power saving",
+        Value::Toggle(s.nm.wifi_powersave),
+        Act::Set(Setting::WifiPowersave),
+    ));
     out
+}
+
+/// The access point: on or off, what to join it with, who has.
+fn hotspot(s: &State) -> Vec<Item> {
+    let h = &s.hotspot;
+    let toggle = match h.busy {
+        Some(word) => Value::Text(word.into()),
+        None => Value::Toggle(h.on),
+    };
+    let unset = || "Made when first on".to_string();
+    let mut out = vec![
+        Item::new("radio-tower", "Hotspot", toggle, Act::Set(Setting::Hotspot)),
+        Item::new(
+            "pencil",
+            "Name",
+            Value::TextChevron(h.name.clone().unwrap_or_else(unset)),
+            Act::Run(Command::HotspotName),
+        ),
+        Item::new(
+            "lock",
+            "Password",
+            Value::TextChevron(h.psk.as_ref().map_or_else(unset, |_| "\u{2022}".repeat(8))),
+            Act::Run(Command::HotspotPassword),
+        ),
+        Item::new(
+            "shield",
+            "Security",
+            Value::Choice(h.security.label().into()),
+            Act::Set(Setting::HotspotSecurity),
+        ),
+        if h.name.is_some() && h.psk.is_some() {
+            Item::new(
+                "qr-code",
+                "Show QR code",
+                Value::Chevron,
+                Act::Open(PageId::HotspotQr),
+            )
+        } else {
+            Item::new(
+                "qr-code",
+                "Show QR code",
+                Value::Off("turn it on first"),
+                Act::None,
+            )
+        },
+    ];
+    if h.on {
+        let n = h
+            .clients
+            .map_or_else(|| "\u{2026}".into(), |n| n.to_string());
+        out.push(Item::new("user", "Devices", Value::Text(n), Act::None));
+    }
+    out
+}
+
+fn hotspot_qr(s: &State) -> Body {
+    let h = &s.hotspot;
+    let (Some(name), Some(psk)) = (&h.name, &h.psk) else {
+        return Body::List(vec![]);
+    };
+    Body::Qr {
+        text: hotspot::wifi_qr(name, psk, h.security),
+        lines: vec![
+            ("Name".into(), name.clone()),
+            ("Password".into(), psk.clone()),
+            ("This device".into(), hotspot::ADDRESS.into()),
+        ],
+    }
 }
 
 /// One row per device. Enter opens its connection: the active one, or for a
@@ -611,6 +740,14 @@ fn network(s: &State) -> Vec<Item> {
         .iter()
         .map(|i| {
             let wifi = i.name.starts_with("wl");
+            if i.connection == hotspot::CONN {
+                return Item::new(
+                    "radio-tower",
+                    format!("{} \u{00b7} Hotspot", i.name),
+                    Value::TextChevron(hotspot::ADDRESS.into()),
+                    Act::Open(PageId::Hotspot),
+                );
+            }
             let profile = if !i.connection.is_empty() {
                 Some(i.connection.clone())
             } else if !wifi {
@@ -1374,7 +1511,7 @@ mod tests {
     #[test]
     fn root_links_every_page_and_shows_the_network() {
         let p = build(&PageId::Root, &state());
-        assert_eq!(p.len(), 10);
+        assert_eq!(p.len(), 11);
         assert_eq!(
             p.item(0).unwrap().value,
             Value::TextChevron("HomeNet".into())
@@ -1384,9 +1521,88 @@ mod tests {
     #[test]
     fn wifi_off_hides_the_list() {
         let mut s = state();
-        assert_eq!(build(&PageId::Wifi, &s).len(), 3);
+        let p = build(&PageId::Wifi, &s);
+        assert_eq!(p.len(), 4);
+        assert_eq!(p.item(3).unwrap().act, Act::Set(Setting::WifiPowersave));
         s.wifi_on = false;
         assert_eq!(build(&PageId::Wifi, &s).len(), 1);
+    }
+
+    #[test]
+    fn the_hotspot_page_follows_its_state() {
+        let mut s = state();
+        let p = build(&PageId::Hotspot, &s);
+        let labels: Vec<&str> = (0..p.len())
+            .map(|i| p.item(i).unwrap().label.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            ["Hotspot", "Name", "Password", "Security", "Show QR code"]
+        );
+        assert_eq!(
+            p.item(1).unwrap().value,
+            Value::TextChevron("Made when first on".into())
+        );
+        assert_eq!(p.item(4).unwrap().value, Value::Off("turn it on first"));
+        assert_eq!(p.item(3).unwrap().value, Value::Choice("WPA3".into()));
+        s.hotspot.on = true;
+        s.hotspot.name = Some("zero-kfwm".into());
+        s.hotspot.psk = Some("kfwmtqzrapdh".into());
+        s.hotspot.clients = Some(2);
+        let p = build(&PageId::Hotspot, &s);
+        assert_eq!(p.len(), 6);
+        assert_eq!(p.item(5).unwrap().value, Value::Text("2".into()));
+        assert_eq!(p.item(4).unwrap().act, Act::Open(PageId::HotspotQr));
+        assert!(
+            !matches!(&p.item(2).unwrap().value, Value::TextChevron(v) if v.contains("kfwm")),
+            "the password stays hidden on the page"
+        );
+        s.hotspot.busy = Some("Stopping\u{2026}");
+        assert_eq!(
+            build(&PageId::Hotspot, &s).item(0).unwrap().value,
+            Value::Text("Stopping\u{2026}".into())
+        );
+    }
+
+    #[test]
+    fn while_the_hotspot_runs_wifi_points_to_it() {
+        let mut s = state();
+        s.hotspot.on = true;
+        let p = build(&PageId::Wifi, &s);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p.item(1).unwrap().act, Act::Open(PageId::Hotspot));
+        let root = build(&PageId::Root, &s);
+        assert_eq!(
+            root.item(0).unwrap().value,
+            Value::TextChevron("Hotspot".into())
+        );
+        assert_eq!(root.item(1).unwrap().value, Value::TextChevron("On".into()));
+    }
+
+    #[test]
+    fn the_qr_page_carries_what_a_phone_joins_with() {
+        let mut s = state();
+        s.hotspot.name = Some("zero-kfwm".into());
+        s.hotspot.psk = Some("kfwmtqzrapdh".into());
+        let p = build(&PageId::HotspotQr, &s);
+        let Body::Qr { text, lines } = &p.body else {
+            panic!("a QR page");
+        };
+        assert_eq!(text, "WIFI:T:SAE;S:zero-kfwm;P:kfwmtqzrapdh;;");
+        assert_eq!(lines[2], ("This device".into(), "10.42.0.1".into()));
+    }
+
+    #[test]
+    fn the_hotspot_on_wlan0_opens_its_page_from_network() {
+        let mut s = state();
+        s.ifaces = vec![Iface {
+            name: "wlan0".into(),
+            connection: hotspot::CONN.into(),
+            ipv4: "10.42.0.1/24".into(),
+            ..Iface::default()
+        }];
+        let p = build(&PageId::Network, &s);
+        assert_eq!(p.item(0).unwrap().act, Act::Open(PageId::Hotspot));
     }
 
     #[test]
@@ -1590,6 +1806,7 @@ mod tests {
             scan_random: true,
             send_hostname: false,
             ip6_privacy: true,
+            wifi_powersave: true,
         };
         s.network_time = true;
         let p = build(&PageId::Privacy, &s);

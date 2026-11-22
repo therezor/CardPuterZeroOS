@@ -111,7 +111,7 @@ On the release image after setup, idle on home, Wi-Fi up, read over SSH.
   value: min 16 MB, low 20 MB, high 24 MB. The per-CPU free lists are sized
   from the low watermark: up to 5 MB a core, 19.8 MB in all at one read.
   MemFree leaves them out, so they count as used.
-- A/B, 30 s settle each, read twice: 16384 shows 152 and 156 MB used, 8192
+- Read twice after a 30 s settle: 16384 shows 152 and 156 MB used, 8192
   shows 129 MB twice. Under a 320 MB memory hog and 150 MB sent over Wi-Fi
   at 8192 there was no "page allocation failure", but brcmfmac logged
   SDIO read errors (CMD53 -5). Not tried at 16384, and the card above
@@ -294,10 +294,7 @@ The other 17 key-press gaps are the first two sends of a glide: one leads in a
 refresh, the next trails in the same refresh. The panel still shows one new
 frame per refresh.
 
-By eye: a blind A/B (`scripts/ab-test.sh`, 5 rounds, scan sync `te=0`
-against `te=1`) picked the sync every round. That's 5 of 5, a 1 in 32 chance
-if guessing. Whether any tear remains is not settled ("hard to tell, looks a
-lot better"). The model rests on TE being high during blanking and on the scan
+The model rests on TE being high during blanking and on the scan
 following the send order (MADCTL ML).
 
 ## Paused apps and the keyboard
@@ -350,6 +347,44 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
   `swap-comp lz4` boots zram0 with `[lz4]`, rpi-swap's size kept.
   `swappiness 150` applies at once and holds after a restart. Same root run
   over SSH. Measured 2026-11-21.
+
+## Wi-Fi access point (measured 2026-11-22, stock card)
+
+Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
+6.18.39+rpt-rpi-v8, brcmfmac firmware BCM43439/5 7.95.75, NetworkManager
+1.52.1. Clients: an iPhone and a POCO X7 Pro. Design in `hotspot.md`.
+
+- `iw list` gives two combinations: `#{managed} <= 2, P2P..., #channels <= 2`,
+  and `#{managed} <= 1, #{AP} <= 1, #{P2P-client} <= 1, #{P2P-device} <= 1,
+  #channels <= 1`. As UID 1000, `iw event`, `iw dev`, `station dump` and
+  `SIOCGIWMODE` all work.
+- **Alongside** (`uap0`, `type __ap`, wlan0 joined on channel 5): the access
+  point starts on wlan0's channel and wlan0 stays up. But:
+  - NetworkManager offers WPA2/WPA3 for `key-mgmt=wpa-psk`. The iPhone tried
+    SAE and the firmware failed to send the auth replies
+    (`brcmf_cyw_mgmt_tx: TX Auth frame operation is timedout`). With
+    `pmf=disable` (WPA2 only) it joined.
+  - `nmcli device wifi rescan` cut pings to a client from 0% to 56% lost over
+    20 s, and the client was disconnected once.
+  - Re-activating the access point logged `brcmf_cfg80211_stop_ap: setting AP
+    mode failed -52` and dropped wlan0. wlan0 then could not rejoin its WPA3
+    network while the access point ran ("No PMK set for PTK derivation",
+    `brcmf_cyw_external_auth` failures), until the radio went off and on.
+  - Stopping the access point alone left wlan0 up (the same -52 is logged).
+- **On wlan0 alone**: WPA2/WPA3 mixed and WPA3-only (SAE, PMF required) both
+  worked. Both phones joined over SAE, with a USB cable up for NAT (that a
+  page loaded on them is not yet confirmed). NetworkManager picked channel 11
+  when none was set. The
+  BSSID was a locally administered address with `cloned-mac-address=stable`.
+  `SIOCGIWMODE` on wlan0 reads 3 (master); `/proc/net/wireless` then has no
+  wlan0 line.
+- Shared mode sets `net.ipv4.ip_forward=1` and adds `table ip
+  nm-shared-<iface>`. dnsmasq listens on 10.42.0.1:53 and 0.0.0.0:67 and uses
+  4 MB RSS. Its lease file is root-only and holds client names.
+- Battery `current_now`, screen on, cable in: 337 mA with the access point
+  off, 375 mA on with two idle clients.
+- Timing as UID 1000: `pkexec gh0st-helper` 150 to 300 ms, an nmcli call
+  about 150 ms, `hotspot on` 2.4 s.
 
 ## Still to check
 

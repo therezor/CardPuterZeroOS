@@ -97,13 +97,18 @@ Seven styles, all from faces the device already has baked:
 
 | Style | Face | For |
 |---|---|---|
-| Display | Inter 24 semibold | a clock, one big number |
-| Title | Inter 17 semibold | a page's heading |
-| Body strong | Inter 15 semibold | the selected row, a dialog's title |
-| Body | Inter 15 | rows, text |
-| Label | Inter 13 semibold | chips, key pills, the top bar, section heads |
-| Caption | Inter 13 | values, notes, hints |
-| Mono | JetBrains Mono 10 | readouts, figures |
+| Display | Inter 26 semibold | a clock, one big number |
+| Title | Inter 19 semibold | a page's heading |
+| Body strong | Inter 17 at 650 | the selected row, a dialog's title |
+| Body | Inter 17 at 450 | rows, text |
+| Label | Inter 15 at 650 | chips, key pills, the top bar, section heads |
+| Caption | Inter 15 at 450 | values, notes, hints |
+| Mono | JetBrains Mono, a 7 px cell | readouts, figures |
+
+Nothing is smaller than 15 px. Caption and Body are fitted to the pixel
+grid, sharpened hard, and given an S-curve on coverage, so stems keep a hard
+core with a thin fringe. They are a step heavier than Inter's named weights,
+which read faint on the dark panel.
 
 ## Icons
 
@@ -134,7 +139,8 @@ the front one underlined, as the shell shows open apps.
    at 5%, where the percent turns `critical` too. A bolt shows while it
    charges.
 3. The network: Wi-Fi bars, a cable, or a struck-out Wi-Fi when there is
-   neither.
+   neither. While the hotspot runs, its radio tower, ahead of a cable, so
+   it is never on unseen.
 4. Bluetooth, while it is on.
 5. A bell and a count while notifications wait. On the shell's screens only,
    until the OS bars draw over apps too.
@@ -168,17 +174,18 @@ and 7.
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
 needs saying, a dialog or message names them in key pills.
 
-**What a chip is.** A tab over its key, with no fill: a 12 px icon in the
-accent colour and one word in Label style, centred over a 2 px bar along the
-screen's bottom edge. The bar is 48 px, a little short of the key, so each one
-underlines its own key and neighbours read apart. A word is never cut: with less than 3 px each side, a
-chip drops its icon.
+**What a chip is.** A tab over its key, with no fill: one word in Label
+style, centred over a 2 px bar along the screen's bottom edge. The bar is 48
+px, a little short of the key, so each one underlines its own key and
+neighbours read apart. At 15 px an icon and a word don't fit a key, so a chip
+with a word shows the word alone; a chip with no word, the menu's ≡, shows
+its icon. Keep words to 54 px: Reload fits, Refresh doesn't.
 
 | State | Looks | For |
 |---|---|---|
-| normal | an accent bar, accent icon, plain word | most actions |
+| normal | an accent bar, plain word | most actions |
 | on | a pale accent wash, accent word | a toggle that is on: Flash |
-| danger | the word alone, in `critical`, over a red bar; no icon | Forget, Stop, Close |
+| danger | the word in `critical`, over a red bar | Forget, Stop, Close |
 | danger, held | fills `critical` left to right | Erase, close all apps: hold it 0.7 s |
 | armed | a pale red wash, a thicker red bar | pressed once, press again |
 | main | accent word, a thicker bar | an action that is the page's main one but not on Enter |
@@ -307,6 +314,12 @@ menu, then the page.
 
 - **Toast.** A short line in a card that floats above the chips, with a
   tone's icon, for 2 s. It never covers the chips.
+- **Busy.** A change the user waits for: a root helper, a radio, the
+  hotspot starting. After 0.3 s the page dims under a card that says what
+  is happening, with a segment moving along a bar. Keys wait and the chips
+  go blank, so a second press can't start it again; Esc hides the card and
+  the work goes on. The toast says how it went. Quicker changes never show
+  it. A Wi-Fi join keeps "Joining…" in its row instead: it can take 45 s.
 - **Banner.** The shell's urgent word, in a tone's colour. It takes the top
   bar's place while it shows, so the page does not move: "Battery 3%:
   powering off in 30 s".

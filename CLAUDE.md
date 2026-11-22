@@ -59,6 +59,8 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
 - `docs/setup.md`: first-boot setup, the steps and how it hands over to the
   shell.
+- `docs/hotspot.md`: the Wi-Fi access point, why it takes wlan0, its security
+  and its tests.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
@@ -87,7 +89,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   shell grabs only while it is in front with apps paused, dark, or locked.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
   apps too. Keep unknown keys. Our keys use a `gh0st.` prefix.
-- New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`, and in the
+- New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`,
+  `qrcodegen` (the hotspot's QR code; no dependencies of its own), and in the
   terminal `vte` (the DEC parser, without std so its OSC buffer is bounded) and
   `unicode-width` (wcwidth). Build only: `resvg`.
 
@@ -121,7 +124,6 @@ GH0ST_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
 GH0ST_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
 GH0ST_HOST=pi@<device> scripts/measure.sh gh0st       # PSS, wakeups, CPU idle
 GH0ST_HOST=pi@<device> scripts/tear-test.sh 10    # full-screen stripes at the panel rate
-GH0ST_HOST=pi@<device> scripts/ab-test.sh          # blind A/B of a driver param by eye
 ```
 
 `GH0ST_LOG=debug` logs the first frame time and, for each frame, the rows flushed and

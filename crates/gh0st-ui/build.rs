@@ -15,12 +15,16 @@ const COVERAGE_GAMMA: f32 = 1.25;
 /// full, so stems keep a hard core and only a thin fringe.
 const MONO_SHARPEN: f32 = 0.2;
 
-/// Inter below this em blurs the same way, its stems a pixel wide. It gets
-/// a milder cure: each glyph moves at most a quarter pixel (a half spaces
-/// letters unevenly), a lighter sharpen, and no gamma lift, which widens the
-/// fringe.
-const SMALL_SANS_EM: f32 = 16.0;
-const SMALL_SANS_SHARPEN: f32 = 0.12;
+/// Inter below this em (Caption and Body) blurs the same way, its stems a
+/// pixel wide. Each glyph moves at most a quarter pixel (a half spaces
+/// letters unevenly) and gets no gamma lift, which widens the fringe. The
+/// sharpen is hard but keeps a fringe: with none, Inter's curves go jagged.
+const SMALL_SANS_EM: f32 = 18.0;
+const SMALL_SANS_SHARPEN: f32 = 0.32;
+/// Small sans text still reads soft, its stem edges at mid grey. An
+/// S-curve on coverage pushes fringes toward the background and cores toward
+/// the ink: 0 is linear, 1 a full smoothstep.
+const SMALL_SANS_CONTRAST: f32 = 1.0;
 
 const TEXT: &[(u32, u32)] = &[
     (0x20, 0x7e),
@@ -122,22 +126,43 @@ impl Face {
             COVERAGE_GAMMA
         }
     }
+
+    /// Coverage after the sharpen and gamma: the small sans S-curve.
+    fn curve(&self, c: f32) -> f32 {
+        if !self.small_sans() {
+            return c;
+        }
+        let s = c * c * (3.0 - 2.0 * c);
+        c + SMALL_SANS_CONTRAST * (s - c)
+    }
 }
 
-/// Inter steps in whole-pixel x-heights: 13 px gives a 7 px x-height, 15 gives
-/// 8, 17 gives 9. Sizes between snap to the same face.
+/// Inter steps in whole-pixel x-heights: 15 px gives an 8 px x-height, 17
+/// gives 9, 19 gives 10. Sizes between snap to the same face. 13 px (7) is
+/// too small to read on the panel. The small faces are a step heavier than
+/// Inter's named weights, 450 and 650: thinner stems read faint on the dark
+/// panel.
 const FACES: &[Face] = &[
-    face("SANS_13", "Inter.ttf", 13.0, 400.0, TEXT, true),
-    face("SANS_13_BOLD", "Inter.ttf", 13.0, 600.0, TEXT, true),
-    face("SANS_15", "Inter.ttf", 15.0, 400.0, TEXT, true),
-    face("SANS_15_BOLD", "Inter.ttf", 15.0, 600.0, TEXT, true),
-    face("SANS_17_BOLD", "Inter.ttf", 17.0, 600.0, TEXT, true),
-    face("SANS_24_BOLD", "Inter.ttf", 24.0, 600.0, TEXT, true),
-    face("MONO_10", "JetBrainsMono.ttf", 10.0, 400.0, MONO, false),
+    face("SANS_15", "Inter.ttf", 15.0, 450.0, TEXT, true),
+    face("SANS_15_BOLD", "Inter.ttf", 15.0, 650.0, TEXT, true),
+    face("SANS_17", "Inter.ttf", 17.0, 450.0, TEXT, true),
+    face("SANS_17_BOLD", "Inter.ttf", 17.0, 650.0, TEXT, true),
+    face("SANS_19_BOLD", "Inter.ttf", 19.0, 600.0, TEXT, true),
+    face("SANS_26_BOLD", "Inter.ttf", 26.0, 600.0, TEXT, true),
+    // A 7 px cell exactly: JetBrains Mono's advance is 0.6 em, and at 12 px
+    // a 7.2 px cell would space letters unevenly.
     face(
-        "MONO_10_BOLD",
+        "MONO_12",
         "JetBrainsMono.ttf",
-        10.0,
+        35.0 / 3.0,
+        400.0,
+        MONO,
+        false,
+    ),
+    face(
+        "MONO_12_BOLD",
+        "JetBrainsMono.ttf",
+        35.0 / 3.0,
         700.0,
         MONO,
         false,
@@ -282,7 +307,7 @@ fn bake_fonts(dir: &Path, out: &Path) {
                         let (t, gamma) = (f.sharpen(), f.gamma());
                         for c in cov {
                             let c = ((c - t) / (1.0 - 2.0 * t)).clamp(0.0, 1.0);
-                            let c = c.powf(1.0 / gamma);
+                            let c = f.curve(c.powf(1.0 / gamma));
                             nibbles.push((c * 15.0).round() as u8);
                         }
                         (w, h, b.min.x as i32, b.min.y as i32, off)

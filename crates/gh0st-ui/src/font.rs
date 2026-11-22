@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn ascii_is_complete_and_indexes_directly() {
-        for f in [&SANS_13, &SANS_15_BOLD, &MONO_10] {
+        for f in [&SANS_15, &SANS_17_BOLD, &MONO_12] {
             for cp in 0x20..0x7f {
                 assert_eq!(f.glyphs[(cp - 0x20) as usize].cp, cp);
             }
@@ -312,20 +312,20 @@ mod tests {
     }
 
     #[test]
-    fn mono_cells_are_six_px_wide() {
-        assert_eq!(MONO_10.measure("abcdefghij"), 60);
+    fn mono_cells_are_seven_px_wide() {
+        assert_eq!(MONO_12.measure("abcdefghij"), 70);
     }
 
     #[test]
     fn elided_text_fits_its_box() {
         let mut c = Canvas::new(200, 20);
-        let end = SANS_13.draw_elided(&mut c, 0, 14, "A rather long application name", 60, 0xffff);
+        let end = SANS_15.draw_elided(&mut c, 0, 14, "A rather long application name", 60, 0xffff);
         assert!(end <= 60, "{end}");
     }
 
     #[test]
     fn cyrillic_is_baked() {
-        assert!(SANS_15.find('Ж' as u32).is_some());
-        assert!(SANS_15.find('ї' as u32).is_some());
+        assert!(SANS_17.find('Ж' as u32).is_some());
+        assert!(SANS_17.find('ї' as u32).is_some());
     }
 }

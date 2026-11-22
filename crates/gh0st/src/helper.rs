@@ -19,6 +19,11 @@
 //!     gh0st-helper ip6-privacy on|off            password
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper usb-power on|off
+//!     gh0st-helper wifi-powersave on|off
+//!     gh0st-helper hotspot on|off
+//!     gh0st-helper hotspot name NAME
+//!     gh0st-helper hotspot password              the new password
+//!     gh0st-helper hotspot security wpa3|mixed
 //!     gh0st-helper power off|reboot
 //!     gh0st-helper update-check
 //!     gh0st-helper update-install                password
@@ -30,7 +35,7 @@
 //!     gh0st-helper setup-finish                  setup only
 //!
 //! A password verb reads the user's password as one line on stdin (see
-//! `auth`). A setup verb runs only for root while setup's marker exists
+//! `auth`). `hotspot password` reads the hotspot's new password the same way. A setup verb runs only for root while setup's marker exists
 //! (docs/setup.md); `user-create` reads the new user's password instead.
 //! Exit codes: 0 done, 1 failed, 2 usage, 10 password required, 11 wrong
 //! password, 12 locked (stderr says for how many seconds), 13 setup only.
@@ -38,6 +43,7 @@
 //! pkexec's.
 
 use crate::auth::{self, Auth};
+use gh0st_core::hotspot::{self, Profile, Security};
 use gh0st_core::rfkill::{self, Radio};
 use gh0st_core::sysconf::{self, CpuMode, MacPolicy};
 use std::ffi::CString;
@@ -97,6 +103,11 @@ pub enum Verb {
     Rfkill(Radio, bool),
     /// The built-in Ethernet chip may suspend.
     UsbPower(bool),
+    WifiPowersave(bool),
+    Hotspot(bool),
+    HotspotName(String),
+    HotspotPassword,
+    HotspotSecurity(Security),
     Power(bool),
     UserCreate(String),
     SetupFinish,
@@ -134,7 +145,14 @@ impl Verb {
             | Verb::UpdateInstall
             | Verb::UpdateAuto(_)
             | Verb::UpdateChannel(_) => true,
+            // The hotspot carries the trust NetworkManager's polkit grant
+            // already gives the device user (roadmap M3).
             Verb::Rfkill(..)
+            | Verb::WifiPowersave(_)
+            | Verb::Hotspot(_)
+            | Verb::HotspotName(_)
+            | Verb::HotspotPassword
+            | Verb::HotspotSecurity(_)
             | Verb::UsbPower(_)
             | Verb::Power(_)
             | Verb::UserCreate(_)
@@ -184,6 +202,11 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["rfkill", "bluetooth", s] => Verb::Rfkill(Radio::Bluetooth, on(s)?),
         ["rfkill", "wlan", s] => Verb::Rfkill(Radio::Wlan, on(s)?),
         ["usb-power", s] => Verb::UsbPower(on(s)?),
+        ["wifi-powersave", s] => Verb::WifiPowersave(on(s)?),
+        ["hotspot", "name", n] if hotspot::valid_name(n) => Verb::HotspotName(n.to_string()),
+        ["hotspot", "password"] => Verb::HotspotPassword,
+        ["hotspot", "security", s] => Verb::HotspotSecurity(Security::from_verb(s)?),
+        ["hotspot", s] => Verb::Hotspot(on(s)?),
         ["power", "off"] => Verb::Power(false),
         ["power", "reboot"] => Verb::Power(true),
         ["update-check"] => Verb::UpdateCheck,
@@ -388,6 +411,91 @@ fn write_conf(path: &str, text: &str) -> Result<(), String> {
     }
     gh0st_core::config::write_atomic(path, text.as_bytes())
         .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// nmcli, its `Error:` line kept for the toast.
+fn nmcli(args: &[&str]) -> Result<(), String> {
+    let out = Command::new("nmcli")
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("nmcli: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let text = String::from_utf8_lossy(&out.stderr);
+    Err(text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("Error: "))
+        .unwrap_or("nmcli failed")
+        .trim_end_matches('.')
+        .to_string())
+}
+
+/// The keyfile, 0600 from the start: it holds the password. NetworkManager
+/// reads it on `load`; it takes effect the next time the hotspot starts.
+fn save_hotspot(p: &Profile) -> Result<(), String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = Path::new(hotspot::KEYFILE);
+    let io = |e: std::io::Error| format!("{}: {e}", path.display());
+    let tmp = path.with_extension("tmp");
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(io)?;
+    let mut text = p.render();
+    let written = f.write_all(text.as_bytes()).and_then(|()| f.sync_all());
+    // SAFETY: zeroes keep the string valid UTF-8.
+    gh0st_core::password::wipe(unsafe { text.as_bytes_mut() });
+    written.map_err(io)?;
+    std::fs::rename(&tmp, path).map_err(io)?;
+    sync_dir(path);
+    nmcli(&["connection", "load", hotspot::KEYFILE])
+}
+
+/// Ours, or a new one with a neutral name and a random password.
+fn load_hotspot() -> Result<Profile, String> {
+    match std::fs::read_to_string(hotspot::KEYFILE) {
+        Ok(mut text) => {
+            let p = Profile::parse(&text);
+            // SAFETY: zeroes keep the string valid UTF-8.
+            gh0st_core::password::wipe(unsafe { text.as_bytes_mut() });
+            p.ok_or_else(|| format!("{}: not a hotspot profile", hotspot::KEYFILE))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let p = Profile::new().map_err(|e| format!("random: {e}"))?;
+            save_hotspot(&p)?;
+            Ok(p)
+        }
+        Err(e) => Err(format!("{}: {e}", hotspot::KEYFILE)),
+    }
+}
+
+/// A change while the hotspot runs restarts it, so clients join again with
+/// the new name or password.
+fn hotspot_edit(change: impl FnOnce(&mut Profile)) -> Result<(), String> {
+    let mut p = load_hotspot()?;
+    change(&mut p);
+    save_hotspot(&p)?;
+    if gh0st_core::status::hotspot() {
+        nmcli(&["--wait", "30", "connection", "up", hotspot::CONN])?;
+    }
+    Ok(())
+}
+
+/// Taking wlan0 for the access point leaves the Wi-Fi network; turning it
+/// off lets NetworkManager rejoin a saved one by itself.
+fn hotspot_on(on: bool) -> Result<(), String> {
+    if !on {
+        return nmcli(&["--wait", "20", "connection", "down", hotspot::CONN]);
+    }
+    load_hotspot()?;
+    rfkill::set(Radio::Wlan, false).map_err(|e| format!("/dev/rfkill: {e}"))?;
+    nmcli(&["radio", "wifi", "on"])?;
+    nmcli(&["--wait", "30", "connection", "up", hotspot::CONN])
 }
 
 /// A NetworkManager drop-in of ours, then a reload so the next connection
@@ -680,6 +788,44 @@ fn act(v: Verb) -> Result<(), String> {
         Verb::SetupFinish => setup_finish(),
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
         Verb::UsbPower(on) => usb_power(on),
+        Verb::WifiPowersave(on) => {
+            write_nm(
+                sysconf::NM_POWERSAVE_DROPIN,
+                &sysconf::wifi_powersave_conf(on),
+            )?;
+            // The link up now takes it at once. An access point has none.
+            if !gh0st_core::status::is_ap(hotspot::IFACE) {
+                let _ = run(&[
+                    "iw",
+                    "dev",
+                    hotspot::IFACE,
+                    "set",
+                    "power_save",
+                    if on { "on" } else { "off" },
+                ]);
+            }
+            Ok(())
+        }
+        Verb::Hotspot(on) => hotspot_on(on),
+        Verb::HotspotName(name) => hotspot_edit(|p| p.name = name),
+        Verb::HotspotPassword => {
+            let mut new = auth::read_password();
+            let r = match String::from_utf8(std::mem::take(&mut new)) {
+                Ok(psk) if hotspot::valid_password(&psk) => hotspot_edit(|p| p.psk = psk),
+                Ok(mut psk) => {
+                    // SAFETY: zeroes keep the string valid UTF-8.
+                    gh0st_core::password::wipe(unsafe { psk.as_bytes_mut() });
+                    Err("8 to 63 letters, digits or symbols, no spaces".into())
+                }
+                Err(e) => {
+                    gh0st_core::password::wipe(&mut e.into_bytes());
+                    Err("8 to 63 letters, digits or symbols, no spaces".into())
+                }
+            };
+            auth::wipe(&mut new);
+            r
+        }
+        Verb::HotspotSecurity(s) => hotspot_edit(|p| p.security = s),
         Verb::Power(reboot) => run(&["systemctl", if reboot { "reboot" } else { "poweroff" }]),
         Verb::UpdateCheck => run(&[
             "systemctl",
@@ -773,8 +919,9 @@ pub fn main(args: &[String]) -> i32 {
              swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | set-time EPOCH | ntp on|off | \
              mac random|stable|device | scan-mac random|device | dhcp-hostname on|off | \
              ip6-privacy on|off | rfkill bluetooth|wlan on|off | usb-power on|off | \
-             power off|reboot | update-check | update-install | update-stop | \
-             update-auto on|off | update-channel stable|edge | apt-clean | \
+             wifi-powersave on|off | hotspot on|off | hotspot name NAME | hotspot password | \
+             hotspot security wpa3|mixed | power off|reboot | update-check | update-install | \
+             update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
              user-create NAME | setup-finish"
         );
         return 2;
@@ -878,7 +1025,49 @@ mod tests {
             Some(Verb::UpdateChannel(true))
         );
         assert_eq!(parse(&args("apt-clean")), Some(Verb::AptClean));
+        assert_eq!(
+            parse(&args("wifi-powersave off")),
+            Some(Verb::WifiPowersave(false))
+        );
+        assert_eq!(parse(&args("hotspot on")), Some(Verb::Hotspot(true)));
+        assert_eq!(parse(&args("hotspot off")), Some(Verb::Hotspot(false)));
+        assert_eq!(
+            parse(&args("hotspot name zero-abcd")),
+            Some(Verb::HotspotName("zero-abcd".into()))
+        );
+        assert_eq!(
+            parse(&["hotspot".into(), "name".into(), "Галя WiFi".into()]),
+            Some(Verb::HotspotName("Галя WiFi".into()))
+        );
+        assert_eq!(
+            parse(&args("hotspot password")),
+            Some(Verb::HotspotPassword)
+        );
+        assert_eq!(
+            parse(&args("hotspot security mixed")),
+            Some(Verb::HotspotSecurity(Security::Mixed))
+        );
         for bad in [
+            vec!["hotspot", "name", ""],
+            vec!["hotspot", "name", &"a".repeat(33)],
+            vec!["hotspot", "name", "new\nline"],
+            vec!["hotspot", "name", " lead"],
+        ] {
+            let a: Vec<String> = bad.iter().map(|s| s.to_string()).collect();
+            assert_eq!(parse(&a), None, "{bad:?}");
+        }
+        for bad in [
+            "hotspot",
+            "hotspot maybe",
+            "hotspot on now",
+            "hotspot name",
+            "hotspot name a b",
+            "hotspot password hunter22",
+            "hotspot security wpa2",
+            "hotspot security open",
+            "hotspot security",
+            "wifi-powersave",
+            "wifi-powersave 2",
             "",
             "logs",
             "logs /etc/passwd",
@@ -960,6 +1149,12 @@ mod tests {
             ("ip6-privacy on", true),
             ("rfkill wlan on", false),
             ("usb-power on", false),
+            ("wifi-powersave on", false),
+            ("hotspot on", false),
+            ("hotspot off", false),
+            ("hotspot name zero", false),
+            ("hotspot password", false),
+            ("hotspot security wpa3", false),
             ("power off", false),
             ("user-create alex", false),
             ("setup-finish", false),

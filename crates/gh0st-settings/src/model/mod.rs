@@ -44,6 +44,10 @@ pub enum PageId {
     Look,
     /// The time zones of the Wi-Fi country, then Other for every region.
     CountryZones,
+    /// An access point in place of the Wi-Fi connection.
+    Hotspot,
+    /// The hotspot's QR code, name and password, for joining it.
+    HotspotQr,
 }
 
 /// A value a row changes in place: Enter flips a toggle, Z and C step the rest.
@@ -86,6 +90,10 @@ pub enum Setting {
     UpdateDaily,
     /// Stable or Edge.
     UpdateChannel,
+    /// Wi-Fi power saving, on the Wi-Fi page.
+    WifiPowersave,
+    Hotspot,
+    HotspotSecurity,
 }
 
 /// A value picked on its own page, each option with a note. The gated
@@ -128,6 +136,8 @@ pub enum Command {
     CheckUpdates,
     /// `apt-get clean`.
     ClearDownloads,
+    HotspotName,
+    HotspotPassword,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -154,7 +164,12 @@ pub enum Value {
     Toggle(bool),
     Choice(String),
     Level(u8),
-    Signal { level: u8, secure: bool },
+    Signal {
+        level: u8,
+        secure: bool,
+    },
+    /// A row that can't be used now, drawn faint with why.
+    Off(&'static str),
 }
 
 pub struct Item {
@@ -188,6 +203,11 @@ pub enum Body {
     List(Vec<Item>),
     /// Readouts with no cursor: Up and Down scroll.
     Info(Vec<Line>),
+    /// A QR code and labelled values beside it.
+    Qr {
+        text: String,
+        lines: Vec<(String, String)>,
+    },
 }
 
 pub struct Page {
@@ -202,6 +222,7 @@ impl Page {
         match &self.body {
             Body::List(items) => items.len(),
             Body::Info(lines) => lines.len(),
+            Body::Qr { .. } => 0,
         }
     }
 
@@ -212,7 +233,7 @@ impl Page {
     pub fn item(&self, i: usize) -> Option<&Item> {
         match &self.body {
             Body::List(items) => items.get(i),
-            Body::Info(_) => None,
+            Body::Info(_) | Body::Qr { .. } => None,
         }
     }
 }
@@ -291,6 +312,11 @@ pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor) {
             for (slot, i) in (cur.top..items.len()).take(n).enumerate() {
                 let it = &items[i];
                 let r = Rect::new(area.x, area.y + slot as i32 * t.m.row_h, w, t.m.row_h);
+                if let Value::Off(why) = it.value {
+                    let icon = it.icon.unwrap_or("");
+                    widgets::disabled_row(c, t, r, icon, &it.label, why);
+                    continue;
+                }
                 widgets::list_row(c, t, r, &row(t, it), i == cur.selected);
             }
             let track = Rect::new(area.x, area.y, w, area.h);
@@ -311,12 +337,21 @@ pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor) {
             let track = Rect::new(area.x, area.y, w, area.h);
             widgets::scrollbar(c, t, track, cur.top, n, lines_.len());
         }
+        Body::Qr { text, lines } => {
+            let lines: Vec<(&str, &str)> = lines
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            if !widgets::qr_card(c, t, widgets::body(t), text, &lines) {
+                widgets::text_centre(c, t.f.body, widgets::content(t), "Too long", t.c.muted);
+            }
+        }
     }
 }
 
 fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
     let trailing = match &it.value {
-        Value::None => Trailing::None,
+        Value::None | Value::Off(_) => Trailing::None,
         Value::Chevron => Trailing::Chevron,
         Value::Text(s) => Trailing::Value(s),
         Value::TextChevron(s) => Trailing::ValueChevron(s),
@@ -341,12 +376,20 @@ fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
 /// middle on 6; two go apart on 5 and 7, a pair's back one on the left.
 pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Chip, Key)> {
     let mut v = Vec::new();
+    // While the hotspot runs, the Wi-Fi page has nothing to scan or forget.
+    let hotspot = page
+        .item(1)
+        .is_some_and(|i| i.act == Act::Open(PageId::Hotspot));
     match id {
+        PageId::Wifi if hotspot => {}
         PageId::Wifi | PageId::Bluetooth => {
             let scan = if *id == PageId::Wifi { 'r' } else { 's' };
             v.push((5, Chip::new("refresh-cw", "Scan"), Key::Char(scan)));
             let forget = Chip::new("trash-2", "Forget").danger();
             v.push((7, forget, Key::Backspace));
+        }
+        PageId::Hotspot => {
+            v.push((6, Chip::new("refresh-cw", "Reload"), Key::Char('r')));
         }
         PageId::Apps if !moving => {
             v.push((6, Chip::new("arrow-up-down", "Move"), Key::Char('m')));
@@ -384,6 +427,7 @@ pub fn icon(id: &PageId) -> &'static str {
         PageId::Country(_) => "globe",
         PageId::Privacy => "shield",
         PageId::Updates => "download",
+        PageId::Hotspot | PageId::HotspotQr => "radio-tower",
         PageId::Look => "palette",
         PageId::About => "info",
         _ => "settings",

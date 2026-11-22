@@ -187,6 +187,8 @@ pub enum JobEvent {
 }
 
 pub(crate) enum Request {
+    /// Work keys wait for, and what to call it; `None` when it ends.
+    Busy(Option<String>),
     Push(Box<dyn Page>),
     Back,
     Done,
@@ -367,6 +369,20 @@ impl Cx<'_> {
     /// an error.
     pub fn toast_tone(&mut self, tone: Tone, text: &str) {
         self.s.requests.push(Request::Toast(text.to_string(), tone));
+    }
+
+    /// Work the user waits for: a root helper, a radio. After a moment the
+    /// page dims under a card with `text` and a moving bar, and keys wait.
+    /// Esc hides the card; the work goes on. Call [`Cx::idle`] when it ends,
+    /// then say how it went with a toast. A change that is done sooner never
+    /// shows the card.
+    pub fn busy(&mut self, text: &str) {
+        self.s.requests.push(Request::Busy(Some(text.to_string())));
+    }
+
+    /// The work [`Cx::busy`] named has ended.
+    pub fn idle(&mut self) {
+        self.s.requests.push(Request::Busy(None));
     }
 
     /// Opens a dialog over the page. It takes every key until Enter, Esc or

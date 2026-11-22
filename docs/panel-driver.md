@@ -17,7 +17,6 @@ cd os/kernel/panel-mipi-dbi-m && sudo ./install.sh   # on the device, then reboo
 | fbdev write to send | 50 ms | 6.6 ms |
 | Frames of a 7-frame glide shown | 2 to 3 | 7 |
 | Full-frame prep | 6.7 ms | 1.3 ms |
-| Blind A/B, which tears less | lost 5 of 5 | won 5 of 5 |
 
 ## How it works
 
@@ -85,11 +84,7 @@ how many sends led, trailed or slept, and the phase of the last send.
 
 ```sh
 GH0ST_HOST=pi@<device> scripts/tear-test.sh 10   # scrolling stripes; a tear is a vertical seam
-GH0ST_HOST=pi@<device> scripts/ab-test.sh 5 6    # blind A/B of a driver parameter
 ```
-
-`AB_PARAM`, `AB_OLD` and `AB_NEW` pick the parameter for the A/B. The default compares `te=0` with
-`te=1`.
 
 ### Uninstall
 

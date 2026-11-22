@@ -17,6 +17,8 @@ pub enum Net {
     /// Signal 0-4 bars.
     Wifi(u8),
     Ethernet,
+    /// This device is the access point.
+    Hotspot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +143,21 @@ pub fn text_right(c: &mut Canvas, f: Font, right: i32, r: Rect, s: &str, color: 
     right - w
 }
 
+/// As [`text_right`], but no wider than `max`: past it the text is cut.
+fn value_right(
+    c: &mut Canvas,
+    f: Font,
+    right: i32,
+    r: Rect,
+    s: &str,
+    color: Color,
+    max: i32,
+) -> i32 {
+    let w = f.measure(s).min(max);
+    text_in(c, f, Rect::new(right - w, r.y, w, r.h), s, color);
+    right - w
+}
+
 pub fn text_centre(c: &mut Canvas, f: Font, r: Rect, s: &str, color: Color) {
     let w = f.measure(s).min(r.w);
     text_in(c, f, Rect::new(r.x + (r.w - w) / 2, r.y, w, r.h), s, color);
@@ -185,6 +202,11 @@ fn draw_status(c: &mut Canvas, t: &Theme, s: &Status, bluetooth: bool) -> bool {
         Net::None => {
             x -= 12;
             icon::draw(c, "wifi-off", IconSize::Tiny, x, inner.y + 2, t.c.muted);
+            x -= 8;
+        }
+        Net::Hotspot => {
+            x -= 12;
+            icon::draw(c, "radio-tower", IconSize::Tiny, x, inner.y + 2, t.c.fg);
             x -= 8;
         }
     }
@@ -542,10 +564,11 @@ fn chip_ink_w(t: &Theme, ch: &Chip) -> i32 {
     } else {
         t.f.small_bold.measure(ch.word) + busy
     };
-    match (ch.icon.is_empty(), ch.word.is_empty()) {
-        (false, true) => IconSize::Tiny as i32,
-        (true, _) => word,
-        (false, false) => IconSize::Tiny as i32 + 3 + word,
+    // A word stands alone; only a chip with none shows its icon.
+    if ch.word.is_empty() && !ch.icon.is_empty() {
+        IconSize::Tiny as i32
+    } else {
+        word
     }
 }
 
@@ -596,12 +619,10 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
 /// action bar is the screen's edge, right over the key. Pressed, the bar
 /// thickens and the ink drops a row, as a key does.
 pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
-    let red = matches!(ch.look, Look::Danger | Look::DangerMain | Look::Hold(_));
-    // A word is never cut: short of room, a chip drops its icon first. A
-    // red chip says it in its word alone.
-    let tight = chip_ink_w(t, ch) + 2 * t.m.chip_pad_min > w;
+    // A chip with a word shows the word alone: at the Label size an icon and
+    // a word don't fit a key. Only a chip with no word shows its icon.
     let bare;
-    let ch = if (tight || red) && !ch.icon.is_empty() && !ch.word.is_empty() {
+    let ch = if !ch.icon.is_empty() && !ch.word.is_empty() {
         bare = Chip { icon: "", ..*ch };
         &bare
     } else {
@@ -936,10 +957,20 @@ pub fn app_row_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selec
     if item.note.is_empty() {
         text_in(c, name, Rect::new(x, r.y, right - x, r.h), item.label, col);
     } else {
-        name.draw_elided(c, x, r.y + 15, item.label, right - x, col);
+        let (y1, y2) = two_lines(t, r, name);
+        name.draw_elided(c, x, y1, item.label, right - x, col);
         t.f.small
-            .draw_elided(c, x, r.y + 29, item.note, right - x, t.c.muted);
+            .draw_elided(c, x, y2, item.note, right - x, t.c.muted);
     }
+}
+
+/// Baselines for a label and a Caption note under it, centred as one block
+/// on their capitals. The gap leaves room for the label's descenders.
+fn two_lines(t: &Theme, r: Rect, label: Font) -> (i32, i32) {
+    let gap = 6;
+    let block = label.cap() + gap + t.f.small.cap();
+    let top = r.y + (r.h - block) / 2;
+    (top + label.cap(), top + block)
 }
 
 /// A switcher card: a large badge, the name, and one short line under it.
@@ -1174,17 +1205,21 @@ fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: 
     }
     let mut right = r.right() - 8;
     let muted = t.c.muted;
+    // A value gives way to the label: the label keeps its width, and a
+    // value too long for the rest is cut, down to a floor.
+    let label_f = if selected { t.f.body_bold } else { t.f.body };
+    let value_max = |right: i32| (right - x - label_f.measure(row.label) - 12).max(48);
     match row.trailing {
         Trailing::None => {}
         Trailing::Chevron => {
             right = chevron(c, right, r, muted);
         }
         Trailing::Value(v) => {
-            right = text_right(c, t.f.small, right, r, v, muted) - 8;
+            right = value_right(c, t.f.small, right, r, v, muted, value_max(right)) - 8;
         }
         Trailing::ValueChevron(v) => {
-            right = chevron(c, right, r, muted);
-            right = text_right(c, t.f.small, right - 3, r, v, muted) - 8;
+            right = chevron(c, right, r, muted) - 3;
+            right = value_right(c, t.f.small, right, r, v, muted, value_max(right)) - 8;
         }
         Trailing::Toggle(on) => {
             right = toggle(c, t, right, r, on) - 8;
@@ -1294,11 +1329,41 @@ pub fn section(c: &mut Canvas, t: &Theme, r: Rect, label: &str) {
     );
 }
 
+/// A QR code for a phone camera on the left of `r`, as large as it allows,
+/// and labelled values beside it for when there is no camera. Values are in
+/// mono, so `l` and `1` read apart. False when the text is too long.
+pub fn qr_card(c: &mut Canvas, t: &Theme, r: Rect, text: &str, lines: &[(&str, &str)]) -> bool {
+    let Some(code) = crate::qr::Qr::new(text) else {
+        return false;
+    };
+    let (_, side) = code.fit(r.h - 2 * t.m.margin_v);
+    let x = r.x + t.m.margin + 3;
+    code.draw(c, x, r.y + (r.h - side) / 2, side);
+    let tx = x + side + 12;
+    let tw = r.right() - t.m.margin - 3 - tx;
+    let value_h = 18;
+    let pair_h = t.m.field_label_h + value_h;
+    let mut y = r.y + (r.h - lines.len() as i32 * pair_h) / 2;
+    for (label, value) in lines {
+        text_in(
+            c,
+            t.f.small,
+            Rect::new(tx, y, tw, t.m.field_label_h),
+            label,
+            t.c.muted,
+        );
+        let vr = Rect::new(tx, y + t.m.field_label_h, tw, value_h);
+        text_in(c, t.f.mono, vr, value, t.c.fg);
+        y += pair_h;
+    }
+    true
+}
+
 /// Label on the left in sans, value on the right in mono: a readout.
 pub fn readout(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: &str) {
     let x = r.x + 9;
-    text_in(c, t.f.small, Rect::new(x, r.y, 66, r.h), label, t.c.muted);
-    let vx = x + 68;
+    text_in(c, t.f.small, Rect::new(x, r.y, 76, r.h), label, t.c.muted);
+    let vx = x + 78;
     text_in(
         c,
         t.f.mono,
@@ -1639,6 +1704,21 @@ pub fn stepper(c: &mut Canvas, t: &Theme, r: Rect, steps: &[&str], current: usiz
     }
 }
 
+/// Work that keys wait for: the page dimmed, a card that says what is
+/// happening, and a segment moving along a bar at `phase` (0 to 255).
+pub fn busy(c: &mut Canvas, t: &Theme, area: Rect, text: &str, phase: u8) {
+    scrim(c, t, area);
+    let w = t.m.width - 88;
+    let h = card_h(t, 4);
+    let r = Rect::new((t.m.width - w) / 2, area.y + (area.h - h).max(0) / 2, w, h);
+    let body = card(c, t, r, text, t.c.accent);
+    let bar = Rect::new(body.x, body.y, body.w, 4);
+    c.round_rect(bar, 2, t.c.border);
+    let seg = bar.w / 4;
+    let x = bar.x + (bar.w - seg) * phase as i32 / 255;
+    c.round_rect(Rect::new(x, bar.y, seg, bar.h), 2, t.c.accent);
+}
+
 /// A row that can't be used now: icon and label in `disabled`, and why on
 /// its right.
 pub fn disabled_row(c: &mut Canvas, t: &Theme, r: Rect, icon_name: &str, label: &str, why: &str) {
@@ -1662,7 +1742,6 @@ pub fn note_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, note: &str, selec
     if selected {
         row_selection(c, t, r);
     }
-    let top = Rect::new(r.x, r.y + 2, r.w, 16);
     let body = Row { label: "", ..*row };
     row_body(c, t, r, &body, selected, false);
     let x = r.x
@@ -1675,9 +1754,9 @@ pub fn note_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, note: &str, selec
     let right = r.right() - 8 - trailing_w(t, &row.trailing);
     let f = if selected { t.f.body_bold } else { t.f.body };
     let col = if selected { t.c.fg } else { soft(t) };
-    text_in(c, f, Rect::new(x, top.y, right - x, top.h), row.label, col);
-    let nr = Rect::new(x, r.y + 17, right - x, 13);
-    text_in(c, t.f.small, nr, note, t.c.muted);
+    let (y1, y2) = two_lines(t, r, f);
+    f.draw_elided(c, x, y1, row.label, right - x, col);
+    t.f.small.draw_elided(c, x, y2, note, right - x, t.c.muted);
 }
 
 /// About how wide a row's right side draws, so a second line stops short.

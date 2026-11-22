@@ -343,8 +343,9 @@ impl Page for Counter {
   keys; the bar is for the actions nobody would guess.
 - **4 is Esc** and has no chip. **8 is the menu**, an icon-only chip the SDK
   adds. `.no_menu()` drops it for a page under its own menu.
-- **One word.** Five letters or fewer keep the icon on a full bar. A word is
-  never cut: short of room, the chip drops its icon.
+- **One word**, 54 px at most in Label style: Reload fits, Refresh
+  doesn't. A chip shows its word alone; the icon shows only on a chip with
+  no word, such as the menu's.
 - **Looks.** `.danger()` for taking something away, `.hold()` for loss that
   can't be undone (it runs only after its key is held 0.7 s), `.armed(true)`
   for a press-again step, `.on(true)` for a toggle that is on, `.main()` for
@@ -523,6 +524,7 @@ margins, fonts and colours:
 | `message` | An icon and a line, centred, for an empty or waiting state |
 | `notice` | An icon in a tone, a line, a note and the keys that act: empty lists, errors |
 | `progress` | A labelled bar, or a moving segment while the end isn't known |
+| `qr` | A QR code for a phone camera, with labelled values beside it |
 | `space` | A gap, in pixels |
 
 For anything else, draw pixels yourself. `ui.area()` is the page's rect in
@@ -590,6 +592,11 @@ impl Page for Volume {
     }
 }
 ```
+
+Work the user waits for, such as a root helper, gets `cx.busy("Applying…")`
+and `cx.idle()` when it ends. After 0.3 s the page dims under a card with
+that text, and keys wait until `idle`, so a second press can't start it
+again; Esc hides the card. Quicker work never shows it.
 
 `cx.after(ms)` fires `timer` once. `cx.every(ms)` fires it until
 `cx.cancel(timer)`. Each firing wakes the CPU, so keep timers for things on

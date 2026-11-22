@@ -684,11 +684,11 @@ mod tests {
     fn list_scrolls_only_when_the_selection_leaves_the_screen() {
         let mut h = home(&TEN, Layout::List);
         let rows = h.per_screen();
-        assert_eq!(rows, 4);
-        h.move_by(0, 3, 0);
+        assert_eq!(rows, 3);
+        h.move_by(0, 2, 0);
         assert_eq!(h.top, 0);
         h.move_by(0, 1, 0);
-        assert_eq!((h.selected, h.top), (4, 1));
+        assert_eq!((h.selected, h.top), (3, 1));
         h.move_by(-1, 0, 0);
         assert_eq!((h.selected, h.top), (0, 0));
     }

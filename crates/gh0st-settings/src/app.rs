@@ -18,6 +18,7 @@ use gh0st_app::{codes, system};
 use gh0st_core::apps::{self, Dirs, Layout};
 use gh0st_core::backlight::Backlight;
 use gh0st_core::config::{self, Config};
+use gh0st_core::hotspot;
 use gh0st_core::sysconf::{self, CpuMode, GpuMem};
 use gh0st_core::{desktop, rfkill, rt};
 use std::collections::HashMap;
@@ -53,6 +54,8 @@ enum Ask {
     DeviceName,
     Swap,
     DateTime,
+    HotspotName,
+    HotspotPassword,
 }
 
 /// Settings as one step of first-boot setup: one page with its label in the
@@ -95,6 +98,27 @@ impl HelperCall {
             done: done.into(),
             restart: false,
         }
+    }
+}
+
+/// What the busy card says while a change the user made is applied. A join
+/// has its own word in its row and can take 45 s, and setup's own unblock
+/// must not hold its Skip, so neither gets one.
+fn busy_label(kind: &NetJob) -> Option<&'static str> {
+    match kind {
+        NetJob::Helper(call) => {
+            let args: Vec<&str> = call.args.iter().map(String::as_str).collect();
+            Some(match args.as_slice() {
+                ["hotspot", "on"] => "Starting the hotspot\u{2026}",
+                ["hotspot", "off"] => "Stopping the hotspot\u{2026}",
+                ["hotspot", ..] => "Saving\u{2026}",
+                _ => "Applying\u{2026}",
+            })
+        }
+        NetJob::SetRadio | NetJob::TimeSet(_) | NetJob::BtPower | NetJob::BtUnblock => {
+            Some("Applying\u{2026}")
+        }
+        _ => None,
     }
 }
 
@@ -141,6 +165,10 @@ enum NetJob {
     ConnUp(String),
     ConnDelete(String),
     Volume,
+    /// The hotspot's name, password and security, from nmcli.
+    HotspotQuery,
+    /// `iw dev wlan0 station dump`: who has joined the hotspot.
+    Stations,
     /// Its answer doesn't matter: `wpctl set-volume`, a leftover delete.
     Ignore,
 }
@@ -241,11 +269,20 @@ impl Settings {
 
     fn run(&mut self, cx: &mut Cx, kind: NetJob, argv: &[&str]) {
         let job = cx.spawn(argv);
-        self.jobs.insert(job, (kind, String::new()));
+        self.track(cx, job, kind);
     }
 
     fn run_with(&mut self, cx: &mut Cx, kind: NetJob, argv: &[&str], input: &[u8]) {
         let job = cx.spawn_with_input(argv, input);
+        self.track(cx, job, kind);
+    }
+
+    /// Keeps a job's output until it ends. A change the user waits for puts
+    /// up the busy card; it goes when the last one ends (see `job`).
+    fn track(&mut self, cx: &mut Cx, job: Job, kind: NetJob) {
+        if let Some(text) = busy_label(&kind) {
+            cx.busy(text);
+        }
         self.jobs.insert(job, (kind, String::new()));
     }
 
@@ -305,6 +342,7 @@ impl Settings {
             .get_int("gh0st.lock.after")
             .unwrap_or(DEFAULT_LOCK_AFTER);
         s.dark_wifi = config.get_int("gh0st.dark.wifi_off").filter(|&t| t >= 0);
+        s.hotspot.on = gh0st_core::status::hotspot();
         let (y, mon, d, h, min) = rt::local_ymdhm();
         s.now = format!("{y}-{mon:02}-{d:02} {h:02}:{min:02}");
     }
@@ -370,6 +408,9 @@ impl Settings {
                 if let PageId::Conn(name) = &id {
                     self.query_conn(cx, name);
                 }
+                if matches!(id, PageId::Hotspot | PageId::HotspotQr) {
+                    self.query_hotspot(cx);
+                }
                 if matches!(id, PageId::System | PageId::Advanced | PageId::Swap) {
                     self.query_advanced(cx);
                 }
@@ -378,7 +419,7 @@ impl Settings {
                 // A picker opens on the option in use.
                 let here = match &self.view.body {
                     Body::List(items) => items.iter().position(|i| i.icon == Some("check")),
-                    Body::Info(_) => None,
+                    Body::Info(_) | Body::Qr { .. } => None,
                 };
                 if let Some(i) = here {
                     self.cursor_mut().selected = i;
@@ -770,7 +811,59 @@ impl Settings {
                     );
                 }
             }
+            Setting::WifiPowersave => {
+                let (arg, done) = match self.state.nm.wifi_powersave {
+                    true => ("off", "Power saving off"),
+                    false => ("on", "Power saving on"),
+                };
+                self.helper(cx, &["wifi-powersave", arg], done);
+            }
+            Setting::Hotspot => {
+                let h = &mut self.state.hotspot;
+                if h.busy.is_some() {
+                    return;
+                }
+                let on = !h.on;
+                h.busy = Some(if on {
+                    "Starting\u{2026}"
+                } else {
+                    "Stopping\u{2026}"
+                });
+                let (arg, done) = match on {
+                    true => ("on", "Hotspot on. Wi-Fi is off while it runs"),
+                    false => ("off", "Hotspot off"),
+                };
+                self.helper(cx, &["hotspot", arg], done);
+            }
+            Setting::HotspotSecurity => {
+                let all = hotspot::Security::ALL;
+                let now = all.iter().position(|s| *s == self.state.hotspot.security);
+                let next = all[cycle(now.unwrap_or(0), d, all.len())];
+                let done = format!("Security: {}", next.label());
+                self.helper(cx, &["hotspot", "security", next.verb()], &done);
+            }
             _ => cx.toast("Not available yet"),
+        }
+    }
+
+    /// The hotspot's profile, and while it runs, its clients.
+    fn query_hotspot(&mut self, cx: &mut Cx) {
+        let argv = [
+            "nmcli",
+            "-s",
+            "-t",
+            "-f",
+            "802-11-wireless.ssid,802-11-wireless-security.psk,802-11-wireless-security.key-mgmt",
+            "connection",
+            "show",
+            hotspot::CONN,
+        ];
+        self.run(cx, NetJob::HotspotQuery, &argv);
+        if self.state.hotspot.on {
+            let argv = ["iw", "dev", hotspot::IFACE, "station", "dump"];
+            self.run(cx, NetJob::Stations, &argv);
+        } else {
+            self.state.hotspot.clients = None;
         }
     }
 
@@ -800,6 +893,26 @@ impl Settings {
             Command::OpenUpdates => cx.open("update"),
             Command::CheckUpdates => self.helper(cx, &["update-check"], "Checking for updates"),
             Command::ClearDownloads => self.helper(cx, &["apt-clean"], "Downloads cleared"),
+            Command::HotspotName => self.ask(
+                Dialog::Text {
+                    title: "Hotspot name".into(),
+                    placeholder: "1 to 32 characters",
+                    text: self.state.hotspot.name.clone().unwrap_or_default(),
+                    masked: false,
+                    secret: false,
+                },
+                Ask::HotspotName,
+            ),
+            Command::HotspotPassword => self.ask(
+                Dialog::Text {
+                    title: "Hotspot password".into(),
+                    placeholder: "8 or more, no spaces",
+                    text: String::new(),
+                    masked: true,
+                    secret: true,
+                },
+                Ask::HotspotPassword,
+            ),
             Command::JoinHidden => self.ask(
                 Dialog::Text {
                     title: "Hidden network".into(),
@@ -1018,6 +1131,23 @@ impl Settings {
                 }
             }
             Ask::Swap => self.set_swap(cx, text.trim()),
+            Ask::HotspotName => {
+                let name = text.trim();
+                if let Some(why) = hotspot::name_problem(name) {
+                    cx.toast(why);
+                } else if self.state.hotspot.name.as_deref() != Some(name) {
+                    let done = format!("Name: {name}");
+                    self.helper(cx, &["hotspot", "name", name], &done);
+                }
+            }
+            Ask::HotspotPassword => match hotspot::password_problem(&text) {
+                Some(why) => cx.toast(why),
+                // On stdin, as a password verb's would be: never in argv.
+                None => {
+                    let call = HelperCall::new(&["hotspot", "password"], "Password saved");
+                    self.helper_with_password(cx, call, &mut text);
+                }
+            },
             Ask::DateTime => {
                 let epoch = pages::parse_date_time(&text)
                     .and_then(|(y, mon, d, h, min)| rt::local_epoch(y, mon, d, h, min));
@@ -1166,6 +1296,10 @@ impl Settings {
                 self.run_command(Command::CheckUpdates, cx);
                 true
             }
+            PageId::Hotspot if k == Key::Char('r') => {
+                self.query_hotspot(cx);
+                true
+            }
             PageId::Wifi if k == Key::Char('r') => {
                 self.query_net(cx, true);
                 cx.toast("Scanning\u{2026}");
@@ -1209,7 +1343,7 @@ impl Settings {
                 let label = c.to_ascii_uppercase().to_string();
                 let found = match &self.view.body {
                     Body::List(items) => items.iter().position(|i| i.label == label),
-                    Body::Info(_) => None,
+                    Body::Info(_) | Body::Qr { .. } => None,
                 };
                 if let Some(i) = found {
                     let per = page_rows(cx.theme(), &self.view);
@@ -1258,7 +1392,7 @@ impl Settings {
         let mut argv = vec!["pkexec", HELPER];
         argv.extend(call.args.iter().map(String::as_str));
         let job = cx.spawn(&argv);
-        self.jobs.insert(job, (NetJob::Helper(call), String::new()));
+        self.track(cx, job, NetJob::Helper(call));
     }
 
     /// The same call again, with the password on stdin.
@@ -1267,7 +1401,7 @@ impl Settings {
         argv.extend(call.args.iter().map(String::as_str));
         let mut input = format!("{password}\n");
         let job = cx.spawn_with_input(&argv, input.as_bytes());
-        self.jobs.insert(job, (NetJob::Helper(call), String::new()));
+        self.track(cx, job, NetJob::Helper(call));
         wipe(&mut input);
         wipe(password);
     }
@@ -1651,6 +1785,12 @@ impl Settings {
                         cx.toast(&why);
                     }
                 }
+                if call.args.first().map(String::as_str) == Some("hotspot") {
+                    self.state.hotspot.busy = None;
+                    self.state.hotspot.on = gh0st_core::status::hotspot();
+                    self.query_hotspot(cx);
+                    requery = true;
+                }
                 self.query_sys(cx);
                 self.query_advanced(cx);
             }
@@ -1710,6 +1850,14 @@ impl Settings {
             }
             NetJob::List if ok => st.networks = net::parse_list(&out, &st.profiles),
             NetJob::Devices if ok => st.ifaces = net::parse_devices(&out),
+            NetJob::HotspotQuery => {
+                // No profile yet: the helper makes one when it first turns on.
+                let (name, psk, security) = net::parse_hotspot(if ok { &out } else { "" });
+                st.hotspot.name = name;
+                st.hotspot.psk = psk;
+                st.hotspot.security = security;
+            }
+            NetJob::Stations if ok => st.hotspot.clients = Some(hotspot::stations(&out)),
             NetJob::Join { .. } => st.wifi_busy = None,
             NetJob::BtQuery => {
                 let (on, devices) = bt::parse_query(&out);
@@ -1922,6 +2070,9 @@ impl Page for Settings {
                 if let Some((kind, out)) = self.jobs.remove(&job) {
                     self.job_done(kind, out, code, cx);
                 }
+                if !self.jobs.values().any(|(k, _)| busy_label(k).is_some()) {
+                    cx.idle();
+                }
             }
         }
         self.flush(cx);
@@ -2020,7 +2171,7 @@ fn page_key_of(key: &str) -> Option<(&'static str, Key)> {
 fn page_rows(t: &Theme, view: &View) -> usize {
     match view.body {
         Body::List(_) => model::rows(t).1,
-        Body::Info(_) => model::lines(t).1,
+        Body::Info(_) | Body::Qr { .. } => model::lines(t).1,
     }
 }
 

@@ -5,10 +5,13 @@ Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
 Section: x11
 Priority: optional
 Depends: cpzeroos-panel-modules, xdg-user-dirs, network-manager, wireplumber,
- bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd, apt
+ bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd, apt,
+ iw, dnsmasq-base, nftables
 Description: Gh0stdeck, the CardputerZero shell and Settings
  The home screen, switcher and OS bars (gh0st shell), Settings
  (gh0st-settings), Updates (gh0st-update and the update engine) and the
  root helper. Static binaries; the Depends are the
  commands they run: nmcli, wpctl, bluetoothctl, rfkill, pkexec, vcgencmd,
- unix_chkpwd, passwd, and systemd's systemctl, timedatectl and hostnamectl.
+ unix_chkpwd, passwd, iw, and systemd's systemctl, timedatectl and
+ hostnamectl. dnsmasq-base and nftables are what NetworkManager's shared
+ mode runs for the hotspot: DHCP and DNS, and NAT.

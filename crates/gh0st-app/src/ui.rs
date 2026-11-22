@@ -68,19 +68,19 @@ impl<'a> Ui<'a> {
     /// A page heading.
     pub fn heading(&mut self, s: &str) {
         let t = self.t;
-        self.line(t.f.title, 24, s, t.c.fg);
+        self.line(t.f.title, 26, s, t.c.fg);
     }
 
     /// Body text, wrapped to the width.
     pub fn text(&mut self, s: &str) {
         let t = self.t;
-        self.wrapped(t.f.body, 18, s, t.c.fg);
+        self.wrapped(t.f.body, 21, s, t.c.fg);
     }
 
     /// Secondary text, smaller and softer, wrapped.
     pub fn note(&mut self, s: &str) {
         let t = self.t;
-        self.wrapped(t.f.small, 16, s, t.c.muted);
+        self.wrapped(t.f.small, 18, s, t.c.muted);
     }
 
     fn wrapped(&mut self, f: Font, h: i32, s: &str, color: Color) {
@@ -93,8 +93,9 @@ impl<'a> Ui<'a> {
     /// A small accent label over a group.
     pub fn section(&mut self, s: &str) {
         let (x, w) = self.inner();
-        widgets::section(self.c, self.t, Rect::new(x - 9, self.y, w + 9, 16), s);
-        self.y += 16;
+        let h = self.t.m.menu_head_h;
+        widgets::section(self.c, self.t, Rect::new(x - 9, self.y, w + 9, h), s);
+        self.y += h;
     }
 
     /// A label and a value in two columns.
@@ -103,11 +104,11 @@ impl<'a> Ui<'a> {
         widgets::readout(
             self.c,
             self.t,
-            Rect::new(x - 9, self.y, w + 9, 14),
+            Rect::new(x - 9, self.y, w + 9, self.t.m.line_h),
             label,
             value,
         );
-        self.y += 14;
+        self.y += self.t.m.line_h;
     }
 
     /// Empty space, in pixels.
@@ -229,6 +230,17 @@ impl<'a> Ui<'a> {
         let track = Rect::new(x, top, w, visible as i32 * row_h);
         widgets::scrollbar(self.c, t, track, first, visible, rows.len());
         self.y = top + visible.min(rows.len()) as i32 * row_h + t.m.margin_v;
+    }
+
+    /// A QR code for a phone camera on the left, as large as the rest
+    /// allows, and labelled values beside it for when there is no camera.
+    pub fn qr(&mut self, text: &str, lines: &[(&str, &str)]) {
+        let r = self.rest();
+        if !widgets::qr_card(self.c, self.t, r, text, lines) {
+            self.note("Too long for a QR code");
+            return;
+        }
+        self.y = r.bottom();
     }
 
     /// A text field, with a caret when `focused`.

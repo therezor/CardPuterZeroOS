@@ -2,6 +2,7 @@
 //! here; the shell runs nmcli as jobs. Ported from pt35-menu.
 
 use super::pages::{Iface, Network};
+use gh0st_core::hotspot::{self, Security as ApSecurity};
 
 /// One line of terse output split into fields. A `:` inside a field comes
 /// escaped as `\:`, and a backslash as `\\`.
@@ -102,14 +103,35 @@ pub fn parse_list(out: &str, saved: &[String]) -> Vec<Network> {
 }
 
 /// `nmcli -t -f NAME,TYPE connection show`: the Wi-Fi profiles' names, which
-/// NetworkManager sets to the network's name.
+/// NetworkManager sets to the network's name. The hotspot is not a network
+/// to join or forget.
 pub fn parse_profiles(out: &str) -> Vec<String> {
     out.lines()
         .filter_map(|l| {
             let f = fields(l);
-            (f.get(1).map(String::as_str) == Some("802-11-wireless")).then(|| f[0].clone())
+            (f.get(1).map(String::as_str) == Some("802-11-wireless") && f[0] != hotspot::CONN)
+                .then(|| f[0].clone())
         })
         .collect()
+}
+
+/// `nmcli -s -t -f 802-11-wireless.ssid,802-11-wireless-security.psk,
+/// 802-11-wireless-security.key-mgmt connection show gh0st-hotspot`.
+pub fn parse_hotspot(out: &str) -> (Option<String>, Option<String>, ApSecurity) {
+    let (mut name, mut psk, mut security) = (None, None, ApSecurity::default());
+    for line in out.lines() {
+        let f = fields(line);
+        let (Some(key), Some(v)) = (f.first(), f.get(1)) else {
+            continue;
+        };
+        match key.as_str() {
+            "802-11-wireless.ssid" if !v.is_empty() => name = Some(v.clone()),
+            "802-11-wireless-security.psk" if !v.is_empty() => psk = Some(v.clone()),
+            "802-11-wireless-security.key-mgmt" => security = ApSecurity::from_key_mgmt(v),
+            _ => {}
+        }
+    }
+    (name, psk, security)
 }
 
 /// `nmcli -t -f NAME,TYPE connection show`: every profile as (name, type).
@@ -119,7 +141,7 @@ pub fn parse_conns(out: &str) -> Vec<(String, String)> {
             let f = fields(l);
             Some((f.first()?.clone(), f.get(1)?.clone()))
         })
-        .filter(|(_, t)| t == "802-11-wireless" || t == "802-3-ethernet")
+        .filter(|(n, t)| (t == "802-11-wireless" && n != hotspot::CONN) || t == "802-3-ethernet")
         .collect()
 }
 
@@ -333,6 +355,30 @@ mod tests {
         assert!(!valid_ipv4("192.168.0/24", true));
         assert!(valid_ipv4("192.168.0.1", false));
         assert!(!valid_ipv4("192.168.0.1/24", false));
+    }
+
+    #[test]
+    fn the_hotspot_is_no_saved_network() {
+        let out = "Home:802-11-wireless\ngh0st-hotspot:802-11-wireless\nWired:802-3-ethernet\n";
+        assert_eq!(parse_profiles(out), ["Home"]);
+        let conns: Vec<String> = parse_conns(out).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(conns, ["Home", "Wired"]);
+    }
+
+    #[test]
+    fn the_hotspot_reads_its_name_password_and_security() {
+        let out = "802-11-wireless.ssid:zero-abcd\n802-11-wireless-security.psk:a\\:b\n\
+                   802-11-wireless-security.key-mgmt:sae\n";
+        let (name, psk, sec) = parse_hotspot(out);
+        assert_eq!(name.as_deref(), Some("zero-abcd"));
+        assert_eq!(psk.as_deref(), Some("a:b"));
+        assert_eq!(sec, ApSecurity::Wpa3);
+        let none = parse_hotspot("");
+        assert!(none.0.is_none() && none.1.is_none());
+        assert_eq!(
+            parse_hotspot("802-11-wireless-security.key-mgmt:wpa-psk\n").2,
+            ApSecurity::Mixed
+        );
     }
 
     #[test]

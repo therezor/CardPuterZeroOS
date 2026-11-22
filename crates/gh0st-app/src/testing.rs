@@ -165,6 +165,11 @@ impl Driver {
         self.rt.awake
     }
 
+    /// The busy card showing now, if any.
+    pub fn busy(&self) -> Option<&str> {
+        self.rt.busy_text()
+    }
+
     /// The toast showing now, if any.
     pub fn toast(&self) -> Option<&str> {
         self.rt.toast_text()

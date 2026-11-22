@@ -94,6 +94,11 @@ habit. It doesn't stop hostile ones.
 
 ## Settings: what comes next
 
+**Hotspot.** Built 2026-11-22 (`hotspot.md`). Still to come: turn it off
+when nobody has joined for a while (iw's station events, no polling), and
+its device checks. Its verbs are ungated, like the NetworkManager grant they
+stand beside; M3 gates both.
+
 In order. Each row names what it changes and whether it works on today's
 stock image. Rows marked "after M3" need the helper's password check, so
 their new verbs must be gated (`Verb::gated` in `helper.rs`).

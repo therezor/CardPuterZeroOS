@@ -8,8 +8,11 @@ use gh0st_app::gfx::snapshot::write_png;
 use gh0st_app::gfx::theme::{self, Theme};
 use gh0st_app::gfx::widgets::{self, Battery, Chip, Hint, Look, Net, Status};
 use gh0st_core::apps::Layout;
+use gh0st_core::hotspot::Security;
 use gh0st_core::sysconf::{self, GpuMem};
-use gh0st_settings::model::pages::{self, AppRow, Conn, Device, Iface, Logs, Network, State};
+use gh0st_settings::model::pages::{
+    self, AppRow, Conn, Device, Hotspot, Iface, Logs, Network, State,
+};
 use gh0st_settings::model::{self, Choice, Cursor, Dialog, PageId};
 use std::path::PathBuf;
 
@@ -88,6 +91,14 @@ fn sample_state() -> State {
                 ..Iface::default()
             },
         ],
+        hotspot: Hotspot {
+            on: false,
+            busy: None,
+            name: Some("zero-kfwm".into()),
+            psk: Some("kfwmtqzrapdh".into()),
+            security: Security::Wpa3,
+            clients: None,
+        },
         bt_on: true,
         bt_scanning: true,
         devices: vec![
@@ -130,6 +141,7 @@ fn sample_state() -> State {
             scan_random: true,
             send_hostname: false,
             ip6_privacy: true,
+            wifi_powersave: true,
         },
         lock_password: true,
         lock_after: 300,
@@ -173,6 +185,24 @@ fn sample_state() -> State {
     }
 }
 
+/// The hotspot running, two phones on it.
+fn hotspot_on() -> State {
+    let mut st = sample_state();
+    st.hotspot.on = true;
+    st.hotspot.clients = Some(2);
+    st.ifaces[0].connection = "gh0st-hotspot".into();
+    st.ifaces[0].ipv4 = "10.42.0.1/24".into();
+    st
+}
+
+/// Before the hotspot first turned on: no profile yet.
+fn hotspot_new() -> State {
+    let mut st = sample_state();
+    st.hotspot.name = None;
+    st.hotspot.psk = None;
+    st
+}
+
 /// One page as the device shows it: the bars the SDK draws, the page body
 /// and any dialog.
 fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dialog>) -> Canvas {
@@ -195,7 +225,11 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
             percent: 87,
             charging: false,
         }),
-        net: Net::Wifi(3),
+        net: if st.hotspot.on {
+            Net::Hotspot
+        } else {
+            Net::Wifi(3)
+        },
         bluetooth: st.bt_on,
         notices: 0,
     };
@@ -307,6 +341,70 @@ fn main() {
                 ),
                 ("network", s(PageId::Network, 0)),
                 ("connection", s(PageId::Conn("HomeNet".into()), 1)),
+                ("wifi-end", s(PageId::Wifi, 6)),
+                ("hotspot", s(PageId::Hotspot, 0)),
+                (
+                    "hotspot-on",
+                    scene(&t, &hotspot_on(), PageId::Hotspot, 0, None),
+                ),
+                (
+                    "hotspot-new",
+                    scene(&t, &hotspot_new(), PageId::Hotspot, 1, None),
+                ),
+                (
+                    "hotspot-name",
+                    scene(
+                        &t,
+                        &st,
+                        PageId::Hotspot,
+                        1,
+                        Some(Dialog::Text {
+                            title: "Hotspot name".into(),
+                            placeholder: "1 to 32 characters",
+                            text: "zero-kfwm".into(),
+                            masked: false,
+                            secret: false,
+                        }),
+                    ),
+                ),
+                (
+                    "hotspot-password",
+                    scene(
+                        &t,
+                        &st,
+                        PageId::Hotspot,
+                        2,
+                        Some(Dialog::Text {
+                            title: "Hotspot password".into(),
+                            placeholder: "8 or more, no spaces",
+                            text: "hunter22".into(),
+                            masked: true,
+                            secret: true,
+                        }),
+                    ),
+                ),
+                (
+                    "hotspot-qr",
+                    scene(&t, &hotspot_on(), PageId::HotspotQr, 0, None),
+                ),
+                ("hotspot-busy", {
+                    let mut c = scene(&t, &st, PageId::Hotspot, 0, None);
+                    let text = "Starting the hotspot\u{2026}";
+                    widgets::busy(&mut c, &t, widgets::body(&t), text, 90);
+                    c
+                }),
+                (
+                    "hotspot-root",
+                    scene(&t, &hotspot_on(), PageId::Root, 1, None),
+                ),
+                (
+                    "hotspot-wifi",
+                    scene(&t, &hotspot_on(), PageId::Wifi, 1, None),
+                ),
+                (
+                    "hotspot-network",
+                    scene(&t, &hotspot_on(), PageId::Network, 0, None),
+                ),
                 ("bluetooth", s(PageId::Bluetooth, 1)),
                 ("system", s(PageId::System, 4)),
                 ("advanced", s(PageId::Advanced, 0)),

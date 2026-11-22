@@ -9,8 +9,7 @@ use gh0st_app::gfx::widgets::{self, Hint, Message, Row, Trailing};
 use gh0st_app::gfx::{Canvas, Rect, Theme};
 use gh0st_app::prelude::*;
 
-/// Shown first while builds are pre-alpha (user, 2026-11-21). False drops
-/// the screen.
+/// Shown first while builds are pre-alpha. False drops the screen.
 pub const PRE_ALPHA: bool = true;
 
 /// The training's screens: eight lessons, then the reward.
@@ -88,7 +87,7 @@ impl Page for Notice {
             "triangle-alert",
             Tone::Warning,
             "A pre-alpha test build",
-            "It can be unstable,\nand the SDK and the design can still change.",
+            "It can be unstable,\nand the SDK and design may change.",
             &[("Enter", "go on")],
         );
     }

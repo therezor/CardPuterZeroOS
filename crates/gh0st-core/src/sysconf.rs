@@ -424,6 +424,7 @@ pub const NM_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-mac.conf";
 pub const NM_SCAN_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf";
 pub const NM_HOSTNAME_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-dhcp-hostname.conf";
 pub const NM_IP6_PRIVACY_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-ip6-privacy.conf";
+pub const NM_POWERSAVE_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-wifi-powersave.conf";
 const NM_HEADER: &str = "# Settings > Privacy.\n";
 
 /// The hardware address a connection shows the network.
@@ -487,6 +488,13 @@ pub fn ip6_privacy_conf(on: bool) -> String {
     format!("{NM_HEADER}[connection]\nipv6.ip6-privacy={v}\n")
 }
 
+/// Wi-Fi power saving for every connection: 3 on, 2 off. It applies from
+/// the next connection; the helper sets the running one with iw.
+pub fn wifi_powersave_conf(on: bool) -> String {
+    let v = if on { 3 } else { 2 };
+    format!("# Settings > Wi-Fi.\n[connection]\nwifi.powersave={v}\n")
+}
+
 /// NetworkManager's config files in the order it reads them; a later value
 /// wins.
 pub const NM_CONF_DIRS: [&str; 3] = [
@@ -506,11 +514,15 @@ pub struct NmPrivacy {
     pub scan_random: bool,
     pub send_hostname: bool,
     pub ip6_privacy: bool,
+    /// Not privacy, but read from the same files: Wi-Fi power saving, on
+    /// unless a file says 2 (brcmfmac turns it on by itself).
+    pub wifi_powersave: bool,
 }
 
 pub fn nm_privacy(files: &[String]) -> NmPrivacy {
     let mut wifi_mac = String::new();
     let (mut scan, mut v4_name, mut ip6) = (String::new(), String::new(), String::new());
+    let mut powersave = String::new();
     for text in files {
         let mut section = "";
         for line in text.lines() {
@@ -528,6 +540,7 @@ pub fn nm_privacy(files: &[String]) -> NmPrivacy {
                 ("device", "wifi.scan-rand-mac-address") => scan = v,
                 ("connection", "ipv4.dhcp-send-hostname") => v4_name = v,
                 ("connection", "ipv6.ip6-privacy") => ip6 = v,
+                ("connection", "wifi.powersave") => powersave = v,
                 _ => {}
             }
         }
@@ -541,6 +554,7 @@ pub fn nm_privacy(files: &[String]) -> NmPrivacy {
         scan_random: yes(&scan, true),
         send_hostname: yes(&v4_name, true),
         ip6_privacy: matches!(ip6.as_str(), "1" | "2"),
+        wifi_powersave: powersave != "2",
     }
 }
 
@@ -833,7 +847,8 @@ mod tests {
                 mac_private: true,
                 scan_random: true,
                 send_hostname: false,
-                ip6_privacy: true
+                ip6_privacy: true,
+                wifi_powersave: true
             }
         );
         let ours = MacPolicy::Device.conf() + &dhcp_hostname_conf(true);
@@ -847,9 +862,14 @@ mod tests {
                 mac_private: false,
                 scan_random: true,
                 send_hostname: true,
-                ip6_privacy: false
+                ip6_privacy: false,
+                wifi_powersave: true
             }
         );
+        let off = nm_privacy(&[image.into(), wifi_powersave_conf(false)]);
+        assert!(!off.wifi_powersave);
+        let on = nm_privacy(&[wifi_powersave_conf(false), wifi_powersave_conf(true)]);
+        assert!(on.wifi_powersave);
         // A key in the wrong section is not that setting.
         assert!(!nm_privacy(&["[device]\nwifi.cloned-mac-address=random\n".into()]).mac_private);
     }

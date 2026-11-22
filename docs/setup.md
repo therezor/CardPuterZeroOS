@@ -21,12 +21,12 @@ Mockups in `mockups/setup` (`cargo run -p gh0st-settings --example setup_mockups
 320x170: the top bar, 132 px of content, the action bar. One idea per screen and at most
 four lines of body text.
 
-First, while builds are pre-alpha, a notice (user, 2026-11-21): "A pre-alpha test build.
-It can be unstable, and the SDK and the design can still change." Enter goes on.
+First, while builds are pre-alpha, a notice: "A pre-alpha test build.
+It can be unstable, and the SDK and design may change." Enter goes on.
 `tour::PRE_ALPHA` drops it.
 
 After the welcome, setup comes in two parts: a **training** of the keys and the design
-system, then the **settings** (user, 2026-11-21). The welcome screen offers both: Enter
+system, then the **settings**. The welcome screen offers both: Enter
 starts the training, and 6 skips straight to the settings. Each part counts its own steps.
 
 Setup is drawn and driven like every other screen (`design.md`), so the user meets the
@@ -67,7 +67,7 @@ training was skipped.
 ### The training
 
 "Training 1 of 9" to "Training 9 of 9": the keyboard first, then the design system, by
-using it, as agent training with a short joke a screen (user, 2026-11-22). One idea each.
+using it, as agent training with a short joke a screen. One idea each.
 Skip on a lesson goes to the next; Skip training, in the menu, goes straight to the
 settings. A wrong letter says "Typo. The van outside saw that."
 

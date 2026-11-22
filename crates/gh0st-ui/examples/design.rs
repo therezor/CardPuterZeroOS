@@ -247,13 +247,13 @@ fn type_scale(t: &Theme) -> Canvas {
     widgets::status_bar(&mut c, t, &top("tag", "Type and icons"));
     let mut y = 22;
     let lines: [(Font, &str, Color, i32); 7] = [
-        (t.f.big, "Display 24", t.c.fg, 26),
-        (t.f.title, "Title 17", t.c.fg, 20),
-        (t.f.body_bold, "Body strong 15", t.c.fg, 18),
-        (t.f.body, "Body 15", soft(t), 18),
-        (t.f.small_bold, "Label 13", t.c.accent, 16),
-        (t.f.small, "Caption 13", t.c.muted, 16),
-        (t.f.mono, "Mono 10  ~/code $ ls", t.c.fg, 14),
+        (t.f.big, "Display 26", t.c.fg, 27),
+        (t.f.title, "Title 19", t.c.fg, 21),
+        (t.f.body_bold, "Body strong 17", t.c.fg, 20),
+        (t.f.body, "Body 17", soft(t), 20),
+        (t.f.small_bold, "Label 15", t.c.accent, 18),
+        (t.f.small, "Caption 15", t.c.muted, 18),
+        (t.f.mono, "Mono 12  ~/code $ ls", t.c.fg, 16),
     ];
     for (f, s, col, h) in lines {
         text_in(&mut c, f, Rect::new(12, y, 180, h), s, col);
@@ -383,14 +383,14 @@ fn chip_states(t: &Theme) -> Canvas {
             (l("arrow-right", "Next", Look::Main), "main"),
             (l("sun", "Flash", Look::On), "on"),
             (l("trash-2", "Forget", Look::Danger), "danger"),
-            (l("trash-2", "Erase", Look::Hold(40)), "hold red"),
+            (l("trash-2", "Erase", Look::Hold(40)), "held"),
         ],
         [
-            (l("check", "Join", Look::Disabled), "disabled"),
-            (l("search", "Find", Look::Pressed), "pressed"),
+            (l("check", "Join", Look::Disabled), "off"),
+            (l("search", "Find", Look::Pressed), "down"),
             (l("square", "Stop", Look::Danger), "danger"),
             (l("check", "Join", Look::Busy), "busy"),
-            (menu(), "icon only"),
+            (menu(), "icon"),
         ],
         [
             (n("chevron-left", "Prev"), "z"),

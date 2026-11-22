@@ -131,7 +131,6 @@ pub struct Metrics {
     pub chip_h: i32,
     pub chip_r: i32,
     pub chip_pad: i32,
-    pub chip_pad_min: i32,
     /// How far a chip's bar, wash and fill stop short of each side, so
     /// neighbouring chips read apart.
     pub chip_inset: i32,
@@ -506,11 +505,11 @@ pub const CARDPUTER: Metrics = Metrics {
     rows: 2,
     badge: 34,
     badge_small: 24,
-    app_row_h: 33,
+    app_row_h: 40,
     row_h: 26,
-    line_h: 15,
+    line_h: 18,
     menu_row_h: 22,
-    menu_head_h: 15,
+    menu_head_h: 18,
     keys_line_h: 17,
     keys_col_max: 92,
     slot_w: 14,
@@ -525,19 +524,25 @@ pub const CARDPUTER: Metrics = Metrics {
     chip_h: 19,
     chip_r: 3,
     chip_pad: 7,
-    chip_pad_min: 3,
     chip_inset: 3,
     pill_h: 15,
     toast_h: 20,
     card_pad: 10,
     card_gap: 6,
     field_h: 22,
-    field_label_h: 14,
-    field_note_h: 16,
+    field_label_h: 17,
+    field_note_h: 18,
     field_gap: 6,
     lock_field_w: 172,
     lock_gap: 7,
 };
+
+/// A QR code is dark on light on every palette: that is what cameras read.
+pub const QR_DARK: Color = crate::color::rgb(0, 0, 0);
+pub const QR_LIGHT: Color = crate::color::rgb(255, 255, 255);
+/// Light modules around the code. The spec asks for 4; 2 reads on a lit
+/// screen and leaves room for bigger modules.
+pub const QR_QUIET: i32 = 2;
 
 /// How far dim terminal text fades toward its background, of 255.
 pub const TERM_DIM: u8 = 140;
@@ -600,14 +605,14 @@ pub const TERM_TERMINUS: &[TermFace] = &[
 ];
 
 pub const FONTS: Fonts = Fonts {
-    small: &font::SANS_13,
-    small_bold: &font::SANS_13_BOLD,
-    body: &font::SANS_15,
-    body_bold: &font::SANS_15_BOLD,
-    title: &font::SANS_17_BOLD,
-    big: &font::SANS_24_BOLD,
-    mono: &font::MONO_10,
-    mono_bold: &font::MONO_10_BOLD,
+    small: &font::SANS_15,
+    small_bold: &font::SANS_15_BOLD,
+    body: &font::SANS_17,
+    body_bold: &font::SANS_17_BOLD,
+    title: &font::SANS_19_BOLD,
+    big: &font::SANS_26_BOLD,
+    mono: &font::MONO_12,
+    mono_bold: &font::MONO_12_BOLD,
 };
 
 impl Theme {

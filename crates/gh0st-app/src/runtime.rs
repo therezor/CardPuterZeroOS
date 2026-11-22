@@ -18,6 +18,11 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 const TOAST_MS: u64 = 2000;
+/// A busy card shows only for work slower than this, so quick changes
+/// don't flash.
+const BUSY_GRACE_MS: u64 = 300;
+/// The busy bar's step while it shows.
+const BUSY_FRAME_MS: u64 = 60;
 /// How long Esc is held on the first page to close the app, and a red chip
 /// to run.
 const HOLD_MS: u64 = 700;
@@ -137,6 +142,7 @@ impl Bar {
             status::Net::None => Net::None,
             status::Net::Wifi(b) => Net::Wifi(b),
             status::Net::Ethernet => Net::Ethernet,
+            status::Net::Hotspot => Net::Hotspot,
         };
     }
 }
@@ -150,6 +156,14 @@ enum Overlay {
         owner: usize,
         d: Box<Dialog>,
     },
+}
+
+/// Work keys wait for, from [`Cx::busy`].
+struct Busy {
+    text: String,
+    since: u64,
+    shown: bool,
+    phase: u8,
 }
 
 pub(crate) struct Runtime {
@@ -179,6 +193,7 @@ pub(crate) struct Runtime {
     /// The menu row last picked, and the depth of the page it was on.
     menu_last: Option<(usize, u32)>,
     toast: Option<Toast>,
+    busy: Option<Busy>,
     /// The app asked to keep the screen on.
     pub awake: bool,
     hold: Option<Hold>,
@@ -217,6 +232,7 @@ impl Runtime {
             taken: Vec::new(),
             menu_last: None,
             toast: None,
+            busy: None,
             awake: false,
             hold: None,
             pressed: None,
@@ -310,6 +326,25 @@ impl Runtime {
                 }
                 Request::Quit => self.quit_all(),
                 Request::Toast(text, tone) => self.show_toast(text, tone, now),
+                Request::Busy(Some(text)) => match &mut self.busy {
+                    Some(b) => {
+                        b.text = text;
+                        self.dirty |= b.shown;
+                    }
+                    None => {
+                        self.busy = Some(Busy {
+                            text,
+                            since: now,
+                            shown: false,
+                            phase: 0,
+                        })
+                    }
+                },
+                Request::Busy(None) => {
+                    if self.busy.take().is_some_and(|b| b.shown) {
+                        self.dirty = true;
+                    }
+                }
                 Request::Timer { id, ms, every } => self.timers.push(TimerEntry {
                     id,
                     owner,
@@ -362,6 +397,8 @@ impl Runtime {
                     _ => self.show_toast(text, Tone::Info, now),
                 },
                 Request::Ask(id, d) => {
+                    // A question the work needs answered takes over.
+                    self.busy = None;
                     self.overlay = Overlay::Dialog {
                         id,
                         owner,
@@ -388,6 +425,14 @@ impl Runtime {
         }
     }
 
+    /// The busy card's text, while it shows.
+    pub(crate) fn busy_text(&self) -> Option<&str> {
+        self.busy
+            .as_ref()
+            .filter(|b| b.shown)
+            .map(|b| b.text.as_str())
+    }
+
     pub(crate) fn toast_text(&self) -> Option<&str> {
         self.toast.as_ref().map(|t| t.text.as_str())
     }
@@ -410,6 +455,8 @@ impl Runtime {
         }
         self.overlay = Overlay::None;
         self.menu_last = None;
+        // The work a closed page waited on is no longer anyone's to show.
+        self.busy = None;
         let Some(top) = self.stack.len().checked_sub(1) else {
             return false;
         };
@@ -486,6 +533,21 @@ impl Runtime {
         if let (State::Release, Some(i)) = (raw.state, taken) {
             self.taken.swap_remove(i);
             return;
+        }
+        // While the busy card shows, keys wait, so a second press can't
+        // start the change again. Esc hides the card; the work goes on.
+        // Before it shows, keys work as ever.
+        if self.busy.as_ref().is_some_and(|b| b.shown) {
+            if raw.state == State::Press {
+                self.take(raw.code);
+                if raw.code == keys_code::ESC {
+                    self.busy = None;
+                    self.dirty = true;
+                }
+            }
+            if raw.state != State::Release {
+                return;
+            }
         }
         // Help (Fn+H) in every app, raw-key pages too.
         let in_dialog = matches!(self.overlay, Overlay::Dialog { .. });
@@ -1005,6 +1067,10 @@ impl Runtime {
         rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([
             self.kb.repeat_at(),
             self.toast.as_ref().map(|t| t.until),
+            self.busy.as_ref().map(|b| match b.shown {
+                true => self.last_frame + BUSY_FRAME_MS,
+                false => b.since + BUSY_GRACE_MS,
+            }),
             self.hold.as_ref().map(|h| h.next.min(h.start + HOLD_MS)),
             clock,
             battery,
@@ -1030,6 +1096,16 @@ impl Runtime {
             self.call(owner, now, |p, cx| p.timer(Timer(id), cx));
         }
         self.hold_tick(now);
+        if let Some(b) = &mut self.busy {
+            let first = !b.shown && now >= b.since + BUSY_GRACE_MS;
+            if first || b.shown && now >= self.last_frame + BUSY_FRAME_MS {
+                b.shown = true;
+                // Back and forth, once every 1.5 s.
+                let t = ((now - b.since) % 1500) * 510 / 1500;
+                b.phase = if t < 256 { t } else { 510 - t } as u8;
+                self.dirty = true;
+            }
+        }
         // A toast stays while its hold lasts.
         if self.toast.as_ref().is_some_and(|t| t.until <= now) && self.hold.is_none() {
             self.toast = None;
@@ -1102,6 +1178,9 @@ impl Runtime {
             Overlay::Menu(m) => m.draw(&mut self.canvas, &t, panel),
             Overlay::Help(s) => s.draw(&mut self.canvas, &t, panel),
             Overlay::Dialog { d, .. } => d.draw(&mut self.canvas, &t, area),
+        }
+        if let Some(b) = self.busy.as_ref().filter(|b| b.shown) {
+            widgets::busy(&mut self.canvas, &t, area, &b.text, b.phase);
         }
         let full = self.canvas.bounds();
         self.canvas.set_clip(full);
@@ -1230,6 +1309,10 @@ impl Runtime {
                 }
                 if bars.menu {
                     chips[4] = menu(Look::Normal);
+                }
+                // Keys wait while the busy card shows, so no chip offers one.
+                if self.busy.as_ref().is_some_and(|b| b.shown) {
+                    chips = [none; 5];
                 }
                 widgets::action_bar(&mut self.canvas, &t, &chips);
             }

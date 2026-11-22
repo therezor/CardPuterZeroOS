@@ -1,6 +1,8 @@
 # Commands our static binaries run (crates/gh0st*), and what checks use.
 # Each must resolve in the image; the gh0st deb's Depends bring them.
 nmcli
+# The hotspot's clients, and Wi-Fi power saving.
+iw
 wpctl
 bluetoothctl
 rfkill

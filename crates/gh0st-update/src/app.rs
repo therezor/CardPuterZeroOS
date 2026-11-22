@@ -345,7 +345,7 @@ impl Updates {
         let note = if self.stoppable() {
             "You can leave this screen. It carries on."
         } else {
-            "Keep it on. Stop is gone once installing starts."
+            "Keep it on until it is done."
         };
         let c = ui.canvas();
         let w = a.w - 30;
