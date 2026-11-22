@@ -116,13 +116,19 @@ StartLimitIntervalSec=0
 [Service]
 Environment=HOME=/var/lib/cpzeroos/setup-home
 WorkingDirectory=/usr/share/APPLaunch
+ExecCondition=/usr/bin/test -e /var/lib/cpzeroos/setup
 ExecStart=/usr/bin/gh0st-settings --setup
 Restart=always
 RestartSec=1
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target home.mount
 ```
+
+**Why ExecCondition too.** systemd skips `Condition` lines on an automatic restart. On
+the first device run, setup exited after `setup-finish`, came back a second later and
+drew its first screen over the shell on every key. `ExecCondition` runs on every start,
+and `Restart=always` stops when it fails.
 
 **Why root.** Stock's wizard runs as root before any user session, for the same reason:
 there is no user yet. `nmcli` and `timedatectl` need no polkit as root, which also holds
