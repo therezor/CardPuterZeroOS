@@ -53,6 +53,10 @@ pub struct Task {
     pub quiet: bool,
     /// Sent `awake 1`: the screen stays on while it is in front.
     pub awake: bool,
+    /// Holds the keyboard itself or can't be paused: the shell can't see
+    /// its keys or stop its drawing, so the screen stays on until it
+    /// leaves the front.
+    pub keeps_on: bool,
 }
 
 impl Task {
@@ -241,6 +245,7 @@ mod tests {
             background: false,
             quiet: false,
             awake: false,
+            keeps_on: false,
         }
     }
 

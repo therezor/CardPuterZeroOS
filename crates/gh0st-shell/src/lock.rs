@@ -9,7 +9,8 @@ use gh0st_core::password::wipe;
 pub const TAB_ENTER_MS: u64 = 2000;
 /// The field goes back to rest after this without a key.
 pub const FIELD_IDLE_MS: u64 = 10_000;
-const MAX_PASSWORD: usize = 256;
+/// As the helper reads, so a password setup took can always be typed.
+const MAX_PASSWORD: usize = 512;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
@@ -246,6 +247,18 @@ mod tests {
         assert!(l.wrong && l.field_open());
         l.checked(true, 8);
         assert!(!l.field_open());
+    }
+
+    #[test]
+    fn capitals_and_symbols_reach_the_check() {
+        let mut l = Lock::default();
+        l.key(&press(code::TAB), 0, true, false);
+        l.key(&press(code::ENTER), 1, true, false);
+        typed(&mut l, "Hu$2!", 2);
+        assert_eq!(
+            l.key(&press(code::ENTER), 3, true, false),
+            Action::Check(b"Hu$2!".to_vec())
+        );
     }
 
     #[test]

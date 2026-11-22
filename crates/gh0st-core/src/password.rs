@@ -112,6 +112,26 @@ pub fn parse_status(out: &str) -> Option<Account> {
     }
 }
 
+/// What `unix_chkpwd`'s exit says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Check {
+    Right,
+    Wrong,
+    /// It couldn't check: no shadow access, no such user, killed.
+    Broken,
+}
+
+/// `PAM_AUTH_ERR`, the one exit that means a wrong password.
+const PAM_AUTH_ERR: i32 = 7;
+
+pub fn chkpwd_result(code: Option<i32>) -> Check {
+    match code {
+        Some(0) => Check::Right,
+        Some(PAM_AUTH_ERR) => Check::Wrong,
+        _ => Check::Broken,
+    }
+}
+
 /// What `unix_chkpwd` reads on stdin: the password and a NUL.
 pub fn chkpwd_input(password: &[u8]) -> Vec<u8> {
     let mut msg = Vec::with_capacity(password.len() + 1);
@@ -188,6 +208,19 @@ mod tests {
         );
         assert_eq!(parse_status("passwd: Permission denied."), None);
         assert_eq!(parse_status(""), None);
+    }
+
+    #[test]
+    fn only_auth_err_means_wrong() {
+        assert_eq!(chkpwd_result(Some(0)), Check::Right);
+        assert_eq!(chkpwd_result(Some(7)), Check::Wrong);
+        assert_eq!(
+            chkpwd_result(Some(9)),
+            Check::Broken,
+            "PAM_AUTHINFO_UNAVAIL"
+        );
+        assert_eq!(chkpwd_result(Some(127)), Check::Broken);
+        assert_eq!(chkpwd_result(None), Check::Broken, "killed");
     }
 
     #[test]

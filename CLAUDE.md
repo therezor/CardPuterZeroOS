@@ -122,3 +122,8 @@ PNGs. Point it at test apps and a scratch home so nothing real changes:
 HOME=/tmp/gh0st-home GH0ST_APPS_OURS=... GH0ST_APPS_STOCK=... GH0ST_ICON_ROOT=... \
 GH0ST_LOG=debug cargo run -p gh0st -- shell --sim /tmp/frames < session.txt
 ```
+
+The shell starts on the lock screen. A session opens with `tab` then `enter`,
+or sets `"gh0st.lock.password": false` in the scratch config.json.
+`GH0ST_PASSWD` and `GH0ST_CHKPWD` swap `passwd -S` and `unix_chkpwd` for test
+scripts.

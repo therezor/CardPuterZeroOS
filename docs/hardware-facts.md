@@ -262,7 +262,7 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
 | `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |
 | Root actions | time and ADB need root; reboot, power off, 5V rails do not | Settings |
 | `unix_chkpwd` right password | exits 0 with `password\0` on stdin, run by root | helper auth |
-| `unix_chkpwd` as the user | exits 0 for the user's own password, run by UID 1000 (setgid `shadow`) | lock screen |
+| `unix_chkpwd` as the user | exits 0 for the user's own password and 7 (`PAM_AUTH_ERR`) for a wrong one, run by UID 1000 (setgid `shadow`). Any other exit lets the user in and stops the lock asking | lock screen |
 | `passwd -S` as the user | prints `<user> P ...` for the user's own account, `NP` or `L` otherwise | lock screen |
 | `EVIOCGRAB` while an app holds the grab | fails with `EBUSY` | dark over an app |
 | Dark current | `current_now` lower with the terminal sent behind and the backlight off than on home | dark state |

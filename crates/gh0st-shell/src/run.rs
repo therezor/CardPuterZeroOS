@@ -488,21 +488,26 @@ impl Shell {
                 self.dirty = true;
             }
             JobKind::Chkpwd => {
-                let ok = j.ok();
+                let result = password::chkpwd_result(j.code());
                 if self.debug {
-                    eprintln!(
-                        "gh0st shell: password {}",
-                        if ok { "right" } else { "wrong" }
-                    );
+                    eprintln!("gh0st shell: password {result:?}");
                 }
-                if ok {
-                    self.tries = Tries::default();
-                    self.save_tries();
+                match result {
+                    password::Check::Right => self.tries = Tries::default(),
+                    // Not a try: it never checked.
+                    password::Check::Broken => {
+                        self.tries.fails = self.tries.fails.saturating_sub(1);
+                        self.checker_missing = true;
+                    }
+                    password::Check::Wrong => {}
                 }
+                self.save_tries();
                 // Dark meanwhile rested the field: the answer is stale.
                 if self.screen == Screen::Locked && self.lock.checking {
+                    let ok = result != password::Check::Wrong;
                     self.lock.checked(ok, rt::now_ms());
                     if ok {
+                        // Broken lets the user in: a lockout means a reflash.
                         self.unlock();
                     }
                 }
@@ -833,6 +838,7 @@ impl Shell {
             self.banner = None;
             self.popup = None;
             self.screen = Screen::Home;
+            self.undim();
             self.take_screen();
         } else {
             let cards = self.cards();
@@ -1026,9 +1032,12 @@ impl Shell {
         if self.screen == Screen::Off && !self.app_front() {
             return None;
         }
+        if !self.held.is_empty() {
+            return None;
+        }
         let d = self.dark_ms?;
         let d = match self.tasks.front() {
-            Some(t) if t.awake => return None,
+            Some(t) if t.awake || t.keeps_on => return None,
             Some(_) => d,
             None if self.screen == Screen::Locked => d.min(LOCK_DARK_MS),
             None => d,
@@ -1084,8 +1093,7 @@ impl Shell {
     /// its drawing.
     fn dark_over_app(&mut self, now: u64) {
         if !self.input.grab(true) {
-            self.last_input = now;
-            self.undim();
+            self.keep_front_on(now);
             return;
         }
         match self.park_front(now) {
@@ -1099,10 +1107,17 @@ impl Shell {
             }
             Err(_) => {
                 self.input.grab(false);
-                self.last_input = now;
-                self.undim();
+                self.keep_front_on(now);
             }
         }
+    }
+
+    fn keep_front_on(&mut self, now: u64) {
+        if let Some(t) = self.tasks.front_mut() {
+            t.keeps_on = true;
+        }
+        self.last_input = now;
+        self.undim();
     }
 
     fn go_dark(&mut self) {
@@ -1252,6 +1267,10 @@ impl Shell {
         if slept {
             self.last_input = rt::now_ms();
         }
+        // Asked mid-dim: back to full.
+        if self.tasks.front().is_some_and(|t| t.awake) {
+            self.undim();
+        }
         // What an app says stays private while the device is locked.
         if self.locked() {
             return;
@@ -1400,7 +1419,8 @@ impl Shell {
             self.swallow_release = None;
             return;
         }
-        if k.state == State::Press {
+        // A held key is input too: dark waits until it comes up.
+        if k.state != State::Repeat {
             self.last_input = now;
             self.undim();
         }
@@ -1891,6 +1911,7 @@ impl Shell {
             background: app.entry.background,
             quiet: false,
             awake: false,
+            keeps_on: false,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -1985,6 +2006,7 @@ impl Shell {
         t.state = tasks::State::Front;
         t.used = now;
         t.mem_kb = None;
+        t.keeps_on = false;
         let pgid = t.pgid;
         // A quiet app redraws all of itself when told to resume.
         if std::mem::take(&mut t.quiet) {
