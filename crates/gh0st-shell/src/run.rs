@@ -8,7 +8,7 @@
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::lock::{self, Lock};
 use crate::overlay::Overlay;
-use crate::switcher::{Card, Switcher};
+use crate::switcher::{Card, HoldTick, Switcher};
 use crate::tasks::{self, Task, Tasks};
 use gh0st_core::apps::{self, App, Dirs, IconRef};
 use gh0st_core::backlight::Backlight;
@@ -278,8 +278,6 @@ struct Shell {
     esc_armed: bool,
     /// Home's menu, open on 8: the selected row.
     home_menu: Option<usize>,
-    /// The switcher asks before closing every app.
-    confirm_all: bool,
     home_armed: bool,
     swallow_release: Option<u16>,
     rescan_at: Option<u64>,
@@ -415,7 +413,6 @@ impl Shell {
             enter_armed: false,
             esc_armed: false,
             home_menu: None,
-            confirm_all: false,
             home_armed: false,
             swallow_release: None,
             rescan_at: None,
@@ -688,6 +685,9 @@ impl Shell {
                 (shell && self.screen == Screen::Switcher && self.next_frame(now).is_none())
                     .then_some(self.stats_at)
                     .flatten(),
+                (shell && self.screen == Screen::Switcher)
+                    .then(|| self.switcher.hold_at())
+                    .flatten(),
                 self.dark_at(),
                 self.dim_at(),
                 (shell && self.screen == Screen::Locked)
@@ -908,6 +908,9 @@ impl Shell {
         if app {
             self.app_timers(now);
             return;
+        }
+        if self.screen == Screen::Switcher {
+            self.close_all_tick(now);
         }
         // Any wake while something moves draws the next frame.
         if self.next_frame(now).is_some() {
@@ -1156,7 +1159,7 @@ impl Shell {
         self.full_flush = true;
         self.lock.rest();
         self.home_menu = None;
-        self.confirm_all = false;
+        self.switcher.cancel_hold();
         self.tab_down = None;
         self.screen = Screen::Off;
         self.off_at = rt::now_ms();
@@ -1221,7 +1224,7 @@ impl Shell {
         self.screen = Screen::Locked;
         self.lock.rest();
         self.home_menu = None;
-        self.confirm_all = false;
+        self.switcher.cancel_hold();
         self.tab_down = None;
         self.last_input = now;
         self.full_flush = true;
@@ -1390,50 +1393,6 @@ impl Shell {
         widgets::lock_screen(&mut self.canvas, &t, &bar, &l);
     }
 
-    /// The switcher's Close all window.
-    fn draw_confirm_all(&mut self) {
-        let t = self.t;
-        let c = &mut self.canvas;
-        let body = widgets::body(&t);
-        widgets::scrim(c, &t, body);
-        let n = self.switcher.apps().len();
-        let line = if n == 1 {
-            "The open app closes. Work it hasn't saved is lost.".to_string()
-        } else {
-            format!("{n} apps close. Work they haven't saved is lost.")
-        };
-        let w = t.m.width - 44;
-        let lines = wrap_words(t.f.body, &line, w - 24);
-        let body_h = lines.len() as i32 * 18 + t.m.card_gap + t.m.pill_h;
-        let h = widgets::card_h(&t, body_h);
-        let r = Rect::new(22, body.y + (body.h - h) / 2, w, h);
-        let inner = widgets::card(c, &t, r, "Close all apps?", t.c.critical);
-        let mut y = inner.y;
-        for l in lines {
-            widgets::text_in(
-                c,
-                t.f.body,
-                Rect::new(inner.x, y, inner.w, 18),
-                &l,
-                t.c.soft(),
-            );
-            y += 18;
-        }
-        let hints = [
-            widgets::Hint {
-                key: "Esc",
-                label: "cancel",
-            },
-            widgets::Hint {
-                key: "Enter",
-                label: "close all",
-            },
-        ];
-        widgets::key_row(c, &t, inner.x, inner.bottom() - t.m.pill_h, &hints);
-        let none = widgets::Chip::default();
-        widgets::action_bar(c, &t, &[none; 5]);
-    }
-
     /// The volume or brightness level in the top bar's place, over an app
     /// too, for as long as a toast.
     fn show_level(&mut self, icon: &'static str, label: &'static str, pct: u8) {
@@ -1546,11 +1505,7 @@ impl Shell {
             return;
         }
         if self.screen == Screen::Switcher {
-            if self.confirm_all {
-                self.confirm_key(k, now);
-            } else {
-                self.switcher_key(k, now);
-            }
+            self.switcher_key(k, now);
             return;
         }
         if self.home_menu.is_some() {
@@ -1803,29 +1758,6 @@ impl Shell {
         self.config.set_str("gh0st.home_layout", l.config_name());
         let _ = self.config.save();
         self.home.set_layout(l);
-        self.dirty = true;
-    }
-
-    /// The switcher's Close all window: Enter closes every app, Esc keeps
-    /// them.
-    fn confirm_key(&mut self, k: Key, now: u64) {
-        if k.is(code::ENTER) {
-            match k.state {
-                State::Press => self.enter_armed = true,
-                State::Release if self.enter_armed => {
-                    self.enter_armed = false;
-                    self.confirm_all = false;
-                    self.tasks.close_all(now);
-                    let cards = self.cards();
-                    self.switcher.set_apps(cards);
-                }
-                _ => {}
-            }
-        } else if k.is(code::ESC) && k.state == State::Press {
-            self.confirm_all = false;
-        } else {
-            return;
-        }
         self.dirty = true;
     }
 
@@ -2090,6 +2022,7 @@ impl Shell {
     /// Takes the panel back from an app that paused or exited.
     fn take_screen(&mut self) {
         self.display.resume();
+        self.switcher.cancel_hold();
         self.kb.reset();
         self.enter_armed = false;
         self.esc_armed = false;
@@ -2120,6 +2053,7 @@ impl Shell {
 
     fn open_switcher(&mut self, back: Back, at: usize) {
         self.back = back;
+        self.switcher.cancel_hold();
         let cards = self.cards();
         self.switcher.set_apps(cards);
         self.switcher.select(at);
@@ -2190,6 +2124,7 @@ impl Shell {
 
     /// Esc on the switcher, or Fn+K again: back to where it was opened.
     fn switcher_back(&mut self) {
+        self.switcher.cancel_hold();
         match self.back.clone() {
             Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.resumable()) => {
                 self.pending = Some(Pending::Resume(id));
@@ -2201,7 +2136,34 @@ impl Shell {
         }
     }
 
+    /// The hold on 7 fills, and at its end closes every app. Only if its
+    /// key is still down: a release lost on the way must not close them.
+    fn close_all_tick(&mut self, now: u64) {
+        match self.switcher.hold_tick(now) {
+            HoldTick::Idle => {}
+            HoldTick::Fill => self.dirty = true,
+            HoldTick::Done(key) => {
+                self.dirty = true;
+                if !self.held.contains(&key) || self.app_front() {
+                    return;
+                }
+                self.tasks.close_all(now);
+                let cards = self.cards();
+                self.switcher.set_apps(cards);
+            }
+        }
+    }
+
     fn switcher_key(&mut self, k: Key, now: u64) {
+        // The held key up early closes nothing; so does any other key.
+        if k.state == State::Release && self.switcher.let_go(k.code) {
+            self.toast("Hold to close all");
+            return;
+        }
+        if k.state == State::Press && self.switcher.holding() {
+            self.switcher.cancel_hold();
+            self.dirty = true;
+        }
         let armed = |flag: &mut bool| match k.state {
             State::Press => {
                 *flag = true;
@@ -2248,7 +2210,7 @@ impl Shell {
             Some(keys::Nav::Left) => self.switcher.move_by(-1, now),
             Some(keys::Nav::Right) => self.switcher.move_by(1, now),
             _ if (k.is(code::BACKSPACE) || k.ch == Some('5')) && k.state == State::Press => {
-                // Del or 5 on an app closes it; on Home, Del asks to close
+                // Del or 5 on an app closes it; on Home, Del held closes
                 // every app, as 7 does.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
                     Some(id) => {
@@ -2256,16 +2218,12 @@ impl Shell {
                         let cards = self.cards();
                         self.switcher.set_apps(cards);
                     }
-                    None if k.is(code::BACKSPACE) && !self.switcher.apps().is_empty() => {
-                        self.confirm_all = true;
-                    }
+                    None if k.is(code::BACKSPACE) => self.switcher.hold_all(k.code, now),
                     None => {}
                 }
             }
             _ if k.ch == Some('7') && k.state == State::Press => {
-                if !self.switcher.apps().is_empty() {
-                    self.confirm_all = true;
-                }
+                self.switcher.hold_all(k.code, now);
             }
             _ if k.ch == Some('6') && k.state == State::Press => self.lock_now(now),
             _ => return,
@@ -2279,7 +2237,7 @@ impl Shell {
             self.home_menu = None;
         }
         if self.screen != Screen::Switcher {
-            self.confirm_all = false;
+            self.switcher.cancel_hold();
         }
         let start = Instant::now();
         let t = self.t;
@@ -2305,9 +2263,6 @@ impl Shell {
             if let Some(sel) = self.home_menu {
                 self.draw_menu(sel);
             }
-        }
-        if self.screen == Screen::Switcher && self.confirm_all {
-            self.draw_confirm_all();
         }
         drop(dock);
         drop(cards);
@@ -2721,26 +2676,3 @@ enum MenuAct {
 }
 
 const MENU_ROWS: usize = 5;
-
-/// Splits `s` into lines no wider than `w`, at spaces.
-fn wrap_words(f: gh0st_ui::font::Font, s: &str, w: i32) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for word in s.split(' ') {
-        let next = if line.is_empty() {
-            word.to_string()
-        } else {
-            format!("{line} {word}")
-        };
-        if f.measure(&next) > w && !line.is_empty() {
-            lines.push(std::mem::take(&mut line));
-            line = word.to_string();
-        } else {
-            line = next;
-        }
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}

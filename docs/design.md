@@ -177,7 +177,7 @@ chip drops its icon.
 | normal | an accent bar, accent icon, plain word | most actions |
 | on | a pale accent wash, accent word | a toggle that is on: Flash |
 | danger | the word alone, in `critical`, over a red bar; no icon | Forget, Stop, Close |
-| danger, held | fills `critical` left to right | Erase: hold it 0.7 s |
+| danger, held | fills `critical` left to right | Erase, close all apps: hold it 0.7 s |
 | armed | a pale red wash, a thicker red bar | pressed once, press again |
 | main | accent word, a thicker bar | an action that is the page's main one but not on Enter |
 | disabled | faint word, a `border` bar | can't be used now; the key does nothing |
@@ -280,10 +280,9 @@ Asking first:
 
 - **Press again**, in the row, for a step that is a nuisance to undo: forget a
   network.
-- **A dialog** when the user should read before deciding: close all apps,
-  unsaved changes.
-- **A held chip** for loss that can't be undone: erase the device. Enter does
-  nothing there.
+- **A dialog** when the user should read before deciding: unsaved changes.
+- **A held chip** for loss that can't be undone: erase the device, close all
+  apps. Enter does nothing there.
 
 ## The menu and help
 
@@ -320,9 +319,10 @@ Home: 4 Apps, 6 Find, 8 the home menu (pin, layout). Enter opens the app.
 
 ![The switcher](design/37-switcher.png)
 
-The switcher: 5 Close closes the selected app at once. 7 All asks first, in a
-dialog, then closes every app. They sit apart, so one is never pressed for
-the other.
+The switcher: 5 Close closes the selected app at once. 7 All is held: its
+chip fills red, and at 0.7 s every app closes. Del held on Home does the same.
+A shorter press shows "Hold to close all". 5 and 7 sit apart, so one is never
+pressed for the other.
 
 ## The lock screen
 

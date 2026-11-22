@@ -14,6 +14,10 @@ use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, Card as CardView, Status, Visual};
 
 const GLIDE_MS: u64 = 80;
+/// How long 7 is held to close every app, as the SDK's held chip.
+const HOLD_MS: u64 = 700;
+/// A frame of the hold's fill.
+const HOLD_FRAME_MS: u64 = 40;
 /// Room under the cards for the meters.
 const STRIP_H: i32 = 20;
 
@@ -48,6 +52,26 @@ enum Motion {
 }
 
 type Anim = motion::Anim<Motion>;
+
+/// 7, or Del on Home, held to close every app. It exists only while the key
+/// is down.
+#[derive(Clone, Copy, Debug)]
+struct Hold {
+    code: u16,
+    start: u64,
+    next: u64,
+    pc: u8,
+}
+
+/// What a tick did to the hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldTick {
+    Idle,
+    /// The fill grew: redraw.
+    Fill,
+    /// Held to the end by key `code`.
+    Done(u16),
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Geo {
@@ -97,6 +121,7 @@ pub struct Switcher {
     /// The stats line per app id, formatted once per sample.
     stats: Vec<(String, String)>,
     meters: Option<Meters>,
+    hold: Option<Hold>,
 }
 
 /// The system's figures under the cards.
@@ -119,6 +144,7 @@ impl Switcher {
             anim: None,
             stats: Vec::new(),
             meters: None,
+            hold: None,
         }
     }
 
@@ -196,6 +222,9 @@ impl Switcher {
             .map_or(0, |i| i + 1);
         self.anim = None;
         self.keep_visible();
+        if self.apps.is_empty() {
+            self.hold = None;
+        }
     }
 
     pub fn apps(&self) -> &[Card] {
@@ -238,6 +267,7 @@ impl Switcher {
 
     /// Left or right one card, no wrap.
     pub fn move_by(&mut self, dx: i32, now: u64) {
+        self.hold = None;
         let (old, old_top) = (self.selected, self.top);
         let from = self.current_frame(now);
         let last = self.count() - 1;
@@ -274,6 +304,58 @@ impl Switcher {
 
     pub fn next_frame(&self, now: u64) -> Option<u64> {
         self.anim.map(|a| a.next_frame(now))
+    }
+
+    /// Starts the hold that closes every app, while key `code` is down.
+    /// Not with none open.
+    pub fn hold_all(&mut self, code: u16, now: u64) {
+        if !self.apps.is_empty() {
+            self.hold = Some(Hold {
+                code,
+                start: now,
+                next: now + HOLD_FRAME_MS,
+                pc: 0,
+            });
+        }
+    }
+
+    pub fn holding(&self) -> bool {
+        self.hold.is_some()
+    }
+
+    pub fn cancel_hold(&mut self) {
+        self.hold = None;
+    }
+
+    /// Key `code` came up. True if that ended a hold before it was done.
+    pub fn let_go(&mut self, code: u16) -> bool {
+        let early = self.hold.is_some_and(|h| h.code == code);
+        if early {
+            self.hold = None;
+        }
+        early
+    }
+
+    /// When the hold next needs a tick: its next frame, or its end.
+    pub fn hold_at(&self) -> Option<u64> {
+        self.hold.map(|h| h.next.min(h.start + HOLD_MS))
+    }
+
+    pub fn hold_tick(&mut self, now: u64) -> HoldTick {
+        let Some(h) = self.hold.as_mut() else {
+            return HoldTick::Idle;
+        };
+        if now >= h.start + HOLD_MS {
+            let code = h.code;
+            self.hold = None;
+            return HoldTick::Done(code);
+        }
+        if now < h.next {
+            return HoldTick::Idle;
+        }
+        h.pc = ((now - h.start) * 100 / HOLD_MS) as u8;
+        h.next = now + HOLD_FRAME_MS;
+        HoldTick::Fill
     }
 
     pub fn settle(&mut self, now: u64) {
@@ -342,9 +424,9 @@ impl Switcher {
         widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         self.meters(c, t);
-        // 5 closes the app in front of you, at once; 7 closes them all,
-        // after asking. Apart, so neither is pressed for the other. 6 locks,
-        // which loses nothing if pressed for either.
+        // 5 closes the app in front of you, at once; 7 held closes them
+        // all. Apart, so neither is pressed for the other. 6 locks, which
+        // loses nothing if pressed for either.
         use widgets::{Chip, Look};
         let none = Chip::default();
         let danger = |icon, word| Chip {
@@ -357,10 +439,13 @@ impl Switcher {
         } else {
             none
         };
-        let all = if self.apps.is_empty() {
-            none
-        } else {
-            danger("copy-x", "All")
+        let all = match self.hold {
+            _ if self.apps.is_empty() => none,
+            Some(h) => Chip {
+                look: Look::Hold(h.pc),
+                ..danger("copy-x", "All")
+            },
+            None => danger("copy-x", "All"),
         };
         let lock = Chip {
             icon: "lock",
@@ -487,5 +572,45 @@ mod tests {
         assert_eq!(s.selected_app().unwrap().id, "b");
         s.set_apps(vec![card("x")]);
         assert_eq!(s.selected(), 0);
+    }
+
+    const SEVEN: u16 = 8;
+
+    #[test]
+    fn a_hold_fills_then_closes_all_and_no_deadline_outlives_it() {
+        let mut s = switcher(&["a"]);
+        s.hold_all(SEVEN, 1000);
+        assert_eq!(s.hold_at(), Some(1000 + HOLD_FRAME_MS));
+        assert_eq!(s.hold_tick(1020), HoldTick::Idle);
+        assert_eq!(s.hold_tick(1040), HoldTick::Fill);
+        assert_eq!(s.hold.unwrap().pc, 5);
+        assert_eq!(s.hold_tick(1000 + HOLD_MS), HoldTick::Done(SEVEN));
+        assert!(!s.holding());
+        assert_eq!(s.hold_at(), None);
+        // The key comes up after: nothing to let go of.
+        assert!(!s.let_go(SEVEN));
+    }
+
+    #[test]
+    fn letting_go_early_or_moving_ends_the_hold() {
+        let mut s = switcher(&["a", "b"]);
+        s.hold_all(SEVEN, 0);
+        assert!(!s.let_go(SEVEN + 1), "another key's release is not this hold");
+        assert!(s.let_go(SEVEN));
+        assert_eq!(s.hold_at(), None);
+        s.hold_all(SEVEN, 0);
+        s.move_by(1, 10);
+        assert!(!s.holding());
+    }
+
+    #[test]
+    fn nothing_open_nothing_to_hold() {
+        let mut s = switcher(&[]);
+        s.hold_all(SEVEN, 0);
+        assert!(!s.holding());
+        let mut s = switcher(&["a"]);
+        s.hold_all(SEVEN, 0);
+        s.set_apps(Vec::new());
+        assert!(!s.holding());
     }
 }

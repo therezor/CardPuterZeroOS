@@ -1140,11 +1140,14 @@ fn switcher(t: &Theme) -> Canvas {
 
 fn close_all(t: &Theme) -> Canvas {
     let mut c = switcher_base(t);
-    scrim(&mut c, t);
-    let text = "Terminal and Settings close. Work you haven't saved is lost.";
-    let keys = [("Esc", "cancel"), ("Enter", "close all")];
-    ask_card(&mut c, t, "Close all apps?", t.c.critical, text, &keys);
-    widgets::action_bar(&mut c, t, &[NONE; 5]);
+    let slots = [
+        NONE,
+        l("circle-x", "Close", Look::Danger),
+        NONE,
+        l("copy-x", "All", Look::Hold(60)),
+        NONE,
+    ];
+    widgets::action_bar(&mut c, t, &slots);
     c
 }
 
@@ -1408,7 +1411,7 @@ fn main() {
             switcher,
             false,
         ),
-        ("37b-close-all", "Close all asks first", close_all, false),
+        ("37b-close-all", "hold 7: every app closes", close_all, false),
         (
             "38-term-typing",
             "terminal: Esc as everywhere, Fn Esc sends Esc",
