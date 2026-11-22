@@ -2191,7 +2191,7 @@ impl Shell {
         }
     }
 
-    /// The hold on 8 fills, and at its end closes every app. Only if its
+    /// The hold on 4 fills, and at its end closes every app. Only if its
     /// key is still down: a release lost on the way must not close them.
     fn close_all_tick(&mut self, now: u64) {
         match self.switcher.hold_tick(now) {
@@ -2264,9 +2264,9 @@ impl Shell {
         match k.nav(true) {
             Some(keys::Nav::Left) => self.switcher.move_by(-1, now),
             Some(keys::Nav::Right) => self.switcher.move_by(1, now),
-            _ if (k.is(code::BACKSPACE) || k.ch == Some('5')) && k.state == State::Press => {
-                // Del or 5 on an app closes it; on Home, Del held closes
-                // every app, as 8 does.
+            _ if (k.is(code::BACKSPACE) || k.ch == Some('8')) && k.state == State::Press => {
+                // Del or 8 on an app closes it; on Home, Del held closes
+                // every app, as 4 does.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
                     Some(id) => {
                         self.tasks.close(&id, now);
@@ -2277,7 +2277,7 @@ impl Shell {
                     None => {}
                 }
             }
-            _ if k.ch == Some('8') && k.state == State::Press => {
+            _ if k.ch == Some('4') && k.state == State::Press => {
                 self.switcher.hold_all(k.code, now);
             }
             _ if k.ch == Some('6') && k.state == State::Press => self.lock_now(now),
@@ -2670,7 +2670,10 @@ mod tests {
     fn a_wake_locks_past_lock_after_only() {
         let due = |secure, since, after, now| lock_due(secure, since, after, now);
         assert!(due(true, None, None, 0), "by hand or at start");
-        assert!(!due(false, Some(1000), Some(300_000), 200_000), "a short dark");
+        assert!(
+            !due(false, Some(1000), Some(300_000), 200_000),
+            "a short dark"
+        );
         assert!(due(false, Some(1000), Some(300_000), 301_000), "a long one");
         assert!(due(false, Some(1000), Some(0), 1000), "at once");
         assert!(!due(false, Some(1000), None, u64::MAX / 2), "only by hand");

@@ -14,7 +14,7 @@ use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, Card as CardView, Status, Visual};
 
 const GLIDE_MS: u64 = 80;
-/// How long 8 is held to close every app, as the SDK's held chip.
+/// How long 4 is held to close every app, as the SDK's held chip.
 const HOLD_MS: u64 = 700;
 /// A frame of the hold's fill.
 const HOLD_FRAME_MS: u64 = 40;
@@ -53,7 +53,7 @@ enum Motion {
 
 type Anim = motion::Anim<Motion>;
 
-/// 8, or Del on Home, held to close every app. It exists only while the key
+/// 4, or Del on Home, held to close every app. It exists only while the key
 /// is down.
 #[derive(Clone, Copy, Debug)]
 struct Hold {
@@ -424,10 +424,10 @@ impl Switcher {
         widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         self.meters(c, t);
-        // 5 closes the app in front of you, at once; 8 held closes them
-        // all. Far apart, so neither is pressed for the other. 6 locks,
-        // which loses nothing if pressed for Close. The switcher has no
-        // menu, so 8 is free.
+        // 8 closes the app in front of you, at once; 4 held closes them
+        // all. At the two ends, so neither is pressed for the other, and
+        // nothing sits next to Close. 6 locks in the middle. The switcher
+        // has no menu, so 8 is free, and Esc alone goes back, so 4 is.
         use widgets::{Chip, Look};
         let none = Chip::default();
         let danger = |icon, word| Chip {
@@ -453,7 +453,7 @@ impl Switcher {
             word: "Lock",
             look: Look::Normal,
         };
-        widgets::action_bar(c, t, &[none, close, lock, none, all]);
+        widgets::action_bar(c, t, &[all, none, lock, none, close]);
     }
 
     /// CPU and memory, side by side across the cards' width. The top bar's
@@ -575,34 +575,34 @@ mod tests {
         assert_eq!(s.selected(), 0);
     }
 
-    const EIGHT: u16 = 9;
+    const FOUR: u16 = 5;
 
     #[test]
     fn a_hold_fills_then_closes_all_and_no_deadline_outlives_it() {
         let mut s = switcher(&["a"]);
-        s.hold_all(EIGHT, 1000);
+        s.hold_all(FOUR, 1000);
         assert_eq!(s.hold_at(), Some(1000 + HOLD_FRAME_MS));
         assert_eq!(s.hold_tick(1020), HoldTick::Idle);
         assert_eq!(s.hold_tick(1040), HoldTick::Fill);
         assert_eq!(s.hold.unwrap().pc, 5);
-        assert_eq!(s.hold_tick(1000 + HOLD_MS), HoldTick::Done(EIGHT));
+        assert_eq!(s.hold_tick(1000 + HOLD_MS), HoldTick::Done(FOUR));
         assert!(!s.holding());
         assert_eq!(s.hold_at(), None);
         // The key comes up after: nothing to let go of.
-        assert!(!s.let_go(EIGHT));
+        assert!(!s.let_go(FOUR));
     }
 
     #[test]
     fn letting_go_early_or_moving_ends_the_hold() {
         let mut s = switcher(&["a", "b"]);
-        s.hold_all(EIGHT, 0);
+        s.hold_all(FOUR, 0);
         assert!(
-            !s.let_go(EIGHT + 1),
+            !s.let_go(FOUR + 1),
             "another key's release is not this hold"
         );
-        assert!(s.let_go(EIGHT));
+        assert!(s.let_go(FOUR));
         assert_eq!(s.hold_at(), None);
-        s.hold_all(EIGHT, 0);
+        s.hold_all(FOUR, 0);
         s.move_by(1, 10);
         assert!(!s.holding());
     }
@@ -610,10 +610,10 @@ mod tests {
     #[test]
     fn nothing_open_nothing_to_hold() {
         let mut s = switcher(&[]);
-        s.hold_all(EIGHT, 0);
+        s.hold_all(FOUR, 0);
         assert!(!s.holding());
         let mut s = switcher(&["a"]);
-        s.hold_all(EIGHT, 0);
+        s.hold_all(FOUR, 0);
         s.set_apps(Vec::new());
         assert!(!s.holding());
     }

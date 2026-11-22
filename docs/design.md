@@ -153,9 +153,9 @@ screen's bottom edge, right above its key, and pressing that key runs it.
 
 | Key | Holds |
 |---|---|
-| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here. |
+| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here; the switcher puts All here, held. |
 | 5, 6, 7 | the page's own actions |
-| 8 | the menu, an icon-only ≡ chip. The switcher has no menu and puts All here. |
+| 8 | the menu, an icon-only ≡ chip. The switcher has no menu and puts Close here. |
 
 Chips spread across the bar, so a key is easy to find without looking. One
 chip sits in the middle, on 6. Two go apart, on 5 and 7; of a pair (Prev and
@@ -319,10 +319,11 @@ Home: 4 Apps, 6 Find, 8 the home menu (pin, layout). Enter opens the app.
 
 ![The switcher](design/37-switcher.png)
 
-The switcher: 5 Close closes the selected app at once. 6 Lock locks. 8 All is
-held: its chip fills red, and at 0.7 s every app closes. Del held on Home does
-the same. A shorter press shows "Hold to close all". Close and All sit at the
-two ends, so one is never pressed for the other.
+The switcher: 4 All is held: its chip fills red, and at 0.7 s every app
+closes. Del held on Home does the same. A shorter press shows "Hold to close
+all". 6 Lock locks. 8 Close closes the selected app at once, and so does Del.
+All and Close sit at the two ends, so one is never pressed for the other, and
+nothing sits next to Close.
 
 ## The lock screen
 

@@ -1128,11 +1128,11 @@ fn switcher_base(t: &Theme) -> Canvas {
 fn switcher(t: &Theme) -> Canvas {
     let mut c = switcher_base(t);
     let slots = [
+        l("copy-x", "All", Look::Danger),
         NONE,
-        l("circle-x", "Close", Look::Danger),
         n("lock", "Lock"),
         NONE,
-        l("copy-x", "All", Look::Danger),
+        l("circle-x", "Close", Look::Danger),
     ];
     widgets::action_bar(&mut c, t, &slots);
     c
@@ -1141,11 +1141,11 @@ fn switcher(t: &Theme) -> Canvas {
 fn close_all(t: &Theme) -> Canvas {
     let mut c = switcher_base(t);
     let slots = [
+        l("copy-x", "All", Look::Hold(60)),
         NONE,
-        l("circle-x", "Close", Look::Danger),
         n("lock", "Lock"),
         NONE,
-        l("copy-x", "All", Look::Hold(60)),
+        l("circle-x", "Close", Look::Danger),
     ];
     widgets::action_bar(&mut c, t, &slots);
     c
@@ -1407,13 +1407,13 @@ fn main() {
         ("36-home", "home: 4 Apps, 6 Find, 8 Menu", home, true),
         (
             "37-switcher",
-            "switcher: 5 closes one, 6 locks, 8 all",
+            "switcher: 4 all, 6 locks, 8 closes one",
             switcher,
             false,
         ),
         (
             "37b-close-all",
-            "hold 8: every app closes",
+            "hold 4: every app closes",
             close_all,
             false,
         ),
