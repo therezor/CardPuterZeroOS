@@ -82,6 +82,33 @@ Measured on the device unless marked.
   `gpioset` are installed. `fb_load.service` has exited by the time the
   launcher runs. LightDM and labwc run too (HDMI desktop).
 
+## CPZeroOS memory, read 2026-11-22
+
+On the release image after setup, idle on home, Wi-Fi up, read over SSH.
+
+- 414 MB visible to Linux (`gpu_mem=64`; the 64 MB CMA pool counts, 58 MB of
+  it free). About shows about 140 MB used, which is MemTotal minus
+  MemAvailable. With an SSH session open it read 166 MB:
+
+| Part | MB |
+|---|---|
+| Held back by MemAvailable: the high watermark, plus the low watermark of page cache and half the reclaimable slab | 53 |
+| Programs (anon and shmem), about 5 MB of it the SSH session | 39 |
+| Unreclaimable slab (kernfs, kmalloc, task structs) | 26 |
+| vmalloc, 7.5 MB of it module code | 15 |
+| Kernel stacks, page tables, per-CPU | 5 |
+| Not in any counter: driver pages, CMA in use (6 MB) | 32 |
+
+- The watermarks come from `vm.min_free_kbytes = 16384`, the Raspberry Pi OS
+  value: min 16 MB, low 20 MB, high 24 MB.
+- PSS: NetworkManager 13.0 MB, WirePlumber 8.8, systemd 8.8, PipeWire 6.8,
+  wpa_supplicant 6.8, systemd --user 4.4, udevd 3.8, polkitd 3.4, bluetoothd 3.0,
+  logind 2.3, journald 2.2, (sd-pam) 2.0, timesyncd 2.0, the two dbus-daemons
+  2.5, gh0st shell 1.8. 85 MB in all, 38 MB of it private.
+- The camera stack loads at boot from `dtoverlay=imx219` with no camera app
+  open: unicam, ISP, codec, legacy V4L2, MMAL and `vc_sm_cma`.
+- No swap in use. Keys were made by the first SSH start in under a second.
+
 ## The stock system, read 2026-11-20
 
 Read without changing anything, on the stock M5 image with gh0st installed.
