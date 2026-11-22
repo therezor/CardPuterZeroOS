@@ -113,26 +113,33 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           api=repos/$GITHUB_REPOSITORY
-          artifact=$(gh api "$api/actions/runs/$GITHUB_RUN_ID/artifacts" \
-            --jq '.artifacts[] | select(.name == "github-pages") | .id')
+          gh api "$api/actions/runs/$GITHUB_RUN_ID/artifacts" > artifacts.json ||
+            { cat artifacts.json; echo "listing the run's artifacts failed"; exit 1; }
+          artifact=$(jq -r '.artifacts[] | select(.name == "github-pages") | .id' artifacts.json)
           [ -n "$artifact" ] || { echo "no github-pages artifact"; exit 1; }
+          echo "artifact $artifact"
           oidc=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r .value)
           echo "::add-mask::$oidc"
           version=$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT
+          echo "version $version"
           gh api -X POST "$api/pages/deployments" -F artifact_id="$artifact" \
-            -f pages_build_version="$version" -f oidc_token="$oidc" > out.json
-          id=$(jq -r .id out.json)
-          echo "page_url=$(jq -r .page_url out.json)" >> "$GITHUB_OUTPUT"
+            -f pages_build_version="$version" -f oidc_token="$oidc" > out.json ||
+            { cat out.json; echo "creating the deployment failed"; exit 1; }
+          cat out.json
+          # As deploy-pages reads it.
+          id=$(jq -r '.id // (.status_url // "" | split("/") | last) // empty' out.json)
+          id=${id:-$version}
+          echo "page_url=$(jq -r '.page_url // empty' out.json)" >> "$GITHUB_OUTPUT"
           for _ in $(seq 120); do
+            sleep 5
             status=$(gh api "$api/pages/deployments/$id" --jq .status)
-            echo "$status"
+            echo "${status:-(none yet)}"
             case $status in
               succeed) exit 0 ;;
-              deployment_in_progress | deployment_queued) ;;
-              deployment_* | "") exit 1 ;;
+              deployment_in_progress | deployment_queued | "") ;;
+              deployment_*) exit 1 ;;
             esac
-            sleep 5
           done
           echo "timed out"
           exit 1
