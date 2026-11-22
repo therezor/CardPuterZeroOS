@@ -68,46 +68,19 @@ pub fn versions(p: &Package) -> String {
 
 /// "today at 09:12", "yesterday at 21:40", "on 3 Nov".
 pub fn when(epoch: u64, now: u64, h24: bool) -> String {
-    let (day, h, m) = local(epoch);
-    let (today, ..) = local(now);
-    let (yesterday, ..) = local(now.saturating_sub(86_400));
-    let clock = gh0st_core::rt::clock_format(h, m, h24);
-    if day == today {
+    use gh0st_core::rt;
+    let t = rt::local_at(epoch as i64);
+    let day = |l: rt::Local| (l.year, l.yday);
+    let today = day(rt::local_at(now as i64));
+    let yesterday = day(rt::local_at(now as i64 - 86_400));
+    let clock = rt::clock_format(t.hour, t.minute, h24);
+    if day(t) == today {
         format!("today at {clock}")
-    } else if day == yesterday {
+    } else if day(t) == yesterday {
         format!("yesterday at {clock}")
     } else {
-        format!("on {}", day_month(epoch))
+        format!("on {} {}", t.day, rt::month_short(t.month))
     }
-}
-
-/// (a day number to compare, hour, minute), local time.
-fn local(epoch: u64) -> ((i32, i32), u32, u32) {
-    // SAFETY: localtime_r into a local struct tm.
-    unsafe {
-        let t = epoch as libc::time_t;
-        let mut tm: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&t, &mut tm);
-        (
-            (tm.tm_year, tm.tm_yday),
-            tm.tm_hour as u32,
-            tm.tm_min as u32,
-        )
-    }
-}
-
-fn day_month(epoch: u64) -> String {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    // SAFETY: as in `local`.
-    let (d, m) = unsafe {
-        let t = epoch as libc::time_t;
-        let mut tm: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&t, &mut tm);
-        (tm.tm_mday, tm.tm_mon as usize)
-    };
-    format!("{d} {}", MONTHS.get(m).unwrap_or(&""))
 }
 
 /// "12 updates", "1 update".

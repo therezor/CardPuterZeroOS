@@ -54,7 +54,7 @@ spy", and 6 has a Skip chip. Esc goes back to the notice.
 |---|---|---|
 | 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. 7 Skip keeps the world country. |
 | 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. "Other" opens the region list. 7 Skip keeps the zone. |
-| 3 | Privacy | The private defaults, each switchable: Wi-Fi address per network, random address while scanning, hostname not sent, IPv6 privacy addresses, network time, logs off. SSH and Bluetooth stay off, switched on their own pages in Settings. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
+| 3 | Privacy | The private defaults, each switchable: Wi-Fi address per network, random address while scanning, hostname not sent, IPv6 privacy addresses, network time, logs off, and the daily check for updates (on; `docs/updates.md`). SSH and Bluetooth stay off, switched on their own pages in Settings. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
 | 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. With a cable in, "Use the cable" makes the wired profile (not built yet). Nothing goes online before this step. |
 | 5 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
 | 6 | Account | The name and the password, then the password again on its own screen. |
@@ -186,6 +186,7 @@ gated verbs don't ask it. Each verb has its arm in `Verb::gated`, and parser tes
 | `scan-mac random\|device` | the user's password | Gated. `90-gh0st-scan-mac.conf` |
 | `dhcp-hostname on\|off` | the user's password | Gated. `90-gh0st-dhcp-hostname.conf` |
 | `ip6-privacy on\|off` | the user's password | Gated. `90-gh0st-ip6-privacy.conf` |
+| `update-auto on\|off` | the user's password | Gated. Enables or disables `gh0st-update-daily.timer` |
 
 The network verbs each write one whole file in `/etc/NetworkManager/conf.d`, which
 NetworkManager reads after the image's `50-cpzeroos.conf`, then reload it. A new

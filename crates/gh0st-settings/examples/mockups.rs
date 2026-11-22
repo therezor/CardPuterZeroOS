@@ -153,6 +153,9 @@ fn sample_state() -> State {
         swap_comp_running: Some("zstd".into()),
         swappiness: Some(100),
         moving: None,
+        updates: updates_state(),
+        update_daily: Some(true),
+        update_cache: 120_000_000,
         about: [
             ("Version", "Gh0stdeck 0.1.0"),
             ("Build", "202611221438.2a760d9"),
@@ -389,7 +392,23 @@ fn main() {
                     scene(&t, &pending, PageId::System, 4, None),
                 ),
                 ("timezone", s(PageId::TimeZone(Some("Europe".into())), 2)),
-                ("privacy", s(PageId::Privacy, 0)),
+                ("privacy", s(PageId::Privacy, 6)),
+                ("updates", s(PageId::Updates, 0)),
+                (
+                    "updates-edge",
+                    scene(
+                        &t,
+                        &st,
+                        PageId::Updates,
+                        2,
+                        Some(Dialog::Confirm {
+                            title: "Switch to Edge?".into(),
+                            line: "Edge gets every build of main. Things may break.".into(),
+                            yes: "switch",
+                            no: "cancel",
+                        }),
+                    ),
+                ),
                 ("about", s(PageId::About, 0)),
                 (
                     "power-off",
@@ -415,4 +434,34 @@ fn main() {
         }
     }
     println!("wrote {}", out.display());
+}
+
+/// What the update engine wrote: 12 ready, checked ten minutes ago.
+fn updates_state() -> gh0st_core::update::State {
+    use gh0st_core::update::{Group, Outcome, Package, Restart, State};
+    let pkg = |name: &str, size: u64, group: Group| Package {
+        name: name.into(),
+        from: "1".into(),
+        to: "2".into(),
+        size,
+        group,
+        restart: Restart::of(name),
+        summary: String::new(),
+    };
+    let mut packages = vec![
+        pkg("gh0st", 4_100_000, Group::Gh0st),
+        pkg("openssl", 1_500_000, Group::Security),
+        pkg("libssl3t64", 2_300_000, Group::Security),
+        pkg("curl", 300_000, Group::Security),
+    ];
+    for i in 0..8 {
+        packages.push(pkg(&format!("lib{i}"), 3_000_000, Group::System));
+    }
+    State {
+        checked: gh0st_core::notify::now_secs() - 600,
+        outcome: Outcome::Ok,
+        channel: "stable".into(),
+        packages,
+        ..State::default()
+    }
 }

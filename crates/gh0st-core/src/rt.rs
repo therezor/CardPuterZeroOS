@@ -189,6 +189,45 @@ pub fn local_ymdhm() -> (i32, u32, u32, u32, u32) {
     }
 }
 
+/// A moment in local time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Local {
+    pub year: i32,
+    /// Day of the year, 0 to 365: with `year`, which day it is.
+    pub yday: i32,
+    /// 0 is January.
+    pub month: usize,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+}
+
+/// Seconds since 1970 as local time.
+pub fn local_at(epoch: i64) -> Local {
+    // SAFETY: localtime_r into a local struct tm.
+    unsafe {
+        let t = epoch as libc::time_t;
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        Local {
+            year: tm.tm_year + 1900,
+            yday: tm.tm_yday,
+            month: tm.tm_mon as usize,
+            day: tm.tm_mday as u32,
+            hour: tm.tm_hour as u32,
+            minute: tm.tm_min as u32,
+        }
+    }
+}
+
+/// "Nov": a month's short name, `month` 0 for January.
+pub fn month_short(month: usize) -> &'static str {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    MONTHS.get(month).copied().unwrap_or("")
+}
+
 /// Seconds since 1970 for a local wall time, in the system's time zone.
 /// `None` when the C library can't place it.
 pub fn local_epoch(y: i32, mon: u32, d: u32, h: u32, min: u32) -> Option<i64> {

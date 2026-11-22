@@ -210,6 +210,12 @@ pub struct State {
     pub swap_comp: Option<String>,
     pub swap_comp_running: Option<String>,
     pub swappiness: Option<u32>,
+    /// What the update engine last wrote (docs/updates.md).
+    pub updates: gh0st_core::update::State,
+    /// The daily check's timer is enabled; None before the query answers.
+    pub update_daily: Option<bool>,
+    /// Bytes of downloaded debs apt keeps.
+    pub update_cache: u64,
     /// The pinned app being moved on the Apps page.
     pub moving: Option<String>,
     pub about: Vec<(String, String)>,
@@ -489,6 +495,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
             },
         ),
         PageId::Privacy => ("Privacy", Body::List(privacy(s)), vec![]),
+        PageId::Updates => ("Updates", Body::List(updates(s)), vec![]),
         PageId::Look => ("Device and look", Body::List(look(s)), vec![]),
         PageId::About => (
             "About",
@@ -799,7 +806,100 @@ pub fn privacy(s: &State) -> Vec<Item> {
             Value::TextChevron(s.logs.label().into()),
             Act::Open(PageId::Choose(Choice::Logs)),
         ),
+        set(
+            "refresh-cw",
+            "Check for updates",
+            s.update_daily.unwrap_or(true),
+            Setting::UpdateDaily,
+        ),
     ]
+}
+
+/// The System row's word for the updates: "3 ready", "Up to date".
+pub fn updates_value(u: &gh0st_core::update::State) -> String {
+    use gh0st_core::update::Outcome;
+    match u.outcome {
+        _ if !u.packages.is_empty() => format!("{} ready", u.packages.len()),
+        Outcome::None if u.checked == 0 => String::new(),
+        Outcome::Ok | Outcome::None => "Up to date".into(),
+        _ => "Not checked".into(),
+    }
+}
+
+fn updates(s: &State) -> Vec<Item> {
+    use gh0st_core::update::{self, Outcome};
+    let u = &s.updates;
+    let (label, value) = match u.outcome {
+        _ if !u.packages.is_empty() => {
+            let n = u.packages.len();
+            let label = if n == 1 {
+                "1 update ready".to_string()
+            } else {
+                format!("{n} updates ready")
+            };
+            (label, update::size_text(u.download()))
+        }
+        Outcome::None if u.checked == 0 => ("Not checked yet".into(), String::new()),
+        Outcome::Ok | Outcome::None => ("Up to date".into(), String::new()),
+        _ => (u.why.clone(), String::new()),
+    };
+    let last = if u.checked == 0 {
+        "Never".to_string()
+    } else {
+        check_time(u.checked)
+    };
+    let cache = if s.update_cache > 0 {
+        update::size_text(s.update_cache)
+    } else {
+        "None".into()
+    };
+    vec![
+        Item::new(
+            "download",
+            label,
+            Value::TextChevron(value),
+            Act::Run(Command::OpenUpdates),
+        ),
+        Item::new(
+            "refresh-cw",
+            "Check daily",
+            Value::Toggle(s.update_daily.unwrap_or(true)),
+            Act::Set(Setting::UpdateDaily),
+        ),
+        Item::new(
+            "flag",
+            "Channel",
+            Value::Choice(
+                if u.channel == "edge" {
+                    "Edge"
+                } else {
+                    "Stable"
+                }
+                .into(),
+            ),
+            Act::Set(Setting::UpdateChannel),
+        ),
+        Item::new("clock", "Last check", Value::Text(last), Act::None),
+        Item::new(
+            "trash-2",
+            "Clear downloads",
+            Value::Text(cache),
+            Act::Run(Command::ClearDownloads),
+        ),
+    ]
+}
+
+/// "Today 09:12", "21 Nov 09:12".
+fn check_time(epoch: u64) -> String {
+    use gh0st_core::rt;
+    let t = rt::local_at(epoch as i64);
+    let now = rt::local_at(gh0st_core::notify::now_secs() as i64);
+    let clock = format!("{:02}:{:02}", t.hour, t.minute);
+    if (t.year, t.yday) == (now.year, now.yday) {
+        format!("Today {clock}")
+    } else {
+        format!("{} {} {clock}", t.day, rt::month_short(t.month))
+    }
 }
 
 /// Setup's device name and look.
@@ -891,6 +991,12 @@ fn system(s: &State) -> Vec<Item> {
             "Lock after",
             Value::Choice(lock_after_label(s.lock_after)),
             Act::Set(Setting::LockAfter),
+        ),
+        Item::new(
+            "download",
+            "Updates",
+            Value::TextChevron(updates_value(&s.updates)),
+            Act::Open(PageId::Updates),
         ),
         Item::new(
             "sliders-horizontal",
@@ -1499,6 +1605,7 @@ mod tests {
                 "IPv6 privacy address",
                 "Network time",
                 "Keep logs",
+                "Check for updates",
             ]
         );
         let on: Vec<Value> = (0..5).map(|i| p.item(i).unwrap().value.clone()).collect();
@@ -1507,6 +1614,38 @@ mod tests {
             [true, true, false, true, true].map(Value::Toggle).to_vec()
         );
         assert_eq!(p.item(1).unwrap().act, Act::Set(Setting::ScanMac));
+        // The daily check: on until the timer query says otherwise.
+        assert_eq!(p.item(6).unwrap().value, Value::Toggle(true));
+        s.update_daily = Some(false);
+        let p = build(&PageId::Privacy, &s);
+        assert_eq!(p.item(6).unwrap().value, Value::Toggle(false));
+        assert_eq!(p.item(6).unwrap().act, Act::Set(Setting::UpdateDaily));
+    }
+
+    #[test]
+    fn updates_say_what_is_ready_and_open_the_app() {
+        use gh0st_core::update::{Outcome, Package, State as Up};
+        let mut s = state();
+        assert_eq!(updates_value(&s.updates), "");
+        s.updates = Up {
+            checked: 1,
+            outcome: Outcome::Ok,
+            packages: vec![Package::default(); 3],
+            ..Up::default()
+        };
+        assert_eq!(updates_value(&s.updates), "3 ready");
+        let p = build(&PageId::Updates, &s);
+        assert_eq!(p.item(0).unwrap().label, "3 updates ready");
+        assert_eq!(p.item(0).unwrap().act, Act::Run(Command::OpenUpdates));
+        assert_eq!(p.item(2).unwrap().value, Value::Choice("Stable".into()));
+        s.updates.packages.clear();
+        s.updates.outcome = Outcome::Offline;
+        s.updates.why = "No network".into();
+        assert_eq!(updates_value(&s.updates), "Not checked");
+        assert_eq!(
+            build(&PageId::Updates, &s).item(0).unwrap().label,
+            "No network"
+        );
     }
 
     #[test]

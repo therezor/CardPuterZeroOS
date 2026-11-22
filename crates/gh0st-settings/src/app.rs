@@ -48,6 +48,8 @@ enum Ask {
     ConnForget(String),
     /// The password for a helper call that asked for one.
     Auth(HelperCall),
+    /// Switch to the edge channel, after reading what it means.
+    EdgeChannel,
     DeviceName,
     Swap,
     DateTime,
@@ -295,6 +297,8 @@ impl Settings {
         s.apps = rows;
         s.about = about();
         s.logs = logs_level();
+        s.updates = gh0st_core::update::State::load();
+        s.update_cache = apt_cache_bytes();
         s.nm = sysconf::nm_privacy(&nm_files());
         s.lock_password = config.get_bool("gh0st.lock.password").unwrap_or(true);
         s.lock_after = config
@@ -742,6 +746,30 @@ impl Settings {
                 };
                 self.helper(cx, &["ip6-privacy", arg], done);
             }
+            Setting::UpdateDaily => {
+                let on = self.state.update_daily.unwrap_or(true);
+                let (arg, done) = if on {
+                    ("off", "Daily checks off")
+                } else {
+                    ("on", "Checks daily")
+                };
+                self.helper(cx, &["update-auto", arg], done);
+            }
+            Setting::UpdateChannel => {
+                if self.state.updates.channel == "edge" {
+                    self.helper(cx, &["update-channel", "stable"], "Stable channel");
+                } else {
+                    self.ask(
+                        Dialog::Confirm {
+                            title: "Switch to Edge?".into(),
+                            line: "Edge gets every build of main. Things may break.".into(),
+                            yes: "switch",
+                            no: "cancel",
+                        },
+                        Ask::EdgeChannel,
+                    );
+                }
+            }
             _ => cx.toast("Not available yet"),
         }
     }
@@ -767,6 +795,11 @@ impl Settings {
                 Ask::Confirm(c),
             ),
             Command::Join(ssid) => self.join(ssid, cx),
+            // The shell brings Updates up over Settings, and Settings back
+            // when it closes.
+            Command::OpenUpdates => cx.open("update"),
+            Command::CheckUpdates => self.helper(cx, &["update-check"], "Checking for updates"),
+            Command::ClearDownloads => self.helper(cx, &["apt-clean"], "Downloads cleared"),
             Command::JoinHidden => self.ask(
                 Dialog::Text {
                     title: "Hidden network".into(),
@@ -917,6 +950,7 @@ impl Settings {
             Ask::Confirm(Command::Restart) => self.power(true, cx),
             Ask::Confirm(Command::PowerOff) => self.power(false, cx),
             Ask::Confirm(_) => {}
+            Ask::EdgeChannel => self.helper(cx, &["update-channel", "edge"], "Edge: every build"),
             Ask::WifiPassword(ssid) => {
                 let argv = [
                     "nmcli", "--wait", "45", "--ask", "device", "wifi", "connect", &ssid,
@@ -1128,6 +1162,10 @@ impl Settings {
                 }
                 known
             }
+            PageId::Updates if k == Key::Char('r') => {
+                self.run_command(Command::CheckUpdates, cx);
+                true
+            }
             PageId::Wifi if k == Key::Char('r') => {
                 self.query_net(cx, true);
                 cx.toast("Scanning\u{2026}");
@@ -1200,7 +1238,8 @@ impl Settings {
     }
 
     fn query_sys(&mut self, cx: &mut Cx) {
-        let script = "timedatectl show -p Timezone -p NTP; echo SSH=$(systemctl is-active ssh)";
+        let script = "timedatectl show -p Timezone -p NTP; echo SSH=$(systemctl is-active ssh); \
+                      echo UPDATES=$(systemctl is-enabled gh0st-update-daily.timer 2>/dev/null)";
         self.run(cx, NetJob::SysQuery, &["sh", "-c", script]);
     }
 
@@ -1585,8 +1624,14 @@ impl Settings {
                 match helper::outcome(code, &out) {
                     Outcome::Done => {
                         // The row flips now, not after the re-query.
-                        if call.args.first().map(String::as_str) == Some("ssh") {
-                            self.state.ssh = call.args.get(1).map(String::as_str) == Some("on");
+                        let arg_on = call.args.get(1).map(String::as_str) == Some("on");
+                        match call.args.first().map(String::as_str) {
+                            Some("ssh") => self.state.ssh = arg_on,
+                            Some("update-auto") => self.state.update_daily = Some(arg_on),
+                            Some("update-channel") => {
+                                self.state.updates.channel = call.args[1].clone();
+                            }
+                            _ => {}
                         }
                         cx.toast(&call.done);
                         if call.restart {
@@ -1678,6 +1723,8 @@ impl Settings {
                         Some(("Timezone", z)) => st.zone = z.to_string(),
                         Some(("NTP", v)) => st.network_time = v == "yes",
                         Some(("SSH", v)) => st.ssh = v == "active",
+                        // No timer at all (a stock image): treat as off.
+                        Some(("UPDATES", v)) => st.update_daily = Some(v == "enabled"),
                         _ => {}
                     }
                 }
@@ -2111,6 +2158,19 @@ fn size(b: u64) -> String {
     } else {
         format!("{} MB", b / 1_000_000)
     }
+}
+
+/// Bytes of the debs apt keeps after a download.
+fn apt_cache_bytes() -> u64 {
+    std::fs::read_dir("/var/cache/apt/archives")
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.path().extension().is_some_and(|x| x == "deb"))
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        })
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

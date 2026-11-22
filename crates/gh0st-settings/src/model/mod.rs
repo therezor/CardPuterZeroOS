@@ -37,6 +37,8 @@ pub enum PageId {
     Country(Option<char>),
     Choose(Choice),
     Privacy,
+    /// System > Updates: the last check, daily checks and the channel.
+    Updates,
     About,
     /// Setup's device name and look: name, layout, palette, clock.
     Look,
@@ -80,6 +82,10 @@ pub enum Setting {
     DarkWifi,
     /// The built-in Ethernet chip may suspend.
     UsbPower,
+    /// The daily update check's timer.
+    UpdateDaily,
+    /// Stable or Edge.
+    UpdateChannel,
 }
 
 /// A value picked on its own page, each option with a note. The gated
@@ -117,6 +123,11 @@ pub enum Command {
     SwapSize,
     /// Type the date and time, for a clock network time can't set.
     SetTime,
+    /// Brings up the Updates app over Settings.
+    OpenUpdates,
+    CheckUpdates,
+    /// `apt-get clean`.
+    ClearDownloads,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -340,6 +351,9 @@ pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Ch
         PageId::Apps if !moving => {
             v.push((6, Chip::new("arrow-up-down", "Move"), Key::Char('m')));
         }
+        PageId::Updates => {
+            v.push((6, Chip::new("refresh-cw", "Check"), Key::Char('r')));
+        }
         _ => {}
     }
     let pair = match page.item(cur.selected).map(|i| &i.value) {
@@ -369,6 +383,7 @@ pub fn icon(id: &PageId) -> &'static str {
         PageId::TimeZone(_) | PageId::CountryZones => "clock",
         PageId::Country(_) => "globe",
         PageId::Privacy => "shield",
+        PageId::Updates => "download",
         PageId::Look => "palette",
         PageId::About => "info",
         _ => "settings",
