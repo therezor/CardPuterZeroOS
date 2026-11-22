@@ -16,6 +16,10 @@ on:
       what:
         description: edge, stable or resign
         default: edge
+      fresh:
+        description: start from an empty site, dropping every package not built now
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -65,7 +69,8 @@ jobs:
           restore-keys: apt-pool-
       - name: Publish
         env:
-          REPO_PREV: ${{ env.SITE }}
+          # Fresh: no live site to start from, so both suites hold only this build.
+          REPO_PREV: ${{ !inputs.fresh && env.SITE || '' }}
           REPO_KEY: ${{ secrets.APT_SIGNING_KEY }}
         run: |
           [ -n "$REPO_KEY" ] || { echo "set the APT_SIGNING_KEY secret (os/repo/README.md)"; exit 1; }
