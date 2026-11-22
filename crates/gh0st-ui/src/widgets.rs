@@ -574,6 +574,8 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
         ch
     };
     let r = Rect::new(cx - w / 2, top, w, t.m.chip_h);
+    // The ink centres on the whole chip; what marks it stops short.
+    let shape = Rect::new(r.x + t.m.chip_inset, r.y, r.w - 2 * t.m.chip_inset, r.h);
     let k = &t.c;
     // Word, icon, bar, bar height, and a wash behind for states that stay.
     let (ink, icon_ink, bar, bar_h, wash) = match ch.look {
@@ -593,9 +595,12 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
         Look::Busy => (k.muted, k.muted, k.muted, BAR_H, None),
     };
     if let Some(wash) = wash {
-        c.fill(r, mix(k.bg, wash, 50));
+        c.fill(shape, mix(k.bg, wash, 50));
     }
-    c.fill(Rect::new(r.x, r.bottom() - bar_h, r.w, bar_h), bar);
+    c.fill(
+        Rect::new(shape.x, shape.bottom() - bar_h, shape.w, bar_h),
+        bar,
+    );
     let sink = i32::from(ch.look == Look::Pressed);
     chip_ink(
         c,
@@ -607,9 +612,14 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     );
     if let Look::Hold(pc) = ch.look {
         let old = c.clip();
-        let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
+        let part = Rect::new(
+            shape.x,
+            shape.y,
+            shape.w * pc.min(100) as i32 / 100,
+            shape.h,
+        );
         c.set_clip(part.intersect(&old));
-        c.fill(r, k.critical);
+        c.fill(shape, k.critical);
         chip_ink(c, t, r, ch, k.bg, k.bg);
         c.set_clip(old);
     }

@@ -2136,7 +2136,7 @@ impl Shell {
         }
     }
 
-    /// The hold on 7 fills, and at its end closes every app. Only if its
+    /// The hold on 8 fills, and at its end closes every app. Only if its
     /// key is still down: a release lost on the way must not close them.
     fn close_all_tick(&mut self, now: u64) {
         match self.switcher.hold_tick(now) {
@@ -2211,7 +2211,7 @@ impl Shell {
             Some(keys::Nav::Right) => self.switcher.move_by(1, now),
             _ if (k.is(code::BACKSPACE) || k.ch == Some('5')) && k.state == State::Press => {
                 // Del or 5 on an app closes it; on Home, Del held closes
-                // every app, as 7 does.
+                // every app, as 8 does.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
                     Some(id) => {
                         self.tasks.close(&id, now);
@@ -2222,7 +2222,7 @@ impl Shell {
                     None => {}
                 }
             }
-            _ if k.ch == Some('7') && k.state == State::Press => {
+            _ if k.ch == Some('8') && k.state == State::Press => {
                 self.switcher.hold_all(k.code, now);
             }
             _ if k.ch == Some('6') && k.state == State::Press => self.lock_now(now),

@@ -132,6 +132,9 @@ pub struct Metrics {
     pub chip_r: i32,
     pub chip_pad: i32,
     pub chip_pad_min: i32,
+    /// How far a chip's bar, wash and fill stop short of each side, so
+    /// neighbouring chips read apart.
+    pub chip_inset: i32,
     /// A key pill in the hint bar, a card or a message.
     pub pill_h: i32,
     pub toast_h: i32,
@@ -523,6 +526,7 @@ pub const CARDPUTER: Metrics = Metrics {
     chip_r: 3,
     chip_pad: 7,
     chip_pad_min: 3,
+    chip_inset: 3,
     pill_h: 15,
     toast_h: 20,
     card_pad: 10,

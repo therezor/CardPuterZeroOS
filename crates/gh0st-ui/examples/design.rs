@@ -1130,9 +1130,9 @@ fn switcher(t: &Theme) -> Canvas {
     let slots = [
         NONE,
         l("circle-x", "Close", Look::Danger),
+        n("lock", "Lock"),
         NONE,
         l("copy-x", "All", Look::Danger),
-        NONE,
     ];
     widgets::action_bar(&mut c, t, &slots);
     c
@@ -1143,9 +1143,9 @@ fn close_all(t: &Theme) -> Canvas {
     let slots = [
         NONE,
         l("circle-x", "Close", Look::Danger),
+        n("lock", "Lock"),
         NONE,
         l("copy-x", "All", Look::Hold(60)),
-        NONE,
     ];
     widgets::action_bar(&mut c, t, &slots);
     c
@@ -1407,11 +1407,16 @@ fn main() {
         ("36-home", "home: 4 Apps, 6 Find, 8 Menu", home, true),
         (
             "37-switcher",
-            "switcher: 5 closes one, 7 all",
+            "switcher: 5 closes one, 6 locks, 8 all",
             switcher,
             false,
         ),
-        ("37b-close-all", "hold 7: every app closes", close_all, false),
+        (
+            "37b-close-all",
+            "hold 8: every app closes",
+            close_all,
+            false,
+        ),
         (
             "38-term-typing",
             "terminal: Esc as everywhere, Fn Esc sends Esc",

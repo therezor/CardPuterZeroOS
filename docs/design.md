@@ -155,7 +155,7 @@ screen's bottom edge, right above its key, and pressing that key runs it.
 |---|---|
 | 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here. |
 | 5, 6, 7 | the page's own actions |
-| 8 | the menu, an icon-only ≡ chip |
+| 8 | the menu, an icon-only ≡ chip. The switcher has no menu and puts All here. |
 
 Chips spread across the bar, so a key is easy to find without looking. One
 chip sits in the middle, on 6. Two go apart, on 5 and 7; of a pair (Prev and
@@ -168,8 +168,8 @@ needs saying, a dialog or message names them in key pills.
 
 **What a chip is.** A tab over its key, with no fill: a 12 px icon in the
 accent colour and one word in Label style, centred over a 2 px bar along the
-screen's bottom edge. The bar is as wide as the key (54 px), so each one
-underlines its own key. A word is never cut: with less than 3 px each side, a
+screen's bottom edge. The bar is 48 px, a little short of the key, so each one
+underlines its own key and neighbours read apart. A word is never cut: with less than 3 px each side, a
 chip drops its icon.
 
 | State | Looks | For |
@@ -319,10 +319,10 @@ Home: 4 Apps, 6 Find, 8 the home menu (pin, layout). Enter opens the app.
 
 ![The switcher](design/37-switcher.png)
 
-The switcher: 5 Close closes the selected app at once. 7 All is held: its
-chip fills red, and at 0.7 s every app closes. Del held on Home does the same.
-A shorter press shows "Hold to close all". 5 and 7 sit apart, so one is never
-pressed for the other.
+The switcher: 5 Close closes the selected app at once. 6 Lock locks. 8 All is
+held: its chip fills red, and at 0.7 s every app closes. Del held on Home does
+the same. A shorter press shows "Hold to close all". Close and All sit at the
+two ends, so one is never pressed for the other.
 
 ## The lock screen
 
