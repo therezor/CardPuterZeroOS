@@ -20,7 +20,7 @@ const MONO_SHARPEN: f32 = 0.2;
 /// letters unevenly) and gets no gamma lift, which widens the fringe. The
 /// sharpen is hard but keeps a fringe: with none, Inter's curves go jagged.
 const SMALL_SANS_EM: f32 = 18.0;
-const SMALL_SANS_SHARPEN: f32 = 0.32;
+const SMALL_SANS_SHARPEN: f32 = 0.22;
 /// Small sans text still reads soft, its stem edges at mid grey. An
 /// S-curve on coverage pushes fringes toward the background and cores toward
 /// the ink: 0 is linear, 1 a full smoothstep.
