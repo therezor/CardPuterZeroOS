@@ -15,6 +15,13 @@ const COVERAGE_GAMMA: f32 = 1.25;
 /// full, so stems keep a hard core and only a thin fringe.
 const MONO_SHARPEN: f32 = 0.2;
 
+/// Inter below this em blurs the same way, its stems a pixel wide. It gets
+/// a milder cure: each glyph moves at most a quarter pixel (a half spaces
+/// letters unevenly), a lighter sharpen, and no gamma lift, which widens the
+/// fringe.
+const SMALL_SANS_EM: f32 = 16.0;
+const SMALL_SANS_SHARPEN: f32 = 0.12;
+
 const TEXT: &[(u32, u32)] = &[
     (0x20, 0x7e),
     (0xa0, 0x17f),
@@ -85,12 +92,34 @@ struct Face {
 }
 
 impl Face {
-    /// Mono faces are sharpened; Inter keeps its smooth edges.
+    fn small_sans(&self) -> bool {
+        self.snap_x_height && self.em < SMALL_SANS_EM
+    }
+
+    /// Mono and small Inter are sharpened; large Inter keeps its smooth
+    /// edges.
     fn sharpen(&self) -> f32 {
-        if self.snap_x_height {
-            0.0
+        match (self.snap_x_height, self.small_sans()) {
+            (false, _) => MONO_SHARPEN,
+            (true, true) => SMALL_SANS_SHARPEN,
+            (true, false) => 0.0,
+        }
+    }
+
+    /// How far, in eighths of a pixel, a glyph may move to fit the grid.
+    fn reach(&self) -> i32 {
+        match (self.snap_x_height, self.small_sans()) {
+            (false, _) => 4,
+            (true, true) => 2,
+            (true, false) => 0,
+        }
+    }
+
+    fn gamma(&self) -> f32 {
+        if self.small_sans() {
+            1.0
         } else {
-            MONO_SHARPEN
+            COVERAGE_GAMMA
         }
     }
 }
@@ -179,17 +208,18 @@ fn grid_fit(font: &FontRef, scale: PxScale) -> ab_glyph::Point {
     best.1
 }
 
-/// Each glyph then moves sideways, up to half a pixel, to put its own
-/// stems on pixels: m's three stems can't all fit the face's offset. The
-/// cell stays put; only the ink inside it moves.
+/// Each glyph then moves sideways, up to `reach` eighths of a pixel, to put
+/// its own stems on pixels: m's three stems can't all fit the face's offset.
+/// The cell stays put; only the ink inside it moves.
 fn glyph_fit(
     font: &FontRef,
     scale: PxScale,
     id: ab_glyph::GlyphId,
     face: ab_glyph::Point,
+    reach: i32,
 ) -> ab_glyph::Point {
     let mut best = (f32::MAX, face);
-    for i in -4..4 {
+    for i in -reach..reach {
         let at = point(face.x + i as f32 / 8.0, face.y);
         let b = blur(font, scale, id, at);
         // Ties keep the face's offset, so glyphs don't drift for nothing.
@@ -237,10 +267,9 @@ fn bake_fonts(dir: &Path, out: &Path) {
                     continue;
                 }
                 let adv = (scaled.h_advance(id) * 64.0).round() as u32;
-                let at = if f.snap_x_height {
-                    at
-                } else {
-                    glyph_fit(&font, scale, id, at)
+                let at = match f.reach() {
+                    0 => at,
+                    r => glyph_fit(&font, scale, id, at, r),
                 };
                 let glyph = id.with_scale_and_position(scale, at);
                 let (w, h, left, top, off) = match font.outline_glyph(glyph) {
@@ -250,10 +279,10 @@ fn bake_fonts(dir: &Path, out: &Path) {
                         let mut cov = vec![0f32; w * h];
                         outline.draw(|x, y, c| cov[y as usize * w + x as usize] = c);
                         let off = nibbles.len();
-                        let t = f.sharpen();
+                        let (t, gamma) = (f.sharpen(), f.gamma());
                         for c in cov {
                             let c = ((c - t) / (1.0 - 2.0 * t)).clamp(0.0, 1.0);
-                            let c = c.powf(1.0 / COVERAGE_GAMMA);
+                            let c = c.powf(1.0 / gamma);
                             nibbles.push((c * 15.0).round() as u8);
                         }
                         (w, h, b.min.x as i32, b.min.y as i32, off)
