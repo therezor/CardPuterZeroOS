@@ -46,18 +46,21 @@ GH0ST_STAMP=$(changed '%ct.%h' crates assets packaging Cargo.toml Cargo.lock \
 case $GH0ST_GIT_REV in *.dirty) GH0ST_STAMP=$SOURCE_DATE_EPOCH.$GH0ST_GIT_REV ;; esac
 GH0ST_BASE_STAMP=$(changed '%ct' os/packages/gh0st-base os/repo/gh0st.sources \
     os/repo/gh0st.pref os/repo/gh0st-archive-keyring.pgp)
-# The kernel set: our driver and its packages, and the firmware pins its
-# Depends name exactly. The kernel and M5 commit are in its version already;
-# other lock.json edits (a stock app) must not reinstall it.
+# The kernel set: our driver and its packages, the firmware pins its
+# Depends name exactly, and the M5 commit its drivers come from. Other
+# lock.json edits (a stock app) must not reinstall it.
+max() { local m=0 v; for v; do [ "${v:-0}" -gt "$m" ] && m=$v; done; echo "$m"; }
 panel=$(changed '%ct' os/kernel os/packages/gh0st-panel-modules os/packages/gh0st-kernel)
 firmware=$(git -C "$root" log -1 --format=%ct \
     -G'(raspi-firmware|firmware-brcm80211|bluez-firmware)' -- os/lock.json)
-GH0ST_PANEL_STAMP=$((${panel:-0} > ${firmware:-0} ? ${panel:-0} : ${firmware:-0}))
+m5=$(git -C "$root" log -1 --format=%ct -S"$(jq -r \
+    '.git[] | select(.name == "m5stack-linux-dtoverlays") | .commit' "$lock")" -- os/lock.json)
+GH0ST_PANEL_STAMP=$(max "$panel" "$firmware" "$m5")
 # gh0st-wifi: its own files and the firmware packages it takes files from.
 wifi=$(changed '%ct' os/packages/gh0st-wifi)
 wifi_fw=$(git -C "$root" log -1 --format=%ct \
     -G'firmware-(atheros|mediatek|realtek)' -- os/lock.json)
-GH0ST_WIFI_STAMP=$((${wifi:-0} > ${wifi_fw:-0} ? ${wifi:-0} : ${wifi_fw:-0}))
+GH0ST_WIFI_STAMP=$(max "$wifi" "$wifi_fw")
 export SOURCE_DATE_EPOCH GH0ST_GIT_REV GH0ST_STAMP GH0ST_BASE_STAMP GH0ST_PANEL_STAMP GH0ST_WIFI_STAMP
 
 envs=

@@ -799,7 +799,7 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
     } else {
         shown(&c.address, "None")
     };
-    vec![
+    let mut items = vec![
         Item::new(
             "check",
             "Connect on its own",
@@ -845,7 +845,11 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
             Value::None,
             Act::Run(Command::ConnUp),
         ),
-        Item {
+    ];
+    // NetworkManager makes the cable's profile itself, and once that one is
+    // deleted it never makes it again: the cable would stay off for good.
+    if c.wifi {
+        items.push(Item {
             danger: true,
             ..Item::new(
                 "power",
@@ -853,8 +857,9 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
                 Value::None,
                 Act::Run(Command::ConnForget),
             )
-        },
-    ]
+        });
+    }
+    items
 }
 
 fn bluetooth(s: &State) -> Vec<Item> {

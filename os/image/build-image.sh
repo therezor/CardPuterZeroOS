@@ -26,14 +26,16 @@ SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(date +%s)}
 GH0ST_GIT_REV=${GH0ST_GIT_REV:-unknown}
 # A version moves only when its package's sources do (os/build.sh passes
 # the stamps), so apt on a device sees nothing new after a docs-only push.
-stamp_time() { date -u -d "@$1" +%Y%m%d%H%M; }
+# To the second: two pushes in one minute must still give rising versions.
+stamp_time() { date -u -d "@$1" +%Y%m%d%H%M%S; }
 GH0ST_STAMP=${GH0ST_STAMP:-$SOURCE_DATE_EPOCH.$GH0ST_GIT_REV}
 GH0ST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/Cargo.toml" | head -1)+$(stamp_time "${GH0ST_STAMP%%.*}").${GH0ST_STAMP#*.}"
 BASE_VERSION="0.1+$(stamp_time "${GH0ST_BASE_STAMP:-$SOURCE_DATE_EPOCH}")"
 WIFI_VERSION="1+$(stamp_time "${GH0ST_WIFI_STAMP:-$SOURCE_DATE_EPOCH}")"
 # Our driver package moves with the kernel, the M5 commit it was built from,
-# and our own driver's last change.
-PANEL_VERSION="${KVERSION#*:}+m5.${M5COMMIT:0:7}+gh0st$(stamp_time "${GH0ST_PANEL_STAMP:-$SOURCE_DATE_EPOCH}")"
+# and our own driver's last change. The stamp comes before the M5 hash: a
+# new M5 pin then sorts by when it was pinned, not by its hash.
+PANEL_VERSION="${KVERSION#*:}+gh0st$(stamp_time "${GH0ST_PANEL_STAMP:-$SOURCE_DATE_EPOCH}").m5.${M5COMMIT:0:7}"
 export KVER KVERSION M5COMMIT PANEL_VERSION GH0ST_VERSION BASE_VERSION WIFI_VERSION SOURCE_DATE_EPOCH SRC OS WORK CACHE LOCK
 
 log() { printf '\033[1m== %s\033[0m\n' "$*"; }

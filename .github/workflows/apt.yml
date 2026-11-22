@@ -17,7 +17,7 @@ on:
         description: edge, stable or resign
         default: edge
       fresh:
-        description: start from an empty site, dropping every package not built now
+        description: edge only, before any stable release. Start from an empty site
         type: boolean
         default: false
 
@@ -69,11 +69,19 @@ jobs:
           restore-keys: apt-pool-
       - name: Publish
         env:
-          # Fresh: no live site to start from, so both suites hold only this build.
-          REPO_PREV: ${{ !inputs.fresh && env.SITE || '' }}
+          # Fresh: no live site to start from. Edge holds only this build and
+          # stable starts empty, so it is for edge before any stable release.
+          REPO_PREV: ${{ !(inputs.fresh && inputs.what == 'edge') && env.SITE || '' }}
           REPO_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          FRESH: ${{ inputs.fresh && 'yes' || '' }}
         run: |
           [ -n "$REPO_KEY" ] || { echo "set the APT_SIGNING_KEY secret (os/repo/README.md)"; exit 1; }
+          if [ -n "$FRESH" ]; then
+            [ "${{ steps.what.outputs.what }}" = edge ] || { echo "fresh is for edge only"; exit 1; }
+            # A fresh run would empty a released stable suite.
+            n=$(curl -fsSL "$SITE/dists/stable/main/binary-arm64/Packages.xz" | xz -dc | grep -c '^Package:' || true)
+            [ "${n:-0}" -eq 0 ] || { echo "stable has $n packages: fresh would empty it"; exit 1; }
+          fi
           case "${{ steps.what.outputs.what }}" in
             resign) os/build.sh resign ;;
             *) os/build.sh publish "${{ steps.what.outputs.what }}" ;;
@@ -85,8 +93,8 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: os/out/pages
-      # A stable release keeps its debs as release assets too, so a lost
-      # site can be rebuilt.
+      # A stable release keeps stable's pool files as release assets too, so
+      # a lost site can be rebuilt with the very bytes devices installed.
       - name: Release assets
         if: steps.what.outputs.what == 'stable' && github.ref_type == 'tag'
         env:
@@ -98,7 +106,9 @@ jobs:
             gh release create "$tag" --prerelease --title "Gh0st OS $tag" \
               --notes "Flash the .img.xz (scripts/flash.sh, or bmaptool with the .bmap). Updates come from the stable apt suite: docs/updates.md." ||
             true
-          gh release upload "$tag" os/out/debs/*.deb --clobber
+          cd os/out/pages/apt
+          sed -n 's/^Filename: //p' dists/stable/main/binary-arm64/Packages |
+            xargs gh release upload "$tag" --clobber
 
   # Its own job: in the job that uploaded, the artifact may not be listed
   # yet. Not actions/deploy-pages: it names a deployment after the commit,

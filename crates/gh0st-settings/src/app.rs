@@ -115,7 +115,7 @@ fn busy_label(kind: &NetJob) -> Option<&'static str> {
                 _ => "Applying\u{2026}",
             })
         }
-        NetJob::SetRadio | NetJob::TimeSet(_) | NetJob::BtPower | NetJob::BtUnblock => {
+        NetJob::SetRadio(_) | NetJob::TimeSet(_) | NetJob::BtPower | NetJob::BtUnblock => {
             Some("Applying\u{2026}")
         }
         _ => None,
@@ -129,7 +129,8 @@ enum NetJob {
     List,
     Profiles,
     Devices,
-    SetRadio,
+    /// Wi-Fi on (true) or off.
+    SetRadio(bool),
     Join {
         ssid: String,
         known: bool,
@@ -239,7 +240,7 @@ impl Settings {
                 kind,
                 NetJob::Helper(_)
                     | NetJob::TimeSet(_)
-                    | NetJob::SetRadio
+                    | NetJob::SetRadio(_)
                     | NetJob::WifiUnblock
                     | NetJob::BtPower
                     | NetJob::BtUnblock
@@ -667,7 +668,7 @@ impl Settings {
                 let on = self.state.wifi_on;
                 self.state.wifi_on = !on;
                 let arg = if on { "off" } else { "on" };
-                self.run(cx, NetJob::SetRadio, &["nmcli", "radio", "wifi", arg]);
+                self.run(cx, NetJob::SetRadio(!on), &["nmcli", "radio", "wifi", arg]);
             }
             Setting::Bluetooth => {
                 let on = self.state.bt_on;
@@ -1301,8 +1302,15 @@ impl Settings {
                 true
             }
             PageId::Wifi if k == Key::Char('r') => {
-                self.query_net(cx, true);
-                cx.toast("Scanning\u{2026}");
+                if !self.state.wifi_on {
+                    cx.toast("Wi-Fi is off");
+                } else {
+                    // One scan at a time: presses don't stack waits.
+                    if !self.jobs.values().any(|(k, _)| *k == NetJob::List) {
+                        self.query_net(cx, true);
+                    }
+                    cx.toast("Scanning\u{2026}");
+                }
                 true
             }
             PageId::Wifi if k == Key::Backspace => {
@@ -1580,11 +1588,13 @@ impl Settings {
         self.run(cx, NetJob::Profiles, &profiles);
         let list = "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list --rescan";
         if rescan {
-            // A radio switched on a moment ago reads unavailable for a few
-            // seconds, and nmcli won't scan it then: wait, 10 s at most.
+            // The built-in radio switched on a moment ago reads unavailable
+            // for a few seconds, and nmcli won't scan it then: wait, 10 s at
+            // most. Only wlan0: a USB adapter left unavailable must not hold
+            // every scan up.
             let script = format!(
-                "i=0; while [ $i -lt 20 ] && nmcli -t -f TYPE,STATE device | \
-                 grep -qx wifi:unavailable; do sleep 0.5; i=$((i + 1)); done; exec {list} yes"
+                "i=0; while [ $i -lt 20 ] && nmcli -t -f DEVICE,STATE device | \
+                 grep -qx wlan0:unavailable; do sleep 0.5; i=$((i + 1)); done; exec {list} yes"
             );
             self.run(cx, NetJob::List, &["sh", "-c", &script]);
         } else {
@@ -1711,12 +1721,12 @@ impl Settings {
                 });
                 requery = true;
             }
-            NetJob::SetRadio => {
+            NetJob::SetRadio(on) => {
                 if !ok {
                     cx.toast(&net::failure(&out, false));
                 }
                 // A radio switched on has scanned nothing yet: look now.
-                rescan = ok && self.state.wifi_on;
+                rescan = ok && *on;
                 requery = true;
             }
             NetJob::BtPower | NetJob::BtRemove(_) => {
@@ -1731,7 +1741,7 @@ impl Settings {
                     cx.toast(&helper::failure(&out));
                 }
                 self.state.wifi_on = true;
-                self.run(cx, NetJob::SetRadio, &["nmcli", "radio", "wifi", "on"]);
+                self.run(cx, NetJob::SetRadio(true), &["nmcli", "radio", "wifi", "on"]);
             }
             NetJob::BtUnblock => {
                 if ok {
@@ -1851,6 +1861,7 @@ impl Settings {
                 }
             }
             NetJob::List if ok => st.networks = net::parse_list(&out, &st.profiles),
+            NetJob::List => cx.toast(&net::failure(&out, false)),
             NetJob::Devices if ok => st.ifaces = net::parse_devices(&out),
             NetJob::HotspotQuery => {
                 // No profile yet: the helper makes one when it first turns on.
@@ -1901,11 +1912,10 @@ impl Settings {
             }
             _ => {}
         }
-        if requery {
+        // Skip pressed while this ran: the step is closing, so don't start
+        // jobs it would only kill.
+        if requery && !self.finish_when_idle {
             self.query_net(cx, rescan);
-            if rescan {
-                cx.toast("Scanning\u{2026}");
-            }
         }
         self.refresh(cx);
         if self.finish_when_idle && !self.changing() {

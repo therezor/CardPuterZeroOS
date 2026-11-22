@@ -27,6 +27,7 @@ if [ "${1:-}" = rollback ]; then
         /etc/systemd/system/fb_load.service.d/gh0st.conf \
         /etc/polkit-1/rules.d/50-gh0st.rules \
         /usr/share/polkit-1/actions/org.gh0st.policy \
+        /usr/share/polkit-1/actions/org.cpzero.gh0st.policy \
         /usr/libexec/gh0st-helper /etc/udev/rules.d/61-gh0st-cpu.rules \
         /etc/rpi/swap.conf.d/90-gh0st-swap.conf /etc/sysctl.d/90-gh0st-swap.conf \
         /etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf \
@@ -83,6 +84,8 @@ remote 'set -e
     sudo install -D -m 644 /tmp/fb_load-gh0st.conf /etc/systemd/system/fb_load.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/50-gh0st.rules /etc/polkit-1/rules.d/50-gh0st.rules
     sudo install -D -m 644 /tmp/org.gh0st.policy /usr/share/polkit-1/actions/org.gh0st.policy
+    # Its name before the rename: two policies on one exec path confuse pkexec.
+    sudo rm -f /usr/share/polkit-1/actions/org.cpzero.gh0st.policy
     sudo systemctl daemon-reload
     rm -rf /tmp/gh0st /tmp/gh0st-settings /tmp/gh0st-term /tmp/gh0st-update /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
