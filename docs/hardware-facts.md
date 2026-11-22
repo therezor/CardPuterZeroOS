@@ -49,7 +49,7 @@ Measured on the device unless marked.
   On it, ext4's backup superblocks read back right up to 18 GiB and as
   garbage at 33 GiB and 46 GiB, so its real capacity is between them. Data
   past that stays readable only while it is in the page cache: under memory
-  pressure, `/home/lol` (inode table at 55 GiB) came back as random bytes,
+  pressure, the home folder (inode table at 55 GiB) came back as random bytes,
   "Inode checksum does not match", and every login failed.
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
   400 MHz core clock divides to 50 MHz, so a full frame takes about 17.4 ms.

@@ -15,17 +15,16 @@ card.
 
 ## Flash it
 
-1. Download `gh0st-os-prealpha-DATE-BUILD.img.xz` and its `.sha256`. To check
-   the download, run `shasum -a 256 -c` on the `.sha256` file (macOS) or
-   `sha256sum -c` (Linux).
+1. Download `gh0st-os-prealpha-DATE-BUILD.img.xz` and its `.img.xz.sha256`.
+   To check the download, run `shasum -a 256 -c` on the `.img.xz.sha256` file
+   (macOS) or `sha256sum -c` (Linux), in the folder that holds both.
 2. In Imager, for the device pick Raspberry Pi Zero 2 W (the same chip), or
    no filter.
 3. For the OS, scroll to **Use custom** and pick the `.img.xz`. Do not unpack
    it.
 4. For the storage, pick the card. Check the size: Imager erases what you pick.
-5. Skip OS customisation. Imager 2.0 greys it out for custom images. If an
-   older Imager asks "apply OS customisation settings?", answer **No**: its
-   script is made for Raspberry Pi OS, and setup on the device does that job.
+5. If Imager offers OS customisation, answer **No**. Its script is made for
+   Raspberry Pi OS, and setup on the device does that job.
 6. Write, and let Imager verify.
 
 ## First boot
@@ -70,7 +69,9 @@ Include:
 - What you did, what you expected, and what happened. A photo of the screen
   helps.
 - For a crash or a hang: turn logs on in Settings > Privacy, do it again, then
-  turn SSH on and send the output of `sudo journalctl -b`.
+  turn SSH on and save the output of `sudo journalctl -b`. It holds your
+  account name, network names and addresses: remove them, or send the log
+  privately.
 
 ## Known issues
 
