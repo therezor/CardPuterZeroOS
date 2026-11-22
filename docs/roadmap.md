@@ -23,9 +23,11 @@ The user made these on 2026-11-20 and 2026-11-21.
 - **Encryption.** None for now. Anyone with the SD card can read it, and the
   lock screen only stops someone using the device itself. User data gets its
   own partition (M6), so L1 can encrypt that partition alone.
-- **Updates.** Our packages come from a signed apt repo, checked only when the
-  user asks. The kernel and the M5Stack modules move together as one pinned
-  pair.
+- **Updates.** Our packages come from a signed apt repo on GitHub Pages,
+  stable and edge. The device checks once a day (on by default, off in
+  Settings or setup) and installs only when the user confirms. The kernel
+  set moves as one, and only above 50% battery. Changed 2026-11-22 from
+  "checked only when the user asks"; `updates.md` has the design.
 - **Isolation.** Each app runs in its own cgroup.
 - **Settings.** Settings is its own crate and binary, `gh0st-settings`, built
   on the SDK.
@@ -51,8 +53,9 @@ These gaps were in no doc before this one:
    device, and the user can't choose a DNS server.
 6. **Per-device identity.** machine-id, the SSH host keys and the random seed
    must be made at first boot, not baked into the image.
-7. **Updates and packaging.** There are no `.deb`s and no signed repo, and
-   nothing checks the Store catalogs.
+7. **Updates and packaging.** Built 2026-11-22 (`updates.md`): the engine,
+   the Updates app, notifications and the Pages repo. Still open: the key
+   and Pages setup, the device test, and nothing checks the Store catalogs.
 8. **Root helper.** `gh0st-helper` exists, run by pkexec. Our polkit rule
    lets anyone in `sudo` or `netdev` run it, and control NetworkManager,
    without a password. The verbs that matter (SSH, logs, GPU memory, Wi-Fi
@@ -144,7 +147,7 @@ apply" until the running value matches the file.
   low-battery power-off level.
 - Date and time: set by hand when network time is off
   (`timedatectl set-time`).
-- Updates (M6): check the signed repo when the user asks, then install.
+- Updates: built 2026-11-22 (System > Updates, `updates.md`).
 
 **In the SDK and the shell.**
 - The shell link (A1), so the shell draws Settings' bars and Settings keeps
@@ -326,7 +329,7 @@ and runs through pkexec today. It runs only when called and exits after.
 - Partitions: FAT boot, ext4 root, and ext4 user data that grows at first
   boot. All mount with `noatime,commit=60`.
 - GitHub Actions builds `.img.xz` and `.bmap`, and a signed apt repo for our
-  packages.
+  packages (built 2026-11-22: `apt.yml`, `os/repo`).
 - Decide how the Store handles catalogs and `postinst`.
 - `scripts/gate.sh` checks RAM, boot time, idle current, open ports and the
   packet capture, and fails on a regression. The targets come from M0 and M1.

@@ -219,7 +219,7 @@ The bigger leaks are in the base OS and its defaults:
 | `rpi-connect-lite` | Raspberry Pi Connect cloud remote-access client | Don't install |
 | `cloud-init` (+ `rpi-cloud-init-mods`) | Network/metadata datasources at boot | Don't install; first-boot setup done by the launcher |
 | `avahi-daemon` | Broadcasts hostname/services via mDNS on every network | Don't install (optional package) |
-| `apt-daily*`, `apt-listchanges`, `applaunch-apt-update` / `applaunch-updater` / `applaunch-apps-updater` | Contact Debian/RPi/GitHub servers | No timers; updates only when the user starts them |
+| `apt-daily*`, `apt-listchanges`, `applaunch-apt-update` / `applaunch-updater` / `applaunch-apps-updater` | Contact Debian/RPi/GitHub servers | Our daily check instead (`updates.md`): one timer, off in Settings, installs only when the user confirms |
 | Stock launcher update check (`api.github.com/repos/CardputerZero/…`) | Version check against GitHub (already user-initiated) | Rust launcher: keep it manual only |
 | ZClaw startup probe, AppStore catalogs | See findings above | Drop/patch ZClaw; catalogs fetched only on user request |
 | Persistent journal (50 MB on SD) | Keeps logs across boots | `Storage=none` by default (see below) |

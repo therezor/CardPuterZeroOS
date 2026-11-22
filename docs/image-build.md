@@ -127,8 +127,9 @@ packages and 367 MB of the 842 MB installed. Kept by decision (2026-11-21).
 timesyncd, bluetoothd, `fb_load` (a oneshot, so setup draws after the logo),
 the first-boot grow and first-boot setup while its marker exists. sshd
 starts only once the user turns SSH on. User: gh0st, and
-PipeWire's sockets. No timers: the tmpfiles timer is masked, `/tmp` is a
-tmpfs. `units-*.expected` in each variant is the list the checks hold it to.
+PipeWire's sockets. One timer, the daily update check
+(`gh0st-update-daily.timer`, off from Settings); the tmpfiles timer is
+masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the checks hold it to.
 
 ## Kernel and boot
 
@@ -172,7 +173,7 @@ drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 - The packages equal `packages.lock`. Our own packages' versions are masked.
 - Nothing from the deny lists. Every `+rpt` package is pinned in `lock.json`.
 - apt's manual packages are `roots.list` plus Debian's required base.
-- Enabled units equal `units-*.expected`. No timers.
+- Enabled units equal `units-*.expected`. No timer but the daily update check.
 - No SSH host keys, empty machine-id, no random seed, no apt lists, no
   Wi-Fi profiles.
 - Every overlay `config.txt` names is on the boot partition, and nothing for
@@ -232,12 +233,13 @@ start is a device test.
 | Packages | 1699 | 444 |
 | Installed | 5.1 GB `/usr` | 842 MB |
 | Download | 14.8 GiB image | 224 MB `.img.xz` |
-| Enabled system services | 30+ and 9 timers | 6, no timers |
+| Enabled system services | 30+ and 9 timers | 6, one timer (the daily update check) |
 
 ## Not done yet
 
 - On the device: the first boot on the spare card, and spikes S3, S4 and S7.
-- Signing, the apt repo on Pages, release assets (roadmap M6).
+- The archive key and Pages setup (`os/repo/README.md`); the repo itself is
+  built (`updates.md`).
 - The CI workflow has not run.
 
 ## Before the first public release
