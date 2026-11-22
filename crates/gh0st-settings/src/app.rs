@@ -457,8 +457,15 @@ impl Settings {
                 cx.settings().set_str("gh0st.home_layout", l.config_name());
             }
             Setting::Palette => {
-                // Built-ins, then the user's colour schemes.
-                let all = theme::all();
+                // Built-ins, then the user's colour schemes. Phantom joins
+                // once setup's training is done.
+                let mut all = theme::all();
+                if cx.settings().get_bool("gh0st.tour_done") == Some(true) {
+                    all.splice(
+                        theme::PALETTES.len()..theme::PALETTES.len(),
+                        theme::EARNED.iter().copied(),
+                    );
+                }
                 let i = all
                     .iter()
                     .position(|p| p.name == self.state.palette)

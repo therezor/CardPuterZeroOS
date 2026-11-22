@@ -7,7 +7,7 @@ mod account;
 mod clock;
 mod finish;
 mod state;
-mod tour;
+pub mod tour;
 
 use crate::app::{Embed, Settings};
 use crate::model::PageId;
@@ -27,7 +27,7 @@ pub type Shared = Rc<RefCell<Answers>>;
 /// root, so its gated verbs ask no password.
 const HELPER: &str = "/usr/libexec/gh0st-helper";
 
-/// The account's step: the notice, the welcome, the tour, then five
+/// The account's step: the notice, the welcome, the training, then five
 /// settings before it. A resume never starts past it: the password isn't
 /// saved.
 const ACCOUNT: usize = 2 + tour::LESSONS + 5;
@@ -54,7 +54,7 @@ pub fn steps(a: Shared) -> Steps {
     let mut s = Steps::new("")
         .optional(|_| tour::PRE_ALPHA.then_some(tour::Notice))
         .step(move |_| tour::Welcome::new(welcome.clone()))
-        .part("Tour");
+        .part("Training");
     for n in 0..tour::LESSONS {
         let a = a.clone();
         s = s.optional(move |label| {

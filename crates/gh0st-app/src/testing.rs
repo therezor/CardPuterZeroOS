@@ -153,6 +153,13 @@ impl Driver {
         self
     }
 
+    /// Shows the app in another palette, as when `gh0st.palette` changes.
+    pub fn palette(&mut self, name: &str) -> &mut Driver {
+        self.rt.s.settings.set_str("gh0st.palette", name);
+        self.rt.retheme();
+        self
+    }
+
     /// The toast showing now, if any.
     pub fn toast(&self) -> Option<&str> {
         self.rt.toast_text()

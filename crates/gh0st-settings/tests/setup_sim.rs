@@ -62,37 +62,42 @@ wait 2500
 ";
 
 /// The notice, the welcome's Enter, then every lesson passed by its keys:
-/// typing, the dot onto the ring, Tab past the symbols, the Light chip, a
-/// switch and a choice, the menu's Next lesson, and the held Erase chip.
+/// the oath, the oath in caps, the sobriety walk, Tab past the email, the
+/// Don't chip, the hat and the paranoia, the menu's Next lesson, the held
+/// Boom chip, and Enter to wear the reward.
 const TOUR: &str = "\
 wait 300
 enter
 wait 300
 enter
 wait 300
-type Hello
-wait 1200
+type opsec
+wait 1400
+type OPSEC
+wait 1400
 c
 c
 x
 enter
-wait 1200
+wait 1400
 tab
 wait 300
 7
-wait 1200
+wait 1400
 7
 f
 enter
-wait 1200
+wait 1400
 8
 wait 200
 enter
-wait 1200
+wait 1400
 down 7
 wait 900
 up 7
-wait 1500
+wait 1600
+enter
+wait 600
 ";
 
 fn write_exe(path: &Path, text: &str) {
@@ -171,9 +176,15 @@ fn the_tour_passes_each_lesson_by_its_keys() {
     }
     let d = scratch("tour");
     run(&d, TOUR);
-    // The notice, the welcome and seven lessons: step 9 is Country.
+    // The notice, the welcome, eight lessons and the reward: step 11 is
+    // Country.
     let s = state(&d);
-    assert!(s.contains("step=9\n") && s.contains("tour=1"), "{s}");
+    assert!(s.contains("step=11\n") && s.contains("tour=1"), "{s}");
+    // The reward: Phantom earned and worn.
+    let config = d.join("home/.config/cardputerzero/config.json");
+    let config = std::fs::read_to_string(config).unwrap();
+    assert!(config.contains("\"tour_done\": true"), "{config}");
+    assert!(config.contains("\"palette\": \"Phantom\""), "{config}");
     let _ = std::fs::remove_dir_all(&d);
 }
 

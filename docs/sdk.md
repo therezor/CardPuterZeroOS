@@ -806,7 +806,8 @@ and `x`, for the arrows.
 `d.jobs(ms)` runs the real loop until every job the page spawned has ended,
 or `ms` of wall time has passed: lines and exit codes arrive as on the
 device. `d.pump(ms)` does the same for watched fds and adopted children.
-`Driver::with(page, opts)` runs a page as `run_with` would.
+`Driver::with(page, opts)` runs a page as `run_with` would, and
+`d.palette("Nord")` shows it in another palette.
 
 ## Rules
 

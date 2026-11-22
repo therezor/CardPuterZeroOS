@@ -364,7 +364,7 @@ impl Runtime {
     }
 
     /// Follows `gh0st.palette`, so a change to it shows at once.
-    fn retheme(&mut self) {
+    pub(crate) fn retheme(&mut self) {
         let name = self.s.settings.get_str("gh0st.palette").unwrap_or("");
         if name != self.palette {
             self.palette = name.to_string();

@@ -293,12 +293,60 @@ pub const PAPER: Palette = Palette {
     ],
 };
 
+/// Near-black and pale violet: the reward for finishing setup's training,
+/// "for people who were never here".
+pub const PHANTOM: Palette = Palette {
+    name: "Phantom",
+    bg: hex("#0b0a10"),
+    surface: hex("#17151f"),
+    fg: hex("#e9e4f5"),
+    muted: hex("#9a90b5"),
+    accent: hex("#c3a6ff"),
+    accent_fg: hex("#140f22"),
+    info: hex("#8fb8ff"),
+    warning: hex("#e8c468"),
+    critical: hex("#ff7a8a"),
+    ok: hex("#8fe3b0"),
+    border: hex("#2c2838"),
+    tints: [
+        hex("#c3a6ff"),
+        hex("#8fb8ff"),
+        hex("#e8c468"),
+        hex("#ff7a8a"),
+        hex("#8fe3b0"),
+        hex("#f0a35e"),
+    ],
+    ansi: [
+        hex("#1d1a26"),
+        hex("#ff7a8a"),
+        hex("#8fe3b0"),
+        hex("#e8c468"),
+        hex("#8fb8ff"),
+        hex("#c3a6ff"),
+        hex("#7fd8e6"),
+        hex("#d6d0e6"),
+        hex("#736b8f"),
+        hex("#ff9daa"),
+        hex("#aef0c8"),
+        hex("#f3d98c"),
+        hex("#b0ceff"),
+        hex("#d9c6ff"),
+        hex("#a3e6f0"),
+        hex("#f6f3fc"),
+    ],
+};
+
 pub const PALETTES: &[Palette] = &[MINT, NORD, PAPER];
+
+/// Built-ins a picker lists only once earned: Phantom, after setup's
+/// training (`gh0st.tour_done`). `gh0st.palette` finds them any time.
+pub const EARNED: &[Palette] = &[PHANTOM];
 
 /// A built-in palette by its name, any case.
 pub fn palette(name: &str) -> Option<Palette> {
     PALETTES
         .iter()
+        .chain(EARNED)
         .find(|p| p.name.eq_ignore_ascii_case(name))
         .copied()
 }
@@ -594,7 +642,7 @@ mod tests {
 
     #[test]
     fn every_palette_keeps_text_readable() {
-        for p in PALETTES {
+        for p in PALETTES.iter().chain(EARNED) {
             assert!(contrast(p.fg, p.bg) >= 7.0, "{} fg", p.name);
             assert!(contrast(p.fg, p.surface) >= 4.5, "{} fg on surface", p.name);
             assert!(contrast(p.muted, p.bg) >= 3.0, "{} muted", p.name);

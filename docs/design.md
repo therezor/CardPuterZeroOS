@@ -43,7 +43,8 @@ bars thin and match it where it counts: the same keys do the same things.
 ## Colour
 
 Apps never pick colours. They name a role and the palette fills it, so Mint,
-Nord and Paper all work and an app looks like the rest of the device.
+Nord and Paper all work and an app looks like the rest of the device. A fourth,
+Phantom, is earned: finishing setup's training unlocks it (`theme::EARNED`).
 
 ![Colour roles in Mint](design/01-roles.png)
 

@@ -5,29 +5,29 @@
 //!
 //!     cargo run -p gh0st-settings --example setup_mockups
 
+use gh0st_app::Page;
 use gh0st_app::gfx::font::Font;
 use gh0st_app::gfx::icon::{self, IconSize};
 use gh0st_app::gfx::snapshot::write_png;
-use gh0st_app::gfx::theme::{self, Theme, Tone};
+use gh0st_app::gfx::theme::{self, Theme};
 use gh0st_app::gfx::widgets::{
-    self, Battery, Chip, Field, Hint, Look, Message, Net, Row, Status, Trailing, soft, text_in,
+    self, Battery, Chip, Field, Hint, Look, Net, Row, Status, Trailing, soft, text_in,
 };
 use gh0st_app::gfx::{Canvas, Rect};
+use gh0st_app::testing::Driver;
 use gh0st_core::sysconf;
 use gh0st_settings::model::pages::{self, Network, State};
 use gh0st_settings::model::{self, Cursor, Dialog, PageId};
+use gh0st_settings::setup::{self, tour};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-/// The settings part's steps, and the tour's lessons.
+/// The settings part's steps.
 const STEPS: usize = 8;
-const LESSONS: usize = 7;
 
 fn setup(n: usize) -> String {
     format!("Setup {n} of {STEPS}")
-}
-
-fn tour(n: usize) -> String {
-    format!("Tour {n} of {LESSONS}")
 }
 
 // ---------------------------------------------------------------- bars
@@ -177,21 +177,6 @@ fn list_top(t: &Theme) -> i32 {
     widgets::rows_area(t, t.m.row_h).0.y
 }
 
-/// A word to type, the typed part lit, a caret after it.
-fn typing_target(c: &mut Canvas, t: &Theme, y: i32, word: &str, typed: usize) {
-    let r = widgets::content(t);
-    let f = t.f.big;
-    let mut x = r.x + (r.w - f.measure(word)) / 2;
-    let base = y + f.cap();
-    for (i, ch) in word.chars().enumerate() {
-        let col = if i < typed { t.c.accent } else { t.c.border };
-        x = f.draw(c, x, base, &ch.to_string(), col);
-        if i + 1 == typed {
-            c.fill(Rect::new(x + 1, y - 2, 2, f.cap() + 6), t.c.accent);
-        }
-    }
-}
-
 /// A form field from `y`, as `Ui::form` draws one; returns the y where the
 /// next one goes.
 fn field(c: &mut Canvas, t: &Theme, y: i32, f: Field) -> i32 {
@@ -220,249 +205,28 @@ fn secret<'a>(label: &'a str, text: &'a str, error: Option<&'a str>) -> Field<'a
 
 // ---------------------------------------------------------------- steps
 
-/// Setup's first screen while builds are pre-alpha.
-fn notice(t: &Theme) -> Canvas {
-    let mut c = frame(t);
-    top(
-        &mut c,
-        t,
-        "triangle-alert",
-        "Before you start",
-        "",
-        Net::None,
-    );
-    let keys = [Hint {
-        key: "Enter",
-        label: "go on",
-    }];
-    let m = Message {
-        icon: "triangle-alert",
-        tone: Some(Tone::Warning),
-        text: "A pre-alpha test build",
-        note: "It can be unstable,\nand the SDK and the design can still change.",
-        keys: &keys,
-    };
-    widgets::message(&mut c, t, widgets::body(t), &m);
-    chips(&mut c, t, NONE, NONE, NONE);
-    c
-}
+// The notice, the welcome and the training are the real pages, drawn by
+// the SDK as on the device: they can't drift from the code.
 
-fn welcome(t: &Theme) -> Canvas {
-    let mut c = frame(t);
-    top(&mut c, t, "", "Welcome", "", Net::None);
-    let keys = [
-        Hint {
-            key: "Enter",
-            label: "take the tour",
-        },
-        Hint {
-            key: "6",
-            label: "skip to settings",
-        },
-    ];
-    let m = Message {
-        icon: widgets::LOGO,
-        tone: Some(Tone::Info),
-        text: "Welcome to Gh0st OS",
-        note: "A short tour of the keys, then the settings.",
-        keys: &keys,
-    };
-    widgets::message(&mut c, t, widgets::body(t), &m);
-    chips(&mut c, t, NONE, skip(), NONE);
-    c
-}
-
-fn lesson_frame(t: &Theme, title: &str, n: usize) -> Canvas {
-    let mut c = frame(t);
-    top(&mut c, t, "keyboard", title, &tour(n), Net::None);
-    c
-}
-
-fn lesson_typing(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t, "Typing", 1);
-    let r = widgets::content(t);
-    let y = r.y;
-    typing_target(&mut c, t, y + 8, "Hello", 3);
-    let s =
-        "Press Shift, then the letter. Twice for caps lock. While you type, the bar shows keys.";
-    para(&mut c, t, y + 42, s, t.f.small, 15);
-    hint_bar(&mut c, t, &[("Esc", "back"), ("Tab", "skip")]);
-    c
-}
-
-fn lesson_moving(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t, "Moving", 2);
-    let r = widgets::content(t);
-    let y = r.y;
-    // A 5 by 4 board: walk the dot onto the ring.
-    let cell = 22;
-    let board = Rect::new(r.x + 4, y + 2, cell * 5, cell * 4);
-    for gy in 0..4 {
-        for gx in 0..5 {
-            let cr = Rect::new(
-                board.x + gx * cell + 2,
-                board.y + gy * cell + 2,
-                cell - 4,
-                cell - 4,
-            );
-            c.round_rect(cr, 3, t.c.surface);
-        }
+fn real(page: impl Page + 'static, keys: &str, hold_ms: u64, t: &Theme) -> Canvas {
+    let mut d = Driver::new(page);
+    d.palette(t.c.name);
+    if !keys.is_empty() {
+        d.keys(keys);
     }
-    let centre = |gx: i32, gy: i32| {
-        (
-            (board.x + gx * cell + cell / 2) as f32,
-            (board.y + gy * cell + cell / 2) as f32,
-        )
-    };
-    let (tx, ty) = centre(3, 2);
-    c.circle(tx, ty, 7.0, t.c.accent);
-    c.circle(tx, ty, 5.0, t.c.surface);
-    let (dx, dy) = centre(1, 1);
-    c.circle(dx, dy, 5.0, t.c.fg);
-    let right = board.right() + 10;
-    let kr = |i: i32| Rect::new(right - 9, y + i * 19, r.right() - right + 9, 19);
-    for (i, (keys, what)) in [("f", "up"), ("x", "down"), ("z", "left"), ("c", "right")]
-        .iter()
-        .enumerate()
-    {
-        widgets::keys_line(&mut c, t, kr(i as i32), keys, 22, what, "");
+    if hold_ms > 0 {
+        d.wait(hold_ms);
     }
-    let note = Rect::new(right, y + 4 * 19 + 2, r.right() - right, 15);
-    text_in(&mut c, t.f.small, note, "Typing? Add Fn.", t.c.muted);
-    chips(&mut c, t, NONE, skip(), NONE);
-    c
+    d.frame().clone()
 }
 
-fn lesson_symbols(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t, "Symbols", 3);
-    let r = widgets::content(t);
-    let y = r.y;
-    typing_target(&mut c, t, y + 8, "me@home.net", 4);
-    let s = "Sym, then a key, types the symbol printed on it.";
-    para(&mut c, t, y + 42, s, t.f.small, 15);
-    hint_bar(&mut c, t, &[("Esc", "back"), ("Tab", "skip")]);
-    c
+fn answers() -> setup::Shared {
+    Rc::new(RefCell::new(setup::Answers::default()))
 }
 
-fn lesson_bars(t: &Theme, lit: bool) -> Canvas {
-    let mut c = lesson_frame(t, "The bars", 4);
-    let r = widgets::content(t);
-    // Callouts up to the top bar's two ends.
-    let y = r.y + 2;
-    let ink = t.c.accent;
-    c.fill(Rect::new(r.x + 10, t.m.bar_h, 1, 7), ink);
-    text_in(
-        &mut c,
-        t.f.small,
-        Rect::new(r.x + 3, y + 6, 120, 14),
-        "where you are",
-        ink,
-    );
-    let rx = r.right() - 30;
-    c.fill(Rect::new(rx, t.m.bar_h, 1, 7), ink);
-    let rr = Rect::new(r.right() - 160, y + 6, 160 - 3, 14);
-    widgets::text_right(
-        &mut c,
-        t.f.small,
-        rr.right(),
-        rr,
-        "clock, battery, network",
-        ink,
-    );
-    let y = y + 26;
-    let s = "A word over a number key says what that key does. Press 7.";
-    para(&mut c, t, y, s, t.f.body, 18);
-    let light = if lit {
-        l("sun", "Light", Look::On)
-    } else {
-        n("sun", "Light")
-    };
-    chips(&mut c, t, skip(), NONE, light);
-    c
-}
-
-fn lesson_rows(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t, "Rows", 5);
-    let r = widgets::content(t);
-    let y = r.y;
-    let s = "The right side says what a row does.";
-    let y = para(&mut c, t, y, s, t.f.small, 15);
-    let items = [
-        row(t, "sun", "Lamp", Trailing::Toggle(true)),
-        row(t, "palette", "Colour", Trailing::Choice("Mint")),
-        row(t, "settings", "More", Trailing::Chevron),
-    ];
-    rows(&mut c, t, y + 2, &items, 1);
-    chips(
-        &mut c,
-        t,
-        n("chevron-left", "Prev"),
-        skip(),
-        n("chevron-right", "Next"),
-    );
-    c
-}
-
-fn lesson_menu(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t, "Menu and help", 6);
-    let r = widgets::content(t);
-    let y = r.y;
-    let s = "8 opens the menu. Fn and H list every key on the screen. Esc closes them, one at a time. Press 8, then pick Next lesson.";
-    para(&mut c, t, y, s, t.f.body, 18);
-    chips(&mut c, t, NONE, skip(), NONE);
-    c
-}
-
-/// Setup's menu over 8: its own rows, then Help. No Close app.
-fn menu_open(t: &Theme) -> Canvas {
-    let mut c = frame(t);
-    top(&mut c, t, "menu", "Menu", &tour(6), Net::None);
-    let a = t.c.accent;
-    let (x, w, kw) = (6, t.m.width - 12, 40);
-    let mut y = 20;
-    widgets::section(&mut c, t, Rect::new(x, y, w, 15), "Setup");
-    y += 15;
-    let items = [
-        (row(t, "arrow-right", "Next lesson", Trailing::None), ""),
-        (row(t, "skip-forward", "Skip the tour", Trailing::None), ""),
-        (row(t, "power", "Power off", Trailing::None), ""),
-    ];
-    for (i, (rw, k)) in items.iter().enumerate() {
-        widgets::menu_row(&mut c, t, Rect::new(x, y, w, 22), rw, k, kw, i == 0, false);
-        y += 22;
-    }
-    widgets::section(&mut c, t, Rect::new(x, y, w, 15), "App");
-    y += 15;
-    let help = Row {
-        tint: a,
-        ..row(t, "keyboard", "Help", Trailing::Chevron)
-    };
-    widgets::menu_row(
-        &mut c,
-        t,
-        Rect::new(x, y, w, 22),
-        &help,
-        "Fn h",
-        kw,
-        false,
-        false,
-    );
-    widgets::action_bar(
-        &mut c,
-        t,
-        &[NONE, NONE, NONE, NONE, l("menu", "", Look::On)],
-    );
-    c
-}
-
-fn lesson_care(t: &Theme) -> Canvas {
-    let mut c = lesson_frame(t, "Taking care", 7);
-    let r = widgets::content(t);
-    let y = r.y;
-    let s = "What loses data is never on Enter: press it twice, or hold its key. Hold 7 to try. Hold Esc to leave an app, Fn and K to switch.";
-    para(&mut c, t, y, s, t.f.small, 15);
-    chips(&mut c, t, skip(), NONE, l("", "Erase", Look::Hold(60)));
-    c
+fn lesson(n: usize, keys: &str, t: &Theme) -> Canvas {
+    let label = format!("Training {} of {}", n + 1, tour::LESSONS);
+    real(tour::Lesson::new(n, &label, answers()), keys, 0, t)
 }
 
 // Settings' own pages, which setup reuses.
@@ -816,65 +580,80 @@ fn main() {
         }
     }
     let all: &[Screen] = &[
-        ("00-notice", "pre-alpha: first of all", notice),
-        (
-            "01-welcome",
-            "Enter takes the tour, 6 skips to settings",
-            welcome,
-        ),
-        ("02-typing", "tour 1: a field, so key hints", lesson_typing),
-        ("03-moving", "tour 2: f x z c", lesson_moving),
-        ("04-symbols", "tour 3: Sym", lesson_symbols),
-        ("05-bars", "tour 4: the bars, press 7", |t| {
-            lesson_bars(t, false)
+        ("00-notice", "pre-alpha, first of all", |t| {
+            real(tour::Notice, "", 0, t)
         }),
-        ("06-bars-lit", "tour 4 passed: Light on", |t| {
-            lesson_bars(t, true)
+        ("01-welcome", "Enter trains, 6 skips to settings", |t| {
+            real(tour::Welcome::new(answers()), "", 0, t)
         }),
-        (
-            "07-rows",
-            "tour 5: what a row's right side means",
-            lesson_rows,
-        ),
-        ("08-menu", "tour 6: press 8, pick Next lesson", lesson_menu),
-        ("09-menu-open", "setup's menu: no Close app", menu_open),
-        ("10-care", "tour 7: hold 7, nothing is lost", lesson_care),
-        ("11-country", "a letter jumps", country),
-        ("12-time-zone", "Enter picks", time_zone),
-        ("13-privacy", "Enter flips, 6 Done goes on", |t| {
+        ("02-opsec", "swear in: type opsec", |t| {
+            lesson(0, "type ops", t)
+        }),
+        ("03-sworn", "passed", |t| lesson(0, "type opsec", t)),
+        ("04-caps", "now mean it: caps lock", |t| {
+            lesson(1, "type OPS", t)
+        }),
+        ("05-typo", "a wrong letter", |t| lesson(1, "type OPX", t)),
+        ("06-sobriety", "walk the dot to the ring", |t| {
+            lesson(2, "c", t)
+        }),
+        ("07-sober", "three moves: sober", |t| {
+            lesson(2, "c\nc\nx\nenter", t)
+        }),
+        ("08-email", "a fake email, Sym for @", |t| {
+            lesson(3, "type nobody", t)
+        }),
+        ("09-dont", "the chip on 7 says Don't", |t| lesson(4, "", t)),
+        ("10-pressed", "everyone presses it", |t| lesson(4, "7", t)),
+        ("11-hat", "a switch and a choice", |t| lesson(5, "", t)),
+        ("12-unreadable", "hat on, paranoia max", |t| {
+            lesson(5, "7\nf\nenter", t)
+        }),
+        ("13-menu", "secret menu on 8", |t| lesson(6, "", t)),
+        ("14-menu-open", "setup's menu, no Close app", |t| {
+            lesson(6, "8", t)
+        }),
+        ("15-boom", "hold 7 to self-destruct", |t| {
+            let label = format!("Training 8 of {}", tour::LESSONS);
+            real(tour::Lesson::new(7, &label, answers()), "down 7", 400, t)
+        }),
+        ("16-graduation", "the reward: Phantom", |t| lesson(8, "", t)),
+        ("17-country", "a letter jumps", country),
+        ("18-time-zone", "Enter picks", time_zone),
+        ("19-privacy", "Enter flips, 6 Done goes on", |t| {
             privacy(t, 0)
         }),
-        ("14-privacy-logs", "Keep logs opens its list", |t| {
+        ("20-privacy-logs", "Keep logs opens its list", |t| {
             privacy(t, 5)
         }),
-        ("15-network", "Enter joins, 5 Scan, 7 Skip", network),
-        ("16-network-cable", "with a cable in", network_cable),
+        ("21-network", "Enter joins, 5 Scan, 7 Skip", network),
+        ("22-network-cable", "with a cable in", network_cable),
         (
-            "17-wifi-password",
+            "23-wifi-password",
             "the join dialog: key hints",
             wifi_password,
         ),
         (
-            "18-date-time",
+            "24-date-time",
             "only when the clock has not synced",
             date_time,
         ),
-        ("19-account", "name and password, Tab between", |t| {
+        ("25-account", "name and password, Tab between", |t| {
             account(t, false)
         }),
-        ("20-account-short", "an error under the field", |t| {
+        ("26-account-short", "an error under the field", |t| {
             account(t, true)
         }),
-        ("21-again", "once more, Tab shows it", |t| {
+        ("27-again", "once more, Tab shows it", |t| {
             account_again(t, false)
         }),
-        ("22-again-differ", "they differ", |t| account_again(t, true)),
-        ("23-look", "5 and 7 change, 6 Done", look),
-        ("24-done", "what was set", finished),
-        ("25-starting", "the shell comes up", starting),
-        ("26-help", "Fn h on a step", help),
+        ("28-again-differ", "they differ", |t| account_again(t, true)),
+        ("29-look", "5 and 7 change, 6 Done", look),
+        ("30-done", "what was set", finished),
+        ("31-starting", "the shell comes up", starting),
+        ("32-help", "Fn h on a step", help),
     ];
-    for palette in theme::PALETTES {
+    for palette in theme::PALETTES.iter().chain(theme::EARNED) {
         let t = Theme::new(*palette);
         let tag = palette.name.to_lowercase();
         let screens: Vec<(&str, &str, Canvas)> = all
