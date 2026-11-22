@@ -79,12 +79,16 @@ pub fn memory() -> Option<(u64, u64)> {
     Some(((total - available) / 1024, total / 1024))
 }
 
-/// Space used and in total on the root filesystem, in MB.
-pub fn storage() -> Option<(u64, u64)> {
+/// Space used and in total on the filesystem that holds `path`, in MB.
+/// The image keeps `/home` on its own partition, which fills the card, so
+/// `/` alone shows only the system.
+pub fn storage(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
     // SAFETY: statvfs fills a zeroed struct for a NUL-terminated path.
     let st = unsafe {
         let mut st: libc::statvfs = std::mem::zeroed();
-        (libc::statvfs(c"/".as_ptr(), &mut st) == 0).then_some(st)
+        (libc::statvfs(c.as_ptr(), &mut st) == 0).then_some(st)
     }?;
     let block = st.f_frsize as u64;
     let total = st.f_blocks as u64 * block;

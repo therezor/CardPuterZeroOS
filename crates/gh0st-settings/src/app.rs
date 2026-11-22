@@ -21,7 +21,8 @@ use gh0st_core::config::{self, Config};
 use gh0st_core::sysconf::{self, CpuMode, GpuMem};
 use gh0st_core::{desktop, rfkill, rt};
 use std::collections::HashMap;
-use std::path::Path;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
 /// pkexec runs the root helper by this path (see packaging/polkit).
 const HELPER: &str = "/usr/libexec/gh0st-helper";
@@ -2091,11 +2092,18 @@ fn about() -> Vec<(String, String)> {
     if let Some((used, total)) = system::memory() {
         out.push(("Memory".into(), format!("{used} MB of {total} MB used")));
     }
-    if let Some((used, total)) = system::storage() {
-        out.push((
-            "Storage".into(),
-            format!("{} of {} used", size(used << 20), size(total << 20)),
-        ));
+    let used =
+        |(used, total): (u64, u64)| format!("{} of {} used", size(used << 20), size(total << 20));
+    let home = std::env::var_os("HOME").map_or("/home".into(), PathBuf::from);
+    if let Some(space) = system::storage(&home) {
+        out.push(("Storage".into(), used(space)));
+    }
+    // With /home on its own partition, the system's space is apart from it.
+    let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
+    if dev(Path::new("/")) != dev(&home) {
+        if let Some(space) = system::storage(Path::new("/")) {
+            out.push(("System".into(), used(space)));
+        }
     }
     if let Some(b) = system::battery() {
         let charging = if b.charging { ", charging" } else { "" };
