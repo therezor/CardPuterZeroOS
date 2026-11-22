@@ -87,6 +87,31 @@ Read without changing anything, on the stock M5 image with gh0st installed.
   switcher's figures walk the shell's own tree instead of all 167 processes.
   `CLK_TCK` is 100. Read 2026-11-21.
 
+## Dark current (measured 2026-11-22)
+
+The dev device on the stock image, shell dark (backlight 1, app paused),
+Wi-Fi joined on the built-in `wlan0` (brcmfmac, SDIO), battery current
+averaged over 10 to 20 s. Each change was reverted after its run.
+
+| State | mA | USB IRQ/s |
+|---|---|---|
+| Dark, as shipped | 346 | 8,100 |
+| Ethernet chip (`r8152`, no cable) `power/control=auto` | 348 | 8,600 |
+| Same, and the TP-Link USB Wi-Fi dongle deauthorized | 214 | 0 |
+| Wi-Fi radios blocked (rfkill) | 315 | 8,100 |
+| Panel DISPOFF and SLPIN (debugfs `command`) | 339 | 8,100 |
+| CPU 1 to 3 offline | 346 | 8,100 |
+
+- The USB host fires about 8,100 IRQ/s while any device on the hub is
+  awake. The Ethernet chip suspends on `auto`, but the dongle (2357:011e,
+  `rtw88_8821au`, `supports_autosuspend=0`) never does, so the hub and dwc2
+  stay up. With both asleep the whole bus suspends: 132 mA less.
+- Wi-Fi off saves about 30 mA; a reconnect costs a burst over 400 mA.
+- Panel sleep is within the noise (about 7 mA), and offlining cores saves
+  nothing: idle cores already wait in WFI.
+- Readings drift 20 to 60 mA after a radio comes back, so compare runs taken
+  back to back.
+
 ## Idle, 60 s on home (`scripts/measure.sh`)
 
 | | Stock APPLaunch 0.6.105 | Shell (first device run) |
