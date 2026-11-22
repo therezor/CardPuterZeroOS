@@ -1,0 +1,22 @@
+# First-boot setup (docs/setup.md): root, before any user session, while
+# its marker exists. setup-finish removes the marker and starts the user's
+# session; a restart after that finds no marker and stays off.
+[Unit]
+Description=First-boot setup
+ConditionPathExists=/var/lib/cpzeroos/setup
+RequiresMountsFor=/home
+After=cpzeroos-grow-data.service fb_load.service dbus.service polkit.service
+After=NetworkManager.service systemd-timesyncd.service
+Wants=NetworkManager.service
+# Never give up: a setup that stays dead leaves a blank device.
+StartLimitIntervalSec=0
+
+[Service]
+Environment=HOME=/var/lib/cpzeroos/setup-home
+WorkingDirectory=/usr/share/APPLaunch
+ExecStart=/usr/bin/gh0st-settings --setup
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

@@ -7,11 +7,13 @@ After=systemd-udev-trigger.service systemd-udevd.service systemd-modules-load.se
 ConditionPathExists=/usr/sbin/fb_load
 ConditionVirtualization=!container
 
-# simple, as stock: a oneshot would hold up boot if fb_load ever hung.
+# A oneshot, so setup draws only after the logo; without --keep-open it
+# draws and exits at once. The timeout keeps a hung one from holding boot.
 [Service]
-Type=simple
+Type=oneshot
 ExecStart=/usr/sbin/fb_load
 RemainAfterExit=yes
+TimeoutStartSec=5
 
 [Install]
 WantedBy=sysinit.target

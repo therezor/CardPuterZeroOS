@@ -42,7 +42,18 @@ expect "/home filesystem grown" 'Successfully resized "/home"'
 expect "zram swap active" 'Activated swap dev-zram0.swap'
 expect "SSH host keys made" 'ssh-keygen: generating new host keys'
 expect "sshd listening" 'Server listening on'
-expect "UID 1000 session started" 'Started user@1000.service'
+if tar -tf "$build/rootfs.tar" ./var/lib/cpzeroos/setup > /dev/null 2>&1; then
+    # Setup's image: setup starts, and no user session until it hands over.
+    # QEMU has no keyboard, so setup itself fails and restarts.
+    expect "setup started" 'gh0st-setup.service|First-boot setup'
+    if grep -q 'Started user@1000.service' "$s/journal.txt"; then
+        printf 'FAIL  a user session before setup\n'; fails=$((fails + 1))
+    else
+        printf 'ok    no user session before setup\n'
+    fi
+else
+    expect "UID 1000 session started" 'Started user@1000.service'
+fi
 expect "system reached multi-user" 'Reached target multi-user.target'
 # QEMU has no Wi-Fi, and NetworkManager logs a profile only when it fails
 # to load one. Joining the network is a device test.
@@ -53,10 +64,11 @@ if [ -n "${CPZ_DEV_WIFI_SSID:-}" ]; then
         printf 'ok    NetworkManager took the dev Wi-Fi profile without complaint\n'
     fi
 fi
-# Failures QEMU causes (no VideoCore, no keyboard) are expected; any other
-# failed unit is not.
-other=$(grep -E 'Failed to start|failed with result' "$s/journal.txt" | grep -vE 'gh0st.service' | head -5)
-if [ -z "$other" ]; then printf 'ok    no failed units beyond gh0st (no keyboard in QEMU)\n'; else printf 'FAIL  failed units:\n%s\n' "$other"; fails=$((fails + 1)); fi
+# Failures QEMU causes are expected: no keyboard for gh0st and setup, no
+# panel for fb_load, which waits for it until its timeout. Any other failed
+# unit is not.
+other=$(grep -E 'Failed to start|failed with result' "$s/journal.txt" | grep -vE '(gh0st|gh0st-setup|fb_load).service' | head -5)
+if [ -z "$other" ]; then printf 'ok    no failed units beyond what QEMU lacks\n'; else printf 'FAIL  failed units:\n%s\n' "$other"; fails=$((fails + 1)); fi
 if grep -q "Can't create dir" "$s/journal.txt"; then printf 'FAIL  home not writable\n'; fails=$((fails + 1)); else printf 'ok    home writable\n'; fi
 echo
 grep -E 'Startup finished in .*\(kernel\)' "$s/journal.txt" | head -1 | sed 's/.*Startup/QEMU: startup/'

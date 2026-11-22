@@ -3,6 +3,10 @@
 # an app plays.
 [Unit]
 Description=Gh0stdeck shell
+# Exactly one of setup and the shell runs: the shell waits for setup's
+# marker to go (docs/setup.md, Power cuts).
+ConditionPathExists=!/var/lib/cpzeroos/setup
+ConditionUser=1000
 # Never give up restarting: a shell that stays dead leaves a blank device.
 StartLimitIntervalSec=0
 

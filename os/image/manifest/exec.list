@@ -11,6 +11,10 @@ hostnamectl
 journalctl
 vcgencmd
 passwd
+# The helper, for first-boot setup's user-create.
+useradd
+usermod
+chpasswd
 reboot
 poweroff
 /usr/sbin/unix_chkpwd

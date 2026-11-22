@@ -96,7 +96,7 @@ if [ "$variant" = dev ]; then
             bad "Wi-Fi profile missing or not 0600 root"
         fi
     fi
-    if [ -n "${CPZ_DEV_SSH_PUBKEY:-}" ]; then
+    if [ -n "${CPZ_DEV_SSH_PUBKEY:-}" ] && [ "${CPZ_DEV_SETUP:-}" != 1 ]; then
         u=${CPZ_DEV_USER:-zero}
         if debugfs -R "stat /$u/.ssh/authorized_keys" "$build/data.ext4" 2>/dev/null |
             grep -qE 'Mode: +0600.*' && debugfs -R "stat /$u/.ssh/authorized_keys" "$build/data.ext4" 2>/dev/null |
@@ -115,8 +115,29 @@ if [ "$variant" = dev ]; then
     fi
 fi
 
-# The data partition's root is /home: UID 1000's home sits at its top.
-if debugfs -R "ls -l /" "$build/data.ext4" 2>/dev/null | awk '$2 ~ /^4/ && $4 == 1000 {f = 1} END {exit !f}'; then
+# A release, or a dev image built with CPZ_DEV_SETUP=1, runs first-boot
+# setup: its marker, no user yet, root locked. Otherwise UID 1000 exists and
+# its home sits at the top of the data partition, which is /home.
+if [ "$variant" = release ] || [ "${CPZ_DEV_SETUP:-}" = 1 ]; then
+    if grep -qE ' \./var/lib/cpzeroos/setup$' "$list"; then ok "setup's marker present"; else bad "no setup marker"; fi
+    if tar -xOf "$build/rootfs.tar" ./etc/passwd | awk -F: '$3 == 1000 {f = 1} END {exit !f}'; then
+        bad "a UID 1000 user in an image that runs setup"
+    else
+        ok "no user: setup makes it"
+    fi
+    if tar -xOf "$build/rootfs.tar" ./etc/shadow | awk -F: '$1 == "root" && $2 !~ /^[!*]/ {f = 1} END {exit !f}'; then
+        bad "root has a password"
+    else
+        ok "root locked"
+    fi
+    if [ -n "${CPZ_DEV_SSH_PUBKEY:-}" ]; then
+        if grep -qE '^-rw------- (root/root|0/0) .*var/lib/cpzeroos/seed/authorized_keys$' "$list"; then
+            ok "SSH key staged for setup, 0600 root"
+        else
+            bad "SSH key not staged for setup"
+        fi
+    fi
+elif debugfs -R "ls -l /" "$build/data.ext4" 2>/dev/null | awk '$2 ~ /^4/ && $4 == 1000 {f = 1} END {exit !f}'; then
     ok "home directory at the root of the data partition"
 else
     bad "no UID 1000 home at the root of the data partition"

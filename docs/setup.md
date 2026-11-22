@@ -238,15 +238,19 @@ each wrong try. It starts locked, and locks on wake after `gh0st.lock.after` sec
 (System > Lock after, 5 minutes by default). `design.md` has the screen; `apps.md`, Pausing,
 has what happens to the app in front.
 
-**Image** (branch `image`):
+**Image** (`docs/image-build.md`, First-boot setup), built 2026-11-22:
 
-- Release: no user and no linger; the marker; `gh0st-setup.service` enabled.
-- Dev: the dev user is made as today, with no marker. `CPZ_DEV_SETUP=1` builds a dev image
-  that runs setup instead, with the SSH key staged for `user-create`.
+- Release: no user and no linger; the marker and setup's `HOME`; `gh0st-setup.service`
+  enabled by the preset; the shell's unit waits for the marker to go. Its checks: the
+  marker, no UID 1000, root locked.
+- Dev: the dev user is made as today, with no marker; key-only, its config turns
+  Unlock with password off. `CPZ_DEV_SETUP=1` builds a dev image that runs setup
+  instead, with the SSH key staged for `user-create` and root on the serial console.
 - NetworkManager gets `no-auto-default=*`, so a cable stays offline until the user picks
   it.
-- `fb_load.service` becomes `Type=oneshot` with a 5 s timeout, so the logo is done before
+- `fb_load.service` is `Type=oneshot` with a 5 s timeout, so the logo is done before
   setup draws.
+- `exec.list` adds `useradd`, `usermod` and `chpasswd`.
 
 ## Tests
 

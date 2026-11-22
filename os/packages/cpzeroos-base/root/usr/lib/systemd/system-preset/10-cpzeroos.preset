@@ -5,4 +5,5 @@ enable systemd-timesyncd.service
 enable bluetooth.service
 enable fb_load.service
 enable cpzeroos-grow-data.service
+enable gh0st-setup.service
 disable *

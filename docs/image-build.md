@@ -35,11 +35,26 @@ os/build.sh image dev
 ```
 
 `CPZ_DEV_PASSWORD_HASH` (from `openssl passwd -6`) sets a password; without
-it the account is key-only with passwordless sudo. The dev image also has a
+it the account is key-only with passwordless sudo, and its config turns
+**Unlock with password** off, as the lock screen has no password to take. The dev image also has a
 serial console on `serial0` at 115200 that logs in by itself, the
 firmware's boot log on the same UART (`uart_2ndstage=1`), a persistent
 journal, avahi for the `.local` name, and radios unblocked at boot. A release build fails if any
 `CPZ_DEV_*` is set.
+
+`CPZ_DEV_SETUP=1` builds a dev image that runs first-boot setup instead, as a
+release does: no user, the setup marker, and the SSH key staged in
+`/var/lib/cpzeroos/seed/authorized_keys` for the user setup makes. The
+serial console logs in as root until then.
+
+## First-boot setup
+
+A release ships with no user. `/var/lib/cpzeroos/setup` is the marker:
+while it exists, `gh0st-setup.service` (in `gh0st`) runs `gh0st-settings
+--setup` as root, and the shell's `gh0st.service` stays off. Setup makes UID
+1000, removes the marker and starts the user's session (`docs/setup.md`).
+`/var/lib/cpzeroos/setup-home` is setup's own `HOME`. NetworkManager's
+`no-auto-default=*` keeps a cable offline until the user picks it.
 
 ## Flash
 
@@ -127,12 +142,13 @@ packages and 367 MB of the 838 MB installed. Kept by decision (2026-11-21).
 | `cpzeroos-kernel` | Exact-version Depends on the kernel, drivers and firmware, so they move together |
 | `cpzeroos-no-initramfs` | Provides `linux-initramfs-tool`: the kernel has ext4 and the SD driver built in |
 | `cpzeroos-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
-| `gh0st`, `gh0st-term` | Our binaries, `.desktop` files, polkit files, the `gh0st.service` user unit |
+| `gh0st`, `gh0st-term` | Our binaries, `.desktop` files, polkit files, the `gh0st.service` user unit, `gh0st-setup.service` |
 | `cpzeroos-m5-appstore` | See above |
 | `cpzeroos-dev` | Dev only: SSH, avahi, sudo without a password, journal, tools |
 
 **Services.** System: NetworkManager and its on-demand dispatcher,
-timesyncd, bluetoothd, `fb_load` and the first-boot grow; the dev image adds
+timesyncd, bluetoothd, `fb_load` (a oneshot, so setup draws after the logo),
+the first-boot grow and first-boot setup while its marker exists; the dev image adds
 sshd and avahi, and logs the serial console straight in. User: gh0st, and
 PipeWire's sockets. No timers: the tmpfiles timer is masked, `/tmp` is a
 tmpfs. `units-*.expected` in each variant is the list the checks hold it to.
@@ -176,7 +192,9 @@ drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
   Wi-Fi profiles in a release.
 - Every overlay `config.txt` names is on the boot partition, and nothing for
   other boards.
-- UID 1000's home sits at the root of the data partition.
+- A release, or a `CPZ_DEV_SETUP=1` image: setup's marker, no UID 1000, root
+  locked, and a staged SSH key when one was given. Otherwise UID 1000's home
+  sits at the root of the data partition.
 - setuid bits survive `mke2fs -d`; the helper is a hard link.
 - Every command in `exec.list` resolves. Our binaries are static, so no
   package metadata says what they run.
@@ -193,7 +211,8 @@ device tree, so the test reads the dev image's journal off the card file
 afterwards. It checks: root mounted without an initramfs, p3 and its
 filesystem grown, zram on, SSH host keys made and sshd listening, UID 1000's
 session started, multi-user reached, no failed unit but gh0st (no keyboard),
-and a writable home.
+and a writable home. On a `CPZ_DEV_SETUP=1` image it checks that setup
+starts and no user session does; setup itself fails there, with no keyboard.
 
 ## Changing things
 
@@ -239,5 +258,5 @@ and a writable home.
 - A licence and source-offer page: the image redistributes Raspberry Pi
   debs, M5 app debs and the AppStore binary.
 - Randomize the disk ID at first boot.
-- Tags publish pre-releases only until first-boot setup (roadmap M4): the
-  release account is locked and there is no setup yet.
+- Tags publish pre-releases until first-boot setup has passed its device
+  test on a fresh card (`docs/setup.md`, Tests).
