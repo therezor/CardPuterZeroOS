@@ -46,8 +46,13 @@ CPZ_GH0ST_STAMP=$(changed '%ct.%h' crates assets packaging Cargo.toml Cargo.lock
 case $CPZ_GIT_REV in *.dirty) CPZ_GH0ST_STAMP=$SOURCE_DATE_EPOCH.$CPZ_GIT_REV ;; esac
 CPZ_BASE_STAMP=$(changed '%ct' os/packages/cpzeroos-base os/repo/cpzeroos.sources \
     os/repo/cpzeroos.pref os/repo/cpzeroos-archive-keyring.pgp)
-CPZ_PANEL_STAMP=$(changed '%ct' os/kernel os/packages/cpzeroos-panel-modules \
-    os/packages/cpzeroos-kernel os/lock.json)
+# The kernel set: our driver and its packages, and the firmware pins its
+# Depends name exactly. The kernel and M5 commit are in its version already;
+# other lock.json edits (a stock app) must not reinstall it.
+panel=$(changed '%ct' os/kernel os/packages/cpzeroos-panel-modules os/packages/cpzeroos-kernel)
+firmware=$(git -C "$root" log -1 --format=%ct \
+    -G'(raspi-firmware|firmware-brcm80211|bluez-firmware)' -- os/lock.json)
+CPZ_PANEL_STAMP=$((${panel:-0} > ${firmware:-0} ? ${panel:-0} : ${firmware:-0}))
 export SOURCE_DATE_EPOCH CPZ_GIT_REV CPZ_GH0ST_STAMP CPZ_BASE_STAMP CPZ_PANEL_STAMP
 
 envs=

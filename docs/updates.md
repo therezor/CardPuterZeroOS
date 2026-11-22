@@ -228,7 +228,8 @@ and the stock app debs.
 - **Versions move with their sources.** `os/build.sh` stamps each package
   with the last commit that touched it: gh0st and gh0st-term with the code,
   cpzeroos-base with its own folder and `os/repo`, the kernel set with
-  `os/kernel`, its packages and `lock.json`. A docs-only push publishes
+  `os/kernel`, its packages and the firmware pins in `lock.json` (the kernel
+  and M5 commit are in its version already). A docs-only push publishes
   nothing new.
 - **CI.** `.github/workflows/apt.yml` builds the debs, restores the pool from
   the Actions cache (falling back to the live site), publishes, and deploys
@@ -255,6 +256,11 @@ own root tree (`rootfs.tar`), with a throwaway Ed25519 key:
   Packages. Later ones fetch diffs.
 - `apt-get update`'s Status-Fd percent lags far behind, then jumps. The
   engine takes the larger of it and "Retrieving file N of M".
+- The Updates app ran beside it under `--sim` and followed the engine
+  over inotify, from the check through Download, Install and Cleaning up to
+  "17 updates installed". `systemd-analyze verify` passes the units.
+- The release image builds with all of it and passes its checks: 843 of
+  850 MB, the daily check's the only timer.
 - The engine itself (`gh0st update check`, then `install`) ran there as
   root: 14 updates found in 4 s, the notice posted, the download and dpkg
   phases reported, the cache cleaned, and "Restart to finish" posted for

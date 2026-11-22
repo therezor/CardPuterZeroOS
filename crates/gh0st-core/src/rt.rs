@@ -206,7 +206,7 @@ pub struct Local {
 pub fn local_at(epoch: i64) -> Local {
     // SAFETY: localtime_r into a local struct tm.
     unsafe {
-        let t = epoch as libc::time_t;
+        let t = epoch as _;
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&t, &mut tm);
         Local {

@@ -209,6 +209,9 @@ fn refresh(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, String)> 
         rep,
         |_| true,
     );
+    if STOP.load(Ordering::SeqCst) {
+        return Err((Outcome::Stopped, "Stopped".into()));
+    }
     // --error-on=any: a source that failed, offline or unsigned, fails the
     // run instead of leaving old lists in place.
     if code != Some(0) {
@@ -687,7 +690,9 @@ fn post_notice(st: &State) {
             tone: notify::Tone::Warning,
             ..Notice::default()
         })
-    } else if n > 0 && st.outcome == Outcome::Ok {
+    } else if n > 0 {
+        // Still true after a failed run: the list is what the last good
+        // check found.
         Some(Notice {
             title: if n == 1 {
                 "1 update ready".into()

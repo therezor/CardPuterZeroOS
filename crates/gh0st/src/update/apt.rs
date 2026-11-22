@@ -189,7 +189,7 @@ pub fn failure(out: &str) -> (Outcome, String) {
             "The update source isn't signed right".into(),
         );
     }
-    if has("Hash Sum mismatch") || has("404") {
+    if has("Hash Sum mismatch") || has("404") || has("File not found") {
         return (
             Outcome::Error,
             "The server changed mid-update. Try again".into(),
@@ -205,9 +205,14 @@ pub fn failure(out: &str) -> (Outcome, String) {
 
 /// Worth one fresh `apt-get update` and a second try.
 pub fn retryable(out: &str) -> bool {
-    out.contains("Hash Sum mismatch")
-        || out.contains("404  Not Found")
-        || out.contains("404 Not Found")
+    [
+        "Hash Sum mismatch",
+        "404  Not Found",
+        "404 Not Found",
+        "File not found",
+    ]
+    .iter()
+    .any(|s| out.contains(s))
 }
 
 #[cfg(test)]

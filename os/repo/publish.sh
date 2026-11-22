@@ -49,6 +49,27 @@ fetch() {
     curl -fsSL --retry 3 -o "$2" "$1"
 }
 
+# A suite's live index into $2. Returns 1 only when the site says it isn't
+# there (404, or no file): anything else stops the publish, since reading a
+# flaky fetch as "empty" would publish that suite empty.
+fetch_index() {
+    local url=$1 out=$2 code
+    if [[ $url == file://* ]]; then
+        [ -f "${url#file://}" ] || return 1
+        cp "${url#file://}" "$out"
+        return 0
+    fi
+    code=$(curl -sSL --retry 3 -o "$out" -w '%{http_code}' "$url") || die "$url: fetch failed"
+    case $code in
+        200) return 0 ;;
+        404)
+            rm -f "$out"
+            return 1
+            ;;
+        *) die "$url: HTTP $code" ;;
+    esac
+}
+
 # Pool path for a deb: pool/main/<initial>/<package>/<file>, lib* by four
 # letters as Debian does.
 pool_path() {
@@ -63,7 +84,7 @@ pool_path() {
 for s in "${suites[@]}"; do
     : > "$tmp/$s.list"
     [ -n "${REPO_PREV:-}" ] || continue
-    if fetch "$REPO_PREV/$(index "$s")/Packages.xz" "$tmp/$s.prev.xz" 2>/dev/null; then
+    if fetch_index "$REPO_PREV/$(index "$s")/Packages.xz" "$tmp/$s.prev.xz"; then
         xz -dc "$tmp/$s.prev.xz" > "$tmp/$s.prev"
         sed -n 's/^Filename: //p' "$tmp/$s.prev" > "$tmp/$s.list"
         log "$s: $(wc -l < "$tmp/$s.list") files live"
@@ -165,7 +186,7 @@ for s in "${suites[@]}"; do
     while read -r rel; do stanza "$rel"; done < "$tmp/$s.final" > "$dir/Packages"
     xz -9e -T1 -c "$dir/Packages" > "$dir/Packages.xz"
     # The previous index stays reachable by its hash.
-    if [ -f "$tmp/$s.prev.xz" ]; then
+    if [ -f "$tmp/$s.prev.xz" ] && [ -f "$tmp/$s.prev" ]; then
         cp "$tmp/$s.prev.xz" "$dir/by-hash/SHA256/$(sha256sum "$tmp/$s.prev.xz" | cut -d' ' -f1)"
         cp "$tmp/$s.prev" "$dir/by-hash/SHA256/$(sha256sum "$tmp/$s.prev" | cut -d' ' -f1)"
     fi

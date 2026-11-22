@@ -52,6 +52,12 @@ pub struct Updates {
     progress: Option<Progress>,
     /// A check or install was asked for and the engine hasn't shown up yet.
     starting: Option<bool>,
+    /// The state file's mtime when it was asked: a run that ends before
+    /// writing progress (offline, the battery) still rewrites the state.
+    starting_from: Option<std::time::SystemTime>,
+    /// The last install's restart is still owed. Read in `reload`: it walks
+    /// /proc.
+    restart_owed: bool,
     start_timer: Option<Timer>,
     helper: Helper,
     battery: Option<system::Battery>,
@@ -77,6 +83,8 @@ impl Updates {
             state: State::default(),
             progress: None,
             starting: None,
+            starting_from: None,
+            restart_owed: false,
             start_timer: None,
             helper: Helper::new(ASK_PASSWORD),
             battery: None,
@@ -92,9 +100,11 @@ impl Updates {
     fn reload(&mut self) {
         self.state = State::load();
         self.progress = Progress::load();
-        if self.progress.is_some() {
+        let rewritten = state_mtime() != self.starting_from;
+        if self.progress.is_some() || (rewritten && !update::engine_running()) {
             self.starting = None;
         }
+        self.restart_owed = !update::restart_done(&self.state);
         self.battery = system::battery();
         self.cache = cache_bytes();
     }
@@ -116,7 +126,7 @@ impl Updates {
                 ..Progress::default()
             });
         }
-        if st.restart != Restart::None && !update::restart_done(st) {
+        if st.restart != Restart::None && self.restart_owed {
             return View::Done(st.restart);
         }
         let ready = !st.packages.is_empty();
@@ -216,6 +226,7 @@ impl Updates {
         match (f.tag, f.result) {
             (CHECK | INSTALL, Ok(_)) => {
                 self.starting = Some(f.tag == INSTALL);
+                self.starting_from = state_mtime();
                 if let Some(t) = self.start_timer.take() {
                     cx.cancel(t);
                 }
@@ -405,12 +416,7 @@ impl Updates {
                 "Another install is running",
                 "The Store may be installing. Try again soon.".into(),
             ),
-            Outcome::Stopped => (
-                "square",
-                Tone::Info,
-                "Stopped",
-                "Nothing was installed.".into(),
-            ),
+            Outcome::Stopped => ("square", Tone::Info, "Stopped", "Nothing changed.".into()),
             _ => ("circle-x", Tone::Critical, "Update failed", why.into()),
         };
         ui.notice(icon, Some(tone), text, &note, &retry);
@@ -532,7 +538,8 @@ impl Page for Updates {
         match key {
             Key::Enter => self.enter(cx),
             Key::Soft(5) if self.stoppable() => self.helper.run(cx, STOP, &["update-stop"]),
-            Key::Soft(5) if !self.busy() => self.check(cx),
+            // Only where the chip shows: elsewhere Enter checks.
+            Key::Soft(5) if !self.busy() && !self.state.packages.is_empty() => self.check(cx),
             Key::Soft(6) if !self.state.packages.is_empty() => {
                 cx.push(Packages::new(&self.state.packages));
             }
@@ -623,6 +630,12 @@ impl Page for Updates {
             View::Problem(o) => self.draw_problem(ui, o),
         }
     }
+}
+
+fn state_mtime() -> Option<std::time::SystemTime> {
+    std::fs::metadata(State::path())
+        .and_then(|m| m.modified())
+        .ok()
 }
 
 /// Bytes of the debs apt keeps after a download.
