@@ -262,6 +262,10 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
 | `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |
 | Root actions | time and ADB need root; reboot, power off, 5V rails do not | Settings |
 | `unix_chkpwd` right password | exits 0 with `password\0` on stdin, run by root | helper auth |
+| `unix_chkpwd` as the user | exits 0 for the user's own password, run by UID 1000 (setgid `shadow`) | lock screen |
+| `passwd -S` as the user | prints `<user> P ...` for the user's own account, `NP` or `L` otherwise | lock screen |
+| `EVIOCGRAB` while an app holds the grab | fails with `EBUSY` | dark over an app |
+| Dark current | `current_now` lower with the terminal sent behind and the backlight off than on home | dark state |
 | Grace window | the helper's parent under pkexec is Settings, so a second change within 5 minutes skips the prompt | helper auth |
 | `gpu_mem=64` | `vcgencmd` reads `gpu=64M` after a restart; camera and splash still work | Advanced |
 | `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |

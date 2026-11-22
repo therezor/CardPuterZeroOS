@@ -218,6 +218,7 @@ says once how to reach Esc and help.
 | Fn and L, M | page up, page down |
 | Fn and H | help: every key on this page |
 | Fn and K | switch apps |
+| Tab, held 3 s on home or in the switcher | lock |
 | Fn and J | screenshot |
 | Fn and Esc | the Esc key itself, for vim and the like |
 
@@ -321,6 +322,45 @@ Home: 4 Apps, 6 Find, 8 the home menu (pin, layout). Enter opens the app.
 The switcher: 5 Close closes the selected app at once. 7 All asks first, in a
 dialog, then closes every app. They sit apart, so one is never pressed for
 the other.
+
+## The lock screen
+
+The top bar shows the clock, the battery and the network, but no open apps:
+what runs stays private. The time sits large in the middle, the date under it
+in Caption.
+
+- **With a password.** A password field sits under the date, focused, so the
+  bottom bar shows key hints: Enter unlock, Esc clear. Each key shows a dot.
+  A wrong password empties the field and says "Wrong password" under it in
+  `critical`. From the fourth wrong try the field waits: "Try again in 5 s",
+  counting down. The wait doubles each time, up to 5 minutes.
+- **Without one.** "Enter unlock" in a key pill. When the account has no
+  password, a note in Caption says "No password set".
+
+It asks for the password when Settings > System > Unlock with password is on
+and the account has one.
+
+It locks:
+
+- when Tab is held 3 s on home or in the switcher;
+- from Lock in the home menu;
+- at start, when it asks for a password;
+- on wake, when the screen was dark longer than Lock after (Settings > System,
+  5 minutes by default).
+
+The brightness, volume and screenshot keys work on it, and the low battery
+banner shows. Toasts from apps don't.
+
+## Dark
+
+After Screen off after (Settings > Display, 30 s by default) with no key, the
+backlight dims to 10% for 5 s, then goes off. A key during the dim brings it
+back, and the page gets that key as usual.
+
+While dark, the app in front is paused as Fn+K pauses it, unless it may run in
+the background. The shell draws nothing and runs no timer. The first key only
+wakes the screen: no app sees it. An app can ask to stay awake (`sdk.md`,
+`keep_awake`), for a player or a clock.
 
 ## Words
 

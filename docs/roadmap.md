@@ -129,9 +129,9 @@ apply" until the running value matches the file.
 | Network per app | In Apps, per app: network allowed or blocked | `net-block`, after M3 | Needs cgroups (M5) |
 
 **Lock and identity** (M4).
-- Screen lock: a password, and lock when the screen goes off. The helper
-  checks the password.
-- Screen-off and lock while an app runs.
+- Screen lock: Unlock with password, and Lock after (at once, 1, 5 or 15
+  minutes of dark, or only by hand; `gh0st.lock.after`, 5 minutes by
+  default). The shell checks the password itself (M4).
 - Factory reset: formats the user data partition, then runs first-boot setup.
 
 **Other pages.**
@@ -285,9 +285,16 @@ and runs through pkexec today. It runs only when called and exits after.
   first turns SSH on. The random seed is made at first boot.
 - The lock screen asks for the password, checked with `unix_chkpwd`, with a
   growing delay after each wrong try. Settings' Unlock with password turns
-  that off.
-- Screen-off and lock work while an app runs too. Stock Camera grabs the
-  keyboard, so idle can't come from key events alone.
+  that off. The shell runs `unix_chkpwd` itself, not through the helper: the
+  helper's 5-minute grace would let a second unlock through with no
+  password. The try count lives in `$XDG_RUNTIME_DIR`, so a shell restart
+  keeps the wait. The shell starts locked, so a restart or a power cycle
+  doesn't skip it. With no usable password, Enter unlocks: a lockout would
+  mean a reflash.
+- Screen-off and lock work while an app runs too. Dark pauses the app in
+  front, as Fn+K does. An app that grabs the keyboard hides the keys from
+  the shell, so the shell tries the grab first and keeps the screen on when
+  it can't take it. `design.md` has the lock screen and the dark state.
 - Factory reset formats the user data partition and returns to setup.
 - Done when a reset device boots to setup with no open ports and no traffic.
 
@@ -324,8 +331,11 @@ and runs through pkexec today. It runs only when called and exits after.
 initramfs, `quiet loglevel=3`, `boot_delay=0`, tuned with `systemd-analyze
 critical-chain`. Done when the time to the home screen is gated.
 
-**M8. Deep idle and power loss.** With the screen off, apps freeze, the panel
-sleeps, Wi-Fi saves power, audio suspends, and a key wakes the device. When
+**M8. Deep idle and power loss.** There is no suspend (`PM_SLEEP` is off),
+so deep idle is the dark state made cheaper. M4 pauses the app in front and
+stops every shell timer. Still to do: the panel sleeps (`SLPIN` on blank,
+which `panel_mipi_dbi_disable` doesn't send yet, and wake re-runs the init),
+Wi-Fi saves power, audio suspends. When
 power fails (GPIO6), the device syncs and shuts down. Done when screen-off
 current is measured against the 173 mA floor.
 

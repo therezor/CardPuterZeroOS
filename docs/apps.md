@@ -43,8 +43,9 @@ use this page directly.
   | `CAMERA_APP_KEYBOARD_GRAB` | `false`: the stock camera grabs the keyboard otherwise |
 
 - The shell never grabs the keyboard while the app is in front. The app reads
-  it directly. An app must not grab it either, or Fn+K, ESC held and the
-  volume keys stop working.
+  it directly. An app must not grab it either, or Fn+K, ESC held, the volume
+  keys and the screen timeout stop working. The shell takes the keyboard only
+  once the app has left the front: paused, dark or locked (see Pausing).
 - While an app is in front, the shell draws over it only for a banner across
   the top (ESC held, or the battery about to run out), a toast for the
   brightness, volume, mute and screenshot keys, and the OS bars an app asks
@@ -54,8 +55,8 @@ use this page directly.
 
 ## Shell link
 
-Status: the transport and `hello`, `pause`, `paused`, `resume`, `redraw`
-and `toast` are built. The bars are not yet (roadmap A1): apps still draw
+Status: the transport and `hello`, `pause`, `paused`, `resume`, `redraw`,
+`toast` and `awake` are built. The bars are not yet (roadmap A1): apps still draw
 their own, as the SDK does for Rust apps.
 
 An app can ask the shell to draw the OS top bar (title, network, battery and
@@ -95,6 +96,7 @@ App to shell:
 | `hints` `key=label` ... | Key hints instead of soft keys, such as `Enter=open` |
 | `softkey` n `on` or `off` | Shows soft key n (4 to 8) lit, for a toggle |
 | `toast` text | A short message over an OS bar for 2 s |
+| `awake` `1` or `0` | Keep the screen on while the app is in front, for a player or a clock. `0` lets it go dark again |
 
 `icon` names a symbol built into gh0st, the Lucide set that `gh0st:<name>`
 uses.
@@ -141,14 +143,23 @@ slots belong to those keys. `design.md` has the rules; in short:
 ## Pausing
 
 - Fn+K (`KEY_HOME`) pauses the app in front and opens the switcher. On the
-  home screen a tap of Tab opens it too, and closes it; Tab held locks. The app
+  home screen a tap of Tab opens it too, and closes it. Tab held 3 s on home
+  or in the switcher locks; over an app, Tab is the app's. The app
   sees Fn and Home pressed and released; the shell waits until every key is
   up, then sends SIGSTOP to the group.
 - The shell keeps the app's last frame. Before it sends SIGCONT, it puts that
   frame back on the panel, so an app that redraws only what changed still
   looks right.
-- While apps are paused and the shell is in front, the shell grabs the
-  keyboard. Before an app resumes, the shell lets go and writes `MSC_SCAN`
+- The screen going dark pauses the app in front the same way, without the
+  switcher. So does a lock. The first key after dark only wakes the screen;
+  the app resumes once every key is up, or after the lock screen.
+- Dark comes `dark_time` seconds after the last key the shell saw. Before
+  it pauses the app, the shell takes the keyboard. If the app holds it (an
+  `EVIOCGRAB` of its own), the shell can't see keys, so it leaves the app
+  alone and the screen on. An app that sent `awake 1` stays in front too.
+- While apps are paused and the shell is in front, while it is dark, and
+  while the lock screen shows, the shell grabs the keyboard. A background app
+  never reads the password. Before an app resumes, the shell lets go and writes `MSC_SCAN`
   events to the device until every paused reader's queue overflows, so the
   app reads `SYN_DROPPED` instead of keys typed elsewhere. Ignore `EV_MSC`.
 - Closing a paused app from the switcher sends SIGTERM and SIGCONT together,
@@ -172,7 +183,8 @@ slots belong to those keys. `design.md` has the rules; in short:
   return. While another app is in front it reads that app's keys and its
   drawing shows over it.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
-  and leaves them in front.
+  and leaves them in front. The screen still goes dark over one, but it won't
+  lock: "Close <app> to lock".
 
 ## The app menu
 

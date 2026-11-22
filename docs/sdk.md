@@ -661,6 +661,15 @@ until the app is back. Timers, jobs and watched fds go on. `cx.in_front()`
 says which. `cx.notify(text)` reaches the user either way: a toast in the
 app, or one the shell draws over whatever is in front.
 
+### The screen timeout
+
+After `dark_time` with no key, the shell turns the screen off and pauses the
+app in front, or sends it behind when it may run in the background. An app
+the user watches without typing, a player or a clock, calls
+`cx.keep_awake(true)` and the screen stays on while it is in front.
+`cx.keep_awake(false)` lets it go dark again. Ask only while it matters:
+the screen is the biggest drain after Wi-Fi.
+
 ## Settings and files
 
 `cx.settings()` reads and writes `~/.config/cardputerzero/config.json`. The
@@ -816,6 +825,6 @@ device. `d.pump(ms)` does the same for watched fds and adopted children.
   a job or a timer.
 - Open no network connection at start. Wait until the user asks for something
   that needs one.
-- Never grab the keyboard (`EVIOCGRAB`). The OS reads it too, for Esc and the
-  global keys.
+- Never grab the keyboard (`EVIOCGRAB`). The OS reads it too, for Esc, the
+  global keys and the screen timeout.
 - Exit quickly on SIGTERM. `stop` runs first.

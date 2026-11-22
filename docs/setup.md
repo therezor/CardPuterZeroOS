@@ -232,8 +232,11 @@ Privacy, Network and Device and look are embedded Settings; `clock.rs`, `account
 it succeeds. `$GH0ST_SETUP_ROOT` moves the files setup reads and writes, for a host run.
 
 **Shell** (`crates/gh0st-shell`): the lock screen asks for the password when
-`gh0st.lock.password` is true. It checks with `/usr/sbin/unix_chkpwd`, which lets a user
-check their own password, and waits longer after each wrong try.
+`gh0st.lock.password` is true and `passwd -S` says the account has one. It checks with
+`/usr/sbin/unix_chkpwd`, which lets a user check their own password, and waits longer after
+each wrong try. It starts locked, and locks on wake after `gh0st.lock.after` seconds of dark
+(System > Lock after, 5 minutes by default). `design.md` has the screen; `apps.md`, Pausing,
+has what happens to the app in front.
 
 **Image** (branch `image`):
 
