@@ -145,6 +145,10 @@ pub struct Metrics {
     pub field_label_h: i32,
     pub field_note_h: i32,
     pub field_gap: i32,
+    /// The lock screen: its password field's width, and the space between
+    /// the lock, the time, the date and the field.
+    pub lock_field_w: i32,
+    pub lock_gap: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -527,6 +531,8 @@ pub const CARDPUTER: Metrics = Metrics {
     field_label_h: 14,
     field_note_h: 16,
     field_gap: 6,
+    lock_field_w: 172,
+    lock_gap: 7,
 };
 
 /// How far dim terminal text fades toward its background, of 255.

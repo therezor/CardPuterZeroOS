@@ -16,7 +16,7 @@ use gh0st_ui::color::{Color, hex};
 use gh0st_ui::geom::Rect;
 use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::snapshot::write_png;
-use gh0st_ui::theme::{self, Theme};
+use gh0st_ui::theme::{self, Theme, Tone};
 use gh0st_ui::widgets::{self, Battery, Net, Status, Visual};
 use std::path::{Path, PathBuf};
 
@@ -253,6 +253,42 @@ fn terminal(t: &Theme) -> Canvas {
     c
 }
 
+/// The lock screen: `typed` dots, or None when Enter unlocks.
+fn lock(t: &Theme, typed: Option<usize>, ready: bool, note: Option<(Tone, &str)>) -> Canvas {
+    let mut s = status(&[], None, "");
+    s.clock = "";
+    let l = widgets::Lock {
+        clock: "14:32",
+        date: "Sunday 22 November",
+        typed,
+        ready,
+        note,
+    };
+    let mut c = new_canvas(t);
+    widgets::lock_screen(&mut c, t, &s, &l);
+    c
+}
+
+/// Home's menu with Lock selected.
+fn home_menu(t: &Theme, stock: Option<&Path>) -> Canvas {
+    let mut c = home(t, stock, Layout::Grid, None);
+    let row = |label, choice, keys| home::MenuRow {
+        label,
+        choice,
+        keys,
+        dim: false,
+    };
+    let rows = [
+        row("Pin Store", None, "p"),
+        row("Layout", Some("Grid"), "l"),
+        row("Find", None, "s"),
+        row("Switch apps", None, "Fn k"),
+        row("Lock", None, "Tab"),
+    ];
+    home::draw_menu(&mut c, t, &rows, 4);
+    c
+}
+
 fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
     let mut c = home(t, stock, Layout::Grid, None);
     let r = Rect::new(40, 30, 240, 110);
@@ -298,6 +334,7 @@ fn main() {
             ("home-grid", home(&t, stock, Layout::Grid, None)),
             ("home-list", home(&t, stock, Layout::List, None)),
             ("switcher", switcher_scene(&t, stock, 2, 1)),
+            ("lock", lock(&t, Some(0), true, None)),
         ];
         if palette.name == "Mint" {
             scenes.extend([
@@ -315,6 +352,30 @@ fn main() {
                 ("low-battery", low_battery(&t, stock)),
                 ("charging-low", charging(&t, stock, 5)),
                 ("charging-high", charging(&t, stock, 87)),
+                ("lock-typing", lock(&t, Some(7), true, None)),
+                (
+                    "lock-checking",
+                    lock(&t, Some(7), false, Some((Tone::Info, "Checking\u{2026}"))),
+                ),
+                (
+                    "lock-wrong",
+                    lock(&t, Some(0), true, Some((Tone::Critical, "Wrong password"))),
+                ),
+                (
+                    "lock-wait",
+                    lock(
+                        &t,
+                        Some(0),
+                        false,
+                        Some((Tone::Warning, "Try again in 12 s")),
+                    ),
+                ),
+                (
+                    "lock-no-password",
+                    lock(&t, None, true, Some((Tone::Info, "No password set"))),
+                ),
+                ("lock-enter", lock(&t, None, true, None)),
+                ("home-menu-lock", home_menu(&t, stock)),
             ]);
         }
         let tag = palette.name.to_lowercase();

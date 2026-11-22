@@ -917,42 +917,21 @@ impl Shell {
         }
     }
 
-    /// Home's menu over the grid: its rows with their keys, and the menu
-    /// chip lit.
     fn draw_menu(&mut self, sel: usize) {
         let t = self.t;
         let rows = self.menu_rows();
         let has_app = self.home.selected().is_some();
-        let c = &mut self.canvas;
-        let body = widgets::body(&t);
-        c.fill(body, t.c.bg);
-        let (x, w) = (t.m.margin, t.m.width - 2 * t.m.margin);
-        let keys_w = rows
+        let rows: Vec<home::MenuRow> = rows
             .iter()
-            .map(|r| widgets::pills_w(&t, r.3))
-            .max()
-            .unwrap_or(0);
-        let mut y = body.y + 2;
-        widgets::section(c, &t, Rect::new(x, y, w, t.m.menu_head_h), "Home");
-        y += t.m.menu_head_h;
-        for (i, (act, label, value, keys)) in rows.iter().enumerate() {
-            let trailing = match act {
-                MenuAct::Layout => widgets::Trailing::Choice(value),
-                _ => widgets::Trailing::None,
-            };
-            let row = widgets::Row {
-                icon: None,
-                tint: t.c.accent,
+            .map(|(act, label, value, keys)| home::MenuRow {
                 label,
-                trailing,
-            };
-            let r = Rect::new(x, y, w, t.m.menu_row_h);
-            // Nothing selected, nothing to pin.
-            let dim = *act == MenuAct::Pin && !has_app;
-            widgets::menu_row(c, &t, r, &row, keys, keys_w, i == sel, dim);
-            y += t.m.menu_row_h;
-        }
-        widgets::action_bar(c, &t, &home::chips(true));
+                choice: (*act == MenuAct::Layout).then_some(value.as_str()),
+                keys,
+                // Nothing selected, nothing to pin.
+                dim: *act == MenuAct::Pin && !has_app,
+            })
+            .collect();
+        home::draw_menu(&mut self.canvas, &t, &rows, sel);
     }
 
     /// The switcher's Close all window.
@@ -1079,7 +1058,7 @@ impl Shell {
             }
             return;
         }
-        if k.is(code::TAB) {
+        if k.is(code::TAB) && self.home_menu.is_none() {
             match k.state {
                 State::Press => self.tab_down = Some(now),
                 // A tap opens the task manager from home and closes it
@@ -1271,7 +1250,7 @@ impl Shell {
     }
 
     /// Home's menu rows: what each does, its label, its value, its keys.
-    fn menu_rows(&self) -> [(MenuAct, String, String, &'static str); 4] {
+    fn menu_rows(&self) -> [(MenuAct, String, String, &'static str); MENU_ROWS] {
         let name = self
             .home
             .selected()
@@ -1291,6 +1270,7 @@ impl Shell {
             (MenuAct::Layout, "Layout".into(), layout.into(), "l"),
             (MenuAct::Find, "Find".into(), String::new(), "s"),
             (MenuAct::Switch, "Switch apps".into(), String::new(), "Fn k"),
+            (MenuAct::Lock, "Lock".into(), String::new(), "Tab"),
         ]
     }
 
@@ -1301,7 +1281,7 @@ impl Shell {
         let Some(sel) = self.home_menu else {
             return;
         };
-        let n = 4;
+        let n = MENU_ROWS;
         let act = match k.nav(true) {
             Some(keys::Nav::Up) => {
                 self.home_menu = Some((sel + n - 1) % n);
@@ -1319,6 +1299,7 @@ impl Shell {
                 None
             }
             None if k.is(code::ENTER) => Some(self.menu_rows()[sel].0),
+            None if k.is(code::TAB) => Some(MenuAct::Lock),
             None => match k.ch {
                 Some('p') => Some(MenuAct::Pin),
                 Some('l') => Some(MenuAct::Layout),
@@ -1343,6 +1324,9 @@ impl Shell {
                 // Opened from home, the switcher starts on Home: what is in front.
                 let at = 0;
                 self.open_switcher(Back::Home, at);
+            }
+            MenuAct::Lock => {
+                self.screen = Screen::Locked;
             }
         }
     }
@@ -1802,6 +1786,9 @@ impl Shell {
                     self.confirm_all = true;
                 }
             }
+            _ if k.ch == Some('6') && k.state == State::Press => {
+                self.screen = Screen::Locked;
+            }
             _ => return,
         }
         self.dirty = true;
@@ -1831,7 +1818,18 @@ impl Shell {
         let mut status = status_of(&clock, self.battery, self.net, &dock, front);
         status.bluetooth = self.bluetooth;
         match self.screen {
-            Screen::Locked => widgets::lock_screen(&mut self.canvas, &t, &clock, &status),
+            Screen::Locked => {
+                let mut bar = status_of("", self.battery, self.net, &[], None);
+                bar.bluetooth = self.bluetooth;
+                let lock = widgets::Lock {
+                    clock: &clock,
+                    date: "",
+                    typed: None,
+                    ready: true,
+                    note: None,
+                };
+                widgets::lock_screen(&mut self.canvas, &t, &bar, &lock)
+            }
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
@@ -2176,7 +2174,10 @@ enum MenuAct {
     Layout,
     Find,
     Switch,
+    Lock,
 }
+
+const MENU_ROWS: usize = 5;
 
 /// Splits `s` into lines no wider than `w`, at spaces.
 fn wrap_words(f: gh0st_ui::font::Font, s: &str, w: i32) -> Vec<String> {

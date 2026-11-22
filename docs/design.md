@@ -325,9 +325,9 @@ the other.
 
 ## The lock screen
 
-The top bar shows the clock, the battery and the network, but no open apps:
-what runs stays private. The time sits large in the middle, the date under it
-in Caption.
+The top bar shows the battery and the network, but no open apps (what runs
+stays private) and no clock. The time sits large in the middle instead, with
+the date under it in Caption.
 
 - **With a password.** A password field sits under the date, focused, so the
   bottom bar shows key hints: Enter unlock, Esc clear. Each key shows a dot.

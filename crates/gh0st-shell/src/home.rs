@@ -18,6 +18,45 @@ use std::rc::Rc;
 
 pub use gh0st_core::apps::Layout;
 
+/// A row of home's menu.
+pub struct MenuRow<'a> {
+    pub label: &'a str,
+    /// A choice shows `‹ value ›`.
+    pub choice: Option<&'a str>,
+    pub keys: &'a str,
+    /// Can't be used now: Pin with no app selected.
+    pub dim: bool,
+}
+
+/// Home's menu over the grid: its rows with their keys, and the menu chip lit.
+pub fn draw_menu(c: &mut Canvas, t: &Theme, rows: &[MenuRow], sel: usize) {
+    let body = widgets::body(t);
+    c.fill(body, t.c.bg);
+    let (x, w) = (t.m.margin, t.m.width - 2 * t.m.margin);
+    let keys_w = rows
+        .iter()
+        .map(|r| widgets::pills_w(t, r.keys))
+        .max()
+        .unwrap_or(0);
+    let mut y = body.y + 2;
+    widgets::section(c, t, Rect::new(x, y, w, t.m.menu_head_h), "Home");
+    y += t.m.menu_head_h;
+    for (i, r) in rows.iter().enumerate() {
+        let row = widgets::Row {
+            icon: None,
+            tint: t.c.accent,
+            label: r.label,
+            trailing: r
+                .choice
+                .map_or(widgets::Trailing::None, widgets::Trailing::Choice),
+        };
+        let rr = Rect::new(x, y, w, t.m.menu_row_h);
+        widgets::menu_row(c, t, rr, &row, r.keys, keys_w, i == sel, r.dim);
+        y += t.m.menu_row_h;
+    }
+    widgets::action_bar(c, t, &chips(true));
+}
+
 /// Home's chips: Apps on 4 (home has no Esc to keep it for), Find in the
 /// middle on 6, the menu on 8, lit while it is open.
 pub fn chips(menu_open: bool) -> [widgets::Chip<'static>; 5] {

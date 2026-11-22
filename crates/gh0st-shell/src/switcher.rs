@@ -343,7 +343,8 @@ impl Switcher {
         c.set_clip(old);
         self.meters(c, t);
         // 5 closes the app in front of you, at once; 7 closes them all,
-        // after asking. Apart, so neither is pressed for the other.
+        // after asking. Apart, so neither is pressed for the other. 6 locks,
+        // which loses nothing if pressed for either.
         use widgets::{Chip, Look};
         let none = Chip::default();
         let danger = |icon, word| Chip {
@@ -361,7 +362,12 @@ impl Switcher {
         } else {
             danger("copy-x", "All")
         };
-        widgets::action_bar(c, t, &[none, close, none, all, none]);
+        let lock = Chip {
+            icon: "lock",
+            word: "Lock",
+            look: Look::Normal,
+        };
+        widgets::action_bar(c, t, &[none, close, lock, all, none]);
     }
 
     /// CPU and memory, side by side across the cards' width. The top bar's

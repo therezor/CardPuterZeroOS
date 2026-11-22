@@ -1539,35 +1539,122 @@ fn trailing_w(t: &Theme, tr: &Trailing) -> i32 {
     }
 }
 
-/// The lock screen: the time, large, and how to get back in.
-pub fn lock_screen(c: &mut Canvas, t: &Theme, clock: &str, s: &Status) {
+/// What the lock screen shows.
+pub struct Lock<'a> {
+    pub clock: &'a str,
+    pub date: &'a str,
+    /// Characters typed, when a password is asked. `None`: Enter unlocks.
+    pub typed: Option<usize>,
+    /// The field takes keys: not while the check runs or a wait counts down.
+    pub ready: bool,
+    /// One line under the field: "Wrong password", "Try again in 5 s".
+    pub note: Option<(Tone, &'a str)>,
+}
+
+/// The lock screen: the time, large, the date, and how to get back in. The
+/// top bar keeps the battery and the network; the caller passes no dock and
+/// no clock, since the open apps stay private and the time is here.
+pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
     c.fill(c.bounds(), t.c.bg);
     status_bar(c, t, s);
     let b = body(t);
-    let w = t.f.big.measure(clock);
-    t.f.big
-        .draw(c, (t.m.width - w) / 2, b.y + b.h / 2 + 4, clock, t.c.fg);
-    let s = IconSize::Small as i32;
+    let icon_s = IconSize::Small as i32;
+    let g = t.m.lock_gap;
+    let stack =
+        icon_s + g + t.f.big.cap() + g + t.f.small.cap() + 2 * g + t.m.field_h + t.m.field_note_h;
+    let mut y = b.y + (b.h - stack) / 2;
     icon::draw(
         c,
         "lock",
         IconSize::Small,
-        (t.m.width - s) / 2,
-        b.y + b.h / 2 - 38,
+        (t.m.width - icon_s) / 2,
+        y,
         t.c.muted,
     );
-    let hints = [Hint {
-        key: "Enter",
-        label: "unlock",
-    }];
-    let w = key_row_w(t, &hints);
-    key_row(
-        c,
-        t,
-        (t.m.width - w) / 2,
-        b.bottom() - t.m.pill_h - 6,
-        &hints,
-    );
+    y += icon_s + g + t.f.big.cap();
+    let w = t.f.big.measure(l.clock);
+    t.f.big.draw(c, (t.m.width - w) / 2, y, l.clock, t.c.fg);
+    y += g + t.f.small.cap();
+    let w = t.f.small.measure(l.date);
+    t.f.small.draw(c, (t.m.width - w) / 2, y, l.date, t.c.muted);
+    y += 2 * g;
+    let fw = t.m.lock_field_w;
+    let field = Rect::new((t.m.width - fw) / 2, y, fw, t.m.field_h);
+    let note_y = match l.typed {
+        Some(n) => {
+            let dots = "*".repeat(n);
+            text_field(
+                c,
+                t,
+                field,
+                &dots,
+                true,
+                l.ready,
+                if l.ready { "Password" } else { "" },
+            );
+            if matches!(l.note, Some((Tone::Critical, _))) {
+                c.stroke_round_rect(field, t.m.radius, t.c.critical);
+            }
+            field.bottom() + 2
+        }
+        None => field.y,
+    };
+    if let Some((tone, text)) = l.note {
+        let col = match tone {
+            Tone::Info => t.c.muted,
+            _ => t.c.tone(tone),
+        };
+        let s = IconSize::Tiny as i32;
+        let tw = t.f.small.measure(text);
+        let show_icon = tone != Tone::Info;
+        let total = tw + if show_icon { s + 4 } else { 0 };
+        let mut x = (t.m.width - total) / 2;
+        let nr = Rect::new(x, note_y, total, t.m.field_note_h);
+        if show_icon {
+            icon::draw(
+                c,
+                tone.icon(),
+                IconSize::Tiny,
+                x,
+                nr.y + (nr.h - s) / 2,
+                col,
+            );
+            x += s + 4;
+        }
+        text_in(c, t.f.small, Rect::new(x, nr.y, tw, nr.h), text, col);
+    }
+    match l.typed {
+        Some(_) if l.ready => hint_bar(
+            c,
+            t,
+            &[
+                Hint {
+                    key: "Enter",
+                    label: "unlock",
+                },
+                Hint {
+                    key: "Esc",
+                    label: "clear",
+                },
+            ],
+            None,
+        ),
+        Some(_) => hint_bar(c, t, &[], None),
+        None => {
+            let hints = [Hint {
+                key: "Enter",
+                label: "unlock",
+            }];
+            let w = key_row_w(t, &hints);
+            key_row(
+                c,
+                t,
+                (t.m.width - w) / 2,
+                b.bottom() - t.m.pill_h - 6,
+                &hints,
+            );
+        }
+    }
 }
 
 #[cfg(test)]
