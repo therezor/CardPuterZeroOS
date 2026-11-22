@@ -30,10 +30,11 @@ stamp_time() { date -u -d "@$1" +%Y%m%d%H%M; }
 CPZ_GH0ST_STAMP=${CPZ_GH0ST_STAMP:-$SOURCE_DATE_EPOCH.$CPZ_GIT_REV}
 GH0ST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/Cargo.toml" | head -1)+$(stamp_time "${CPZ_GH0ST_STAMP%%.*}").${CPZ_GH0ST_STAMP#*.}"
 BASE_VERSION="0.1+$(stamp_time "${CPZ_BASE_STAMP:-$SOURCE_DATE_EPOCH}")"
+WIFI_VERSION="1+$(stamp_time "${CPZ_WIFI_STAMP:-$SOURCE_DATE_EPOCH}")"
 # Our driver package moves with the kernel, the M5 commit it was built from,
 # and our own driver's last change.
 PANEL_VERSION="${KVERSION#*:}+m5.${M5COMMIT:0:7}+cpz$(stamp_time "${CPZ_PANEL_STAMP:-$SOURCE_DATE_EPOCH}")"
-export KVER KVERSION M5COMMIT PANEL_VERSION GH0ST_VERSION BASE_VERSION SOURCE_DATE_EPOCH SRC OS WORK CACHE LOCK
+export KVER KVERSION M5COMMIT PANEL_VERSION GH0ST_VERSION BASE_VERSION WIFI_VERSION SOURCE_DATE_EPOCH SRC OS WORK CACHE LOCK
 
 log() { printf '\033[1m== %s\033[0m\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }

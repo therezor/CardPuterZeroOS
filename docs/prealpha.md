@@ -79,6 +79,9 @@ Include:
   installs them. A flash still erases the card.
 - Every card made from this image has the same disk ID. Do not plug two of
   them into one Linux computer at the same time.
-- Wi-Fi is 2.4 GHz only: that is the chip. No monitor mode yet.
+- Wi-Fi is 2.4 GHz only: that is the chip. Its firmware has no monitor
+  mode. A USB adapter can do it: the image carries firmware for the common
+  monitor-capable chips (Atheros AR9271, Ralink RT5370, MediaTek MT7601U and
+  MT7612U, Realtek RTL8812AU and RTL8811AU, and more; `gh0st-wifi`).
 - The hotspot takes the Wi-Fi: the device leaves its network while it runs.
 - The training is part of setup for now. It becomes its own app later.

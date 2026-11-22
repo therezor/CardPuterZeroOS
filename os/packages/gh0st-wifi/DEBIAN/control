@@ -1,0 +1,18 @@
+Package: gh0st-wifi
+Version: @WIFI_VERSION@
+Architecture: all
+Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Section: kernel
+Priority: optional
+Depends: udev, systemd
+Description: Wi-Fi for Gh0st OS: the built-in chip's boot retry, USB firmware
+ The built-in BCM43439 can fail its firmware download at boot ("Downloaded
+ RAM image is corrupted"), and brcmfmac then lets the chip go. A udev rule
+ binds it again, at most twice a boot.
+ .
+ Also firmware for USB Wi-Fi adapters whose drivers do monitor mode:
+ Atheros AR9271 and AR7010, the Ralink RT2870 family (RT3070, RT5370 and
+ kin), MediaTek MT7601U, MT7610U, MT7612U and MT7921AU, Realtek RTL8812AU,
+ RTL8811AU, RTL8821AU, RTL8814AU, RTL8822BU, RTL8811CU, RTL8821CU,
+ RTL8822CU and RTL8723DU. The files come from Raspberry Pi's
+ firmware-atheros, firmware-mediatek and firmware-realtek.

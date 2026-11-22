@@ -44,6 +44,7 @@ fonts-dejavu-mono	2.37-8
 gcc-14-base	14.2.0-19
 gh0st	(ours)
 gh0st-term	(ours)
+gh0st-wifi	(ours)
 grep	3.11-4+b1
 gzip	1.13-1+deb13u1
 hostname	3.25

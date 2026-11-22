@@ -386,6 +386,21 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 - Timing as UID 1000: `pkexec gh0st-helper` 150 to 300 ms, an nmcli call
   about 150 ms, `hotspot on` 2.4 s.
 
+## Wi-Fi firmware at boot (read 2026-11-22, release image)
+
+- The BCM43439's firmware download can fail at boot: `brcmf_sdio_verifymemory:
+  Downloaded RAM image is corrupted, block offset is 0, len is 780`, then
+  `dongle nvram file download failed` and `mmc1: Controller never released
+  inhibit bit(s)`. No `wlan0`, and NetworkManager reports `WIFI-HW missing`.
+  The Bluetooth patch download to the same chip ran at the same moment.
+- brcmfmac then unbinds both SDIO functions (`mmc1:0001:1` and `:2`, SDIO ID
+  `04B4:BD3D`, function 1 has `OF_NAME=wifi`). Binding them again, or
+  reloading the module, loads the firmware and `wlan0` comes up. How often it
+  fails is not counted yet. `gh0st-wifi` binds them again on the unbind
+  event, twice a boot at most.
+- `iw phy` on the built-in chip lists IBSS, managed, AP and the P2P modes: no
+  monitor (firmware 7.95.75).
+
 ## Still to check
 
 

@@ -1,0 +1,25 @@
+#!/bin/sh
+# Binds the built-in Wi-Fi chip's SDIO functions to brcmfmac again after its
+# firmware failed to load. Twice a boot at most, so a chip that never loads
+# can't loop.
+set -u
+count=/run/gh0st-wifi-rebind
+n=$(cat "$count" 2>/dev/null || echo 0)
+if [ "$n" -ge 2 ]; then
+    echo "the Wi-Fi chip failed $n times this boot; leaving it"
+    exit 0
+fi
+echo $((n + 1)) > "$count"
+drv=/sys/bus/sdio/drivers/brcmfmac
+# No driver: the module was removed on purpose.
+[ -d "$drv" ] || exit 0
+sleep 1
+for f in /sys/bus/sdio/devices/*; do
+    [ -e "$f/driver" ] && continue
+    case $(cat "$f/vendor" 2>/dev/null) in
+        0x02d0 | 0x04b4) ;;
+        *) continue ;;
+    esac
+    echo "binding ${f##*/} again (try $((n + 1)))"
+    echo "${f##*/}" > "$drv/bind" || true
+done

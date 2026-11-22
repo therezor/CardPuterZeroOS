@@ -53,10 +53,15 @@ panel=$(changed '%ct' os/kernel os/packages/cpzeroos-panel-modules os/packages/c
 firmware=$(git -C "$root" log -1 --format=%ct \
     -G'(raspi-firmware|firmware-brcm80211|bluez-firmware)' -- os/lock.json)
 CPZ_PANEL_STAMP=$((${panel:-0} > ${firmware:-0} ? ${panel:-0} : ${firmware:-0}))
-export SOURCE_DATE_EPOCH CPZ_GIT_REV CPZ_GH0ST_STAMP CPZ_BASE_STAMP CPZ_PANEL_STAMP
+# gh0st-wifi: its own files and the firmware packages it takes files from.
+wifi=$(changed '%ct' os/packages/gh0st-wifi)
+wifi_fw=$(git -C "$root" log -1 --format=%ct \
+    -G'firmware-(atheros|mediatek|realtek)' -- os/lock.json)
+CPZ_WIFI_STAMP=$((${wifi:-0} > ${wifi_fw:-0} ? ${wifi:-0} : ${wifi_fw:-0}))
+export SOURCE_DATE_EPOCH CPZ_GIT_REV CPZ_GH0ST_STAMP CPZ_BASE_STAMP CPZ_PANEL_STAMP CPZ_WIFI_STAMP
 
 envs=
-for v in SOURCE_DATE_EPOCH CPZ_GIT_REV CPZ_GH0ST_STAMP CPZ_BASE_STAMP CPZ_PANEL_STAMP \
+for v in SOURCE_DATE_EPOCH CPZ_GIT_REV CPZ_GH0ST_STAMP CPZ_BASE_STAMP CPZ_PANEL_STAMP CPZ_WIFI_STAMP \
     GH0ST_LOG TRACE REPO_PREV REPO_KEY REPO_KEEP REPO_DAYS REPO_MAX_MB; do
     envs="$envs -e $v"
 done

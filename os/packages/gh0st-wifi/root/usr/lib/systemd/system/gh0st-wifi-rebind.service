@@ -1,0 +1,7 @@
+# Started by 90-gh0st-wifi.rules when brcmfmac lets the Wi-Fi chip go.
+[Unit]
+Description=Bind the Wi-Fi chip again after a failed firmware load
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/gh0st-wifi-rebind

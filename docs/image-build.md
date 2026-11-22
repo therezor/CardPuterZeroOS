@@ -122,6 +122,7 @@ packages and 367 MB of the 842 MB installed. Kept by decision (2026-11-21).
 | `cpzeroos-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
 | `gh0st`, `gh0st-term` | Our binaries, `.desktop` files, polkit files, the `gh0st.service` user unit, `gh0st-setup.service` |
 | `cpzeroos-m5-appstore` | See above |
+| `gh0st-wifi` | The built-in Wi-Fi chip's boot retry (a udev rule binds it again when its firmware load fails), and firmware for USB adapters with monitor mode, from Raspberry Pi's `firmware-atheros`, `firmware-mediatek` and `firmware-realtek` |
 
 **Services.** System: NetworkManager and its on-demand dispatcher,
 timesyncd, bluetoothd, `fb_load` (a oneshot, so setup draws after the logo),

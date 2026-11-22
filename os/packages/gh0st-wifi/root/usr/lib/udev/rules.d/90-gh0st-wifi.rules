@@ -1,0 +1,3 @@
+# The built-in Wi-Fi chip's firmware download can fail at boot ("Downloaded
+# RAM image is corrupted"), and brcmfmac then unbinds the chip. Bind it again.
+ACTION=="unbind", SUBSYSTEM=="sdio", ENV{OF_NAME}=="wifi", RUN+="/usr/bin/systemctl --no-block start gh0st-wifi-rebind.service"
