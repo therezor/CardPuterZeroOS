@@ -694,7 +694,7 @@ root:
 | `brightness()`, `set_brightness(percent)` | The screen, 0 to 100 |
 | `battery()` | Charge, charging, mAh, and `health()` against the design charge |
 | `memory()`, `storage(path)` | Used and total, in MB; `storage` for the filesystem holding `path` |
-| `kernel()`, `version()` | The kernel release and the gh0st version |
+| `kernel()`, `version()`, `build()` | The kernel release, the gh0st version, and the image build's time and commit |
 
 Wi-Fi, Bluetooth, time and the other root jobs come with the root helper
 (roadmap M3). Its sensitive verbs ask for the user's password on stdin, so an

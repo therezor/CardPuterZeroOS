@@ -155,6 +155,7 @@ fn sample_state() -> State {
         moving: None,
         about: [
             ("Version", "Gh0stdeck 0.1.0"),
+            ("Build", "202611221438.2a760d9"),
             ("OS", "Debian 13 (trixie)"),
             ("Kernel", "6.18.39+rpt-rpi-v8"),
             ("Memory", "61 MB of 352 MB used"),

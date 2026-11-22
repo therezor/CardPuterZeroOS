@@ -103,9 +103,18 @@ pub fn kernel() -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-/// The gh0st version this SDK belongs to.
+/// The gh0st version, as Cargo.toml has it.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// The image build: its time and commit, the part after `+` in the deb
+/// version (`os/image/build-image.sh` sets `GH0ST_VERSION`). None in a
+/// plain `cargo build`. Testers quote it in reports.
+pub fn build() -> Option<&'static str> {
+    option_env!("GH0ST_VERSION")?
+        .split_once('+')
+        .map(|(_, b)| b)
 }
 
 #[cfg(test)]

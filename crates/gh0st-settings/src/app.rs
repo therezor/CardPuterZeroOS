@@ -2082,6 +2082,9 @@ fn about() -> Vec<(String, String)> {
         "Version".to_string(),
         format!("Gh0stdeck {}", system::version()),
     )];
+    if let Some(b) = system::build() {
+        out.push(("Build".into(), b.into()));
+    }
     let read = |p: &str| std::fs::read_to_string(p).ok();
     if let Some(os) = read("/etc/os-release").and_then(|s| {
         s.lines()
