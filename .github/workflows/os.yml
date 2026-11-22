@@ -23,7 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Package versions come from each package's last change, so the
+          # image carries the same versions as the apt repo.
+          fetch-depth: 0
       - name: Fetch pinned inputs
         run: os/build.sh fetch
       - name: Build packages

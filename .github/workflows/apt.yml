@@ -21,6 +21,8 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  # deploy-pages lists the run's artifacts.
+  actions: read
 
 # One publish at a time: each starts from the live site.
 concurrency:
@@ -34,9 +36,6 @@ jobs:
   publish:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -81,8 +80,6 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: os/out/pages
-      - id: deploy
-        uses: actions/deploy-pages@v4
       # A stable release keeps its debs as release assets too, so a lost
       # site can be rebuilt.
       - name: Release assets
@@ -97,3 +94,15 @@ jobs:
               --notes "Flash the .img.xz (scripts/flash.sh, or bmaptool with the .bmap). Updates come from the stable apt suite: docs/updates.md." ||
             true
           gh release upload "$tag" os/out/debs/*.deb --clobber
+
+  # Its own job: deploy-pages in the job that uploaded can miss the
+  # artifact while it is still being listed.
+  deploy:
+    needs: publish
+    runs-on: ubuntu-24.04-arm
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
