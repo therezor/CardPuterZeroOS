@@ -1589,6 +1589,56 @@ pub fn progress(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: Option<u
     }
 }
 
+/// Steps in a row, joined by a line: those done get a check, the current
+/// one a ring and its name in bold, the rest a dot. `r` is about 26 px tall.
+pub fn stepper(c: &mut Canvas, t: &Theme, r: Rect, steps: &[&str], current: usize) {
+    if steps.is_empty() {
+        return;
+    }
+    let step_w = r.w / steps.len() as i32;
+    let line_y = r.y + 5;
+    for (i, name) in steps.iter().enumerate() {
+        let cx = r.x + step_w * i as i32 + step_w / 2;
+        if i + 1 < steps.len() {
+            let col = if i < current { t.c.accent } else { t.c.border };
+            c.fill(Rect::new(cx + 8, line_y, step_w - 16, 1), col);
+        }
+        let (x, y) = (cx as f32, line_y as f32 + 0.5);
+        let ink = if i < current {
+            c.circle(x, y, 5.0, t.c.accent);
+            let s = IconSize::Tiny as i32;
+            icon::draw(
+                c,
+                "check",
+                IconSize::Tiny,
+                cx - s / 2,
+                line_y - s / 2,
+                t.c.accent_fg,
+            );
+            t.c.accent
+        } else if i == current {
+            c.circle(x, y, 5.0, t.c.accent);
+            c.circle(x, y, 2.0, t.c.bg);
+            t.c.fg
+        } else {
+            c.circle(x, y, 4.0, t.c.border);
+            t.c.muted
+        };
+        let f = if i == current {
+            t.f.small_bold
+        } else {
+            t.f.small
+        };
+        text_centre(
+            c,
+            f,
+            Rect::new(cx - step_w / 2, r.y + 12, step_w, 14),
+            name,
+            ink,
+        );
+    }
+}
+
 /// A row that can't be used now: icon and label in `disabled`, and why on
 /// its right.
 pub fn disabled_row(c: &mut Canvas, t: &Theme, r: Rect, icon_name: &str, label: &str, why: &str) {

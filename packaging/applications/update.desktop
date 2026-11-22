@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Updates
+Comment=Gh0st OS and every package
+Exec=/usr/bin/gh0st-update
+Icon=gh0st:refresh-cw
+Terminal=false
+X-Gh0st-Bars=both

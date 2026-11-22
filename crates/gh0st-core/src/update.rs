@@ -421,6 +421,51 @@ impl Progress {
     }
 }
 
+/// The restart the last install asked for has happened: the device booted,
+/// or the shell started, after it. True when none is owed.
+pub fn restart_done(st: &State) -> bool {
+    match st.restart {
+        Restart::None => true,
+        Restart::Device => boot_time() > st.installed,
+        Restart::Shell => boot_time() > st.installed || shell_started_after(st.installed),
+    }
+}
+
+/// `btime` from /proc/stat: when the device booted, in epoch seconds.
+pub fn boot_time() -> u64 {
+    std::fs::read_to_string("/proc/stat")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|l| l.strip_prefix("btime ")?.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// A `gh0st shell` process started after `t`, epoch seconds.
+pub fn shell_started_after(t: u64) -> bool {
+    // SAFETY: sysconf has no failure mode for this name.
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
+    let boot = boot_time();
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    dir.flatten().any(|e| {
+        let p = e.path();
+        let cmd = std::fs::read(p.join("cmdline")).unwrap_or_default();
+        let mut words = cmd.split(|&b| b == 0);
+        let shell = words.next() == Some(b"/usr/bin/gh0st") && words.next() == Some(b"shell");
+        if !shell {
+            return false;
+        }
+        let stat = std::fs::read_to_string(p.join("stat")).unwrap_or_default();
+        // starttime is field 22; counted from after the command's ')'.
+        let start = stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().nth(19)?.parse::<u64>().ok())
+            .unwrap_or(0);
+        boot + start / hz > t
+    })
+}
+
 /// The engine holds an exclusive flock on this while it runs.
 pub fn lock_path() -> PathBuf {
     run_dir().join("lock")

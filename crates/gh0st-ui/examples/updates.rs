@@ -5,12 +5,11 @@
 //!     cargo run -p gh0st-ui --example updates
 
 use gh0st_ui::font::Font;
-use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::snapshot::write_png;
 use gh0st_ui::theme::{self, Theme, Tone};
 use gh0st_ui::widgets::{
     self, AppItem, Battery, Card, Chip, Hint, Look, Message, Net, Row, Status, Trailing, Visual,
-    soft, text_centre, text_in,
+    soft, text_in,
 };
 use gh0st_ui::{Canvas, Color, Rect};
 use std::path::PathBuf;
@@ -268,47 +267,14 @@ fn u_available_list(t: &Theme) -> Canvas {
 
 /// Check, Download, Install, Restart, with the current one lit.
 fn stepper(c: &mut Canvas, t: &Theme, y: i32, current: usize) {
-    let steps = ["Check", "Download", "Install", "Restart"];
-    let (x0, w) = (15, t.m.width - 30);
-    let step_w = w / steps.len() as i32;
-    let line_y = y + 5;
-    for (i, name) in steps.iter().enumerate() {
-        let cx = x0 + step_w * i as i32 + step_w / 2;
-        if i + 1 < steps.len() {
-            let col = if i < current { t.c.accent } else { t.c.border };
-            c.fill(Rect::new(cx + 8, line_y, step_w - 16, 1), col);
-        }
-        let (fill, ink) = if i < current {
-            (t.c.accent, t.c.accent)
-        } else if i == current {
-            (t.c.accent, t.c.fg)
-        } else {
-            (t.c.border, t.c.muted)
-        };
-        if i < current {
-            c.circle(cx as f32, line_y as f32 + 0.5, 5.0, fill);
-            icon::draw(
-                c,
-                "check",
-                IconSize::Tiny,
-                cx - 6,
-                line_y - 6,
-                t.c.accent_fg,
-            );
-        } else if i == current {
-            c.circle(cx as f32, line_y as f32 + 0.5, 5.0, fill);
-            c.circle(cx as f32, line_y as f32 + 0.5, 2.0, t.c.bg);
-        } else {
-            c.circle(cx as f32, line_y as f32 + 0.5, 4.0, fill);
-        }
-        let f = if i == current {
-            t.f.small_bold
-        } else {
-            t.f.small
-        };
-        let lr = Rect::new(cx - step_w / 2, y + 12, step_w, 14);
-        text_centre(c, f, lr, name, ink);
-    }
+    let r = Rect::new(15, y, t.m.width - 30, 26);
+    widgets::stepper(
+        c,
+        t,
+        r,
+        &["Check", "Download", "Install", "Restart"],
+        current,
+    );
 }
 
 fn busy(

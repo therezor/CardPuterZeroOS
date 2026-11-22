@@ -181,7 +181,8 @@ impl<'a> Ui<'a> {
     /// fills the rest of the page; a short one leaves room below it.
     pub fn list(&mut self, list: &List, rows: &[Row]) {
         let t = self.t;
-        let row_h = t.m.row_h;
+        let tall = rows.iter().any(|r| r.note.is_some());
+        let row_h = if tall { t.m.app_row_h } else { t.m.row_h };
         // First on the page: use the whole area and centre the rows, as the
         // shell's lists do. Below other content: start under it.
         let alone = self.y == self.area.y + t.m.margin_v;
@@ -220,7 +221,10 @@ impl<'a> Ui<'a> {
                 label: row.label,
                 trailing,
             };
-            widgets::list_row(self.c, t, r, &w_row, i == list.selected());
+            match row.note {
+                Some(note) => widgets::note_row(self.c, t, r, &w_row, note, i == list.selected()),
+                None => widgets::list_row(self.c, t, r, &w_row, i == list.selected()),
+            }
         }
         let track = Rect::new(x, top, w, visible as i32 * row_h);
         widgets::scrollbar(self.c, t, track, first, visible, rows.len());

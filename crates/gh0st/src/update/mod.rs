@@ -668,49 +668,9 @@ fn free_bytes(path: &str) -> u64 {
 /// A restart the last install needed has happened: the device booted, or
 /// the shell started, after it.
 fn clear_done_restart(st: &mut State) {
-    let done = match st.restart {
-        Restart::None => return,
-        Restart::Device => boot_time() > st.installed,
-        Restart::Shell => boot_time() > st.installed || shell_started_after(st.installed),
-    };
-    if done {
+    if update::restart_done(st) {
         st.restart = Restart::None;
     }
-}
-
-/// `btime` from /proc/stat: when the device booted.
-fn boot_time() -> u64 {
-    std::fs::read_to_string("/proc/stat")
-        .unwrap_or_default()
-        .lines()
-        .find_map(|l| l.strip_prefix("btime ")?.trim().parse().ok())
-        .unwrap_or(0)
-}
-
-/// A `gh0st shell` process started after `t`.
-fn shell_started_after(t: u64) -> bool {
-    // SAFETY: sysconf has no failure mode for this name.
-    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
-    let boot = boot_time();
-    let Ok(dir) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    dir.flatten().any(|e| {
-        let p = e.path();
-        let cmd = std::fs::read(p.join("cmdline")).unwrap_or_default();
-        let shell = cmd.split(|&b| b == 0).take(2).collect::<Vec<_>>()
-            == [b"/usr/bin/gh0st" as &[u8], b"shell"];
-        if !shell {
-            return false;
-        }
-        let stat = std::fs::read_to_string(p.join("stat")).unwrap_or_default();
-        // Field 22 counts from after the command's closing bracket.
-        let start = stat
-            .rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().nth(19)?.parse::<u64>().ok())
-            .unwrap_or(0);
-        boot + start / hz > t
-    })
 }
 
 /// The notice: updates ready, a restart owed, or none.

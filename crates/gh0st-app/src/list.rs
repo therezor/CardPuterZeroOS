@@ -107,6 +107,8 @@ pub struct Row<'a> {
     pub(crate) dim: bool,
     /// Can't be used now, and why: drawn faint, the reason on the right.
     pub(crate) off: Option<&'a str>,
+    /// A second line in Caption under the label.
+    pub(crate) note: Option<&'a str>,
 }
 
 impl<'a> Row<'a> {
@@ -117,6 +119,7 @@ impl<'a> Row<'a> {
             trail,
             dim: false,
             off: None,
+            note: None,
         }
     }
 
@@ -181,6 +184,13 @@ impl<'a> Row<'a> {
     }
 
     /// A built-in icon on the left.
+    /// A second line under the label, in Caption: versions, an address.
+    /// A list with any such row gives every row the taller height.
+    pub fn note(mut self, note: &'a str) -> Row<'a> {
+        self.note = Some(note);
+        self
+    }
+
     pub fn icon(mut self, name: &'a str) -> Row<'a> {
         self.icon = name;
         self

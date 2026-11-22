@@ -41,7 +41,11 @@ battery in `/sys/class/power_supply`. Details and sources in
   `examples/mockups.rs` renders every page into `mockups/settings`.
 - `crates/gh0st-term`: the terminal, an SDK app with its own binary. `src/vt`
   is the emulator on `vte`; `docs/terminal.md` is its guide.
-- `crates/gh0st`: one multi-call binary. The name it runs under picks the program.
+- `crates/gh0st-update`: Updates, an SDK app with its own binary. It shows
+  what the update engine found and asks gh0st-helper to check or install.
+  `examples/mockups.rs` renders its pages into `mockups/update-app`.
+- `crates/gh0st`: one multi-call binary. The name it runs under picks the
+  program. `gh0st update` is the update engine, run as root by systemd.
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
   kept as published), Lucide icons (ISC), our mark, and the terminal's Nerd
   Font icons (a subset, `assets/fonts/nerd/README.md`).
@@ -50,6 +54,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   renders its pictures.
 - `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
   home is an app built to it: Settings, the terminal.
+- `docs/updates.md`: the update engine, the Updates app, notifications and
+  our apt repo on GitHub Pages (`os/repo/publish.sh`).
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
 - `docs/setup.md`: first-boot setup, the steps and how it hands over to the
   shell.
@@ -66,7 +72,8 @@ battery in `/sys/class/power_supply`. Details and sources in
 
 - **Performance first.** 512 MB, an SPI panel, a battery. No timer runs while
   idle unless it shows something (the clock ticks once a minute). Nothing polls
-  in the background: use inotify, netlink, uevents, signalfd.
+  in the background: use inotify, netlink, uevents, signalfd. The one system
+  timer is the daily update check, which Settings turns off.
 - **Draw cheap, flush less.** A frame redraws the 320x170 back buffer (about
   a millisecond); the flush then writes only the rows that changed, which is
   where SPI time goes. After an app or the boot splash, write every row.

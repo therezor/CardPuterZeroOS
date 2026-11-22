@@ -180,6 +180,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-update"
+version = "0.1.0"
+dependencies = [
+ "gh0st-app",
+ "gh0st-core",
+ "libc",
+]
+
+[[package]]
 name = "imagesize"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

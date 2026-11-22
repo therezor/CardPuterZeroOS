@@ -1,0 +1,16 @@
+[package]
+name = "gh0st-update"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Updates for the CardputerZero: Gh0st OS and every package, a gh0st app"
+
+[[bin]]
+name = "gh0st-update"
+path = "src/main.rs"
+
+[dependencies]
+gh0st-app.workspace = true
+gh0st-core.workspace = true
+libc.workspace = true
