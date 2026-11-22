@@ -78,69 +78,19 @@ else
 fi
 if grep -q 'var/lib/systemd/random-seed' "$list"; then bad "random seed in the image"; else ok "no random seed"; fi
 if grep -E 'var/lib/apt/lists/[^/]+_' "$list" | grep -q .; then bad "apt lists in the image"; else ok "no apt lists"; fi
-if [ "$variant" = release ]; then
-    if grep -q 'system-connections/.' "$list"; then bad "Wi-Fi profiles in a release"; else ok "no Wi-Fi profiles"; fi
-fi
+if grep -q 'system-connections/.' "$list"; then bad "Wi-Fi profiles in the image"; else ok "no Wi-Fi profiles"; fi
 
-# Dev: what the CPZ_DEV_* secrets should have produced, when they are set.
-if [ "$variant" = dev ]; then
-    if grep -q 'serial-getty@.service.d/50-cpzeroos-dev.conf' "$list"; then
-        ok "serial console logs in"
-    else
-        bad "no serial autologin drop-in"
-    fi
-    if [ -n "${CPZ_DEV_WIFI_SSID:-}" ]; then
-        if grep -qE '^-rw------- (root/root|0/0) .*system-connections/dev-wifi.nmconnection$' "$list"; then
-            ok "Wi-Fi profile present, 0600 root"
-        else
-            bad "Wi-Fi profile missing or not 0600 root"
-        fi
-    fi
-    if [ -n "${CPZ_DEV_SSH_PUBKEY:-}" ] && [ "${CPZ_DEV_SETUP:-}" != 1 ]; then
-        u=${CPZ_DEV_USER:-zero}
-        if debugfs -R "stat /$u/.ssh/authorized_keys" "$build/data.ext4" 2>/dev/null |
-            grep -qE 'Mode: +0600.*' && debugfs -R "stat /$u/.ssh/authorized_keys" "$build/data.ext4" 2>/dev/null |
-            grep -qE 'User: +1000 '; then
-            ok "authorized_keys present, 0600 UID 1000"
-        else
-            bad "authorized_keys missing or wrong mode or owner"
-        fi
-    fi
-    if [ -n "${CPZ_DEV_WIFI_COUNTRY:-}" ]; then
-        if grep -q "cfg80211.ieee80211_regdom=$CPZ_DEV_WIFI_COUNTRY" "$build/bootfs/cmdline.txt"; then
-            ok "Wi-Fi country on the kernel command line"
-        else
-            bad "Wi-Fi country missing from cmdline.txt"
-        fi
-    fi
-fi
-
-# A release, or a dev image built with CPZ_DEV_SETUP=1, runs first-boot
-# setup: its marker, no user yet, root locked. Otherwise UID 1000 exists and
-# its home sits at the top of the data partition, which is /home.
-if [ "$variant" = release ] || [ "${CPZ_DEV_SETUP:-}" = 1 ]; then
-    if grep -qE ' \./var/lib/cpzeroos/setup$' "$list"; then ok "setup's marker present"; else bad "no setup marker"; fi
-    if tar -xOf "$build/rootfs.tar" ./etc/passwd | awk -F: '$3 == 1000 {f = 1} END {exit !f}'; then
-        bad "a UID 1000 user in an image that runs setup"
-    else
-        ok "no user: setup makes it"
-    fi
-    if tar -xOf "$build/rootfs.tar" ./etc/shadow | awk -F: '$1 == "root" && $2 !~ /^[!*]/ {f = 1} END {exit !f}'; then
-        bad "root has a password"
-    else
-        ok "root locked"
-    fi
-    if [ -n "${CPZ_DEV_SSH_PUBKEY:-}" ]; then
-        if grep -qE '^-rw------- (root/root|0/0) .*var/lib/cpzeroos/seed/authorized_keys$' "$list"; then
-            ok "SSH key staged for setup, 0600 root"
-        else
-            bad "SSH key not staged for setup"
-        fi
-    fi
-elif debugfs -R "ls -l /" "$build/data.ext4" 2>/dev/null | awk '$2 ~ /^4/ && $4 == 1000 {f = 1} END {exit !f}'; then
-    ok "home directory at the root of the data partition"
+# First-boot setup makes the user: its marker, no UID 1000 yet, root locked.
+if grep -qE ' \./var/lib/cpzeroos/setup$' "$list"; then ok "setup's marker present"; else bad "no setup marker"; fi
+if tar -xOf "$build/rootfs.tar" ./etc/passwd | awk -F: '$3 == 1000 {f = 1} END {exit !f}'; then
+    bad "a UID 1000 user in the image"
 else
-    bad "no UID 1000 home at the root of the data partition"
+    ok "no user: setup makes it"
+fi
+if tar -xOf "$build/rootfs.tar" ./etc/shadow | awk -F: '$1 == "root" && $2 !~ /^[!*]/ {f = 1} END {exit !f}'; then
+    bad "root has a password"
+else
+    ok "root locked"
 fi
 
 # Boot partition: every overlay config.txt names is there, and nothing for

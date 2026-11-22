@@ -10,6 +10,7 @@ sudo                    the AppStore installs through sudo
 procps                  ps, free, sysctl
 iproute2                ip and ss
 fdisk                   sfdisk, for the first-boot grow
+e2fsprogs               fsck.ext4, without which systemd never checks / or /home
 ca-certificates         TLS for apt and apps
 tzdata                  time zones, Settings > Date & time
 systemd-timesyncd       network time; the RTC keeps time offline

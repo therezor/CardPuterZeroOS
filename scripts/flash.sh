@@ -1,6 +1,6 @@
 #!/bin/sh
 # Writes a CPZeroOS image to an SD card on macOS. Destroys what is on it.
-#   scripts/flash.sh os/out/cpzeroos-dev-YYYYMMDD.img.xz /dev/diskN
+#   scripts/flash.sh os/out/cpzeroos-release-YYYYMMDD.img.xz /dev/diskN
 # Find N with `diskutil list`: the card is the external, physical disk.
 set -eu
 img=${1:?image .img.xz}

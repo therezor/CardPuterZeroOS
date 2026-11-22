@@ -183,7 +183,6 @@ conf.d drop-ins, next to a `gh0st` package.
   (`OnFailure=`). Once M4 exists, the fallback opens on a locked screen.
 - `cpzeroos-panel-modules` holds our panel driver and the M5Stack modules,
   built in CI against the pinned kernel headers.
-- `cpzeroos-dev` keeps SSH on and port 22 open for the device loop.
 - Hide ZClaw under stock APPLaunch too (`preinstalled-desktop-apps.tsv`). It
   contacts Cloudflare and Microsoft at start. gh0st already hides it.
 - Done when each change is measured against M0, and the panel, keyboard, audio
@@ -191,7 +190,7 @@ conf.d drop-ins, next to a `gh0st` package.
 
 **M1b. Image spike.** Build a minbase image on a second SD card, by hand if
 needed, from mmdebstrap, the pinned kernel, the M5Stack modules, our packages
-and `cpzeroos-dev`. It finds the driver, `fb_load`, PipeWire and library
+It finds the driver, `fb_load`, PipeWire and library
 problems early.
 - Target hardware rev v0.5, as M5Stack's CI does (`cardputerzero-v5-overlay`,
   `bq27220_v5`, `bmi270_bmm150_overlay`). Check that the same image boots on
@@ -201,8 +200,9 @@ problems early.
 - The M2 and M4 tests run on this card. They turn SSH off and drop inbound
   traffic, which would lock us out of the dev card.
 - Done when it boots to gh0st and stock apps run.
-- Built 2026-11-21 as `os/build.sh image dev` (`image-build.md`). It passes the
-  offline checks; the boot on the spare card is next.
+- Built 2026-11-21 (`image-build.md`). Since 2026-11-22 there is one image,
+  with no dev variant: it runs first-boot setup. It passes the offline checks;
+  the boot on the spare card is next.
 
 **A1. App SDK v0.** `crates/gh0st-app` with pages, OS bars, soft keys, lists,
 text fields, jobs with stdin, timers, watched fds, raw keys, a sim backend
@@ -328,8 +328,7 @@ and runs through pkexec today. It runs only when called and exits after.
   packages.
 - Decide how the Store handles catalogs and `postinst`.
 - `scripts/gate.sh` checks RAM, boot time, idle current, open ports and the
-  packet capture, and fails on a regression. It also fails if `cpzeroos-dev` is
-  in a release. The targets come from M0 and M1.
+  packet capture, and fails on a regression. The targets come from M0 and M1.
 - Done when a fresh flash passes every gate.
 
 **M7. Boot and splash.** gh0st draws the splash and `fb_load` goes. No

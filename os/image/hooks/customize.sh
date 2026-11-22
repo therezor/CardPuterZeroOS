@@ -1,6 +1,6 @@
 #!/bin/bash
 # mmdebstrap customize hook: runs in the container with the finished root
-# at $1, before it is packed. Env: VARIANT, REPORTS, and CPZ_DEV_* for dev.
+# at $1, before it is packed. Env: REPORTS, PARTUUID_*, ROOTS.
 set -euo pipefail
 root=$1
 ch() { chroot "$root" "$@"; }
@@ -10,107 +10,21 @@ ch() { chroot "$root" "$@"; }
 rm -f "$root/etc/apt/sources.list" "$root"/etc/apt/apt.conf.d/99mmdebstrap \
     "$root"/etc/dpkg/dpkg.cfg.d/99mmdebstrap
 
-if [ "$VARIANT" = dev ]; then
-    user=${CPZ_DEV_USER:-zero}
-    host=${CPZ_DEV_HOSTNAME:-cpzero-dev}
-else
-    user=zero
-    host=zero
-fi
-echo "$host" > "$root/etc/hostname"
-printf '127.0.0.1\tlocalhost\n127.0.1.1\t%s\n::1\t\tlocalhost ip6-localhost ip6-loopback\n' \
-    "$host" > "$root/etc/hosts"
+echo zero > "$root/etc/hostname"
+printf '127.0.0.1\tlocalhost\n127.0.1.1\tzero\n::1\t\tlocalhost ip6-localhost ip6-loopback\n' > "$root/etc/hosts"
 
-# A release has no user: first-boot setup (docs/setup.md) makes UID 1000
-# on the device. Its marker starts gh0st-setup.service and keeps the shell
-# off until setup hands over. CPZ_DEV_SETUP=1 builds a dev image that runs
-# setup too.
-setup=0
-if [ "$VARIANT" = release ] || [ "${CPZ_DEV_SETUP:-}" = 1 ]; then
-    setup=1
-    install -d -m 755 "$root/var/lib/cpzeroos"
-    install -d -m 700 "$root/var/lib/cpzeroos/setup-home"
-    : > "$root/var/lib/cpzeroos/setup"
-    if [ -n "${CPZ_DEV_SSH_PUBKEY:-}" ]; then
-        # user-create installs it in the new home.
-        install -d -m 700 "$root/var/lib/cpzeroos/seed"
-        printf '%s\n' "$CPZ_DEV_SSH_PUBKEY" > "$root/var/lib/cpzeroos/seed/authorized_keys"
-        chmod 600 "$root/var/lib/cpzeroos/seed/authorized_keys"
-    fi
-else
-    # UID 1000 runs gh0st and the apps. Groups: sudo and netdev for the
-    # polkit rules, the rest for the panel, keyboard, audio, camera and Cap
-    # buses.
-    ch useradd -m -u 1000 -U -s /bin/bash \
-        -G sudo,netdev,video,input,render,audio,gpio,i2c,spi,dialout,plugdev "$user"
-    if [ -n "${CPZ_DEV_PASSWORD_HASH:-}" ]; then
-        ch usermod -p "$CPZ_DEV_PASSWORD_HASH" "$user"
-    else
-        # Key-only: no password the lock screen could take.
-        ch passwd -q -l "$user"
-        cfg=$root/home/$user/.config/cardputerzero
-        install -d -m 755 -o 1000 -g 1000 "$root/home/$user/.config" "$cfg"
-        echo '{"gh0st": {"lock": {"password": false}}}' > "$cfg/config.json"
-        chown 1000:1000 "$cfg/config.json"
-    fi
-    mkdir -p "$root/var/lib/systemd/linger"
-    touch "$root/var/lib/systemd/linger/$user"
-fi
+# No user: first-boot setup (docs/setup.md) makes UID 1000 on the device.
+# Its marker starts gh0st-setup.service and keeps the shell off until setup
+# hands over.
+install -d -m 755 "$root/var/lib/cpzeroos"
+install -d -m 700 "$root/var/lib/cpzeroos/setup-home"
+: > "$root/var/lib/cpzeroos/setup"
 
 cat > "$root/etc/fstab" <<FSTAB
 PARTUUID=$PARTUUID_BOOT  /boot/firmware  vfat  noatime,fmask=0022,dmask=0022  0  2
 PARTUUID=$PARTUUID_ROOT  /               ext4  noatime,commit=60,errors=remount-ro  0  1
 PARTUUID=$PARTUUID_DATA  /home           ext4  noatime,commit=60,nodev,nosuid,x-systemd.growfs  0  2
 FSTAB
-
-if [ "$VARIANT" = dev ]; then
-    # The serial console logs straight in: if Wi-Fi never comes up, the UART
-    # is the only way in, and the account may have no password. Before
-    # setup has made a user, root.
-    login=$user
-    [ "$setup" = 1 ] && login=root
-    d=$root/etc/systemd/system/serial-getty@.service.d
-    mkdir -p "$d"
-    cat > "$d/50-cpzeroos-dev.conf" <<GETTY
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin $login --noreset --noclear --keep-baud 115200,57600,38400,9600 - \${TERM}
-GETTY
-    home=$root/home/$user
-    if [ "$setup" = 0 ] && [ -n "${CPZ_DEV_SSH_PUBKEY:-}" ]; then
-        install -d -m 700 -o 1000 -g 1000 "$home/.ssh"
-        printf '%s\n' "$CPZ_DEV_SSH_PUBKEY" > "$home/.ssh/authorized_keys"
-        chown 1000:1000 "$home/.ssh/authorized_keys"
-        chmod 600 "$home/.ssh/authorized_keys"
-    fi
-    if [ -n "${CPZ_DEV_WIFI_SSID:-}" ]; then
-        f=$root/etc/NetworkManager/system-connections/dev-wifi.nmconnection
-        install -d -m 700 "${f%/*}"
-        # The permanent MAC, so the router hands out the address it knows.
-        cat > "$f" <<NM
-[connection]
-id=dev-wifi
-type=wifi
-autoconnect=true
-
-[wifi]
-mode=infrastructure
-ssid=$CPZ_DEV_WIFI_SSID
-cloned-mac-address=permanent
-
-[wifi-security]
-key-mgmt=wpa-psk
-psk=${CPZ_DEV_WIFI_PSK:-}
-
-[ipv4]
-method=auto
-
-[ipv6]
-method=auto
-NM
-        chmod 600 "$f"
-    fi
-fi
 
 # Only the units in our presets stay enabled. The tmpfiles timer is static,
 # so it is masked: /tmp is a tmpfs and the daily wakeup buys nothing.

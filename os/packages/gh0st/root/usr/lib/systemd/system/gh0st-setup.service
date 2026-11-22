@@ -19,4 +19,6 @@ Restart=always
 RestartSec=1
 
 [Install]
-WantedBy=multi-user.target
+# home.mount too: if /home mounts late, on a retry, setup's first start
+# job has already failed, and this queues it again.
+WantedBy=multi-user.target home.mount

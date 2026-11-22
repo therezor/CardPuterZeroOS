@@ -2,10 +2,10 @@
 # Builds CPZeroOS in the build container. Same on the Mac and on CI.
 #   os/build.sh fetch             download and verify the pinned inputs
 #   os/build.sh debs              build our packages
-#   os/build.sh image dev|release build the disk image into os/out/
-#   os/build.sh check dev|release tier 1 checks
-#   os/build.sh smoke             first boot of the dev image in QEMU
-#   os/build.sh relock dev|release accept the packages and units of the last build
+#   os/build.sh image release     build the disk image into os/out/
+#   os/build.sh check release     tier 1 checks
+#   os/build.sh smoke             first boot of the image in QEMU
+#   os/build.sh relock release    accept the packages and units of the last build
 #   os/build.sh shell             a shell in the container
 # Work happens on the Docker volume cpzeroos-work, never on the bind-mounted
 # repo: macOS filesystems lose ownership and sparseness.
@@ -33,10 +33,8 @@ CPZ_GIT_REV=$(git -C "$root" rev-parse --short HEAD)
 git -C "$root" diff --quiet HEAD || CPZ_GIT_REV=$CPZ_GIT_REV.dirty
 export SOURCE_DATE_EPOCH CPZ_GIT_REV
 
-# Dev secrets reach the container only as env, never a file in the repo.
 envs=
-for v in CPZ_DEV_USER CPZ_DEV_PASSWORD_HASH CPZ_DEV_SSH_PUBKEY CPZ_DEV_WIFI_SSID CPZ_DEV_SETUP \
-         CPZ_DEV_WIFI_PSK CPZ_DEV_WIFI_COUNTRY CPZ_DEV_HOSTNAME SOURCE_DATE_EPOCH CPZ_GIT_REV GH0ST_LOG TRACE; do
+for v in SOURCE_DATE_EPOCH CPZ_GIT_REV GH0ST_LOG TRACE; do
     envs="$envs -e $v"
 done
 

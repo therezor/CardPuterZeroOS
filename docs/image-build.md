@@ -13,39 +13,13 @@ os/build.sh fetch           # download and verify every pinned input
 os/build.sh debs            # build our packages and the drivers
 os/build.sh image release   # os/out/cpzeroos-release-YYYYMMDD.img.xz
 os/build.sh check release   # tier 1 checks
-os/build.sh smoke           # first boot of the dev image in QEMU, about 10 min
+os/build.sh smoke           # first boot of the image in QEMU, about 10 min
 ```
 
 A clean build takes about ten minutes. `.github/workflows/os.yml` runs the
 same steps on an arm64 runner; it has not run yet. Work happens on the Docker volume
 `cpzeroos-work`, never on the repo: macOS filesystems lose ownership and
 sparse files. Only finished files land in `os/out/`.
-
-## Dev images
-
-A dev image comes up on Wi-Fi with SSH on and no input, so the device is
-reachable headless. The secrets reach the container only as environment
-variables; they never enter a package, the repo or CI.
-
-```sh
-CPZ_DEV_USER=<user> CPZ_DEV_HOSTNAME=<device> \
-CPZ_DEV_SSH_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" \
-CPZ_DEV_WIFI_SSID=... CPZ_DEV_WIFI_PSK=... CPZ_DEV_WIFI_COUNTRY=GB \
-os/build.sh image dev
-```
-
-`CPZ_DEV_PASSWORD_HASH` (from `openssl passwd -6`) sets a password; without
-it the account is key-only with passwordless sudo, and its config turns
-**Unlock with password** off, as the lock screen has no password to take. The dev image also has a
-serial console on `serial0` at 115200 that logs in by itself, the
-firmware's boot log on the same UART (`uart_2ndstage=1`), a persistent
-journal, avahi for the `.local` name, and radios unblocked at boot. A release build fails if any
-`CPZ_DEV_*` is set.
-
-`CPZ_DEV_SETUP=1` builds a dev image that runs first-boot setup instead, as a
-release does: no user, the setup marker, and the SSH key staged in
-`/var/lib/cpzeroos/seed/authorized_keys` for the user setup makes. The
-serial console logs in as root until then.
 
 ## First-boot setup
 
@@ -56,11 +30,15 @@ while it exists, `gh0st-setup.service` (in `gh0st`) runs `gh0st-settings
 `/var/lib/cpzeroos/setup-home` is setup's own `HOME`. NetworkManager's
 `no-auto-default=*` keeps a cable offline until the user picks it.
 
+There is one image, the one users get. No dev image: a device under test
+goes through setup like any other. To get in afterwards, turn on SSH, and
+Logs if needed, in Settings.
+
 ## Flash
 
 ```sh
 diskutil list                                   # find the card: /dev/diskN
-scripts/flash.sh os/out/cpzeroos-dev-YYYYMMDD.img.xz /dev/diskN
+scripts/flash.sh os/out/cpzeroos-release-YYYYMMDD.img.xz /dev/diskN
 ```
 
 The script refuses internal disks and asks before it writes.
@@ -73,7 +51,7 @@ os/Dockerfile          the build container
 os/lock.json           every pinned input: URL, SHA-256, commit, snapshot
 os/image/build-image.sh  the steps, inside the container
 os/image/manifest/     roots.list, deny.list, exec.list, boot-files.list
-os/image/variants/     dev and release: extra roots, deny list, the lock,
+os/image/variants/     release: extra roots, deny list, the lock,
                        expected units, budget
 os/image/hooks/        the mmdebstrap customize hook
 os/image/checks/       tier 1 checks
@@ -98,8 +76,8 @@ both install from it.
 3. **image.** `mmdebstrap --variant=minbase` installs `roots.list` from a
    snapshot.debian.org timestamp and the two local repos. Recommends are
    off, and docs, man pages and translations never unpack. The customize
-   hook makes UID 1000, applies the variant, runs `systemctl preset-all`
-   and removes per-device identity. The boot and home trees come out as
+   hook leaves setup's marker where a user would be, runs `systemctl
+   preset-all` and removes per-device identity. The boot and home trees come out as
    their own trees.
 4. The FAT partition is made with `mkfs.vfat` and `mcopy`, the ext4 ones with
    `mke2fs -d` from the tar, and the disk with `sfdisk` on a sparse file. No
@@ -132,7 +110,7 @@ country; that stays until our own Store replaces it.
 **ffmpeg.** Files runs `ffmpeg` and `ffprobe` for video previews. Debian's
 ffmpeg is a desktop build: its device library pulls OpenGL, so Mesa and
 LLVM, and its filters pull speech synthesis and recognition. That is 148
-packages and 367 MB of the 838 MB installed. Kept by decision (2026-11-21).
+packages and 367 MB of the 842 MB installed. Kept by decision (2026-11-21).
 
 **Packages.**
 
@@ -144,12 +122,11 @@ packages and 367 MB of the 838 MB installed. Kept by decision (2026-11-21).
 | `cpzeroos-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
 | `gh0st`, `gh0st-term` | Our binaries, `.desktop` files, polkit files, the `gh0st.service` user unit, `gh0st-setup.service` |
 | `cpzeroos-m5-appstore` | See above |
-| `cpzeroos-dev` | Dev only: SSH, avahi, sudo without a password, journal, tools |
 
 **Services.** System: NetworkManager and its on-demand dispatcher,
 timesyncd, bluetoothd, `fb_load` (a oneshot, so setup draws after the logo),
-the first-boot grow and first-boot setup while its marker exists; the dev image adds
-sshd and avahi, and logs the serial console straight in. User: gh0st, and
+the first-boot grow and first-boot setup while its marker exists. sshd
+starts only once the user turns SSH on. User: gh0st, and
 PipeWire's sockets. No timers: the tmpfiles timer is masked, `/tmp` is a
 tmpfs. `units-*.expected` in each variant is the list the checks hold it to.
 
@@ -176,7 +153,14 @@ tmpfs. `units-*.expected` in each variant is the list the checks hold it to.
 All mount `noatime,commit=60`. The disk ID is fixed (`0x43505a30`, "CPZ0"),
 so every card shares PARTUUIDs; randomizing it at first boot is still to do.
 On first boot `cpzeroos-grow-data.service` grows p3, and `x-systemd.growfs`
-grows its filesystem. machine-id and the random seed are made by systemd.
+grows its filesystem online. The grow runs before `local-fs-pre.target`
+and waits for udev: the new size makes the card's device units flap for a
+second or two, and a check or mount of `/home` in that window is cut off.
+`gh0st-setup.service` is also wanted by `home.mount`, so a late mount still
+starts setup. `e2fsprogs` is in the image so systemd checks `/` and `/home`
+at boot and replays their journals. p3 has 4 KiB blocks and descriptors reserved
+for 1 TiB: with the 1 KiB blocks `mke2fs` picks at 256 MiB, growing to a
+64 GB card corrupted it. machine-id and the random seed are made by systemd.
 SSH host keys are made the first time SSH starts, by an `ExecStartPre`
 drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 
@@ -188,13 +172,11 @@ drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 - Nothing from the deny lists. Every `+rpt` package is pinned in `lock.json`.
 - apt's manual packages are `roots.list` plus Debian's required base.
 - Enabled units equal `units-*.expected`. No timers.
-- No SSH host keys, empty machine-id, no random seed, no apt lists, and no
-  Wi-Fi profiles in a release.
+- No SSH host keys, empty machine-id, no random seed, no apt lists, no
+  Wi-Fi profiles.
 - Every overlay `config.txt` names is on the boot partition, and nothing for
   other boards.
-- A release, or a `CPZ_DEV_SETUP=1` image: setup's marker, no UID 1000, root
-  locked, and a staged SSH key when one was given. Otherwise UID 1000's home
-  sits at the root of the data partition.
+- Setup's marker, no UID 1000, root locked.
 - setuid bits survive `mke2fs -d`; the helper is a hard link.
 - Every command in `exec.list` resolves. Our binaries are static, so no
   package metadata says what they run.
@@ -204,15 +186,19 @@ drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 
 ## Smoke test
 
-`os/build.sh smoke` boots the dev image in QEMU's `raspi3b`, a Pi 3 close to
+`os/build.sh smoke` boots the image in QEMU's `raspi3b`, a Pi 3 close to
 the CM0, for ten minutes. QEMU has no panel, keyboard, Wi-Fi or VideoCore,
 so it proves the boot path only. Its serial console stays silent with this
-device tree, so the test reads the dev image's journal off the card file
-afterwards. It checks: root mounted without an initramfs, p3 and its
-filesystem grown, zram on, SSH host keys made and sshd listening, UID 1000's
-session started, multi-user reached, no failed unit but gh0st (no keyboard),
-and a writable home. On a `CPZ_DEV_SETUP=1` image it checks that setup
-starts and no user session does; setup itself fails there, with no keyboard.
+device tree, so the test reads the journal off the card file afterwards.
+The image keeps no logs, so the test's own copy of the card gets a journald
+drop-in for a persistent journal first. The card is 8 GB, so p3 grows; a
+64 GB card stalls QEMU's slow SD emulation behind ext4's inode table
+writes, which a real card finishes in seconds. It checks: root mounted without an
+initramfs, p3 and its filesystem grown and `/home` mounted with no ext4
+errors and no emergency mode, zram on, setup started, no user
+session, SSH off, multi-user reached, and no failed unit but setup and
+gh0st (no keyboard) and `fb_load` (no panel). SSH host keys made on first
+start is a device test.
 
 ## Changing things
 
@@ -242,8 +228,8 @@ starts and no user session does; setup itself fails there, with no keyboard.
 
 | | Stock M5 image | CPZeroOS release |
 |---|---|---|
-| Packages | 1699 | 440 |
-| Installed | 5.1 GB `/usr` | 838 MB |
+| Packages | 1699 | 444 |
+| Installed | 5.1 GB `/usr` | 842 MB |
 | Download | 14.8 GiB image | 224 MB `.img.xz` |
 | Enabled system services | 30+ and 9 timers | 6, no timers |
 

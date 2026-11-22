@@ -1,1 +1,1 @@
-console=tty1 root=PARTUUID=@PARTUUID@ rootfstype=ext4 fsck.repair=yes rootwait fbcon=map:off @EXTRA@
+console=tty1 root=PARTUUID=@PARTUUID@ rootfstype=ext4 fsck.repair=yes rootwait fbcon=map:off quiet loglevel=3

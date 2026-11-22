@@ -188,7 +188,7 @@ connection takes the change.
 `user-create` runs `useradd -m -u 1000 -U -s /bin/bash` with the groups `sudo`,
 `netdev`, `video`, `input`, `render`, `audio`, `gpio`, `i2c`, `spi`, `dialout` and
 `plugdev`, leaving out any the system lacks. It sets the password with `chpasswd`,
-installs the staged `config.json` (and, on a dev image, the staged SSH key), and can run
+installs the staged `config.json`, and can run
 twice: UID 1000 with the same name carries on, any other clash refuses. `setup-finish`
 writes the linger file and syncs it and its directory, removes the marker and syncs
 `/var/lib/cpzeroos`, then starts `user@1000.service`. The existing verbs stay as they are:
@@ -240,15 +240,13 @@ has what happens to the app in front.
 
 **Image** (`docs/image-build.md`, First-boot setup), built 2026-11-22:
 
-- Release: no user and no linger; the marker and setup's `HOME`; `gh0st-setup.service`
+- No user and no linger; the marker and setup's `HOME`; `gh0st-setup.service`
   enabled by the preset; the shell's unit waits for the marker to go. Its checks: the
   marker, no UID 1000, root locked.
-- Dev: the dev user is made as today, with no marker; key-only, its config turns
-  Unlock with password off. `CPZ_DEV_SETUP=1` builds a dev image that runs setup
-  instead, with the SSH key staged for `user-create` and root on the serial console.
+- One image, no dev variant (2026-11-22): a device under test runs setup too.
 - NetworkManager gets `no-auto-default=*`, so a cable stays offline until the user picks
   it.
-- `fb_load.service` is `Type=oneshot` with a 5 s timeout, so the logo is done before
+- `fb_load.service` is `Type=oneshot` with a 10 s timeout, so the logo is done before
   setup draws.
 - `exec.list` adds `useradd`, `usermod` and `chpasswd`.
 

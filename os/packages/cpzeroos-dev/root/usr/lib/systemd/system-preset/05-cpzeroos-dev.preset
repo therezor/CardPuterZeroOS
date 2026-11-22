@@ -1,2 +1,0 @@
-enable ssh.service
-enable avahi-daemon.service

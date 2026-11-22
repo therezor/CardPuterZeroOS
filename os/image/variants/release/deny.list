@@ -1,5 +1,4 @@
-# Dev tooling never ships.
-cpzeroos-dev
+# Debugging tools never ship, nor mDNS, which announces the device.
 avahi-daemon
 strace
 evtest

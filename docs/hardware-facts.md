@@ -32,6 +32,17 @@ Measured on the device unless marked.
   holds a one-shot Fn down until the next key comes up. Plain Esc comes alone.
   Measured 2026-11-21 with a raw evdev read.
 - The only side button is power/boot. It sends no key event.
+- First boot of the CPZeroOS image (kernel `6.18.60+rpt-rpi-v8`, stock
+  firmware), read off the card 2026-11-22: userspace in 6.5 s, 9.3 s in all.
+  vc4 takes DRM minor 0, the panel minor 1 at 8.5 s; `fb_load` waits for
+  `/dev/dri/card1` and shows the logo at 9.0 s. The keyboard, battery,
+  Wi-Fi (BCM43439) and Bluetooth (CYW4343A2) all probe. The RTC
+  (`rtc-ds1307` at 1-0032) logs "oscillator failed": it had no time to keep.
+  The panel logs one "Timeout waiting for TE signal" before the logo.
+- The data partition grown from 256 MiB to a 64 GB card with 1 KiB blocks
+  came up with corrupt group descriptors (group 4128, where the reserved
+  descriptor blocks run out) and `/home` would not mount. The image now
+  makes it with 4 KiB blocks (2026-11-22).
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
   400 MHz core clock divides to 50 MHz, so a full frame takes about 17.4 ms.
   The panel refreshes at 60.5 Hz by default (TE period 16.5 ms). With

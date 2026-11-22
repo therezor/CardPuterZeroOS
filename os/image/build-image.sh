@@ -3,9 +3,9 @@
 # read-only at /src, the work volume at /work, the output dir at /out.
 #   build-image.sh fetch          download and verify every pinned input
 #   build-image.sh debs           build our packages, index both local repos
-#   build-image.sh image VARIANT  rootfs, partitions, disk image (dev|release)
+#   build-image.sh image VARIANT  rootfs, partitions, disk image (release)
 #   build-image.sh check VARIANT  tier 1 checks on the last image
-#   build-image.sh smoke          first boot of the dev image in QEMU
+#   build-image.sh smoke          first boot of the release image in QEMU
 #   build-image.sh relock VARIANT write the last build's lock and units to /out
 set -euo pipefail
 
@@ -121,15 +121,12 @@ step_debs() {
 list_words() { grep -hv '^#' "$@" 2>/dev/null | awk 'NF {print $1}'; }
 
 step_image() {
-    local variant=${1:?variant: dev or release}
+    local variant=${1:?variant: release}
     [ -d "$OS/image/variants/$variant" ] || die "no variant $variant"
-    if [ "$variant" = release ] && env | grep -q '^CPZ_DEV_'; then
-        die "CPZ_DEV_* is set: dev secrets must never reach a release image"
-    fi
     # shellcheck source=/dev/null
     . "$OS/image/layout.conf"
     local id=${DISK_ID#0x}
-    export VARIANT=$variant PARTUUID_BOOT=$id-01 PARTUUID_ROOT=$id-02 PARTUUID_DATA=$id-03
+    export PARTUUID_BOOT=$id-01 PARTUUID_ROOT=$id-02 PARTUUID_DATA=$id-03
     local build=$WORK/build/image-$variant
     export REPORTS=$build/reports
     rm -rf "$build"
@@ -170,24 +167,20 @@ step_image() {
         cp -a "$build/boot/$f" "$bootdir/"
     done
     cp "$OS/image/boot/config.txt" "$bootdir/config.txt"
-    if [ "$variant" = dev ]; then
-        # The firmware's own boot log on the UART, before the kernel.
-        printf '# Dev image: firmware log on the UART.\nuart_2ndstage=1\n' >> "$bootdir/config.txt"
-    fi
-    local extra="quiet loglevel=3"
-    if [ "$variant" = dev ]; then
-        extra="console=serial0,115200"
-        [ -n "${CPZ_DEV_WIFI_COUNTRY:-}" ] && extra="$extra cfg80211.ieee80211_regdom=$CPZ_DEV_WIFI_COUNTRY"
-    fi
-    sed -e "s|@PARTUUID@|$PARTUUID_ROOT|" -e "s|@EXTRA@|$extra|" \
-        "$OS/image/boot/cmdline.txt.in" > "$bootdir/cmdline.txt"
+    sed "s|@PARTUUID@|$PARTUUID_ROOT|" "$OS/image/boot/cmdline.txt.in" > "$bootdir/cmdline.txt"
     mkfs.vfat -F 32 -n BOOT -i "$id" -C "$build/boot.vfat" $((BOOT_MIB * 1024)) >/dev/null
     mcopy -s -i "$build/boot.vfat" "$bootdir"/* ::/
 
     log "ext4 partitions"
     mke2fs -q -t ext4 -L rootfs -m 2 -d "$build/rootfs.tar" "$build/root.ext4" "${ROOT_MIB}M"
     # From the directory, not a tar: the data partition's root is /home.
-    mke2fs -q -t ext4 -L data -m 1 -d "$build/home" "$build/data.ext4" "${DATA_MIB}M"
+    # It grows online at first boot, from 256 MiB to the whole card. At
+    # this size mke2fs picks 1 KiB blocks, whose reserved descriptors run
+    # out near 33 GiB; past that the kernel's resize corrupted the group
+    # descriptors on a 64 GB card. 4 KiB blocks, with descriptors reserved
+    # for 1 TiB, grow the common way.
+    mke2fs -q -t ext4 -T default -b 4096 -E resize=$((1 << 28)) -L data -m 1 \
+        -d "$build/home" "$build/data.ext4" "${DATA_MIB}M"
 
     log "disk image"
     local img=$build/cpzeroos-$variant.img
@@ -253,5 +246,5 @@ case ${1:-} in
     smoke) "$OS/image/checks/smoke.sh" ;;
     relock) step_relock "${2:-}" ;;
     shell) exec bash ;;
-    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|shell" ;;
+    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|shell" ;;
 esac

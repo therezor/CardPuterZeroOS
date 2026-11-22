@@ -13,7 +13,7 @@ ConditionVirtualization=!container
 Type=oneshot
 ExecStart=/usr/sbin/fb_load
 RemainAfterExit=yes
-TimeoutStartSec=5
+TimeoutStartSec=10
 
 [Install]
 WantedBy=sysinit.target

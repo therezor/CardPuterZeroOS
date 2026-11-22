@@ -54,8 +54,6 @@ const SETUP_MARKER: &str = "/var/lib/cpzeroos/setup";
 const SETUP_STATE: &str = "/var/lib/cpzeroos/setup.state";
 /// Setup's own home: the look chosen during setup is in its config.
 const SETUP_HOME: &str = "/var/lib/cpzeroos/setup-home";
-/// A dev image's SSH key, waiting for the user setup makes.
-const SEED_KEYS: &str = "/var/lib/cpzeroos/seed/authorized_keys";
 const LINGER_DIR: &str = "/var/lib/systemd/linger";
 const USER_UID: u32 = 1000;
 /// The device user's groups. One the system lacks is left out, so
@@ -502,23 +500,12 @@ fn chpasswd(name: &str, password: &[u8]) -> Result<(), String> {
     }
 }
 
-/// Copies what setup gathered into the new home: the look in config.json,
-/// and on a dev image the SSH key.
+/// Copies what setup gathered into the new home: the look in config.json.
 fn seed_home(home: &Path, uid: u32, gid: u32) -> Result<(), String> {
     let config = Path::new(SETUP_HOME).join(".config/cardputerzero/config.json");
     if config.exists() {
         let dir = owned_dirs(home, &[".config", "cardputerzero"], 0o755, uid, gid)?;
         copy_owned(&config, &dir.join("config.json"), 0o644, uid, gid)?;
-    }
-    if Path::new(SEED_KEYS).exists() {
-        let dir = owned_dirs(home, &[".ssh"], 0o700, uid, gid)?;
-        copy_owned(
-            Path::new(SEED_KEYS),
-            &dir.join("authorized_keys"),
-            0o600,
-            uid,
-            gid,
-        )?;
     }
     Ok(())
 }
