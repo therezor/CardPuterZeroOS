@@ -2,10 +2,8 @@
 
 Settings > Hotspot turns the device into a Wi-Fi access point. Phones and
 laptops join it to reach the device (SSH, files), and the internet when a
-cable is up. On our image a cable stays offline until the user picks it
-(`no-auto-default=*`), and setup's "Use the cable" isn't built yet, so there
-the hotspot reaches the device only. It takes wlan0, so the device leaves its Wi-Fi network while the
-hotspot runs and rejoins it when the hotspot stops.
+cable is up. It takes wlan0, so the device leaves its Wi-Fi network while
+the hotspot runs and rejoins it when the hotspot stops.
 
 ## How it works
 

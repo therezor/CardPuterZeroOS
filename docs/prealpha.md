@@ -75,11 +75,10 @@ Include:
 
 ## Known issues
 
-- No updates yet. To get a newer build, flash it again, which erases the card.
+- Updates come from our apt repo: the daily check finds them and Updates
+  installs them. A flash still erases the card.
 - Every card made from this image has the same disk ID. Do not plug two of
   them into one Linux computer at the same time.
 - Wi-Fi is 2.4 GHz only: that is the chip. No monitor mode yet.
 - The hotspot takes the Wi-Fi: the device leaves its network while it runs.
-  Its clients reach the device only: a cable stays offline on this image.
-- Setup has no wired network yet: "Use the cable" is not built.
 - The training is part of setup for now. It becomes its own app later.

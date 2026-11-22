@@ -330,29 +330,6 @@ fn network(t: &Theme) -> Canvas {
     c
 }
 
-fn network_cable(t: &Theme) -> Canvas {
-    let mut c = frame(t);
-    top(&mut c, t, "wifi", "Network", &setup(4), Net::None);
-    let sig = |level| Trailing::Signal {
-        level,
-        secure: true,
-    };
-    let items = [
-        row(
-            t,
-            "ethernet-port",
-            "Use the cable",
-            Trailing::Value("plugged in"),
-        ),
-        row(t, "wifi", "HomeNet", sig(3)),
-        row(t, "wifi", "Office-5G", sig(4)),
-        row(t, "wifi", "Neighbours", sig(1)),
-    ];
-    rows(&mut c, t, list_top(t), &items, 0);
-    chips(&mut c, t, n("refresh-cw", "Scan"), NONE, skip());
-    c
-}
-
 fn wifi_password(t: &Theme) -> Canvas {
     let mut c = frame(t);
     top(&mut c, t, "wifi", "Network", &setup(4), Net::None);
@@ -628,7 +605,6 @@ fn main() {
             privacy(t, 5)
         }),
         ("21-network", "Enter joins, 5 Scan, 7 Skip", network),
-        ("22-network-cable", "with a cable in", network_cable),
         (
             "23-wifi-password",
             "the join dialog: key hints",

@@ -55,7 +55,7 @@ spy", and 6 has a Skip chip. Esc goes back to the notice.
 | 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. 7 Skip keeps the world country. |
 | 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. "Other" opens the region list. 7 Skip keeps the zone. |
 | 3 | Privacy | The private defaults, each switchable: Wi-Fi address per network, random address while scanning, hostname not sent, IPv6 privacy addresses, network time, logs off, and the daily check for updates (on; `docs/updates.md`). SSH and Bluetooth stay off, switched on their own pages in Settings. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
-| 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. With a cable in, "Use the cable" makes the wired profile (not built yet). Nothing goes online before this step. |
+| 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. A cable needs no step: NetworkManager connects it as soon as it is in, before setup too. Wi-Fi goes online only here. |
 | 5 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
 | 6 | Account | The name and the password, then the password again on its own screen. |
 | 7 | Device name and look | The device name (`zero` unless changed), the home layout, the palette (Mint, Nord, Paper) and the clock. 5 and 7 change a choice; Done on 6 goes on. The look applies at once. |
@@ -251,8 +251,8 @@ has the screen; `apps.md`, Pausing, has what happens to the app in front.
   enabled by the preset; the shell's unit waits for the marker to go. Its checks: the
   marker, no UID 1000, root locked.
 - One image, no dev variant (2026-11-22): a device under test runs setup too.
-- NetworkManager gets `no-auto-default=*`, so a cable stays offline until the user picks
-  it.
+- A cable connects on its own: NetworkManager makes the wired profile. The privacy
+  defaults (a stable address, no hostname sent, no connectivity check) cover it.
 - `fb_load.service` is `Type=oneshot` with a 10 s timeout, so the logo is done before
   setup draws.
 - `exec.list` adds `useradd`, `usermod` and `chpasswd`.

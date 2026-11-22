@@ -27,8 +27,8 @@ A release ships with no user. `/var/lib/cpzeroos/setup` is the marker:
 while it exists, `gh0st-setup.service` (in `gh0st`) runs `gh0st-settings
 --setup` as root, and the shell's `gh0st.service` stays off. Setup makes UID
 1000, removes the marker and starts the user's session (`docs/setup.md`).
-`/var/lib/cpzeroos/setup-home` is setup's own `HOME`. NetworkManager's
-`no-auto-default=*` keeps a cable offline until the user picks it.
+`/var/lib/cpzeroos/setup-home` is setup's own `HOME`. A cable connects on
+its own; Wi-Fi waits for setup's network step.
 
 There is one image, the one users get. No dev image: a device under test
 goes through setup like any other. To get in afterwards, turn on SSH, and
