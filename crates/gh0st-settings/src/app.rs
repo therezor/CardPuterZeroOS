@@ -1578,19 +1578,19 @@ impl Settings {
         self.run(cx, NetJob::Radio, &["nmcli", "-t", "-f", "WIFI", "radio"]);
         let profiles = ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"];
         self.run(cx, NetJob::Profiles, &profiles);
-        let scan = if rescan { "yes" } else { "no" };
-        let list = [
-            "nmcli",
-            "-t",
-            "-f",
-            "IN-USE,SIGNAL,SECURITY,SSID",
-            "device",
-            "wifi",
-            "list",
-            "--rescan",
-            scan,
-        ];
-        self.run(cx, NetJob::List, &list);
+        let list = "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list --rescan";
+        if rescan {
+            // A radio switched on a moment ago reads unavailable for a few
+            // seconds, and nmcli won't scan it then: wait, 10 s at most.
+            let script = format!(
+                "i=0; while [ $i -lt 20 ] && nmcli -t -f TYPE,STATE device | \
+                 grep -qx wifi:unavailable; do sleep 0.5; i=$((i + 1)); done; exec {list} yes"
+            );
+            self.run(cx, NetJob::List, &["sh", "-c", &script]);
+        } else {
+            let argv: Vec<&str> = list.split(' ').chain(["no"]).collect();
+            self.run(cx, NetJob::List, &argv);
+        }
         let devices = [
             "nmcli",
             "-t",
@@ -1680,7 +1680,7 @@ impl Settings {
 
     fn job_done(&mut self, kind: NetJob, out: String, code: Option<i32>, cx: &mut Cx) {
         let ok = code == Some(0);
-        let mut requery = false;
+        let (mut requery, mut rescan) = (false, false);
         match &kind {
             NetJob::Join {
                 ssid,
@@ -1715,6 +1715,8 @@ impl Settings {
                 if !ok {
                     cx.toast(&net::failure(&out, false));
                 }
+                // A radio switched on has scanned nothing yet: look now.
+                rescan = ok && self.state.wifi_on;
                 requery = true;
             }
             NetJob::BtPower | NetJob::BtRemove(_) => {
@@ -1900,7 +1902,10 @@ impl Settings {
             _ => {}
         }
         if requery {
-            self.query_net(cx, false);
+            self.query_net(cx, rescan);
+            if rescan {
+                cx.toast("Scanning\u{2026}");
+            }
         }
         self.refresh(cx);
         if self.finish_when_idle && !self.changing() {
