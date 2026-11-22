@@ -159,8 +159,9 @@ second or two, and a check or mount of `/home` in that window is cut off.
 `gh0st-setup.service` is also wanted by `home.mount`, so a late mount still
 starts setup. `e2fsprogs` is in the image so systemd checks `/` and `/home`
 at boot and replays their journals. p3 has 4 KiB blocks and descriptors reserved
-for 1 TiB: with the 1 KiB blocks `mke2fs` picks at 256 MiB, growing to a
-64 GB card corrupted it. machine-id and the random seed are made by systemd.
+for 1 TiB, not the 1 KiB blocks `mke2fs` picks at 256 MiB. A fake card, one
+that claims more than it holds, corrupts whatever lands past its real size
+(`docs/hardware-facts.md`). machine-id and the random seed are made by systemd.
 SSH host keys are made the first time SSH starts, by an `ExecStartPre`
 drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 

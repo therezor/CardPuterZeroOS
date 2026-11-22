@@ -40,9 +40,17 @@ Measured on the device unless marked.
   (`rtc-ds1307` at 1-0032) logs "oscillator failed": it had no time to keep.
   The panel logs one "Timeout waiting for TE signal" before the logo.
 - The data partition grown from 256 MiB to a 64 GB card with 1 KiB blocks
-  came up with corrupt group descriptors (group 4128, where the reserved
-  descriptor blocks run out) and `/home` would not mount. The image now
-  makes it with 4 KiB blocks (2026-11-22).
+  came up with corrupt group descriptors (group 4128) and `/home` would not
+  mount. The image now makes it with 4 KiB blocks (2026-11-22). The cause
+  was the card, not the block size: see "A fake card" below. Group 4128 sits
+  about 32 GiB into p3, past the card's real capacity.
+- **A fake card** (read 2026-11-22). The 64 GB test card, sold as Sony,
+  reports manfid 0x05, OEM 0x000c, name "asdfg", serial 0x12, made 07/2025.
+  On it, ext4's backup superblocks read back right up to 18 GiB and as
+  garbage at 33 GiB and 46 GiB, so its real capacity is between them. Data
+  past that stays readable only while it is in the page cache: under memory
+  pressure, `/home/lol` (inode table at 55 GiB) came back as random bytes,
+  "Inode checksum does not match", and every login failed.
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
   400 MHz core clock divides to 50 MHz, so a full frame takes about 17.4 ms.
   The panel refreshes at 60.5 Hz by default (TE period 16.5 ms). With
@@ -97,10 +105,23 @@ On the release image after setup, idle on home, Wi-Fi up, read over SSH.
 | Unreclaimable slab (kernfs, kmalloc, task structs) | 26 |
 | vmalloc, 7.5 MB of it module code | 15 |
 | Kernel stacks, page tables, per-CPU | 5 |
-| Not in any counter: driver pages, CMA in use (6 MB) | 32 |
+| Not in any counter: free pages in the per-CPU lists (10 to 20 MB), CMA in use (6 MB), driver pages | 32 |
 
 - The watermarks come from `vm.min_free_kbytes = 16384`, the Raspberry Pi OS
-  value: min 16 MB, low 20 MB, high 24 MB.
+  value: min 16 MB, low 20 MB, high 24 MB. The per-CPU free lists are sized
+  from the low watermark: up to 5 MB a core, 19.8 MB in all at one read.
+  MemFree leaves them out, so they count as used.
+- A/B, 30 s settle each, read twice: 16384 shows 152 and 156 MB used, 8192
+  shows 129 MB twice. Under a 320 MB memory hog and 150 MB sent over Wi-Fi
+  at 8192 there was no "page allocation failure", but brcmfmac logged
+  SDIO read errors (CMD53 -5). Not tried at 16384, and the card above
+  corrupted data in the same run, so 8192 is not proven safe.
+- WirePlumber's v4l2, libcamera and MIDI monitors off: PipeWire 3.6 to
+  1.9 MB private, WirePlumber unchanged (4.3 MB).
+- Toggling SSH: `systemctl enable` or `disable` took 3.9 s, 2.6 s of it
+  Debian's SysV sync (`update-rc.d`, Perl) and 1.25 s the manager reload.
+  With `SYSTEMCTL_SKIP_SYSV=1` and `--no-reload`: 0.05 to 0.13 s. Start
+  0.40 s, stop 0.07 s, `unix_chkpwd` on a yescrypt hash 0.30 s.
 - PSS: NetworkManager 13.0 MB, WirePlumber 8.8, systemd 8.8, PipeWire 6.8,
   wpa_supplicant 6.8, systemd --user 4.4, udevd 3.8, polkitd 3.4, bluetoothd 3.0,
   logind 2.3, journald 2.2, (sd-pam) 2.0, timesyncd 2.0, the two dbus-daemons
