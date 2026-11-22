@@ -601,7 +601,7 @@ fn main() {
             lesson(2, "c\nc\nx\nenter", t)
         }),
         ("08-email", "a fake email, Sym for @", |t| {
-            lesson(3, "type nobody", t)
+            lesson(3, "type no", t)
         }),
         ("09-dont", "the chip on 7 says Don't", |t| lesson(4, "", t)),
         ("10-pressed", "everyone presses it", |t| lesson(4, "7", t)),

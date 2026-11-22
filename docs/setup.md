@@ -76,7 +76,7 @@ settings. A wrong letter says "Typo. The van outside saw that."
 | 1 | Typing | "Raise your right hand. Promise you won't hack anything. Type opsec to swear." | `opsec`: "Sworn in. We believe you. Mostly." |
 | 2 | Caps lock | "Now say it like you mean it. Press Shift twice for caps lock." | `OPSEC`: "The neighbours heard. Fine." |
 | 3 | Moving | "Field sobriety test. Walk the dot to the ring. Straight line, agent." f x z c move. | Enter on the ring: in 3 moves "Sober. Suspiciously sober.", else "Zigzag. We'll call it evasive driving." |
-| 4 | Symbols | "Give us your email. Kidding. Type a fake one." Sym gives the @. | `nobody@nowhere.net`: "Perfect. We'll never write." |
+| 4 | Symbols | "Give us your email. Kidding. Type a fake one." Sym gives the @. | `no@pe`: "Perfect. We'll never write." |
 | 5 | The bars | Callouts to the top bar. "See 7? It says Don't. So don't." | the Don't chip: "You pressed it. Of course you did." |
 | 6 | Rows | "Put on your tinfoil hat. Turn paranoia up." A switch, a choice, a page. | hat on, Paranoia at Max: "Fashionable and unreadable." |
 | 7 | Menu and help | "Secret menu on 8. Find Next lesson. Tell no one. Fn and H list every key." | Next lesson from the menu: "It was never secret. Act surprised." |

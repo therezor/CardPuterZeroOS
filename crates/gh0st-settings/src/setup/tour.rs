@@ -193,7 +193,7 @@ impl Lesson {
         match self.n {
             0 => Some("opsec"),
             1 => Some("OPSEC"),
-            3 => Some("nobody@nowhere.net"),
+            3 => Some(FAKE_EMAIL),
             _ => None,
         }
     }
@@ -401,7 +401,7 @@ impl Page for Lesson {
             0 => typing(c, &t, r, "opsec", typed, SWEAR),
             1 => typing(c, &t, r, "OPSEC", typed, MEAN_IT),
             2 => moving(c, &t, r, self.dot),
-            3 => typing(c, &t, r, "nobody@nowhere.net", typed, EMAIL),
+            3 => typing(c, &t, r, FAKE_EMAIL, typed, EMAIL),
             4 => bars(c, &t, r),
             5 => rows(c, &t, r, self.row, self.hat, self.paranoia),
             6 => {
@@ -417,6 +417,8 @@ impl Page for Lesson {
 const SWEAR: &str = "Raise your right hand. Promise you won't hack anything. Type opsec to swear.";
 const MEAN_IT: &str = "Now say it like you mean it. Press Shift twice for caps lock.";
 const SOBRIETY: &str = "Field sobriety test. Walk the dot to the ring. Straight line, agent.";
+/// No domain ending, so it can never be someone's address.
+const FAKE_EMAIL: &str = "no@pe";
 const EMAIL: &str =
     "Give us your email. Kidding. Type a fake one. Sym, then a key, types its symbol.";
 const DONT: &str = "A word over a number key says what it does. See 7? It says Don't. So don't.";
