@@ -111,6 +111,12 @@ averaged over 10 to 20 s. Each change was reverted after its run.
   nothing: idle cores already wait in WFI.
 - Readings drift 20 to 60 mA after a radio comes back, so compare runs taken
   back to back.
+- With the dongle unplugged, back to back: the Ethernet chip on `auto`
+  takes dark from 305 to 212 mA with the bus suspended (0 IRQ/s); Wi-Fi off
+  from 302 to 274 mA. Settings' USB power saving, run through pkexec as the
+  user, gives the same 212 mA. Wi-Fi off in the dark at 1 min blocked the
+  radio 61 s into the dark, through `nmcli` from the shell's unit. The wake
+  turning it back on is not yet checked on the device.
 
 ## Idle, 60 s on home (`scripts/measure.sh`)
 
