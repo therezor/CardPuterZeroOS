@@ -241,8 +241,8 @@ it succeeds. `$GH0ST_SETUP_ROOT` moves the files setup reads and writes, for a h
 `gh0st.lock.password` is true and `passwd -S` says the account has one. It checks with
 `/usr/sbin/unix_chkpwd`, which lets a user check their own password, and waits longer after
 each wrong try. It starts locked, and locks on wake after `gh0st.lock.after` seconds of dark
-(System > Lock after, 5 minutes by default). `design.md` has the screen; `apps.md`, Pausing,
-has what happens to the app in front.
+(System > Lock after, 5 minutes by default). A shorter dark goes straight back. `design.md`
+has the screen; `apps.md`, Pausing, has what happens to the app in front.
 
 **Image** (`docs/image-build.md`, First-boot setup), built 2026-11-22:
 

@@ -327,8 +327,8 @@ two ends, so one is never pressed for the other.
 ## The lock screen
 
 The device lives in a pocket, so no key typed by accident may reach an app or
-the password. The lock screen rests until Tab, then Enter, are pressed in
-turn. Nothing else does anything there.
+the password once it is locked. The lock screen rests until Tab, then Enter,
+are pressed in turn. Nothing else does anything there.
 
 The top bar shows the battery and the network, but no open apps (what runs
 stays private) and no clock. The time sits large in the middle instead, with
@@ -345,17 +345,20 @@ the date under it in Caption.
   doubles with each wrong try after that, up to 5 minutes. Esc, or 10 s without a key, wipes
   it and goes back to rest.
 
-It asks for the password when Settings > System > Unlock with password is on,
-the account has one, and the device was locked for real: by hand, at start, or
-dark longer than Lock after (Settings > System, 5 minutes by default). After a
-shorter dark, Tab then Enter goes straight back.
+It asks for the password when Settings > System > Unlock with password is on
+and the account has one.
 
 It locks:
 
 - when Tab is held 3 s on home or in the switcher;
 - from Lock in the home menu, or 6 Lock in the switcher;
 - at start, when a password is asked;
-- whenever the screen goes dark.
+- when the screen was dark longer than Lock after (Settings > System, 5
+  minutes by default; At once locks on every dark, By hand never).
+
+A key after a shorter dark goes straight back to home, the switcher or the
+app. That key does nothing else, even held. Inside the window, a pocket can
+press keys on an unlocked device.
 
 At rest it goes dark again after 10 s without a key (sooner when Screen off
 after is shorter, never when it is Never), so a pocket keeps it lit only
@@ -370,7 +373,8 @@ back, and the page gets that key as usual.
 
 While dark, the app in front is paused as Fn+K pauses it, unless it may run in
 the background. The shell draws nothing and runs no timer. A key wakes the
-screen on the lock screen at rest: no app sees it. An app can ask to stay
+screen, and no app sees that key. Past Lock after it wakes on the lock screen
+at rest; before, straight back. An app can ask to stay
 awake (`sdk.md`, `keep_awake`), for a player or a clock.
 
 Two more savers, each its own setting:

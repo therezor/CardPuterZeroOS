@@ -151,9 +151,10 @@ slots belong to those keys. `design.md` has the rules; in short:
   frame back on the panel, so an app that redraws only what changed still
   looks right.
 - The screen going dark pauses the app in front the same way, without the
-  switcher. So does a lock. A key after dark wakes the lock screen, and the
-  app resumes after Tab then Enter (and the password, when asked), once
-  every key is up. Keys pressed in a pocket never reach it.
+  switcher. So does a lock. A key after a dark shorter than Lock after
+  resumes the app once every key is up. Past Lock after it wakes the lock
+  screen, and the app resumes after Tab then Enter (and the password, when
+  asked). The key that wakes the screen never reaches the app.
 - Dark comes `dark_time` seconds after the last key the shell saw. Before
   it pauses the app, the shell takes the keyboard. If the app holds it (an
   `EVIOCGRAB` of its own), the shell can't see keys, so it leaves the app

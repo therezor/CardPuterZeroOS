@@ -99,7 +99,8 @@ enum Screen {
     Home,
     Switcher,
     Locked,
-    /// Backlight off after `dark_time`. The next key wakes the lock screen.
+    /// Backlight off after `dark_time`. The next key wakes the lock screen
+    /// once Lock after has passed, else goes straight back.
     Off,
 }
 
@@ -199,13 +200,15 @@ struct Shell {
     watches: Vec<(bool, Watch)>,
     pictures: HashMap<PathBuf, (Option<SystemTime>, Rc<Picture>)>,
     lock: Lock,
-    /// This lock asks for the password however short the dark: locked by
-    /// hand or at start.
+    /// This lock holds however short the dark: locked by hand or at start.
     lock_secure: bool,
     /// When the screen first went dark since the last unlock.
     dark_since: Option<u64>,
     /// Where unlocking goes.
     unlock_to: Back,
+    /// Home or the switcher, when the screen went dark from there: where a
+    /// wake inside Lock after goes back to.
+    wake_to: Option<Screen>,
     /// `gh0st.lock.password`.
     lock_password: bool,
     /// `gh0st.lock.after`, or None for only by hand.
@@ -371,6 +374,7 @@ impl Shell {
             lock_secure: false,
             dark_since: None,
             unlock_to: Back::Home,
+            wake_to: None,
             lock_password: lock_password_of(&config),
             lock_after_ms: lock_after_of(&config),
             account: None,
@@ -663,7 +667,9 @@ impl Shell {
         let mut keys_buf = Vec::new();
         loop {
             let app = self.app_front();
-            if !app && self.dirty && self.screen != Screen::Off {
+            // Not while an app is about to come back: it would flash.
+            let resuming = matches!(self.pending, Some(Pending::Resume(_)));
+            if !app && self.dirty && self.screen != Screen::Off && !resuming {
                 self.draw();
             }
             let now = rt::now_ms();
@@ -1106,8 +1112,10 @@ impl Shell {
             Screen::Switcher => self.unlock_to = self.back.clone(),
             _ => {}
         }
+        // From the lock screen, the lock and where it goes back to stay.
         if self.screen != Screen::Locked {
             self.dark_since = Some(now);
+            self.wake_to = Some(self.screen);
         }
         self.go_dark();
     }
@@ -1127,6 +1135,7 @@ impl Shell {
                 self.screen = Screen::Locked;
                 self.take_screen();
                 self.unlock_to = Back::App(id);
+                self.wake_to = None;
                 self.dark_since = Some(now);
                 self.go_dark();
             }
@@ -1198,8 +1207,52 @@ impl Shell {
         child::fire(&["nmcli", "radio", "wifi", "on"]);
     }
 
-    /// A key in the dark: the lock screen, at rest.
+    /// A key in the dark: the lock screen at rest once Lock after has
+    /// passed, else straight back to where it was. True if it locked.
+    fn wake(&mut self, now: u64) -> bool {
+        let locked = lock_due(self.lock_secure, self.dark_since, self.lock_after_ms, now);
+        if locked {
+            self.screen_on(now);
+        } else {
+            self.light();
+            self.back_from_dark();
+            self.refresh_status();
+        }
+        locked
+    }
+
+    /// Lit on the lock screen at rest: a wake past Lock after, or the low
+    /// battery countdown, which no key asked for.
     fn screen_on(&mut self, now: u64) {
+        self.light();
+        self.enter_locked(now);
+        self.refresh_status();
+    }
+
+    /// Back from a dark shorter than Lock after, with no lock screen.
+    fn back_from_dark(&mut self) {
+        if self.wake_to.take() == Some(Screen::Switcher) {
+            self.lock.rest();
+            self.lock_secure = false;
+            self.dark_since = None;
+            self.screen = Screen::Switcher;
+            self.full_flush = true;
+            self.dirty = true;
+            self.sync_grab();
+            return;
+        }
+        // Until the app is back, stray keys land on the lock screen, which
+        // is not drawn meanwhile.
+        self.screen = Screen::Locked;
+        self.unlock();
+        if let Some(Pending::Resume(id)) = &self.pending {
+            if let Some(px) = self.tasks.get(id).and_then(|t| t.pixels.as_ref()) {
+                self.display.flush_all(px);
+            }
+        }
+    }
+
+    fn light(&mut self) {
         self.wifi_wake();
         if let Some(bl) = &self.backlight {
             // The panel may have been dark already (stock's timeout), so
@@ -1216,8 +1269,6 @@ impl Shell {
                 .unwrap_or(bl.max);
             let _ = bl.set(raw);
         }
-        self.enter_locked(now);
-        self.refresh_status();
     }
 
     fn enter_locked(&mut self, now: u64) {
@@ -1247,6 +1298,7 @@ impl Shell {
         self.lock.rest();
         self.lock_secure = false;
         self.dark_since = None;
+        self.wake_to = None;
         self.dirty = true;
         if self.debug {
             eprintln!("gh0st shell: unlocked");
@@ -1436,8 +1488,12 @@ impl Shell {
     }
 
     fn on_key(&mut self, k: Key, now: u64) {
-        if k.state == State::Release && self.swallow_release == Some(k.code) {
-            self.swallow_release = None;
+        // The key that woke the screen or closed a banner does nothing
+        // more: not its repeats, not its release.
+        if k.state != State::Press && self.swallow_release == Some(k.code) {
+            if k.state == State::Release {
+                self.swallow_release = None;
+            }
             return;
         }
         // A held key is input too: dark waits until it comes up.
@@ -1452,9 +1508,8 @@ impl Shell {
         if self.screen == Screen::Off {
             if k.state == State::Press {
                 self.swallow_release = Some(k.code);
-                self.screen_on(now);
-                // Tab may wake it: Enter then unlocks.
-                if k.is(code::TAB) {
+                // Tab may wake it to the lock screen: Enter then unlocks.
+                if self.wake(now) && k.is(code::TAB) {
                     self.lock.key(&k, now, false, false);
                 }
             }
@@ -2511,8 +2566,14 @@ fn lock_after_of(c: &Config) -> Option<u64> {
     (secs >= 0).then_some(secs as u64 * 1000)
 }
 
-/// Whether a lock asks for the password: one made by hand or at start, or
-/// dark at least `after`, with the password lock on and a password to ask.
+/// Whether a wake finds the device locked: by hand or at start, or dark at
+/// least `after`. None for `after` locks only by hand.
+fn lock_due(secure: bool, dark_since: Option<u64>, after: Option<u64>, now: u64) -> bool {
+    secure || matches!((dark_since, after), (Some(d), Some(a)) if now >= d + a)
+}
+
+/// Whether the lock asks for the password: a lock that is due, with the
+/// password lock on and a password to ask.
 fn asks_password(
     secure: bool,
     dark_since: Option<u64>,
@@ -2522,7 +2583,7 @@ fn asks_password(
     account: Option<Account>,
     probing: bool,
 ) -> bool {
-    let real = secure || matches!((dark_since, after), (Some(d), Some(a)) if now >= d + a);
+    let real = lock_due(secure, dark_since, after, now);
     let has = match account {
         Some(Account::Password) => true,
         // Until passwd -S answers, ask: a probe that fails says no.
@@ -2604,6 +2665,16 @@ fn parse_volume(s: &str) -> Option<(u8, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wake_locks_past_lock_after_only() {
+        let due = |secure, since, after, now| lock_due(secure, since, after, now);
+        assert!(due(true, None, None, 0), "by hand or at start");
+        assert!(!due(false, Some(1000), Some(300_000), 200_000), "a short dark");
+        assert!(due(false, Some(1000), Some(300_000), 301_000), "a long one");
+        assert!(due(false, Some(1000), Some(0), 1000), "at once");
+        assert!(!due(false, Some(1000), None, u64::MAX / 2), "only by hand");
+    }
 
     #[test]
     fn the_password_comes_with_a_real_lock_only() {

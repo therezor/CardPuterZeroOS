@@ -293,8 +293,9 @@ and runs through pkexec today. It runs only when called and exits after.
   helper's 5-minute grace would let a second unlock through with no
   password. The try count lives in `$XDG_RUNTIME_DIR`, so a shell restart
   keeps the wait. The shell starts locked, so a restart or a power cycle
-  doesn't skip it. Every dark ends on the lock screen, which takes keys only
-  after Tab then Enter, so a pocket can't type into an app or the password. With no usable password, Enter unlocks: a lockout would
+  doesn't skip it. A dark longer than Lock after ends on the lock screen,
+  which takes keys only after Tab then Enter, so a pocket can't type into an
+  app or the password. With no usable password, Enter unlocks: a lockout would
   mean a reflash.
 - Screen-off and lock work while an app runs too. Dark pauses the app in
   front, as Fn+K does. An app that grabs the keyboard hides the keys from

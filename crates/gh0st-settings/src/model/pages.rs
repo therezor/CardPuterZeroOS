@@ -181,7 +181,7 @@ pub struct State {
     pub nm: NmPrivacy,
     /// `gh0st.lock.password`: the lock screen asks for the password.
     pub lock_password: bool,
-    /// `gh0st.lock.after`: seconds of dark before it asks.
+    /// `gh0st.lock.after`: seconds of dark before a wake finds it locked.
     pub lock_after: i64,
     /// `gh0st.dark.wifi_off`: Wi-Fi goes off this long into the dark.
     pub dark_wifi: Option<i64>,
