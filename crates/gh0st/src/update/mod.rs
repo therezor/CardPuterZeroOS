@@ -24,7 +24,7 @@ const APP: &str = "update";
 /// The notice's poster and tag.
 const POSTER: &str = "gh0st-update";
 const TAG: &str = "updates";
-const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/cpzeroos-edge.sources";
+const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st-edge.sources";
 /// Lists older than this are fetched again before an install: Debian
 /// removes superseded debs.
 const LISTS_FRESH_SECS: u64 = 3600;
@@ -777,7 +777,7 @@ mod tests {
         let st = State {
             packages: vec![
                 pkg("gh0st", Group::Gh0st, 4_100_000),
-                pkg("cpzeroos-kernel", Group::Gh0st, 21_000_000),
+                pkg("gh0st-kernel", Group::Gh0st, 21_000_000),
                 pkg("openssl", Group::Security, 2_000_000),
                 pkg("libssl3t64", Group::Security, 2_000_000),
                 pkg("tzdata", Group::System, 300_000),

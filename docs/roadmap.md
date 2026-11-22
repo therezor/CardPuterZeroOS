@@ -1,6 +1,6 @@
 # Roadmap
 
-This is the path from a shell on a stock image to CPZeroOS as its own OS. The
+This is the path from a shell on a stock image to Gh0st OS as its own OS. The
 research and the reasons behind each choice are in `distro-plan.md`. Each
 milestone ends with a test on the device, measured the same way before and
 after.
@@ -17,7 +17,7 @@ SDK in `sdk.md`. The root helper (M3) does what needs root.
 
 The user made these on 2026-11-20 and 2026-11-21.
 
-- **Threats.** CPZeroOS defends against hostile networks, a lost or stolen
+- **Threats.** Gh0st OS defends against hostile networks, a lost or stolen
   device, and network observers who see DNS and NTP. Untrusted apps come in
   stages (see below).
 - **Encryption.** None for now. Anyone with the SD card can read it, and the
@@ -175,7 +175,7 @@ packages.
 - Done when `hardware-facts.md` has a stock column and `docs/` has an app
   traffic table.
 
-**M1. Performance config package.** `cpzeroos-base` holds config only, as
+**M1. Performance config package.** `gh0st-base` holds config only, as
 conf.d drop-ins, next to a `gh0st` package.
 - Turn off LightDM, labwc, avahi, rpcbind, nfs, udisks2, accounts-daemon, cron
   and the timers.
@@ -189,7 +189,7 @@ conf.d drop-ins, next to a `gh0st` package.
   on. They cost RAM and CPU, and only M5 needs them.
 - After 3 crashes the `gh0st` unit falls back to stock APPLaunch
   (`OnFailure=`). Once M4 exists, the fallback opens on a locked screen.
-- `cpzeroos-panel-modules` holds our panel driver and the M5Stack modules,
+- `gh0st-panel-modules` holds our panel driver and the M5Stack modules,
   built in CI against the pinned kernel headers.
 - Hide ZClaw under stock APPLaunch too (`preinstalled-desktop-apps.tsv`). It
   contacts Cloudflare and Microsoft at start. gh0st already hides it.
@@ -245,7 +245,7 @@ copy, and running behind other apps on the shell link. The guide is
 Still to come: the kitty keyboard protocol, a visual bell, and a check of
 which Fn combos the keyboard passes clean (`hardware-facts.md`).
 
-**M2. Network and privacy defaults**, in `cpzeroos-base`.
+**M2. Network and privacy defaults**, in `gh0st-base`.
 - nftables drops inbound traffic, except established connections, DHCP and
   ICMPv6 ND. SSH is open only while the user has it on.
 - NetworkManager uses a random or stable-per-SSID MAC and randomizes the scan

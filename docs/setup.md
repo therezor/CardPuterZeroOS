@@ -106,17 +106,17 @@ package:
 ```ini
 [Unit]
 Description=First-boot setup
-ConditionPathExists=/var/lib/cpzeroos/setup
+ConditionPathExists=/var/lib/gh0st/setup
 RequiresMountsFor=/home
-After=cpzeroos-grow-data.service fb_load.service dbus.service polkit.service
+After=gh0st-grow-data.service fb_load.service dbus.service polkit.service
 After=NetworkManager.service systemd-timesyncd.service
 Wants=NetworkManager.service
 StartLimitIntervalSec=0
 
 [Service]
-Environment=HOME=/var/lib/cpzeroos/setup-home
+Environment=HOME=/var/lib/gh0st/setup-home
 WorkingDirectory=/usr/share/APPLaunch
-ExecCondition=/usr/bin/test -e /var/lib/cpzeroos/setup
+ExecCondition=/usr/bin/test -e /var/lib/gh0st/setup
 ExecStart=/usr/bin/gh0st-settings --setup
 Restart=always
 RestartSec=1
@@ -143,7 +143,7 @@ passes a root caller without a password.
 hold Esc to exit, and the first step ignores Esc. SIGTERM ends it, and the unit starts it
 again.
 
-**Settings for the look.** Setup's `HOME` is `/var/lib/cpzeroos/setup-home`, so the look
+**Settings for the look.** Setup's `HOME` is `/var/lib/gh0st/setup-home`, so the look
 choices land in its own `config.json` through `Cx::settings()`, and theme setup at once.
 `user-create` installs that file into the new home.
 
@@ -153,7 +153,7 @@ and powering off after 10 idle minutes on battery.
 
 ## Power cuts
 
-**Resume.** `/var/lib/cpzeroos/setup.state` (root, 0600) keeps the step, whether the
+**Resume.** `/var/lib/gh0st/setup.state` (root, 0600) keeps the step, whether the
 training was taken, and the account name. Never the password, so a resume never starts past
 the account step. System steps apply as they are made and can run twice. The account is
 made only on Done. When a cut came after `user-create`, the account step keeps that name
@@ -162,7 +162,7 @@ reboot`): the marker may be gone already, and either boot path is then right.
 
 **Hand-over.** At any power cut, the next boot runs exactly one of setup or the shell:
 
-- `gh0st.service` (the shell's user unit) has `ConditionPathExists=!/var/lib/cpzeroos/setup`
+- `gh0st.service` (the shell's user unit) has `ConditionPathExists=!/var/lib/gh0st/setup`
   and `ConditionUser=1000`.
 - `setup-finish` writes the linger file and syncs it, removes the marker and syncs again,
   then starts `user@1000.service`.
@@ -189,7 +189,7 @@ gated verbs don't ask it. Each verb has its arm in `Verb::gated`, and parser tes
 | `update-auto on\|off` | the user's password | Gated. Enables or disables `gh0st-update-daily.timer` |
 
 The network verbs each write one whole file in `/etc/NetworkManager/conf.d`, which
-NetworkManager reads after the image's `50-cpzeroos.conf`, then reload it. A new
+NetworkManager reads after the image's `50-gh0st.conf`, then reload it. A new
 connection takes the change.
 
 `user-create` runs `useradd -m -u 1000 -U -s /bin/bash` with the groups `sudo`,
@@ -198,7 +198,7 @@ connection takes the change.
 installs the staged `config.json`, and can run
 twice: UID 1000 with the same name carries on, any other clash refuses. `setup-finish`
 writes the linger file and syncs it and its directory, removes the marker and syncs
-`/var/lib/cpzeroos`, then starts `user@1000.service`. The existing verbs stay as they are:
+`/var/lib/gh0st`, then starts `user@1000.service`. The existing verbs stay as they are:
 `regdom`, `hostname`, `logs`, `ssh`, `rfkill`, `power`.
 
 ## What gets built

@@ -1,0 +1,14 @@
+# The device gets Debian from Debian and the rest from the Gh0st OS repo
+# (gh0st.sources). The daily check only looks; nothing installs until
+# the user says so (docs/updates.md).
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie trixie-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+
+Types: deb
+URIs: https://deb.debian.org/debian-security
+Suites: trixie-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp

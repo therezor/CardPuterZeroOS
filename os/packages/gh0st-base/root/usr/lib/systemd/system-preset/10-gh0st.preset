@@ -1,0 +1,11 @@
+# The only system services Gh0st OS starts at boot. Everything else a
+# package enables is reset by `systemctl preset-all` at image build.
+enable NetworkManager.service
+enable systemd-timesyncd.service
+enable bluetooth.service
+enable fb_load.service
+enable gh0st-grow-data.service
+enable gh0st-setup.service
+# The daily update check (Settings > System > Updates turns it off).
+enable gh0st-update-daily.timer
+disable *

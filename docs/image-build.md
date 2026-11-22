@@ -1,4 +1,4 @@
-# Building the CPZeroOS image
+# Building the Gh0st OS image
 
 The image is Debian 13 trixie arm64, built from pinned inputs in a container.
 The reasons behind each choice are in `distro-plan.md`; the milestones in
@@ -11,23 +11,23 @@ Needs Docker Desktop running and `jq` on the Mac.
 ```sh
 os/build.sh fetch           # download and verify every pinned input
 os/build.sh debs            # build our packages and the drivers
-os/build.sh image release   # os/out/cpzeroos-release-YYYYMMDD.img.xz
+os/build.sh image release   # os/out/gh0st-release-YYYYMMDD.img.xz
 os/build.sh check release   # tier 1 checks
 os/build.sh smoke           # first boot of the image in QEMU, about 10 min
 ```
 
 A clean build takes about ten minutes. `.github/workflows/os.yml` runs the
 same steps on an arm64 runner; it has not run yet. Work happens on the Docker volume
-`cpzeroos-work`, never on the repo: macOS filesystems lose ownership and
+`gh0st-work`, never on the repo: macOS filesystems lose ownership and
 sparse files. Only finished files land in `os/out/`.
 
 ## First-boot setup
 
-A release ships with no user. `/var/lib/cpzeroos/setup` is the marker:
+A release ships with no user. `/var/lib/gh0st/setup` is the marker:
 while it exists, `gh0st-setup.service` (in `gh0st`) runs `gh0st-settings
 --setup` as root, and the shell's `gh0st.service` stays off. Setup makes UID
 1000, removes the marker and starts the user's session (`docs/setup.md`).
-`/var/lib/cpzeroos/setup-home` is setup's own `HOME`. A cable connects on
+`/var/lib/gh0st/setup-home` is setup's own `HOME`. A cable connects on
 its own; Wi-Fi waits for setup's network step.
 
 There is one image, the one users get. No dev image: a device under test
@@ -38,7 +38,7 @@ Logs if needed, in Settings.
 
 ```sh
 diskutil list                                   # find the card: /dev/diskN
-scripts/flash.sh os/out/cpzeroos-release-YYYYMMDD.img.xz /dev/diskN
+scripts/flash.sh os/out/gh0st-release-YYYYMMDD.img.xz /dev/diskN
 ```
 
 The script refuses internal disks and asks before it writes.
@@ -101,7 +101,7 @@ from it would not resolve.
 
 **Base apps.** gh0st, Settings, the terminal, and the stock Camera, Files,
 Music and Recorder at the versions the dev device runs. M5's AppStore is
-repacked alone (`cpzeroos-m5-appstore`): the binary, its images, three fonts
+repacked alone (`gh0st-m5-appstore`): the binary, its images, three fonts
 and two sounds. Not the launcher and not `applaunch-updater`, which would
 reinstall the stock launcher. It installs apps through `sudo`. It fetches
 catalogs from GitHub and an Aliyun mirror and asks ipinfo.io for the
@@ -116,12 +116,12 @@ packages and 367 MB of the 842 MB installed. Kept by decision (2026-11-21).
 
 | Package | Holds |
 |---|---|
-| `cpzeroos-base` | Config only: apt sources and deny pins, dpkg excludes, unit presets, journald off, zram, sysctl, rfkill default, `/tmp` cap, the first-boot grow, udev rules in place of `raspberrypi-sys-mods`, NetworkManager privacy defaults, PipeWire realtime limits without rtkit, the default volume |
-| `cpzeroos-kernel` | Exact-version Depends on the kernel, drivers and firmware, so they move together |
-| `cpzeroos-no-initramfs` | Provides `linux-initramfs-tool`: the kernel has ext4 and the SD driver built in |
-| `cpzeroos-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
+| `gh0st-base` | Config only: apt sources and deny pins, dpkg excludes, unit presets, journald off, zram, sysctl, rfkill default, `/tmp` cap, the first-boot grow, udev rules in place of `raspberrypi-sys-mods`, NetworkManager privacy defaults, PipeWire realtime limits without rtkit, the default volume |
+| `gh0st-kernel` | Exact-version Depends on the kernel, drivers and firmware, so they move together |
+| `gh0st-no-initramfs` | Provides `linux-initramfs-tool`: the kernel has ext4 and the SD driver built in |
+| `gh0st-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
 | `gh0st`, `gh0st-term` | Our binaries, `.desktop` files, polkit files, the `gh0st.service` user unit, `gh0st-setup.service` |
-| `cpzeroos-m5-appstore` | See above |
+| `gh0st-m5-appstore` | See above |
 | `gh0st-wifi` | The built-in Wi-Fi chip's boot retry (a udev rule binds it again when its firmware load fails), and firmware for USB adapters with monitor mode, from Raspberry Pi's `firmware-atheros`, `firmware-mediatek` and `firmware-realtek` |
 
 **Services.** System: NetworkManager and its on-demand dispatcher,
@@ -138,7 +138,7 @@ masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the ch
 - `raspi-firmware` and the kernel hooks fill `/boot/firmware` in the chroot.
   The boot partition then keeps only what `boot-files.list` names: the
   CM0's firmware, kernel and dtb, and all overlays. Our four overlays are
-  copied in by `cpzeroos-panel-modules`.
+  copied in by `gh0st-panel-modules`.
 - Stock Raspberry Pi firmware, not M5's custom `start.elf` with its LCD
   splash. `fb_load` draws the logo once the kernel is up.
 - `config.txt` is the stock one minus the Pi 4/5 sections, `auto_initramfs`
@@ -152,9 +152,9 @@ masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the ch
 | p2 | ext4 | 3 GiB | `/` |
 | p3 | ext4 | 256 MiB, grows to the end of the card | `/home` |
 
-All mount `noatime,commit=60`. The disk ID is fixed (`0x43505a30`, "CPZ0"),
+All mount `noatime,commit=60`. The disk ID is fixed (`0x67683073`, "gh0s"),
 so every card shares PARTUUIDs; randomizing it at first boot is still to do.
-On first boot `cpzeroos-grow-data.service` grows p3, and `x-systemd.growfs`
+On first boot `gh0st-grow-data.service` grows p3, and `x-systemd.growfs`
 grows its filesystem online. The grow runs before `local-fs-pre.target`
 and waits for udev: the new size makes the card's device units flap for a
 second or two, and a check or mount of `/home` in that window is cut off.
@@ -210,7 +210,7 @@ start is a device test.
 - **Move the Debian snapshot:** change `debian.snapshot` in `lock.json`,
   build, relock, review.
 - **Bump the kernel:** change the kernel, header and firmware entries in
-  `lock.json` together. `cpzeroos-panel-modules` rebuilds against the new
+  `lock.json` together. `gh0st-panel-modules` rebuilds against the new
   headers and its version follows.
 - **Update a stock app:** change its URL, version and SHA-256 in
   `lock.json`. Camera and libcamera move as a pair.
@@ -223,13 +223,13 @@ start is a device test.
 | S2 kernel in chroot | Our provider satisfies the kernel; no initramfs-tools. The firmware hooks fill `/boot/firmware`. |
 | S3 boot on a clone | To do, on the device. |
 | S4 apps without applaunch | To do, on the device. |
-| S5 RPi glue | Bluetooth attaches in the kernel (`hci_uart_bcm` from the device tree): no `pi-bluetooth`, no `hciuart`. The udev rules we need from `raspberrypi-sys-mods` are in `cpzeroos-base`. |
+| S5 RPi glue | Bluetooth attaches in the kernel (`hci_uart_bcm` from the device tree): no `pi-bluetooth`, no `hciuart`. The udev rules we need from `raspberrypi-sys-mods` are in `gh0st-base`. |
 | S6 ffmpeg cost | 148 packages, 367 MB. Kept. |
 | S7 AppStore | To do, on the device. |
 
 ## Numbers
 
-| | Stock M5 image | CPZeroOS release |
+| | Stock M5 image | Gh0st OS release |
 |---|---|---|
 | Packages | 1699 | 444 |
 | Installed | 5.1 GB `/usr` | 842 MB |

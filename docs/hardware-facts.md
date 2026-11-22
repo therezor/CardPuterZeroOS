@@ -32,7 +32,7 @@ Measured on the device unless marked.
   holds a one-shot Fn down until the next key comes up. Plain Esc comes alone.
   Measured 2026-11-21 with a raw evdev read.
 - The only side button is power/boot. It sends no key event.
-- First boot of the CPZeroOS image (kernel `6.18.60+rpt-rpi-v8`, stock
+- First boot of the Gh0st OS image (kernel `6.18.60+rpt-rpi-v8`, stock
   firmware), read off the card 2026-11-22: userspace in 6.5 s, 9.3 s in all.
   vc4 takes DRM minor 0, the panel minor 1 at 8.5 s; `fb_load` waits for
   `/dev/dri/card1` and shows the logo at 9.0 s. The keyboard, battery,
@@ -63,7 +63,7 @@ Measured on the device unless marked.
   Its M5 panel module is the newest M5 version: the sysfs reset is in, and
   there is no TE code (M5 turned TE off on 2026-09-23 "until timing is
   verified"). That file is unchanged through `a3fd3e8` (2026-11-19), which the
-  official 2026-11-19 image and CPZeroOS build from. Our driver started from it.
+  official 2026-11-19 image and Gh0st OS build from. Our driver started from it.
   Read 2026-11-21.
 - The init file sets MADCTL 0xA0 (MV|MY): the panel refreshes across the
   landscape rows. gh0st's driver (`os/kernel/panel-mipi-dbi-m`) sends along
@@ -90,7 +90,7 @@ Measured on the device unless marked.
   `gpioset` are installed. `fb_load.service` has exited by the time the
   launcher runs. LightDM and labwc run too (HDMI desktop).
 
-## CPZeroOS memory, read 2026-11-22
+## Gh0st OS memory, read 2026-11-22
 
 On the release image after setup, idle on home, Wi-Fi up, read over SSH.
 
@@ -426,7 +426,7 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 | Grace window | the helper's parent under pkexec is Settings, so a second change within 5 minutes skips the prompt | helper auth |
 | `gpu_mem=64` | `vcgencmd` reads `gpu=64M` after a restart; camera and splash still work | Advanced |
 | `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |
-| Swap on the image | `zram-size` in `/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf` beats `50-cpzeroos.conf`; 0 leaves no zram0 | Advanced |
+| Swap on the image | `zram-size` in `/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf` beats `50-gh0st.conf`; 0 leaves no zram0 | Advanced |
 | Swap compression and swappiness on the image | the same drop-ins work without rpi-swap | Advanced |
 
 ## Stock system baseline (`scripts/measure.sh system`)

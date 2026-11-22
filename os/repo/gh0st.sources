@@ -1,0 +1,8 @@
+# Gh0st OS: gh0st, the kernel set, and the Raspberry Pi and app debs the
+# image ships, signed by the Gh0st OS archive key (docs/updates.md).
+# Settings > System > Updates > Channel adds the edge suite beside this one.
+Types: deb
+URIs: https://therezor.github.io/CardPuterZeroOS/apt
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/gh0st-archive-keyring.pgp

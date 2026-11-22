@@ -11,11 +11,6 @@ bsdutils	1:2.41.5-0+deb13u1
 ca-certificates	20250419+deb13u1
 camera	1.0.2-m5stack1
 coreutils	9.7-3
-cpzeroos-base	(ours)
-cpzeroos-kernel	(ours)
-cpzeroos-m5-appstore	(ours)
-cpzeroos-no-initramfs	(ours)
-cpzeroos-panel-modules	(ours)
 dash	0.5.12-12
 dbus	1.16.2-2
 dbus-bin	1.16.2-2
@@ -43,6 +38,11 @@ fonts-dejavu-core	2.37-8
 fonts-dejavu-mono	2.37-8
 gcc-14-base	14.2.0-19
 gh0st	(ours)
+gh0st-base	(ours)
+gh0st-kernel	(ours)
+gh0st-m5-appstore	(ours)
+gh0st-no-initramfs	(ours)
+gh0st-panel-modules	(ours)
 gh0st-term	(ours)
 gh0st-wifi	(ours)
 grep	3.11-4+b1

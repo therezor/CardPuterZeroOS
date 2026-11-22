@@ -35,7 +35,7 @@ pub fn pending_path() -> PathBuf {
 pub fn is_kernel_set(name: &str) -> bool {
     matches!(
         name,
-        "cpzeroos-kernel" | "cpzeroos-panel-modules" | "raspi-firmware"
+        "gh0st-kernel" | "gh0st-panel-modules" | "raspi-firmware"
     ) || name.starts_with("linux-image-")
 }
 
@@ -97,10 +97,10 @@ pub enum Group {
 }
 
 impl Group {
-    /// From apt's origin: `CPZeroOS`, `Debian-Security`, `Debian`.
+    /// From apt's origin: `Gh0st`, `Debian-Security`, `Debian`.
     pub fn of_origin(origin: &str) -> Group {
         match origin {
-            "CPZeroOS" => Group::Gh0st,
+            "Gh0st" => Group::Gh0st,
             "Debian-Security" => Group::Security,
             _ => Group::System,
         }
@@ -531,7 +531,7 @@ mod tests {
                     summary: "Gh0stdeck, the CardputerZero shell".into(),
                 },
                 Package {
-                    name: "cpzeroos-kernel".into(),
+                    name: "gh0st-kernel".into(),
                     from: "6.12.47".into(),
                     to: "6.12.50".into(),
                     size: 21_000_000,

@@ -452,7 +452,7 @@ fn u_list(t: &Theme) -> Canvas {
             "0.4.1 → 0.5.0 · restarts Gh0st",
         ),
         (
-            row("cpu", a, "cpzeroos-kernel", Trailing::Value("21 MB")),
+            row("cpu", a, "gh0st-kernel", Trailing::Value("21 MB")),
             "6.12.47 → 6.12.50 · restarts the device",
         ),
     ];
@@ -498,7 +498,7 @@ fn u_detail(t: &Theme) -> Canvas {
     let rows = [
         ("Version", "0.4.1 → 0.5.0"),
         ("Download", "4.1 MB"),
-        ("From", "CPZeroOS stable"),
+        ("From", "Gh0st OS stable"),
         ("After", "Gh0st restarts"),
     ];
     for (i, (k, v)) in rows.iter().enumerate() {

@@ -1,4 +1,4 @@
-# Builds the CPZeroOS release image on an arm64 runner and runs the tier 1
+# Builds the Gh0st OS release image on an arm64 runner and runs the tier 1
 # checks. Same script as on the Mac (os/build.sh). A v* tag also attaches
 # the image to its release; apt.yml publishes the tag's packages.
 name: os
@@ -36,7 +36,7 @@ jobs:
         run: os/build.sh check release
       - uses: actions/upload-artifact@v4
         with:
-          name: cpzeroos-release
+          name: gh0st-release
           path: |
             os/out/*.img.xz
             os/out/*.bmap

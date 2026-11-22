@@ -26,7 +26,7 @@ if [ "${1:-}" = rollback ]; then
     remote 'sudo rm -f /etc/systemd/user/APPLaunch.service.d/gh0st.conf \
         /etc/systemd/system/fb_load.service.d/gh0st.conf \
         /etc/polkit-1/rules.d/50-gh0st.rules \
-        /usr/share/polkit-1/actions/org.cpzero.gh0st.policy \
+        /usr/share/polkit-1/actions/org.gh0st.policy \
         /usr/libexec/gh0st-helper /etc/udev/rules.d/61-gh0st-cpu.rules \
         /etc/rpi/swap.conf.d/90-gh0st-swap.conf /etc/sysctl.d/90-gh0st-swap.conf \
         /etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf \
@@ -55,7 +55,7 @@ scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" "$out/gh0st-update" 
     "$root/packaging/applications/update.desktop" \
     "$root/packaging/systemd/APPLaunch.service.d/gh0st.conf" "$host:/tmp/"
 scp -q "$root/packaging/systemd/fb_load.service.d/gh0st.conf" "$host:/tmp/fb_load-gh0st.conf"
-scp -q "$root/packaging/polkit/50-gh0st.rules" "$root/packaging/polkit/org.cpzero.gh0st.policy" "$host:/tmp/"
+scp -q "$root/packaging/polkit/50-gh0st.rules" "$root/packaging/polkit/org.gh0st.policy" "$host:/tmp/"
 # The update engine's units, folders and network trigger (docs/updates.md).
 # Installed, not enabled: the daily check is Settings' to turn on.
 scp -q -r "$root/packaging/systemd/update" "$host:/tmp/gh0st-update-units"
@@ -82,10 +82,10 @@ remote 'set -e
     sudo install -m 644 /tmp/gh0st.conf /etc/systemd/user/APPLaunch.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/fb_load-gh0st.conf /etc/systemd/system/fb_load.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/50-gh0st.rules /etc/polkit-1/rules.d/50-gh0st.rules
-    sudo install -D -m 644 /tmp/org.cpzero.gh0st.policy /usr/share/polkit-1/actions/org.cpzero.gh0st.policy
+    sudo install -D -m 644 /tmp/org.gh0st.policy /usr/share/polkit-1/actions/org.gh0st.policy
     sudo systemctl daemon-reload
     rm -rf /tmp/gh0st /tmp/gh0st-settings /tmp/gh0st-term /tmp/gh0st-update /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
-        /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.cpzero.gh0st.policy'
+        /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy'
 restart_launcher
 echo "gh0st $(git -C "$root" rev-parse --short HEAD) running on $host"

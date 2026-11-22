@@ -1,4 +1,4 @@
-# The CPZeroOS build container: Debian trixie arm64 with the image tools.
+# The Gh0st OS build container: Debian trixie arm64 with the image tools.
 # Same image on the Mac (Docker Desktop, native arm64) and on GitHub's
 # ubuntu-24.04-arm runners. The base is pinned by digest in lock.json.
 ARG BASE

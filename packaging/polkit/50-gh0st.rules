@@ -17,7 +17,7 @@ polkit.addRule(function(action, subject) {
         // country, CPU mode, hostname, swap, the clock and the network
         // privacy settings also check the user's password. Making the user
         // and finishing setup run only for root during setup.
-        "org.cpzero.gh0st.helper"
+        "org.gh0st.helper"
     ];
     if (allowed.indexOf(action.id) >= 0) {
         return polkit.Result.YES;

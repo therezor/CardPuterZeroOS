@@ -1,4 +1,4 @@
-# CPZeroOS: base distro and optimization plan
+# Gh0st OS: base distro and optimization plan
 
 Status: research, 2026-11-20. Figures marked **measured** come from community repos (linked);
 everything else is a target to measure. The image is now built: `image-build.md` has how, and
@@ -236,9 +236,9 @@ The bigger leaks are in the base OS and its defaults:
 
 **Logging design (default off, toggle in the launcher):**
 
-- Default `/etc/systemd/journald.conf.d/10-cpzero-privacy.conf`: `Storage=none`,
+- Default `/etc/systemd/journald.conf.d/10-gh0st-privacy.conf`: `Storage=none`,
   `ForwardToSyslog=no`, `ForwardToKMsg=no`, `ForwardToConsole=no`.
-- Launcher setting **Logs: Off / RAM only / Persistent** writes `50-cpzero-logging.conf`
+- Launcher setting **Logs: Off / RAM only / Persistent** writes `50-gh0st-logging.conf`
   (`Storage=none|volatile|persistent`, with `RuntimeMaxUse=8M` / `SystemMaxUse=16M`) and restarts
   `systemd-journald`. The privileged step goes through a fixed root helper unit allowed by a polkit
   rule, the same pattern as the stock `60-applaunch-updater.rules`. Switching back to Off also

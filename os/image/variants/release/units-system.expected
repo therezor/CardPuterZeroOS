@@ -1,7 +1,7 @@
 NetworkManager-dispatcher.service enabled
 NetworkManager.service enabled
 bluetooth.service enabled
-cpzeroos-grow-data.service enabled
+gh0st-grow-data.service enabled
 cryptdisks-early.service masked
 cryptdisks.service masked
 fb_load.service enabled

@@ -68,7 +68,7 @@ Only systemd runs them, as root.
 5. `apt-get update`, with progress from `APT::Status-Fd`.
 6. `apt-get -s upgrade --with-new-pkgs` lists what would change. One
    `apt-cache show` adds sizes and summaries.
-7. Each package lands in a group: Gh0st OS (origin CPZeroOS), Security
+7. Each package lands in a group: Gh0st OS (origin Gh0st), Security
    (Debian-Security) or System. It also gets a restart: the device for the
    kernel set, `libc6` and `systemd`, Gh0st for `gh0st` and `gh0st-term`.
 8. Writes the state and posts, replaces or removes the notice.
@@ -221,13 +221,13 @@ and the stock app debs.
   the repo can't hold devices back.
 - **The key.** An Ed25519 primary kept offline, and a signing subkey in the
   `APT_SIGNING_KEY` Actions secret. The image ships the public key in
-  `/usr/share/keyrings/cpzeroos-archive-keyring.pgp` and prefers our origin
-  (`Pin: release o=CPZeroOS`, 990).
+  `/usr/share/keyrings/gh0st-archive-keyring.pgp` and prefers our origin
+  (`Pin: release o=Gh0st`, 990).
 - **Limits.** Pages takes 1 GB per site. CI fails the publish past 800 MB.
   Past that, the pool moves to release assets.
 - **Versions move with their sources.** `os/build.sh` stamps each package
   with the last commit that touched it: gh0st and gh0st-term with the code,
-  cpzeroos-base with its own folder and `os/repo`, the kernel set with
+  gh0st-base with its own folder and `os/repo`, the kernel set with
   `os/kernel`, its packages and the firmware pins in `lock.json` (the kernel
   and M5 commit are in its version already). A docs-only push publishes
   nothing new.
@@ -235,9 +235,9 @@ and the stock app debs.
   the Actions cache (falling back to the live site), publishes, and deploys
   Pages. A tag also attaches its debs to the release. Setup of the key and
   Pages: `os/repo/README.md`.
-- **The image.** `cpzeroos-base` ships `os/repo/cpzeroos.sources`, the pin
-  and the key once `os/repo/cpzeroos-archive-keyring.pgp` exists; before
-  that the image has no CPZeroOS source, since a source apt can't check
+- **The image.** `gh0st-base` ships `os/repo/gh0st.sources`, the pin
+  and the key once `os/repo/gh0st-archive-keyring.pgp` exists; before
+  that the image has no Gh0st OS source, since a source apt can't check
   would fail every check.
 
 ## Tested

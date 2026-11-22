@@ -1,4 +1,4 @@
-# CPZeroOS boot configuration for the M5Stack CardputerZero (CM0).
+# Gh0st OS boot configuration for the M5Stack CardputerZero (CM0).
 # gpu_mem stays first: Settings > System > Advanced edits it there.
 gpu_mem=64
 arm_64bit=1

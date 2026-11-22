@@ -17,8 +17,8 @@ install -D -m 644 -t "$dest/usr/share/gh0st/applications" \
     "$pk/applications/settings.desktop" "$pk/applications/store.desktop" \
     "$pk/applications/update.desktop"
 install -D -m 644 "$pk/polkit/50-gh0st.rules" "$dest/usr/share/polkit-1/rules.d/50-gh0st.rules"
-install -D -m 644 "$pk/polkit/org.cpzero.gh0st.policy" \
-    "$dest/usr/share/polkit-1/actions/org.cpzero.gh0st.policy"
+install -D -m 644 "$pk/polkit/org.gh0st.policy" \
+    "$dest/usr/share/polkit-1/actions/org.gh0st.policy"
 install -d "$dest/usr/share/APPLaunch/applications"
 # The update engine: its units, folders and network trigger (docs/updates.md).
 up=$pk/systemd/update

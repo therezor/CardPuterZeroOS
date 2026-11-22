@@ -1,5 +1,0 @@
-Explanation: CPZeroOS leaves these out on purpose: phone-home, resident
-Explanation: daemons that wake at idle, or a boot path we don't use.
-Package: initramfs-tools* dracut* cloud-init rpi-connect* raspberrypi-sys-mods rpi-swap rpi-update rpi-eeprom udisks2 modemmanager cups* rpcbind lightdm rtkit packagekit unattended-upgrades systemd-coredump popularity-contest
-Pin: version *
-Pin-Priority: -1

@@ -101,7 +101,7 @@ impl Page for Details {
         ui.readout("Version", &words::versions(p));
         ui.readout("Download", &update::size_text(p.size));
         let from = match p.group {
-            Group::Gh0st => "CPZeroOS",
+            Group::Gh0st => "Gh0st OS",
             Group::Security => "Debian security",
             Group::System => "Debian",
         };

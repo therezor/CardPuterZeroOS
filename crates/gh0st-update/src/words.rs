@@ -20,7 +20,7 @@ pub fn group_icon(g: Group) -> &'static str {
 }
 
 /// "0.5.0" from our "0.5.0+202611221733.35a14dd" (the build stamp goes),
-/// "6.18.60" from a kernel set's "6.18.60-1+rpt1+m5.a3fd3e8+cpz1". Any
+/// "6.18.60" from a kernel set's "6.18.60-1+rpt1+m5.a3fd3e8+gh0st1". Any
 /// other version stays whole: a security fix often differs only in its
 /// Debian revision.
 pub fn short_version(v: &str) -> &str {
@@ -48,7 +48,7 @@ pub fn group_note(packages: &[&Package]) -> String {
                     short_version(&p.to)
                 ),
             );
-        } else if p.name == "cpzeroos-kernel" {
+        } else if p.name == "gh0st-kernel" {
             parts.push(format!("kernel {}", short_version(&p.to)));
         } else if !is_kernel_set(&p.name) {
             parts.push(p.name.clone());
@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn versions_read_short() {
         assert_eq!(short_version("0.5.0+202611221733.35a14dd"), "0.5.0");
-        assert_eq!(short_version("6.18.60-1+rpt1+m5.a3fd3e8+cpz1"), "6.18.60");
+        assert_eq!(short_version("6.18.60-1+rpt1+m5.a3fd3e8+gh0st1"), "6.18.60");
         assert_eq!(short_version("2.41-12+deb13u5"), "2.41-12+deb13u5");
         assert_eq!(short_version("1:9.2p1-2"), "1:9.2p1-2");
         assert_eq!(versions(&pkg("x", "", "1.2-3")), "new 1.2-3");
@@ -138,8 +138,8 @@ mod tests {
             "0.4.1+202611201200.1a2b3c4",
             "0.5.0+202611221733.35a14dd",
         );
-        let k = pkg("cpzeroos-kernel", "", "6.18.60-1+rpt1+m5.a3+cpz2");
-        let m = pkg("cpzeroos-panel-modules", "", "6.18.60-1");
+        let k = pkg("gh0st-kernel", "", "6.18.60-1+rpt1+m5.a3+gh0st2");
+        let m = pkg("gh0st-panel-modules", "", "6.18.60-1");
         let t = pkg("gh0st-term", "", "0.5.0");
         assert_eq!(
             group_note(&[&t, &k, &m, &g]),

@@ -1,0 +1,3 @@
+# I2C and SPI drivers that only match the part after the vendor in a device
+# tree compatible ("m5stack,tca8418c" -> "i2c:tca8418c").
+SUBSYSTEM=="i2c|spi", ENV{MODALIAS}=="?*", ENV{OF_COMPATIBLE_0}=="?*", RUN+="/usr/lib/gh0st/i2cprobe"

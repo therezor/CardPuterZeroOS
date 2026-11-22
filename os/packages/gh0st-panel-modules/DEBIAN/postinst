@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    depmod -a @KVER@
+    # The FAT boot partition is not ours to own file by file: copy the
+    # overlays in, as raspi-firmware does (hence the Depends, so it runs
+    # first). Its kernel hook copies without --delete, so upgrades keep them.
+    mkdir -p /boot/firmware/overlays
+    cp /usr/lib/gh0st/overlays/*.dtbo /boot/firmware/overlays/
+fi

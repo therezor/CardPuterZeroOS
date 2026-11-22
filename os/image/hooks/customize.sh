@@ -5,7 +5,7 @@ set -euo pipefail
 root=$1
 ch() { chroot "$root" "$@"; }
 
-# The build's apt sources and dpkg options go. cpzeroos-base ships the
+# The build's apt sources and dpkg options go. gh0st-base ships the
 # device's own.
 rm -f "$root/etc/apt/sources.list" "$root"/etc/apt/apt.conf.d/99mmdebstrap \
     "$root"/etc/dpkg/dpkg.cfg.d/99mmdebstrap
@@ -16,9 +16,9 @@ printf '127.0.0.1\tlocalhost\n127.0.1.1\tzero\n::1\t\tlocalhost ip6-localhost ip
 # No user: first-boot setup (docs/setup.md) makes UID 1000 on the device.
 # Its marker starts gh0st-setup.service and keeps the shell off until setup
 # hands over.
-install -d -m 755 "$root/var/lib/cpzeroos"
-install -d -m 700 "$root/var/lib/cpzeroos/setup-home"
-: > "$root/var/lib/cpzeroos/setup"
+install -d -m 755 "$root/var/lib/gh0st"
+install -d -m 700 "$root/var/lib/gh0st/setup-home"
+: > "$root/var/lib/gh0st/setup"
 
 cat > "$root/etc/fstab" <<FSTAB
 PARTUUID=$PARTUUID_BOOT  /boot/firmware  vfat  noatime,fmask=0022,dmask=0022  0  2

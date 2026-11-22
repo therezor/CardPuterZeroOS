@@ -8,12 +8,12 @@
 set -uo pipefail
 build=$WORK/build/image-release
 s=$WORK/smoke
-[ -f "$build/cpzeroos-release.img" ] || { echo "no image: run os/build.sh image release"; exit 1; }
+[ -f "$build/gh0st-release.img" ] || { echo "no image: run os/build.sh image release"; exit 1; }
 # shellcheck source=/dev/null
 . "$OS/image/layout.conf"
 rm -rf "$s"
 mkdir -p "$s/tree/j"
-cp --sparse=always "$build/cpzeroos-release.img" "$s/sd.img"
+cp --sparse=always "$build/gh0st-release.img" "$s/sd.img"
 # A power of two for QEMU; p3 grows into it. Larger cards stall QEMU's slow
 # SD emulation behind ext4's inode table writes (SMOKE_CARD=64G to try).
 truncate -s "${SMOKE_CARD:-8G}" "$s/sd.img"
@@ -51,7 +51,7 @@ expect() {
     if grep -qE "$2" "$s/journal.txt"; then printf 'ok    %s\n' "$1"; else printf 'FAIL  %s\n' "$1"; fails=$((fails + 1)); fi
 }
 expect "kernel mounted root without an initramfs" 'EXT4-fs \(mmcblk0p2\): mounted filesystem'
-expect "data partition grown" 'Finished cpzeroos-grow-data.service'
+expect "data partition grown" 'Finished gh0st-grow-data.service'
 expect "/home filesystem grown" 'Successfully resized "/home"'
 expect "root checked" 'Finished systemd-fsck-root.service'
 expect "/home checked" 'Finished systemd-fsck@dev-disk-by.*x2d03.service'

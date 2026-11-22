@@ -242,12 +242,12 @@ impl CpuMode {
 }
 
 /// Our zram size for systemd-zram-generator. 90 sorts after the image's
-/// `50-cpzeroos.conf` and stock's `20-rpi-swap-zram0-ctrl.conf`, so ours win.
+/// `50-gh0st.conf` and stock's `20-rpi-swap-zram0-ctrl.conf`, so ours win.
 pub const ZRAM_DROPIN: &str = "/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf";
 /// The compression, on both systems: rpi-swap leaves it to the kernel.
 pub const ZRAM_COMP_DROPIN: &str =
     "/etc/systemd/zram-generator.conf.d/90-gh0st-swap-compression.conf";
-/// After the image's `50-cpzeroos.conf`, which sets 100.
+/// After the image's `50-gh0st.conf`, which sets 100.
 pub const SWAPPINESS_DROPIN: &str = "/etc/sysctl.d/90-gh0st-swap.conf";
 /// The same for stock's rpi-swap, which writes zram-generator's file itself
 /// at boot from its own config.
@@ -372,13 +372,13 @@ pub fn swap_max(meminfo: &str) -> u32 {
 }
 
 // NetworkManager's privacy settings. The image ships its defaults in
-// /usr/lib/NetworkManager/conf.d/50-cpzeroos.conf; Settings and setup write
+// /usr/lib/NetworkManager/conf.d/50-gh0st.conf; Settings and setup write
 // one whole file per setting in /etc, which NetworkManager reads after it.
 
 /// The built-in USB Ethernet chip on the board's hub. Left awake, it keeps
 /// the hub and the USB host up at about 8,100 IRQ/s: 93 mA, measured.
 pub const ETH_USB_ID: (&str, &str) = ("0fe6", "9900");
-/// Settings' USB power saving, after the image's `60-cpzeroos.rules`.
+/// Settings' USB power saving, after the image's `60-gh0st.rules`.
 pub const USB_POWER_RULE: &str = "/etc/udev/rules.d/61-gh0st-usb-power.rules";
 
 /// The USB devices with this vendor and product id under `devices`

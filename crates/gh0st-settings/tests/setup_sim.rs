@@ -166,7 +166,7 @@ fn run(d: &Path, keys: &str) -> String {
 }
 
 fn state(d: &Path) -> String {
-    std::fs::read_to_string(d.join("root/var/lib/cpzeroos/setup.state")).unwrap()
+    std::fs::read_to_string(d.join("root/var/lib/gh0st/setup.state")).unwrap()
 }
 
 #[test]

@@ -11,7 +11,7 @@ pub struct Inst {
     /// Empty for a package new to the device.
     pub from: String,
     pub to: String,
-    /// The archive's origin: `CPZeroOS`, `Debian`, `Debian-Security`.
+    /// The archive's origin: `Gh0st`, `Debian`, `Debian-Security`.
     pub origin: String,
 }
 
@@ -239,15 +239,15 @@ mod tests {
             }
         );
         let gh0st = list.iter().find(|i| i.name == "gh0st").unwrap();
-        assert_eq!(gh0st.origin, "CPZeroOS");
+        assert_eq!(gh0st.origin, "Gh0st");
         assert_eq!(gh0st.to, "0.1.0+202611221733.35a14dd.dirty");
     }
 
     #[test]
     fn held_back_and_new_packages_read_too() {
-        let text = "The following packages have been kept back:\n  cpzeroos-kernel cpzeroos-panel-modules\n\
+        let text = "The following packages have been kept back:\n  gh0st-kernel gh0st-panel-modules\n\
                     Inst newpkg (1.0 Debian-Security:13/stable-security [arm64])\n\
-                    Inst cpzeroos-kernel [1] (2 CPZeroOS:edge [arm64]) []\n";
+                    Inst gh0st-kernel [1] (2 Gh0st:edge [arm64]) []\n";
         let (list, held) = simulate(text);
         assert_eq!(held, 2);
         assert_eq!(list[0].from, "");

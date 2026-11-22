@@ -1,0 +1,12 @@
+Package: gh0st-panel-modules
+Version: @PANEL_VERSION@
+Architecture: arm64
+Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
+Section: kernel
+Priority: optional
+Depends: linux-image-@KVER@ (= @KVERSION@), raspi-firmware, kmod, udev
+Description: CardputerZero drivers for the pinned kernel
+ The M5Stack CardputerZero drivers (keyboard, audio codec, IO expander, fuel
+ gauge, IMU, power-fail) from m5stack-linux-dtoverlays @M5COMMIT@, and
+ Gh0st OS's panel driver with scan sync, built for @KVER@. Also the device
+ tree overlays, udev rules, firmware files and the fb_load boot logo.

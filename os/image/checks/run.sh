@@ -36,7 +36,7 @@ done < <(words "$M/deny.list" "$V/deny.list")
 if [ -z "$hits" ]; then ok "nothing from the deny list"; else bad "denied packages:$hits"; fi
 
 # Raspberry Pi builds only where lock.json pins them.
-rpt=$(awk -F'\t' '$2 ~ /rpt/ && $1 !~ /^cpzeroos-/ {print $1}' "$R/packages.tsv" | sort)
+rpt=$(awk -F'\t' '$2 ~ /rpt/ && $1 !~ /^gh0st-/ {print $1}' "$R/packages.tsv" | sort)
 allowed=$(jq -r '.rpt[].name' "$LOCK" | sort)
 extra=$(comm -23 <(echo "$rpt") <(echo "$allowed"))
 if [ -z "$extra" ]; then ok "rpt packages all pinned in lock.json"; else bad "unpinned rpt packages: $extra"; fi
@@ -86,7 +86,7 @@ if grep -E 'var/lib/apt/lists/[^/]+_' "$list" | grep -q .; then bad "apt lists i
 if grep -q 'system-connections/.' "$list"; then bad "Wi-Fi profiles in the image"; else ok "no Wi-Fi profiles"; fi
 
 # First-boot setup makes the user: its marker, no UID 1000 yet, root locked.
-if grep -qE ' \./var/lib/cpzeroos/setup$' "$list"; then ok "setup's marker present"; else bad "no setup marker"; fi
+if grep -qE ' \./var/lib/gh0st/setup$' "$list"; then ok "setup's marker present"; else bad "no setup marker"; fi
 if tar -xOf "$build/rootfs.tar" ./etc/passwd | awk -F: '$3 == 1000 {f = 1} END {exit !f}'; then
     bad "a UID 1000 user in the image"
 else

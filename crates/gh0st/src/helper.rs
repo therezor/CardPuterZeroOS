@@ -62,16 +62,16 @@ const MAX_GROWTH: usize = 64;
 /// A sanity bound for parsing; `set_swap` holds it to twice RAM.
 const SWAP_PARSE_MAX: u32 = 4096;
 /// Setup runs while this exists; `setup-finish` removes it.
-const SETUP_MARKER: &str = "/var/lib/cpzeroos/setup";
-const SETUP_STATE: &str = "/var/lib/cpzeroos/setup.state";
+const SETUP_MARKER: &str = "/var/lib/gh0st/setup";
+const SETUP_STATE: &str = "/var/lib/gh0st/setup.state";
 /// Setup's own home: the look chosen during setup is in its config.
-const SETUP_HOME: &str = "/var/lib/cpzeroos/setup-home";
+const SETUP_HOME: &str = "/var/lib/gh0st/setup-home";
 const LINGER_DIR: &str = "/var/lib/systemd/linger";
 const USER_UID: u32 = 1000;
-/// Our repo's stable source, from cpzeroos-base. Edge is the same with
+/// Our repo's stable source, from gh0st-base. Edge is the same with
 /// another suite, in its own file, so the URL lives in one place.
-const STABLE_SOURCES: &str = "/etc/apt/sources.list.d/cpzeroos.sources";
-const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/cpzeroos-edge.sources";
+const STABLE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st.sources";
+const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st-edge.sources";
 /// The device user's groups. One the system lacks is left out, so
 /// `useradd` doesn't fail on it.
 const USER_GROUPS: [&str; 11] = [
@@ -888,7 +888,7 @@ fn set_channel(edge: bool) -> Result<(), String> {
     }
     let stable =
         std::fs::read_to_string(STABLE_SOURCES).map_err(|e| format!("{STABLE_SOURCES}: {e}"))?;
-    let text = edge_sources(&stable).ok_or("the CPZeroOS source has no Suites line")?;
+    let text = edge_sources(&stable).ok_or("the Gh0st OS source has no Suites line")?;
     write_conf(EDGE_SOURCES, &text)
 }
 
@@ -1171,7 +1171,7 @@ mod tests {
 
     #[test]
     fn edge_is_the_stable_source_with_its_suite_swapped() {
-        let stable = "# CPZeroOS\nTypes: deb\nURIs: https://x/apt\nSuites: stable\nComponents: main\nSigned-By: /k.pgp\n";
+        let stable = "# Gh0st OS\nTypes: deb\nURIs: https://x/apt\nSuites: stable\nComponents: main\nSigned-By: /k.pgp\n";
         let edge = edge_sources(stable).unwrap();
         assert!(edge.contains("URIs: https://x/apt\nSuites: edge\nComponents: main\n"));
         assert!(!edge.contains("stable"));

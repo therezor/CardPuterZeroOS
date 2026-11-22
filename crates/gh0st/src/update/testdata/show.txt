@@ -175,10 +175,10 @@ SHA256: 2c1c561091402883430d0d47c57a3c0aa00b44afc8a6239265065a87211a5c11
 Package: gh0st
 Version: 0.1.0+202611221733.35a14dd.dirty
 Architecture: arm64
-Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: x11
 Priority: optional
-Depends: cpzeroos-panel-modules, xdg-user-dirs, network-manager, wireplumber,
+Depends: gh0st-panel-modules, xdg-user-dirs, network-manager, wireplumber,
  bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd
 Description: Gh0stdeck, the CardputerZero shell and Settings
  The home screen, switcher and OS bars (gh0st shell), Settings
@@ -194,7 +194,7 @@ SHA256: a16a0e41b023eb6150bc54bd6e159c04615bd9c394ee15be3fd10f28cecfe171
 Package: gh0st-term
 Version: 0.1.0+202611221733.35a14dd.dirty
 Architecture: arm64
-Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: x11
 Priority: optional
 Depends: gh0st

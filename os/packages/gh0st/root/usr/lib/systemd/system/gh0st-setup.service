@@ -3,21 +3,21 @@
 # session.
 [Unit]
 Description=First-boot setup
-ConditionPathExists=/var/lib/cpzeroos/setup
+ConditionPathExists=/var/lib/gh0st/setup
 RequiresMountsFor=/home
-After=cpzeroos-grow-data.service fb_load.service dbus.service polkit.service
+After=gh0st-grow-data.service fb_load.service dbus.service polkit.service
 After=NetworkManager.service systemd-timesyncd.service
 Wants=NetworkManager.service
 # Never give up: a setup that stays dead leaves a blank device.
 StartLimitIntervalSec=0
 
 [Service]
-Environment=HOME=/var/lib/cpzeroos/setup-home
+Environment=HOME=/var/lib/gh0st/setup-home
 WorkingDirectory=/usr/share/APPLaunch
 # An automatic restart skips the Condition lines, so after setup-finish
 # setup came back behind the shell. ExecCondition runs on every start,
 # and Restart=always stops once it fails.
-ExecCondition=/usr/bin/test -e /var/lib/cpzeroos/setup
+ExecCondition=/usr/bin/test -e /var/lib/gh0st/setup
 ExecStart=/usr/bin/gh0st-settings --setup
 Restart=always
 RestartSec=1

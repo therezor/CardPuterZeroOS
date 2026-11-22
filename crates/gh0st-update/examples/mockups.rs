@@ -36,9 +36,9 @@ fn ready() -> State {
                 "Gh0stdeck, the CardputerZero shell and Settings",
             ),
             pkg(
-                "cpzeroos-kernel",
-                "6.18.47-1+rpt1+m5.a3fd3e8+cpz1",
-                "6.18.60-1+rpt1+m5.a3fd3e8+cpz1",
+                "gh0st-kernel",
+                "6.18.47-1+rpt1+m5.a3fd3e8+gh0st1",
+                "6.18.60-1+rpt1+m5.a3fd3e8+gh0st1",
                 21_000_000,
                 Group::Gh0st,
                 "the CardputerZero kernel, drivers and firmware as one pinned set",

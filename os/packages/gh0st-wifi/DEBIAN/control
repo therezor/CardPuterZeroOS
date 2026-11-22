@@ -1,7 +1,7 @@
 Package: gh0st-wifi
 Version: @WIFI_VERSION@
 Architecture: all
-Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: kernel
 Priority: optional
 Depends: udev, systemd

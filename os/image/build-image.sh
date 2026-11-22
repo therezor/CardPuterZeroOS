@@ -23,17 +23,17 @@ SNAPSHOT=$(jq -r .debian.snapshot "$LOCK")
 # os/build.sh passes the commit time and hash: a worktree's .git is not
 # reachable from inside the container.
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(date +%s)}
-CPZ_GIT_REV=${CPZ_GIT_REV:-unknown}
+GH0ST_GIT_REV=${GH0ST_GIT_REV:-unknown}
 # A version moves only when its package's sources do (os/build.sh passes
 # the stamps), so apt on a device sees nothing new after a docs-only push.
 stamp_time() { date -u -d "@$1" +%Y%m%d%H%M; }
-CPZ_GH0ST_STAMP=${CPZ_GH0ST_STAMP:-$SOURCE_DATE_EPOCH.$CPZ_GIT_REV}
-GH0ST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/Cargo.toml" | head -1)+$(stamp_time "${CPZ_GH0ST_STAMP%%.*}").${CPZ_GH0ST_STAMP#*.}"
-BASE_VERSION="0.1+$(stamp_time "${CPZ_BASE_STAMP:-$SOURCE_DATE_EPOCH}")"
-WIFI_VERSION="1+$(stamp_time "${CPZ_WIFI_STAMP:-$SOURCE_DATE_EPOCH}")"
+GH0ST_STAMP=${GH0ST_STAMP:-$SOURCE_DATE_EPOCH.$GH0ST_GIT_REV}
+GH0ST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/Cargo.toml" | head -1)+$(stamp_time "${GH0ST_STAMP%%.*}").${GH0ST_STAMP#*.}"
+BASE_VERSION="0.1+$(stamp_time "${GH0ST_BASE_STAMP:-$SOURCE_DATE_EPOCH}")"
+WIFI_VERSION="1+$(stamp_time "${GH0ST_WIFI_STAMP:-$SOURCE_DATE_EPOCH}")"
 # Our driver package moves with the kernel, the M5 commit it was built from,
 # and our own driver's last change.
-PANEL_VERSION="${KVERSION#*:}+m5.${M5COMMIT:0:7}+cpz$(stamp_time "${CPZ_PANEL_STAMP:-$SOURCE_DATE_EPOCH}")"
+PANEL_VERSION="${KVERSION#*:}+m5.${M5COMMIT:0:7}+gh0st$(stamp_time "${GH0ST_PANEL_STAMP:-$SOURCE_DATE_EPOCH}")"
 export KVER KVERSION M5COMMIT PANEL_VERSION GH0ST_VERSION BASE_VERSION WIFI_VERSION SOURCE_DATE_EPOCH SRC OS WORK CACHE LOCK
 
 log() { printf '\033[1m== %s\033[0m\n' "$*"; }
@@ -95,7 +95,7 @@ step_vendor() {
     lock_debs | while IFS=$'\t' read -r _kind use _name url _sha; do
         if [ "$use" = image ]; then cp "$(deb_path "$url")" "$WORK/repo-vendor/"; fi
     done
-    index_repo "$WORK/repo-vendor" cpzeroos-vendor
+    index_repo "$WORK/repo-vendor" gh0st-vendor
 }
 
 # The pinned headers go into this throwaway container, for the module builds.
@@ -121,7 +121,7 @@ step_debs() {
         [ -d "$p/DEBIAN" ] || continue
         "$OS/packages/build-deb.sh" "$p" "$WORK/repo-ours"
     done
-    index_repo "$WORK/repo-ours" cpzeroos
+    index_repo "$WORK/repo-ours" gh0st
 }
 
 # Package names from a manifest list: the first word of each line.
@@ -145,13 +145,13 @@ step_image() {
     export ROOTS=$roots
     while IFS= read -r line; do
         dpkgopts+=(--dpkgopt="$line")
-    done < <(grep -E '^path-' "$OS/packages/cpzeroos-base/root/etc/dpkg/dpkg.cfg.d/50cpzeroos-excludes")
+    done < <(grep -E '^path-' "$OS/packages/gh0st-base/root/etc/dpkg/dpkg.cfg.d/50gh0st-excludes")
     mmdebstrap --mode=root --variant=minbase --architectures=arm64 \
         --aptopt='APT::Install-Recommends "false"' \
         --aptopt='Acquire::Languages "none"' \
         "${dpkgopts[@]}" \
         --include="$roots" \
-        --setup-hook="install -D -m 644 $OS/packages/cpzeroos-base/root/etc/apt/preferences.d/cpzeroos-deny.pref \"\$1/etc/apt/preferences.d/cpzeroos-deny.pref\"" \
+        --setup-hook="install -D -m 644 $OS/packages/gh0st-base/root/etc/apt/preferences.d/gh0st-deny.pref \"\$1/etc/apt/preferences.d/gh0st-deny.pref\"" \
         --customize-hook="bash ${TRACE:+-x} $OS/image/hooks/customize.sh \"\$1\"" \
         --customize-hook="sync-out /boot/firmware $build/boot" \
         --customize-hook="sync-out /home $build/home" \
@@ -190,7 +190,7 @@ step_image() {
         -d "$build/home" "$build/data.ext4" "${DATA_MIB}M"
 
     log "disk image"
-    local img=$build/cpzeroos-$variant.img
+    local img=$build/gh0st-$variant.img
     local s1=$((ALIGN_MIB * 2048)) b=$((BOOT_MIB * 2048)) r=$((ROOT_MIB * 2048)) d=$((DATA_MIB * 2048))
     truncate -s $(( (ALIGN_MIB + BOOT_MIB + ROOT_MIB + DATA_MIB) * 1024 * 1024 )) "$img"
     sfdisk -q "$img" <<SFDISK
@@ -211,7 +211,7 @@ SFDISK
     bmaptool -q create -o "$img.bmap" "$img"
     xz -T0 -6 -f -k "$img"
     local name
-    name=cpzeroos-$variant-$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y%m%d)
+    name=gh0st-$variant-$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y%m%d)
     install -m 644 "$img.xz" "/out/$name.img.xz"
     install -m 644 "$img.bmap" "/out/$name.bmap"
     install -m 644 "$REPORTS/packages.tsv" "/out/$name.packages.tsv"
@@ -222,7 +222,7 @@ SFDISK
 # name<TAB>version, with our own packages' versions masked: they move with
 # every commit, and the lock is for what comes from outside.
 lock_lines() {
-    awk -F'\t' -v OFS='\t' '$1 ~ /^(cpzeroos-|gh0st)/ {$2 = "(ours)"} {print $1, $2}' "$1"
+    awk -F'\t' -v OFS='\t' '$1 ~ /^gh0st/ {$2 = "(ours)"} {print $1, $2}' "$1"
 }
 export -f lock_lines
 

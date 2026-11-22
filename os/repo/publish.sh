@@ -196,8 +196,8 @@ for s in "${suites[@]}"; do
 
     rel=$site/dists/$s/Release
     {
-        echo "Origin: CPZeroOS"
-        echo "Label: CPZeroOS"
+        echo "Origin: Gh0st"
+        echo "Label: Gh0st"
         echo "Suite: $s"
         echo "Codename: $s"
         echo "Date: $(date -u -d "@$now" '+%a, %d %b %Y %H:%M:%S UTC')"
@@ -205,7 +205,7 @@ for s in "${suites[@]}"; do
         echo "Architectures: $arch"
         echo "Components: main"
         echo "Acquire-By-Hash: yes"
-        echo "Description: CPZeroOS $s"
+        echo "Description: Gh0st OS $s"
         echo "SHA256:"
         for f in Packages Packages.xz; do
             p=$dir/$f
@@ -229,14 +229,14 @@ for s in "${suites[@]}"; do
     "${gpg[@]}" --armor --detach-sign -o "$d/Release.gpg" "$d/Release"
 done
 fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
-gpg --batch --export --export-options export-minimal "$fpr" > "$site/cpzeroos-archive-keyring.pgp"
+gpg --batch --export --export-options export-minimal "$fpr" > "$site/gh0st-archive-keyring.pgp"
 
 cat > "$site/index.html" <<EOF
 <!doctype html>
 <meta charset="utf-8">
-<title>CPZeroOS apt</title>
-<p>The CPZeroOS apt repo, for the CardputerZero. Suites: stable, edge.</p>
-<p>Signing key <a href="cpzeroos-archive-keyring.pgp">cpzeroos-archive-keyring.pgp</a>,
+<title>Gh0st OS apt</title>
+<p>The Gh0st OS apt repo, for the CardputerZero. Suites: stable, edge.</p>
+<p>Signing key <a href="gh0st-archive-keyring.pgp">gh0st-archive-keyring.pgp</a>,
 fingerprint <code>$fpr</code>.</p>
 EOF
 # Pages serves the tree as is.

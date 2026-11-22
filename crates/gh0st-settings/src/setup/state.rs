@@ -3,7 +3,7 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-pub const FILE: &str = "/var/lib/cpzeroos/setup.state";
+pub const FILE: &str = "/var/lib/gh0st/setup.state";
 
 pub struct Answers {
     /// The step open now, counting from 0.
