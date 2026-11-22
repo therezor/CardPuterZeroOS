@@ -83,7 +83,7 @@ jobs:
       # A stable release keeps its debs as release assets too, so a lost
       # site can be rebuilt.
       - name: Release assets
-        if: steps.what.outputs.what == 'stable'
+        if: steps.what.outputs.what == 'stable' && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -95,14 +95,44 @@ jobs:
             true
           gh release upload "$tag" os/out/debs/*.deb --clobber
 
-  # Its own job: deploy-pages in the job that uploaded can miss the
-  # artifact while it is still being listed.
+  # Its own job: in the job that uploaded, the artifact may not be listed
+  # yet. Not actions/deploy-pages: it names a deployment after the commit,
+  # and Pages keeps the first deployment of a name. A tag on a commit main
+  # already deployed, or a weekly re-sign with no new commit, would then
+  # change nothing. Here each run gets its own name.
   deploy:
     needs: publish
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - id: deploy
-        uses: actions/deploy-pages@v4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          api=repos/$GITHUB_REPOSITORY
+          artifact=$(gh api "$api/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name == "github-pages") | .id')
+          [ -n "$artifact" ] || { echo "no github-pages artifact"; exit 1; }
+          oidc=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r .value)
+          echo "::add-mask::$oidc"
+          version=$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT
+          gh api -X POST "$api/pages/deployments" -F artifact_id="$artifact" \
+            -f pages_build_version="$version" -f oidc_token="$oidc" > out.json
+          id=$(jq -r .id out.json)
+          echo "page_url=$(jq -r .page_url out.json)" >> "$GITHUB_OUTPUT"
+          for _ in $(seq 120); do
+            status=$(gh api "$api/pages/deployments/$id" --jq .status)
+            echo "$status"
+            case $status in
+              succeed) exit 0 ;;
+              deployment_in_progress | deployment_queued) ;;
+              deployment_* | "") exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "timed out"
+          exit 1
