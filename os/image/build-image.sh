@@ -24,10 +24,16 @@ SNAPSHOT=$(jq -r .debian.snapshot "$LOCK")
 # reachable from inside the container.
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(date +%s)}
 CPZ_GIT_REV=${CPZ_GIT_REV:-unknown}
-GH0ST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/Cargo.toml" | head -1)+$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y%m%d%H%M).$CPZ_GIT_REV"
-# Our driver package moves with the kernel and the M5 commit it was built from.
-PANEL_VERSION="${KVERSION#*:}+m5.${M5COMMIT:0:7}+cpz1"
-export KVER KVERSION M5COMMIT PANEL_VERSION GH0ST_VERSION SOURCE_DATE_EPOCH SRC OS WORK CACHE LOCK
+# A version moves only when its package's sources do (os/build.sh passes
+# the stamps), so apt on a device sees nothing new after a docs-only push.
+stamp_time() { date -u -d "@$1" +%Y%m%d%H%M; }
+CPZ_GH0ST_STAMP=${CPZ_GH0ST_STAMP:-$SOURCE_DATE_EPOCH.$CPZ_GIT_REV}
+GH0ST_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/Cargo.toml" | head -1)+$(stamp_time "${CPZ_GH0ST_STAMP%%.*}").${CPZ_GH0ST_STAMP#*.}"
+BASE_VERSION="0.1+$(stamp_time "${CPZ_BASE_STAMP:-$SOURCE_DATE_EPOCH}")"
+# Our driver package moves with the kernel, the M5 commit it was built from,
+# and our own driver's last change.
+PANEL_VERSION="${KVERSION#*:}+m5.${M5COMMIT:0:7}+cpz$(stamp_time "${CPZ_PANEL_STAMP:-$SOURCE_DATE_EPOCH}")"
+export KVER KVERSION M5COMMIT PANEL_VERSION GH0ST_VERSION BASE_VERSION SOURCE_DATE_EPOCH SRC OS WORK CACHE LOCK
 
 log() { printf '\033[1m== %s\033[0m\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -245,7 +251,12 @@ case ${1:-} in
     check) "$OS/image/checks/run.sh" "${2:?variant}" ;;
     smoke) "$OS/image/checks/smoke.sh" ;;
     relock) step_relock "${2:-}" ;;
-    publish) "$OS/repo/publish.sh" "${2:?suite: stable or edge}" /out/apt "$WORK/repo-ours" "$WORK/repo-vendor" ;;
+    publish)
+        # The site goes to os/out/pages (Pages serves it at /apt), and the
+        # debs to os/out/debs for the release.
+        rm -rf /out/debs && mkdir -p /out/debs && cp "$WORK"/repo-ours/*.deb /out/debs/
+        "$OS/repo/publish.sh" "${2:?suite: stable or edge}" /out/pages/apt "$WORK/repo-ours" "$WORK/repo-vendor" ;;
+    resign) "$OS/repo/publish.sh" edge /out/pages/apt ;;
     shell) exec bash ;;
-    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|shell" ;;
+    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|shell" ;;
 esac

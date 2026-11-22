@@ -1,0 +1,5 @@
+Explanation: Our builds win over Debian's of the same name (raspi-firmware),
+Explanation: below 1000, so nothing ever downgrades.
+Package: *
+Pin: release o=CPZeroOS
+Pin-Priority: 990

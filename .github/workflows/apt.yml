@@ -1,0 +1,95 @@
+# Publishes our apt repo to GitHub Pages (docs/updates.md, Our apt repo).
+# A push to main publishes edge, a v* tag publishes stable, and a weekly run
+# signs both again so Valid-Until never lapses. One pool for both suites:
+# a file in it is never replaced, so a tag republishes what edge built.
+name: apt
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: [crates/**, assets/**, packaging/**, os/**, Cargo.toml, Cargo.lock, .github/workflows/apt.yml]
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      what:
+        description: edge, stable or resign
+        default: edge
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# One publish at a time: each starts from the live site.
+concurrency:
+  group: apt-pages
+  cancel-in-progress: false
+
+env:
+  SITE: https://therezor.github.io/CardPuterZeroOS/apt
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The package versions come from each package's last change.
+          fetch-depth: 0
+      - name: What to publish
+        id: what
+        run: |
+          case "${{ github.event_name }}:${{ github.ref_type }}" in
+            schedule:*) what=resign ;;
+            workflow_dispatch:*) what="${{ inputs.what }}" ;;
+            push:tag) what=stable ;;
+            *) what=edge ;;
+          esac
+          echo "what=$what" >> "$GITHUB_OUTPUT"
+      - name: Fetch pinned inputs
+        if: steps.what.outputs.what != 'resign'
+        run: os/build.sh fetch
+      - name: Build packages
+        if: steps.what.outputs.what != 'resign'
+        run: os/build.sh debs
+      # The pool from the last run, so only new debs come down from Pages.
+      - uses: actions/cache/restore@v4
+        with:
+          path: os/out/pages/apt/pool
+          key: apt-pool-${{ github.run_id }}
+          restore-keys: apt-pool-
+      - name: Publish
+        env:
+          REPO_PREV: ${{ env.SITE }}
+          REPO_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          [ -n "$REPO_KEY" ] || { echo "set the APT_SIGNING_KEY secret (os/repo/README.md)"; exit 1; }
+          case "${{ steps.what.outputs.what }}" in
+            resign) os/build.sh resign ;;
+            *) os/build.sh publish "${{ steps.what.outputs.what }}" ;;
+          esac
+      - uses: actions/cache/save@v4
+        with:
+          path: os/out/pages/apt/pool
+          key: apt-pool-${{ github.run_id }}
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: os/out/pages
+      - id: deploy
+        uses: actions/deploy-pages@v4
+      # A stable release keeps its debs as release assets too, so a lost
+      # site can be rebuilt.
+      - name: Release assets
+        if: steps.what.outputs.what == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.ref_name }}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --prerelease --title "$tag" --notes "Gh0st OS $tag"
+          gh release upload "$tag" os/out/debs/*.deb --clobber

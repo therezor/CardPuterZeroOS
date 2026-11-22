@@ -225,6 +225,19 @@ and the stock app debs.
   (`Pin: release o=CPZeroOS`, 990).
 - **Limits.** Pages takes 1 GB per site. CI fails the publish past 800 MB.
   Past that, the pool moves to release assets.
+- **Versions move with their sources.** `os/build.sh` stamps each package
+  with the last commit that touched it: gh0st and gh0st-term with the code,
+  cpzeroos-base with its own folder and `os/repo`, the kernel set with
+  `os/kernel`, its packages and `lock.json`. A docs-only push publishes
+  nothing new.
+- **CI.** `.github/workflows/apt.yml` builds the debs, restores the pool from
+  the Actions cache (falling back to the live site), publishes, and deploys
+  Pages. A tag also attaches its debs to the release. Setup of the key and
+  Pages: `os/repo/README.md`.
+- **The image.** `cpzeroos-base` ships `os/repo/cpzeroos.sources`, the pin
+  and the key once `os/repo/cpzeroos-archive-keyring.pgp` exists; before
+  that the image has no CPZeroOS source, since a source apt can't check
+  would fail every check.
 
 ## Tested
 

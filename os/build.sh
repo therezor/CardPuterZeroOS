@@ -6,7 +6,8 @@
 #   os/build.sh check release     tier 1 checks
 #   os/build.sh smoke             first boot of the image in QEMU
 #   os/build.sh relock release    accept the packages and units of the last build
-#   os/build.sh publish edge      add the built debs to the apt site in os/out/apt
+#   os/build.sh publish edge      add the built debs to the apt site in os/out/pages/apt
+#   os/build.sh resign            sign the apt site again, nothing added
 #   os/build.sh shell             a shell in the container
 # Work happens on the Docker volume cpzeroos-work, never on the bind-mounted
 # repo: macOS filesystems lose ownership and sparseness.
@@ -32,10 +33,26 @@ fi
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct)}
 CPZ_GIT_REV=$(git -C "$root" rev-parse --short HEAD)
 git -C "$root" diff --quiet HEAD || CPZ_GIT_REV=$CPZ_GIT_REV.dirty
-export SOURCE_DATE_EPOCH CPZ_GIT_REV
+# Each of our packages takes its version from the last commit that touched
+# its sources, so a push that changes only docs publishes nothing new to
+# devices on edge (docs/updates.md). "epoch.rev", or "epoch" alone.
+changed() {
+    fmt=$1
+    shift
+    git -C "$root" log -1 --format="$fmt" -- "$@"
+}
+CPZ_GH0ST_STAMP=$(changed '%ct.%h' crates assets packaging Cargo.toml Cargo.lock \
+    os/packages/gh0st os/packages/gh0st-term)
+case $CPZ_GIT_REV in *.dirty) CPZ_GH0ST_STAMP=$SOURCE_DATE_EPOCH.$CPZ_GIT_REV ;; esac
+CPZ_BASE_STAMP=$(changed '%ct' os/packages/cpzeroos-base os/repo/cpzeroos.sources \
+    os/repo/cpzeroos.pref os/repo/cpzeroos-archive-keyring.pgp)
+CPZ_PANEL_STAMP=$(changed '%ct' os/kernel os/packages/cpzeroos-panel-modules \
+    os/packages/cpzeroos-kernel os/lock.json)
+export SOURCE_DATE_EPOCH CPZ_GIT_REV CPZ_GH0ST_STAMP CPZ_BASE_STAMP CPZ_PANEL_STAMP
 
 envs=
-for v in SOURCE_DATE_EPOCH CPZ_GIT_REV GH0ST_LOG TRACE REPO_PREV REPO_KEY REPO_KEEP REPO_DAYS REPO_MAX_MB; do
+for v in SOURCE_DATE_EPOCH CPZ_GIT_REV CPZ_GH0ST_STAMP CPZ_BASE_STAMP CPZ_PANEL_STAMP \
+    GH0ST_LOG TRACE REPO_PREV REPO_KEY REPO_KEEP REPO_DAYS REPO_MAX_MB; do
     envs="$envs -e $v"
 done
 

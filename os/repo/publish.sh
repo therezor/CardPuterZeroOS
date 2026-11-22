@@ -131,6 +131,7 @@ prune() {
 }
 
 prune "$tmp/$suite.list" "$tmp/$suite.final"
+sort -o "$tmp/$suite.final" "$tmp/$suite.final"
 other=edge
 [ "$suite" = edge ] && other=stable
 sort -u "$tmp/$other.list" > "$tmp/$other.final"

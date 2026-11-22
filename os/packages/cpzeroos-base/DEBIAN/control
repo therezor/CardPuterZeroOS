@@ -1,5 +1,5 @@
 Package: cpzeroos-base
-Version: 0.1
+Version: @BASE_VERSION@
 Architecture: all
 Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
 Section: admin

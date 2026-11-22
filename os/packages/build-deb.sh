@@ -23,7 +23,7 @@ fi
 # @V:pkg@ the version of pkg in lock.json, so pins live in one place.
 subst() {
     local args=() v p
-    for v in KVER KVERSION PANEL_VERSION GH0ST_VERSION M5COMMIT; do
+    for v in KVER KVERSION PANEL_VERSION GH0ST_VERSION BASE_VERSION M5COMMIT; do
         args+=(-e "s|@$v@|${!v:-}|g")
     done
     for p in $(grep -o '@V:[^@]*@' "$1" | sort -u | sed 's/^@V://; s/@$//'); do
