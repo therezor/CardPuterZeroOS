@@ -13,6 +13,10 @@ mod run;
 mod runtime;
 mod steps;
 pub mod system;
+/// Notices in the shell's notifications: the file format and folders, for
+/// posting with more than [`Cx::post`] gives (a count, a tone, another app
+/// to open).
+pub use gh0st_core::notify;
 pub mod testing;
 mod ui;
 

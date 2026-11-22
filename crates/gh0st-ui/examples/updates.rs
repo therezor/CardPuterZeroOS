@@ -155,16 +155,6 @@ fn blit(dst: &mut Canvas, src: &Canvas, ox: i32, oy: i32) {
     }
 }
 
-/// A count on a badge's top-right corner, in accent, ringed in the
-/// background so it reads over any badge.
-fn count_dot(c: &mut Canvas, t: &Theme, badge: Rect, count: &str) {
-    let w = (t.f.small_bold.measure(count) + 6).max(13);
-    let r = Rect::new(badge.right() - w + 4, badge.y - 4, w, 13);
-    c.round_rect(r.inset(-2), 8, t.c.bg);
-    c.round_rect(r, 7, t.c.accent);
-    text_centre(c, t.f.small_bold, r, count, t.c.accent_fg);
-}
-
 // ---------------------------------------------------------------- Updates app
 
 const APP_ICON: &str = "refresh-cw";
@@ -764,16 +754,9 @@ fn n_home(t: &Theme) -> Canvas {
             note: "",
             visual: v,
             pinned: i < 2,
+            count: if label == "Updates" { 12 } else { 0 },
         };
         widgets::tile(&mut c, t, r, &item, i == 2);
-        if label == "Updates" {
-            // The badge sits where tile_content puts it.
-            let f = t.f.small_bold;
-            let b = t.m.badge;
-            let block = b + 5 + f.cap();
-            let top = r.y + 1 + (r.h - 2 - block) / 2;
-            count_dot(&mut c, t, Rect::new(r.x + (r.w - b) / 2, top, b, b), "12");
-        }
     }
     widgets::scrollbar(&mut c, t, area, 0, 2, 3);
     widgets::action_bar(&mut c, t, &home_slots());
@@ -801,37 +784,10 @@ fn n_toast(t: &Theme) -> Canvas {
     for (i, line) in lines.iter().enumerate() {
         t.f.mono.draw(&mut c, 6, 32 + i as i32 * 14, line, t.c.fg);
     }
-    notice_toast(&mut c, t, APP_ICON, "Updates", "12 ready · 34 MB");
+    let bottom = t.m.height - t.m.hint_h;
+    let v = Visual::System { icon: APP_ICON };
+    widgets::notice_toast(&mut c, t, bottom, &v, "Updates", "12 updates ready");
     c
-}
-
-/// The notice toast: the app's icon and name, then the title.
-fn notice_toast(c: &mut Canvas, t: &Theme, icon_name: &str, app: &str, title: &str) {
-    let s = IconSize::Tiny as i32;
-    let aw = t.f.small_bold.measure(app);
-    let tw = t.f.small.measure(title);
-    let w = (8 + s + 5 + aw + 6 + tw + 10).min(t.m.width - 2 * t.m.margin);
-    let h = t.m.toast_h;
-    let r = Rect::new((t.m.width - w) / 2, t.m.height - t.m.hint_h - h - 4, w, h);
-    c.round_rect(r, t.m.radius_large, t.c.surface);
-    c.stroke_round_rect(r, t.m.radius_large, t.c.accent);
-    icon::draw(
-        c,
-        icon_name,
-        IconSize::Tiny,
-        r.x + 8,
-        r.y + (h - s) / 2,
-        t.c.accent,
-    );
-    let x = r.x + 8 + s + 5;
-    let x = text_in(c, t.f.small_bold, Rect::new(x, r.y, aw, h), app, t.c.fg) + 6;
-    text_in(
-        c,
-        t.f.small,
-        Rect::new(x, r.y, r.right() - 8 - x, h),
-        title,
-        soft(t),
-    );
 }
 
 fn n_switcher(t: &Theme) -> Canvas {

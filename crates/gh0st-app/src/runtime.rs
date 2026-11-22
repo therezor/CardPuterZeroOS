@@ -350,6 +350,11 @@ impl Runtime {
                     }
                 }
                 Request::KeepAwake(_) => {}
+                Request::Open(name) => {
+                    if let Some(l) = &self.link {
+                        l.send(&["open", &name]);
+                    }
+                }
                 Request::Notify(text) => match &self.link {
                     Some(l) if self.paused => {
                         l.send(&["toast", &text]);

@@ -1,8 +1,10 @@
 //! The shell: the home screen and everything it owns while no app is open.
 
+pub mod hold;
 pub mod home;
 pub mod lock;
 pub mod motion;
+pub mod notices;
 pub mod overlay;
 pub mod run;
 pub mod search;

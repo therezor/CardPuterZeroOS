@@ -661,6 +661,39 @@ until the app is back. Timers, jobs and watched fds go on. `cx.in_front()`
 says which. `cx.notify(text)` reaches the user either way: a toast in the
 app, or one the shell draws over whatever is in front.
 
+### Notifications
+
+A notice outlives the toast: it waits in the shell's notifications until the
+user clears it, and puts a count on the app's tile. `cx.post(tag, title,
+body)` posts one; posting the same `tag` again replaces it, and
+`cx.unpost(tag)` takes it back. The shell toasts a new one over whatever is
+in front, never while the device is locked.
+
+```rust
+use gh0st_app::prelude::*;
+
+struct Recorder;
+
+impl Page for Recorder {
+    fn title(&self) -> &str {
+        "Recorder"
+    }
+
+    fn start(&mut self, cx: &mut Cx) {
+        cx.post("saved", "Recording saved", "Memo 12 · 4:31");
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.text("Saved");
+    }
+}
+```
+
+[`notify`] is the file format underneath, for a count, a tone, or another
+app for Enter to open. `cx.open(name)` asks the shell for another app, by
+its desktop file stem or its program: this app pauses and comes back when
+that one closes.
+
 ### The screen timeout
 
 After `dark_time` with no key, the shell turns the screen off and pauses the

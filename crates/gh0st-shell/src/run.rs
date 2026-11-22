@@ -7,6 +7,7 @@
 
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::lock::{self, Lock};
+use crate::notices::{self, Panel};
 use crate::overlay::Overlay;
 use crate::switcher::{Card, HoldTick, Switcher};
 use crate::tasks::{self, Task, Tasks};
@@ -20,6 +21,7 @@ use gh0st_core::evdev;
 use gh0st_core::job::{self, Job};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::link::Link;
+use gh0st_core::notify::{self, Dismissed, Notice};
 use gh0st_core::password::{self, Account, Tries};
 use gh0st_core::rfkill;
 use gh0st_core::rt;
@@ -52,6 +54,8 @@ const DIM_PERCENT: u8 = 10;
 /// only briefly.
 const LOCK_DARK_MS: u64 = 10_000;
 const TOAST_MS: u64 = 1500;
+/// A notice stays a little longer: it has two parts to read.
+const NOTICE_TOAST_MS: u64 = 3000;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
 const VOLUME_STEP: i32 = 10;
@@ -98,6 +102,8 @@ pub fn main(args: &[String]) -> i32 {
 enum Screen {
     Home,
     Switcher,
+    /// The notifications, from the switcher's 5 or home's menu.
+    Notices,
     Locked,
     /// Backlight off after `dark_time`. The next key wakes the lock screen
     /// once Lock after has passed, else goes straight back.
@@ -117,6 +123,21 @@ enum Back {
 enum Pending {
     Pause,
     Resume(String),
+    /// The app in front asked for another over the link: pause it, then
+    /// bring this one up.
+    Open(String),
+}
+
+/// What a watched fd says changed. Only Linux has the watches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+enum Wake {
+    /// The app folders: rescan.
+    Apps,
+    /// Battery, charger and links: re-read the status.
+    Status,
+    /// A notice was posted or removed.
+    Notices,
 }
 
 /// A helper whose answer the shell is waiting for.
@@ -196,8 +217,7 @@ struct Shell {
     input: Input,
     kb: Keyboard,
     signals: rt::Signals,
-    /// (true: app folders, rescan; false: status, re-read sysfs).
-    watches: Vec<(bool, Watch)>,
+    watches: Vec<(Wake, Watch)>,
     pictures: HashMap<PathBuf, (Option<SystemTime>, Rc<Picture>)>,
     lock: Lock,
     /// This lock holds however short the dark: locked by hand or at start.
@@ -281,6 +301,19 @@ struct Shell {
     esc_armed: bool,
     /// Home's menu, open on 8: the selected row.
     home_menu: Option<usize>,
+    /// Every notice shown, newest first: posted and not dismissed.
+    notices: Vec<Notice>,
+    /// Ids and times already seen, so only a new post toasts.
+    notices_known: Vec<(String, u64)>,
+    dismissed: Dismissed,
+    panel: Panel,
+    /// Where Esc on the notifications goes: Home or the switcher.
+    panel_back: Screen,
+    /// The toast is this notice, drawn with its app's picture.
+    toast_notice: Option<notices::Row>,
+    /// (opened, opener): an app opened over another over the link. When
+    /// it closes, the opener comes back.
+    return_to: Option<(String, String)>,
     home_armed: bool,
     swallow_release: Option<u16>,
     rescan_at: Option<u64>,
@@ -417,6 +450,13 @@ impl Shell {
             enter_armed: false,
             esc_armed: false,
             home_menu: None,
+            notices: Vec::new(),
+            notices_known: Vec::new(),
+            dismissed: Dismissed::load(&notify::dismissed_path()),
+            panel: Panel::default(),
+            panel_back: Screen::Home,
+            toast_notice: None,
+            return_to: None,
             home_armed: false,
             swallow_release: None,
             rescan_at: None,
@@ -438,6 +478,7 @@ impl Shell {
             );
         }
         s.rescan();
+        s.reload_notices(false);
         s.refresh_status();
         if on_device {
             let dir = std::env::var_os("XDG_RUNTIME_DIR")
@@ -630,7 +671,16 @@ impl Shell {
             note: a.entry.comment.clone(),
             icon,
             pinned: self.pins.contains(&a.file),
+            count: self.count_for(a),
         }
+    }
+
+    /// The number on app `a`'s badge: the largest `count` its notices
+    /// carry, else how many it has.
+    fn count_for(&self, a: &App) -> u32 {
+        let mine = self.notices.iter().filter(|n| a.answers_to(&n.app));
+        let (most, n) = mine.fold((0, 0), |(m, n), x| (m.max(x.count), n + 1));
+        if most > 0 { most } else { n }
     }
 
     fn refresh_status(&mut self) {
@@ -693,6 +743,9 @@ impl Shell {
                     .flatten(),
                 (shell && self.screen == Screen::Switcher)
                     .then(|| self.switcher.hold_at())
+                    .flatten(),
+                (shell && self.screen == Screen::Notices)
+                    .then(|| self.panel.hold_at())
                     .flatten(),
                 self.dark_at(),
                 self.dim_at(),
@@ -762,15 +815,18 @@ impl Shell {
                     }
                 }
             }
-            let (mut apps_changed, mut status_changed) = (false, false);
-            for (i, (apps, w)) in self.watches.iter().enumerate() {
+            let (mut apps_changed, mut status_changed, mut notices_changed) = (false, false, false);
+            for (i, (wake, w)) in self.watches.iter().enumerate() {
                 if rt::readable(&fds[2 + i]) && w.drain() {
-                    if *apps {
-                        apps_changed = true;
-                    } else {
-                        status_changed = true;
+                    match wake {
+                        Wake::Apps => apps_changed = true,
+                        Wake::Status => status_changed = true,
+                        Wake::Notices => notices_changed = true,
                     }
                 }
+            }
+            if notices_changed {
+                self.reload_notices(true);
             }
             if apps_changed {
                 // Apps change in bursts while the Store installs; settle first.
@@ -811,6 +867,7 @@ impl Shell {
                 match self.pending.take() {
                     Some(Pending::Pause) => self.pause_front(now),
                     Some(Pending::Resume(id)) => self.resume(&id, now),
+                    Some(Pending::Open(id)) => self.open_over_front(&id, now),
                     None => {}
                 }
             }
@@ -865,6 +922,14 @@ impl Shell {
             self.screen = Screen::Home;
             self.undim();
             self.take_screen();
+            // An app opened over another goes back to it.
+            if let Some((opened, opener)) = self.return_to.take() {
+                let back = gone.iter().any(|t| t.id == opened)
+                    && self.tasks.get(&opener).is_some_and(|t| t.resumable());
+                if back {
+                    self.pending = Some(Pending::Resume(opener));
+                }
+            }
         } else {
             let cards = self.cards();
             self.switcher.set_apps(cards);
@@ -902,6 +967,7 @@ impl Shell {
         if self.toast.as_ref().is_some_and(|t| now >= t.1) {
             self.toast = None;
             self.level = None;
+            self.toast_notice = None;
             self.dirty = true;
             if let Some(p) = self.popup.take() {
                 self.spare = Some(p.hide(self.display.as_mut()));
@@ -917,6 +983,9 @@ impl Shell {
         }
         if self.screen == Screen::Switcher {
             self.close_all_tick(now);
+        }
+        if self.screen == Screen::Notices {
+            self.clear_all_tick();
         }
         // Any wake while something moves draws the next frame.
         if self.next_frame(now).is_some() {
@@ -1366,11 +1435,15 @@ impl Shell {
     fn read_link(&mut self, pgid: i32) {
         let mut toasts = Vec::new();
         let mut slept = false;
+        let mut open = None;
         if let Some(t) = self.tasks.iter_mut().find(|t| t.pgid == pgid) {
+            let front = t.state == tasks::State::Front;
             while let Some(m) = t.link.as_ref().and_then(|l| l.recv()) {
                 match m.first().map(String::as_str) {
                     Some("hello") => t.linked = true,
                     Some("toast") => toasts.extend(m.get(1).cloned()),
+                    // Only the app in front may bring another up.
+                    Some("open") if front => open = m.get(1).cloned(),
                     Some("awake") => {
                         let on = m.get(1).is_some_and(|v| v == "1");
                         slept |= t.awake && !on;
@@ -1388,6 +1461,9 @@ impl Shell {
         if self.tasks.front().is_some_and(|t| t.awake) {
             self.undim();
         }
+        if let Some(name) = open {
+            self.open_request(&name);
+        }
         // What an app says stays private while the device is locked.
         if self.locked() {
             return;
@@ -1395,6 +1471,251 @@ impl Shell {
         for text in toasts {
             self.toast(text);
         }
+    }
+
+    /// An app in front asked, over the link, for app `name`.
+    fn open_request(&mut self, name: &str) {
+        let Some(app) = self.apps.iter().find(|a| a.answers_to(name)) else {
+            return;
+        };
+        let front = self.tasks.front().map(|t| t.id.clone());
+        if front.is_some() && front.as_deref() != Some(app.file.as_str()) {
+            self.pending = Some(Pending::Open(app.file.clone()));
+        }
+    }
+
+    /// Pauses the app in front and brings up app `id` over it; when `id`
+    /// closes, the first comes back.
+    fn open_over_front(&mut self, id: &str, now: u64) {
+        let Some(app) = self.apps.iter().find(|a| a.file == id).cloned() else {
+            return;
+        };
+        match self.park_front(now) {
+            Ok(opener) => {
+                self.return_to = Some((app.file.clone(), opener));
+                match self.tasks.get(id).map(|t| t.state) {
+                    Some(tasks::State::Closing { .. }) => {
+                        self.return_to = None;
+                        self.take_screen();
+                        self.toast(format!("{} is closing", app.entry.name));
+                    }
+                    Some(_) => self.resume(id, now),
+                    None => self.launch(&app),
+                }
+            }
+            Err(Some(name)) => self.toast(format!("{name} can't be paused")),
+            Err(None) => {}
+        }
+    }
+
+    /// Reads the notice folders again. With `announce`, a notice not seen
+    /// before shows as a toast, unless the screen is dark or locked.
+    fn reload_notices(&mut self, announce: bool) {
+        let mut all = notify::read_dir(&notify::system_dir(), true);
+        all.extend(notify::read_dir(&notify::user_dir(), false));
+        self.dismissed.keep_only(&all);
+        all.retain(|n| !(n.system && self.dismissed.has(n)));
+        all.sort_by_key(|n| std::cmp::Reverse(n.time));
+        let fresh = all
+            .iter()
+            .find(|n| {
+                !self
+                    .notices_known
+                    .iter()
+                    .any(|(id, t)| *id == n.id() && *t == n.time)
+            })
+            .cloned();
+        self.notices_known = all.iter().map(|n| (n.id(), n.time)).collect();
+        self.notices = all;
+        self.sync_notices();
+        if let Some(n) = fresh.filter(|_| announce) {
+            if !self.locked() && self.screen != Screen::Off {
+                self.announce(&n);
+            }
+        }
+    }
+
+    /// The app a notice belongs to, as home shows it: name and picture.
+    fn notice_row(&mut self, n: &Notice) -> notices::Row {
+        let app = self.apps.iter().find(|a| a.answers_to(&n.app)).cloned();
+        match app {
+            Some(a) => {
+                let e = self.entry_for(&a);
+                notices::Row {
+                    notice: n.clone(),
+                    name: e.name,
+                    icon: e.icon,
+                }
+            }
+            None => notices::Row {
+                notice: n.clone(),
+                name: n.app.clone(),
+                icon: Icon::Letter { tint: n.app.len() },
+            },
+        }
+    }
+
+    /// The panel's rows, the tiles' numbers and the switcher's chip follow
+    /// the notices.
+    fn sync_notices(&mut self) {
+        let list = self.notices.clone();
+        let rows = list.iter().map(|n| self.notice_row(n)).collect();
+        self.panel.set(rows);
+        let counts: Vec<(String, u32)> = self
+            .apps
+            .iter()
+            .map(|a| (a.file.clone(), self.count_for(a)))
+            .collect();
+        self.home
+            .set_counts(|id| counts.iter().find(|(f, _)| f == id).map_or(0, |(_, n)| *n));
+        self.switcher.set_notices(list.len());
+        self.dirty = true;
+    }
+
+    /// A new notice: a toast with its app's picture, over an app too.
+    fn announce(&mut self, n: &Notice) {
+        let row = self.notice_row(n);
+        if self.app_front() {
+            if let Some(p) = self.popup.take() {
+                self.spare = Some(p.hide(self.display.as_mut()));
+            }
+            let t = self.t;
+            let under = Canvas::new(t.m.width, t.m.height);
+            let v = home::visual(&t, &row.icon, &row.name, Size::Tiny);
+            let (name, title) = (row.name.clone(), row.notice.title.clone());
+            self.popup = Some(Overlay::show(self.display.as_mut(), under, |c| {
+                let bottom = t.m.height - t.m.hint_h;
+                widgets::notice_toast(c, &t, bottom, &v, &name, &title)
+            }));
+        }
+        self.level = None;
+        self.toast = Some((String::new(), rt::now_ms() + NOTICE_TOAST_MS));
+        self.toast_notice = Some(row);
+        self.dirty = true;
+    }
+
+    fn open_notices(&mut self, back: Screen) {
+        self.panel_back = back;
+        self.panel.reset();
+        self.switcher.cancel_hold();
+        self.screen = Screen::Notices;
+        self.dirty = true;
+    }
+
+    fn notices_back(&mut self) {
+        self.panel.cancel_hold();
+        self.screen = self.panel_back;
+        self.dirty = true;
+    }
+
+    /// Clears notice `n`: an app's file goes; a system notice is remembered
+    /// as dismissed until it is posted anew.
+    fn dismiss(&mut self, n: &Notice) {
+        if n.system {
+            self.dismissed.add(n);
+            if let Err(e) = self.dismissed.save(&notify::dismissed_path()) {
+                eprintln!("gh0st shell: notices: {e}");
+            }
+        } else if let Err(e) = notify::remove(&notify::user_dir(), &n.app, &n.tag) {
+            eprintln!("gh0st shell: notices: {e}");
+        }
+        self.notices
+            .retain(|m| m.id() != n.id() || m.system != n.system);
+        self.sync_notices();
+    }
+
+    /// Enter on a notice: it is done with, and its app comes up.
+    fn open_notice(&mut self) {
+        let Some(n) = self.panel.selected().map(|r| r.notice.clone()) else {
+            return;
+        };
+        let Some(app) = self.apps.iter().find(|a| a.answers_to(n.target())).cloned() else {
+            self.toast("No app opens this");
+            return;
+        };
+        self.dismiss(&n);
+        match self.tasks.get(&app.file).map(|t| t.state) {
+            Some(tasks::State::Closing { .. }) => {
+                self.toast(format!("{} is closing", app.entry.name))
+            }
+            Some(_) => self.pending = Some(Pending::Resume(app.file.clone())),
+            None => self.launch(&app),
+        }
+    }
+
+    /// The hold on 4 fills, and at its end clears every notice, if its key
+    /// is still down.
+    fn clear_all_tick(&mut self) {
+        match self.panel.hold_tick(rt::now_ms()) {
+            HoldTick::Idle => {}
+            HoldTick::Fill => self.dirty = true,
+            HoldTick::Done(key) => {
+                self.dirty = true;
+                if !self.held.contains(&key) {
+                    return;
+                }
+                for n in self.notices.clone() {
+                    self.dismiss(&n);
+                }
+            }
+        }
+    }
+
+    fn notices_key(&mut self, k: Key, now: u64) {
+        if k.state == State::Release && self.panel.let_go(k.code) {
+            self.toast("Hold to clear all");
+            return;
+        }
+        if k.state == State::Press && self.panel.holding() {
+            self.panel.cancel_hold();
+            self.dirty = true;
+        }
+        let armed = |flag: &mut bool| match k.state {
+            State::Press => {
+                *flag = true;
+                false
+            }
+            State::Release if *flag => {
+                *flag = false;
+                true
+            }
+            _ => false,
+        };
+        if k.is(code::ENTER) {
+            if armed(&mut self.enter_armed) {
+                self.open_notice();
+            }
+            return;
+        }
+        if k.is(code::ESC) {
+            if armed(&mut self.esc_armed) {
+                self.notices_back();
+            }
+            return;
+        }
+        if k.is(code::HOME) {
+            if armed(&mut self.home_armed) {
+                self.notices_back();
+            }
+            return;
+        }
+        if k.state == State::Release {
+            return;
+        }
+        match k.nav(true) {
+            Some(keys::Nav::Up) => self.panel.move_by(-1),
+            Some(keys::Nav::Down) => self.panel.move_by(1),
+            Some(_) => return,
+            None if k.state != State::Press => return,
+            None if k.is(code::BACKSPACE) || k.ch == Some('8') => {
+                if let Some(n) = self.panel.selected().map(|r| r.notice.clone()) {
+                    self.dismiss(&n);
+                }
+            }
+            None if k.ch == Some('4') => self.panel.hold_all(k.code, now),
+            None => return,
+        }
+        self.dirty = true;
     }
 
     fn draw_menu(&mut self, sel: usize) {
@@ -1406,6 +1727,7 @@ impl Shell {
             .map(|(act, label, value, keys)| home::MenuRow {
                 label,
                 choice: (*act == MenuAct::Layout).then_some(value.as_str()),
+                count: (*act == MenuAct::Notices && !value.is_empty()).then_some(value.as_str()),
                 keys,
                 // Nothing selected, nothing to pin.
                 dim: *act == MenuAct::Pin && !has_app,
@@ -1422,10 +1744,20 @@ impl Shell {
         let wait = self.tries.wait(password::boottime());
         let pw_on = self.lock_password && !self.checker_missing;
         let wait_note = format!("Try again in {wait} s");
+        // Only how many: what they say stays behind the lock.
+        let waiting = match self.notices.len() {
+            0 => String::new(),
+            1 => "1 notification".into(),
+            n => format!("{n} notifications"),
+        };
         let note = if !self.lock.field_open() {
             let no_password =
                 pw_on && !self.probing && self.account.is_some_and(|a| a != Account::Password);
-            no_password.then_some((Tone::Info, "No password set"))
+            if no_password {
+                Some((Tone::Info, "No password set"))
+            } else {
+                (!waiting.is_empty()).then_some((Tone::Info, waiting.as_str()))
+            }
         } else if self.lock.checking {
             Some((Tone::Info, "Checking\u{2026}"))
         } else if wait > 0 {
@@ -1466,6 +1798,7 @@ impl Shell {
     fn toast(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.level = None;
+        self.toast_notice = None;
         if self.app_front() {
             self.show_popup(&text);
         }
@@ -1561,6 +1894,10 @@ impl Shell {
         }
         if self.screen == Screen::Switcher {
             self.switcher_key(k, now);
+            return;
+        }
+        if self.screen == Screen::Notices {
+            self.notices_key(k, now);
             return;
         }
         if self.home_menu.is_some() {
@@ -1748,7 +2085,15 @@ impl Shell {
             (MenuAct::Pin, format!("{pin} {name}"), String::new(), "p"),
             (MenuAct::Layout, "Layout".into(), layout.into(), "l"),
             (MenuAct::Find, "Find".into(), String::new(), "s"),
-            (MenuAct::Switch, "Switch apps".into(), String::new(), "Fn k"),
+            (
+                MenuAct::Notices,
+                "Notifications".into(),
+                match self.notices.len() {
+                    0 => String::new(),
+                    n => n.to_string(),
+                },
+                "",
+            ),
             (MenuAct::Lock, "Lock".into(), String::new(), "Tab"),
         ]
     }
@@ -1799,11 +2144,7 @@ impl Shell {
             MenuAct::Pin => self.toggle_pin(),
             MenuAct::Layout => self.toggle_layout(),
             MenuAct::Find => self.home.start_search(),
-            MenuAct::Switch => {
-                // Opened from home, the switcher starts on Home: what is in front.
-                let at = 0;
-                self.open_switcher(Back::Home, at);
-            }
+            MenuAct::Notices => self.open_notices(Screen::Home),
             MenuAct::Lock => self.lock_now(rt::now_ms()),
         }
     }
@@ -2091,6 +2432,7 @@ impl Shell {
         self.pins = apps::load_pins();
         self.refresh_status();
         self.rescan();
+        self.reload_notices(false);
         let cards = self.cards();
         self.switcher.set_apps(cards);
         self.sync_grab();
@@ -2281,6 +2623,9 @@ impl Shell {
                 self.switcher.hold_all(k.code, now);
             }
             _ if k.ch == Some('6') && k.state == State::Press => self.lock_now(now),
+            _ if k.ch == Some('5') && k.state == State::Press && !self.notices.is_empty() => {
+                self.open_notices(Screen::Switcher);
+            }
             _ => return,
         }
         self.dirty = true;
@@ -2309,9 +2654,21 @@ impl Shell {
         };
         let mut status = status_of(&clock, self.battery, self.net, &dock, front);
         status.bluetooth = self.bluetooth;
+        status.notices = self.notices.len().min(u8::MAX as usize) as u8;
         match self.screen {
             Screen::Locked => self.draw_lock(&clock),
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
+            Screen::Notices => {
+                let status = Status {
+                    dock: &[],
+                    front: None,
+                    icon: "bell",
+                    title: "Notifications",
+                    ..status
+                };
+                self.panel
+                    .draw(&mut self.canvas, &t, &status, notify::now_secs());
+            }
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
         if self.screen == Screen::Home {
@@ -2323,11 +2680,22 @@ impl Shell {
         drop(cards);
         if matches!(
             self.screen,
-            Screen::Home | Screen::Switcher | Screen::Locked
+            Screen::Home | Screen::Switcher | Screen::Notices | Screen::Locked
         ) {
             self.draw_low_battery();
             if let Some((icon, label, pct)) = self.level {
                 widgets::level_bar(&mut self.canvas, &t, icon, label, pct);
+            } else if let (Some(row), Some(_)) = (&self.toast_notice, &self.toast) {
+                let bottom = t.m.height - t.m.hint_h;
+                let v = home::visual(&t, &row.icon, &row.name, Size::Tiny);
+                widgets::notice_toast(
+                    &mut self.canvas,
+                    &t,
+                    bottom,
+                    &v,
+                    &row.name,
+                    &row.notice.title,
+                );
             } else if let Some((text, _)) = &self.toast {
                 let bottom = t.m.height - t.m.hint_h;
                 let info = gh0st_ui::theme::Tone::Info;
@@ -2420,18 +2788,23 @@ impl Shell {
 /// Wakes for app installs (true: rescan), and for battery, charger and link
 /// changes (false: re-read status only).
 #[cfg(target_os = "linux")]
-fn watches(d: &Dirs) -> Vec<(bool, Watch)> {
-    let apps = Watch::dirs(&[d.ours.as_path(), d.stock.as_path()]).map(|w| (true, w));
-    let power = Watch::uevents().map(|w| (false, w));
-    let links = Watch::links().map(|w| (false, w));
-    [apps, power, links]
+fn watches(d: &Dirs) -> Vec<(Wake, Watch)> {
+    let apps = Watch::dirs(&[d.ours.as_path(), d.stock.as_path()]).map(|w| (Wake::Apps, w));
+    let power = Watch::uevents().map(|w| (Wake::Status, w));
+    let links = Watch::links().map(|w| (Wake::Status, w));
+    // The apps' folder is made here, so it is there to watch.
+    let user = notify::user_dir();
+    let _ = std::fs::create_dir_all(&user);
+    let system = notify::system_dir();
+    let notices = Watch::dirs(&[system.as_path(), user.as_path()]).map(|w| (Wake::Notices, w));
+    [apps, power, links, notices]
         .into_iter()
         .filter_map(Result::ok)
         .collect()
 }
 
 #[cfg(not(target_os = "linux"))]
-fn watches(_: &Dirs) -> Vec<(bool, Watch)> {
+fn watches(_: &Dirs) -> Vec<(Wake, Watch)> {
     Vec::new()
 }
 
@@ -2746,7 +3119,8 @@ enum MenuAct {
     Pin,
     Layout,
     Find,
-    Switch,
+    /// Switch apps left the menu for this: it has 4 and Fn+K.
+    Notices,
     Lock,
 }
 

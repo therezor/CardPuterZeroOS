@@ -216,6 +216,7 @@ pub(crate) enum Request {
     Redraw,
     Notify(String),
     KeepAwake(bool),
+    Open(String),
     ShowKeys,
     Ask(u32, Dialog),
 }
@@ -460,6 +461,36 @@ impl Cx<'_> {
     /// a [`toast`](Cx::toast).
     pub fn notify(&mut self, text: &str) {
         self.s.requests.push(Request::Notify(text.to_string()));
+    }
+
+    /// Asks the shell to bring up app `name`: its desktop file stem
+    /// (`update`) or its program (`gh0st-update`). This app pauses, and
+    /// comes back when that one closes. Without a shell, nothing happens.
+    pub fn open(&mut self, name: &str) {
+        self.s.requests.push(Request::Open(name.to_string()));
+    }
+
+    /// Posts a notice that stays until the user clears it or this app
+    /// replaces it: a toast now, a row in the shell's notifications, a
+    /// count on this app's tile. Posting `tag` again replaces it. See
+    /// [`notify`](crate::notify).
+    pub fn post(&mut self, tag: &str, title: &str, body: &str) {
+        let n = crate::notify::Notice {
+            app: self.s.app_id.clone(),
+            tag: tag.into(),
+            title: title.into(),
+            body: body.into(),
+            time: crate::notify::now_secs(),
+            ..Default::default()
+        };
+        if let Err(e) = crate::notify::post(&crate::notify::user_dir(), &n) {
+            eprintln!("gh0st app: notice {tag}: {e}");
+        }
+    }
+
+    /// Takes back notice `tag`, posted by [`post`](Cx::post).
+    pub fn unpost(&mut self, tag: &str) {
+        let _ = crate::notify::remove(&crate::notify::user_dir(), &self.s.app_id, tag);
     }
 
     /// Keeps the screen on while the app is in front, for a player or a

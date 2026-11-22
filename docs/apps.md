@@ -97,6 +97,7 @@ App to shell:
 | `softkey` n `on` or `off` | Shows soft key n (4 to 8) lit, for a toggle |
 | `toast` text | A short message over an OS bar for 2 s |
 | `awake` `1` or `0` | Keep the screen on while the app is in front, for a player or a clock. `0` lets it go dark again |
+| `open` name | Bring up app `name` (its desktop file stem, or the program its `Exec` runs). Only the app in front may ask. It pauses, and comes back when `name` closes |
 
 `icon` names a symbol built into gh0st, the Lucide set that `gh0st:<name>`
 uses.
@@ -139,6 +140,37 @@ slots belong to those keys. `design.md` has the rules; in short:
   a text field has focus.
 - Slot centres follow the keys. Stock puts them at x = 49, 105, 161, 217 and
   273. Ours are in `theme.rs`.
+
+## Notifications
+
+A notice is a small file, so any app, in any language, posts one without a
+daemon, and it waits even when the app is gone. The shell watches two
+folders with inotify:
+
+- `~/.local/state/gh0st/notify/` for apps,
+- `/var/lib/gh0st/notify/` for system services.
+
+The file name is `<app>.<tag>`: `app` is the desktop file stem or the
+program name, `tag` names the notice. Both are lowercase letters, digits,
+`-` and `_`. Posting the same name again replaces the notice. Write a hidden
+file (a name starting with `.`) and rename it, so the shell never reads half
+of one. The body is `key=value` lines:
+
+| Key | Holds |
+|---|---|
+| `title` | One line, up to 60 characters. Without it the file is not a notice |
+| `body` | One line under it, up to 120 |
+| `tone` | `info`, `ok`, `warning` or `critical` |
+| `time` | Seconds since the epoch. The newest shows first |
+| `open` | The app Enter opens, named as `app` is. Empty: the poster |
+| `count` | A number for the app's tile, such as how many updates |
+
+The shell toasts a new notice over whatever is in front, keeps it in the
+notifications (5 in the switcher, or home's menu), lights a bell in its top
+bar, and puts the count, or how many notices the app has, on its tile.
+Clearing an app's notice deletes its file; clearing a system one hides it
+until it is posted again with a new `time`. While locked, the lock screen
+says only how many there are.
 
 ## Pausing
 

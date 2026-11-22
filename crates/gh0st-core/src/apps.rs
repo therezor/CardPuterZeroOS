@@ -147,6 +147,21 @@ pub struct App {
 }
 
 impl App {
+    /// True when `name` means this app: its desktop file stem (`update`)
+    /// or the program its `Exec` runs (`gh0st-update`). Notices and the
+    /// shell link name apps either way.
+    pub fn answers_to(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let stem = self.file.strip_suffix(".desktop").unwrap_or(&self.file);
+        if stem == name {
+            return true;
+        }
+        let program = self.entry.exec.split_whitespace().next().unwrap_or("");
+        program.rsplit('/').next() == Some(name)
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(entry: DesktopEntry, ours: bool) -> App {
         App {

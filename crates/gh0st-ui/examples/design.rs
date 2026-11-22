@@ -1072,6 +1072,7 @@ fn home(t: &Theme) -> Canvas {
             note: "",
             visual: v,
             pinned: i < 2,
+            count: 0,
         };
         widgets::tile(&mut c, t, r, &item, i == 1);
     }

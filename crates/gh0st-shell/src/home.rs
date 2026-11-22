@@ -23,6 +23,8 @@ pub struct MenuRow<'a> {
     pub label: &'a str,
     /// A choice shows `‹ value ›`.
     pub choice: Option<&'a str>,
+    /// A count in a tag: how many notifications.
+    pub count: Option<&'a str>,
     pub keys: &'a str,
     /// Can't be used now: Pin with no app selected.
     pub dim: bool,
@@ -46,9 +48,11 @@ pub fn draw_menu(c: &mut Canvas, t: &Theme, rows: &[MenuRow], sel: usize) {
             icon: None,
             tint: t.c.accent,
             label: r.label,
-            trailing: r
-                .choice
-                .map_or(widgets::Trailing::None, widgets::Trailing::Choice),
+            trailing: match (r.choice, r.count) {
+                (Some(v), _) => widgets::Trailing::Choice(v),
+                (None, Some(n)) => widgets::Trailing::Tag(n, gh0st_ui::theme::Tone::Info),
+                (None, None) => widgets::Trailing::None,
+            },
         };
         let rr = Rect::new(x, y, w, t.m.menu_row_h);
         widgets::menu_row(c, t, rr, &row, r.keys, keys_w, i == sel, r.dim);
@@ -129,6 +133,8 @@ pub struct Entry {
     pub note: String,
     pub icon: Icon,
     pub pinned: bool,
+    /// The number from the app's notice, on its badge. 0: none.
+    pub count: u32,
 }
 
 const GLIDE_MS: u64 = 80;
@@ -279,6 +285,13 @@ impl Home {
         }
         self.selected = self.top + n;
         true
+    }
+
+    /// Sets each app's badge number from `count` (by entry id).
+    pub fn set_counts(&mut self, count: impl Fn(&str) -> u32) {
+        for e in &mut self.entries {
+            e.count = count(&e.id);
+        }
     }
 
     /// New app list after a rescan, keeping the selection on the same app.
@@ -491,6 +504,7 @@ impl Home {
                 if small { Size::Small } else { Size::Large },
             ),
             pinned: e.pinned,
+            count: e.count,
         }
     }
 
@@ -626,6 +640,7 @@ mod tests {
                 note: String::new(),
                 icon: Icon::Letter { tint: 0 },
                 pinned: false,
+                count: 0,
             })
             .collect();
         Home::new(entries, layout, &Theme::default())

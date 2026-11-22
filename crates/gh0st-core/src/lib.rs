@@ -12,6 +12,7 @@ pub mod evdev;
 pub mod job;
 pub mod keys;
 pub mod link;
+pub mod notify;
 pub mod password;
 pub mod procfs;
 pub mod rfkill;

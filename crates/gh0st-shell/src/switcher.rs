@@ -5,6 +5,8 @@
 //! The bar's dock is the same list in the same order, and its fill follows
 //! the cursor.
 
+use crate::hold::HeldKey;
+pub use crate::hold::HoldTick;
 use crate::home::{self, Icon, Size};
 use crate::motion::{self, lerp, lerp_rect};
 use gh0st_core::usage::{AppUsage, SystemUsage};
@@ -14,10 +16,6 @@ use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, Card as CardView, Status, Visual};
 
 const GLIDE_MS: u64 = 80;
-/// How long 4 is held to close every app, as the SDK's held chip.
-const HOLD_MS: u64 = 700;
-/// A frame of the hold's fill.
-const HOLD_FRAME_MS: u64 = 40;
 /// Room under the cards for the meters.
 const STRIP_H: i32 = 20;
 
@@ -52,26 +50,6 @@ enum Motion {
 }
 
 type Anim = motion::Anim<Motion>;
-
-/// 4, or Del on Home, held to close every app. It exists only while the key
-/// is down.
-#[derive(Clone, Copy, Debug)]
-struct Hold {
-    code: u16,
-    start: u64,
-    next: u64,
-    pc: u8,
-}
-
-/// What a tick did to the hold.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HoldTick {
-    Idle,
-    /// The fill grew: redraw.
-    Fill,
-    /// Held to the end by key `code`.
-    Done(u16),
-}
 
 #[derive(Clone, Copy, Debug)]
 struct Geo {
@@ -121,7 +99,10 @@ pub struct Switcher {
     /// The stats line per app id, formatted once per sample.
     stats: Vec<(String, String)>,
     meters: Option<Meters>,
-    hold: Option<Hold>,
+    /// 4, or Del on Home, held to close every app.
+    hold: HeldKey,
+    /// How many notices wait, as chip 5's word. Empty: no chip.
+    notices: String,
 }
 
 /// The system's figures under the cards.
@@ -144,7 +125,8 @@ impl Switcher {
             anim: None,
             stats: Vec::new(),
             meters: None,
-            hold: None,
+            hold: HeldKey::default(),
+            notices: String::new(),
         }
     }
 
@@ -223,7 +205,7 @@ impl Switcher {
         self.anim = None;
         self.keep_visible();
         if self.apps.is_empty() {
-            self.hold = None;
+            self.hold.cancel();
         }
     }
 
@@ -267,7 +249,7 @@ impl Switcher {
 
     /// Left or right one card, no wrap.
     pub fn move_by(&mut self, dx: i32, now: u64) {
-        self.hold = None;
+        self.hold.cancel();
         let (old, old_top) = (self.selected, self.top);
         let from = self.current_frame(now);
         let last = self.count() - 1;
@@ -306,56 +288,39 @@ impl Switcher {
         self.anim.map(|a| a.next_frame(now))
     }
 
+    /// How many notices wait: chip 5 opens them. 0 hides it.
+    pub fn set_notices(&mut self, n: usize) {
+        self.notices = if n == 0 { String::new() } else { n.to_string() };
+    }
+
     /// Starts the hold that closes every app, while key `code` is down.
     /// Not with none open.
     pub fn hold_all(&mut self, code: u16, now: u64) {
         if !self.apps.is_empty() {
-            self.hold = Some(Hold {
-                code,
-                start: now,
-                next: now + HOLD_FRAME_MS,
-                pc: 0,
-            });
+            self.hold.start(code, now);
         }
     }
 
     pub fn holding(&self) -> bool {
-        self.hold.is_some()
+        self.hold.holding()
     }
 
     pub fn cancel_hold(&mut self) {
-        self.hold = None;
+        self.hold.cancel();
     }
 
     /// Key `code` came up. True if that ended a hold before it was done.
     pub fn let_go(&mut self, code: u16) -> bool {
-        let early = self.hold.is_some_and(|h| h.code == code);
-        if early {
-            self.hold = None;
-        }
-        early
+        self.hold.let_go(code)
     }
 
     /// When the hold next needs a tick: its next frame, or its end.
     pub fn hold_at(&self) -> Option<u64> {
-        self.hold.map(|h| h.next.min(h.start + HOLD_MS))
+        self.hold.at()
     }
 
     pub fn hold_tick(&mut self, now: u64) -> HoldTick {
-        let Some(h) = self.hold.as_mut() else {
-            return HoldTick::Idle;
-        };
-        if now >= h.start + HOLD_MS {
-            let code = h.code;
-            self.hold = None;
-            return HoldTick::Done(code);
-        }
-        if now < h.next {
-            return HoldTick::Idle;
-        }
-        h.pc = ((now - h.start) * 100 / HOLD_MS) as u8;
-        h.next = now + HOLD_FRAME_MS;
-        HoldTick::Fill
+        self.hold.tick(now)
     }
 
     pub fn settle(&mut self, now: u64) {
@@ -440,10 +405,10 @@ impl Switcher {
         } else {
             none
         };
-        let all = match self.hold {
+        let all = match self.hold.fill() {
             _ if self.apps.is_empty() => none,
-            Some(h) => Chip {
-                look: Look::Hold(h.pc),
+            Some(pc) => Chip {
+                look: Look::Hold(pc),
                 ..danger("copy-x", "All")
             },
             None => danger("copy-x", "All"),
@@ -453,7 +418,17 @@ impl Switcher {
             word: "Lock",
             look: Look::Normal,
         };
-        widgets::action_bar(c, t, &[all, none, lock, none, close]);
+        // 5 opens the notifications, while there are any.
+        let bell = if self.notices.is_empty() {
+            none
+        } else {
+            Chip {
+                icon: "bell",
+                word: &self.notices,
+                look: Look::Normal,
+            }
+        };
+        widgets::action_bar(c, t, &[all, bell, lock, none, close]);
     }
 
     /// CPU and memory, side by side across the cards' width. The top bar's
@@ -579,12 +554,13 @@ mod tests {
 
     #[test]
     fn a_hold_fills_then_closes_all_and_no_deadline_outlives_it() {
+        use crate::hold::{HOLD_FRAME_MS, HOLD_MS};
         let mut s = switcher(&["a"]);
         s.hold_all(FOUR, 1000);
         assert_eq!(s.hold_at(), Some(1000 + HOLD_FRAME_MS));
         assert_eq!(s.hold_tick(1020), HoldTick::Idle);
         assert_eq!(s.hold_tick(1040), HoldTick::Fill);
-        assert_eq!(s.hold.unwrap().pc, 5);
+        assert_eq!(s.hold.fill(), Some(5));
         assert_eq!(s.hold_tick(1000 + HOLD_MS), HoldTick::Done(FOUR));
         assert!(!s.holding());
         assert_eq!(s.hold_at(), None);

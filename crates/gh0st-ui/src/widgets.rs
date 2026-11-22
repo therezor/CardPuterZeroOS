@@ -800,6 +800,9 @@ pub struct AppItem<'a> {
     pub note: &'a str,
     pub visual: Visual<'a>,
     pub pinned: bool,
+    /// A number on the badge's corner, from the app's notice: "12" updates.
+    /// 0 draws none.
+    pub count: u32,
 }
 
 /// One grid cell: badge on top, name below, both centred, a pin mark in the
@@ -826,6 +829,7 @@ pub fn tile_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected
     let top = r.y + 1 + (r.h - 2 - block) / 2;
     let br = Rect::new(r.x + (r.w - b) / 2, top, b, b);
     badge(c, t, br, &item.visual, selected);
+    count_badge(c, t, br, item.count);
     if item.pinned {
         let s = IconSize::Tiny as i32;
         let col = if selected { t.c.accent } else { t.c.muted };
@@ -835,6 +839,64 @@ pub fn tile_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selected
     let w = f.measure(item.label).min(r.w - 8);
     let y = br.bottom() + gap + f.cap();
     f.draw_elided(c, r.x + (r.w - w) / 2, y, item.label, r.w - 8, col);
+}
+
+/// A count on a badge's top-right corner, in accent, ringed in the
+/// background so it reads over any badge. Nothing for 0; past 99, "99+".
+pub fn count_badge(c: &mut Canvas, t: &Theme, badge: Rect, n: u32) {
+    if n == 0 {
+        return;
+    }
+    let text = if n > 99 {
+        "99+".to_string()
+    } else {
+        n.to_string()
+    };
+    let w = (t.f.small_bold.measure(&text) + 6).max(13);
+    let r = Rect::new(badge.right() - w + 4, badge.y - 4, w, 13);
+    c.round_rect(r.inset(-2), 8, t.c.bg);
+    c.round_rect(r, 7, t.c.accent);
+    text_centre(c, t.f.small_bold, r, &text, t.c.accent_fg);
+}
+
+/// A notice over whatever is in front: the app's picture and name, then
+/// what it says, in a card edged in accent above `bottom`. Returns where
+/// it went.
+pub fn notice_toast(
+    c: &mut Canvas,
+    t: &Theme,
+    bottom: i32,
+    visual: &Visual,
+    app: &str,
+    title: &str,
+) -> Rect {
+    let s = IconSize::Tiny as i32;
+    let aw = t.f.small_bold.measure(app);
+    let tw = t.f.small.measure(title);
+    let w = (8 + s + 5 + aw + 6 + tw + 10).min(t.m.width - 2 * t.m.margin);
+    let h = t.m.toast_h;
+    let r = Rect::new((t.m.width - w) / 2, bottom - h - 4, w, h);
+    c.round_rect(r, t.m.radius_large, t.c.surface);
+    c.stroke_round_rect(r, t.m.radius_large, t.c.accent);
+    slot_visual(c, t, Rect::new(r.x + 8, r.y + (h - s) / 2, s, s), visual);
+    let x = r.x + 8 + s + 5;
+    let x = text_in(
+        c,
+        t.f.small_bold,
+        Rect::new(x, r.y, aw.min(r.right() - 8 - x), h),
+        app,
+        t.c.fg,
+    ) + 6;
+    if x < r.right() - 8 {
+        text_in(
+            c,
+            t.f.small,
+            Rect::new(x, r.y, r.right() - 8 - x, h),
+            title,
+            soft(t),
+        );
+    }
+    r
 }
 
 /// The pin icon with its right edge at `right`.
@@ -861,6 +923,7 @@ pub fn app_row_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selec
     let b = t.m.badge_small;
     let br = Rect::new(r.x + 6, r.y + (r.h - b) / 2, b, b);
     badge(c, t, br, &item.visual, selected);
+    count_badge(c, t, br, item.count);
     let x = br.right() + 10;
     let mut right = r.right() - 10;
     if item.pinned {

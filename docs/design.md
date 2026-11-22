@@ -136,7 +136,9 @@ the front one underlined, as the shell shows open apps.
 3. The network: Wi-Fi bars, a cable, or a struck-out Wi-Fi when there is
    neither.
 4. Bluetooth, while it is on.
-5. One word of the app's own, in a tone, after a dot: "REC" while recording.
+5. A bell and a count while notifications wait. On the shell's screens only,
+   until the OS bars draw over apps too.
+6. One word of the app's own, in a tone, after a dot: "REC" while recording.
 
 When the title does not fit, the parent goes first, then Bluetooth, then the
 title shortens. The clock and the battery always stay.
@@ -315,7 +317,9 @@ menu, then the page.
 
 ![Home](design/36-home.png)
 
-Home: 4 Apps, 6 Find, 8 the home menu (pin, layout). Enter opens the app.
+Home: 4 Apps, 6 Find, 8 the home menu (pin, layout, notifications). Enter
+opens the app. A tile carries a count from its app's notice: how many
+updates, or how many notices.
 
 ![The switcher](design/37-switcher.png)
 
@@ -323,7 +327,17 @@ The switcher: 4 All is held: its chip fills red, and at 0.7 s every app
 closes. Del held on Home does the same. A shorter press shows "Hold to close
 all". 6 Lock locks. 8 Close closes the selected app at once, and so does Del.
 All and Close sit at the two ends, so one is never pressed for the other, and
-nothing sits next to Close.
+nothing sits next to Close. While notifications wait, 5 shows a bell and how
+many, and opens them.
+
+## Notifications
+
+A notice arrives as a toast over whatever is in front, with its app's
+picture and name. It then waits in the notifications, opened from the
+switcher's 5 or home's menu: newest first, each with its app, title, a line
+under it and its age. Enter opens the app and clears the notice. 8 Clear
+clears the selected one, as Del does. 4 held clears them all, as in the
+switcher. The lock screen shows only how many.
 
 ## The lock screen
 

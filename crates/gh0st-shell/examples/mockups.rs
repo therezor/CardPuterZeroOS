@@ -33,6 +33,7 @@ fn entries(t: &Theme, stock: Option<&Path>) -> Vec<Entry> {
         note: note.to_string(),
         icon,
         pinned,
+        count: 0,
     };
     vec![
         e(
@@ -273,18 +274,19 @@ fn lock(t: &Theme, field: Option<usize>, ready: bool, note: Option<(Tone, &str)>
 /// Home's menu with Lock selected.
 fn home_menu(t: &Theme, stock: Option<&Path>) -> Canvas {
     let mut c = home(t, stock, Layout::Grid, None);
-    let row = |label, choice, keys| home::MenuRow {
+    let row = |label, choice, count, keys| home::MenuRow {
         label,
         choice,
+        count,
         keys,
         dim: false,
     };
     let rows = [
-        row("Pin Store", None, "p"),
-        row("Layout", Some("Grid"), "l"),
-        row("Find", None, "s"),
-        row("Switch apps", None, "Fn k"),
-        row("Lock", None, "Tab"),
+        row("Pin Store", None, None, "p"),
+        row("Layout", Some("Grid"), None, "l"),
+        row("Find", None, None, "s"),
+        row("Notifications", None, Some("2"), ""),
+        row("Lock", None, None, "Tab"),
     ];
     home::draw_menu(&mut c, t, &rows, 4);
     c
