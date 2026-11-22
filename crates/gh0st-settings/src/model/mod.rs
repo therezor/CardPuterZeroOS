@@ -74,6 +74,8 @@ pub enum Setting {
     Ip6Privacy,
     /// The lock screen asks for the password.
     LockPassword,
+    /// How long dark before the lock asks for it.
+    LockAfter,
 }
 
 /// A value picked on its own page, each option with a note. The gated

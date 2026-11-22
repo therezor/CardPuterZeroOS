@@ -179,6 +179,8 @@ pub(crate) struct Runtime {
     /// The menu row last picked, and the depth of the page it was on.
     menu_last: Option<(usize, u32)>,
     toast: Option<Toast>,
+    /// The app asked to keep the screen on.
+    pub awake: bool,
     hold: Option<Hold>,
     /// The chip whose key is down, and that key: drawn pressed.
     pressed: Option<(u16, u8)>,
@@ -215,6 +217,7 @@ impl Runtime {
             taken: Vec::new(),
             menu_last: None,
             toast: None,
+            awake: false,
             hold: None,
             pressed: None,
             bar: Bar::new(),
@@ -340,6 +343,13 @@ impl Runtime {
                 }
                 Request::Adopt(pid) => self.adopted.push((pid, owner)),
                 Request::Redraw => self.dirty = true,
+                Request::KeepAwake(on) if on != self.awake => {
+                    self.awake = on;
+                    if let Some(l) = &self.link {
+                        l.send(&["awake", if on { "1" } else { "0" }]);
+                    }
+                }
+                Request::KeepAwake(_) => {}
                 Request::Notify(text) => match &self.link {
                     Some(l) if self.paused => {
                         l.send(&["toast", &text]);

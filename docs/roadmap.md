@@ -40,7 +40,8 @@ These gaps were in no doc before this one:
 
 1. **Data at rest.** See Decisions. The CPU has no AES instructions, so
    encryption will use Adiantum, which the rpt kernel has as a module.
-2. **Lock auth.** Holding Tab locks the screen, with no PIN or password.
+2. **Lock auth.** Built 2026-11-22: the lock screen asks for the password
+   (`design.md`, The lock screen). Still unmeasured on the device.
 3. **App isolation.** Every app runs as UID 1000 and can use the network, the
    camera, the mic and the home directory.
 4. **Memory pressure.** zram exists, but nothing decides which app dies first.
@@ -69,7 +70,8 @@ These gaps were in no doc before this one:
 12. **Release gates.** Nothing measures the whole system, checks for open
     ports, or captures idle traffic.
 13. **Stock apps.** Nobody has audited their traffic.
-14. **Screen-off and lock over an app.** Both work only on the home screen.
+14. **Screen-off and lock over an app.** Built 2026-11-22: dark pauses the
+    app in front (`apps.md`, Pausing). Still unmeasured on the device.
 
 ## Untrusted apps, in stages
 

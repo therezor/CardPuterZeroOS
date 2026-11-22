@@ -3,7 +3,9 @@
 //! saves, so stock apps' keys survive. The shell reads the file again each
 //! time it takes the screen back, so home follows what changed here.
 
-use crate::model::pages::{self, APP_ICONS, AppRow, DARK_TIMES, Logs, State as PageState};
+use crate::model::pages::{
+    self, APP_ICONS, AppRow, DARK_TIMES, DEFAULT_LOCK_AFTER, LOCK_AFTERS, Logs, State as PageState,
+};
 use crate::model::{
     self, Act, Body, Choice, Command, ConnField, Cursor, Dialog, Page as View, PageId, Setting,
     Value,
@@ -318,6 +320,9 @@ impl Settings {
         s.logs = logs_level();
         s.nm = sysconf::nm_privacy(&nm_files());
         s.lock_password = config.get_bool("gh0st.lock.password").unwrap_or(true);
+        s.lock_after = config
+            .get_int("gh0st.lock.after")
+            .unwrap_or(DEFAULT_LOCK_AFTER);
         let (y, mon, d, h, min) = rt::local_ymdhm();
         s.now = format!("{y}-{mon:02}-{d:02} {h:02}:{min:02}");
     }
@@ -524,6 +529,14 @@ impl Settings {
             Setting::LockPassword => {
                 let on = self.state.lock_password;
                 cx.settings().set_bool("gh0st.lock.password", !on);
+            }
+            Setting::LockAfter => {
+                let i = LOCK_AFTERS
+                    .iter()
+                    .position(|&t| t == self.state.lock_after)
+                    .unwrap_or(2);
+                let next = LOCK_AFTERS[cycle(i, d, LOCK_AFTERS.len())];
+                cx.settings().set_int("gh0st.lock.after", next);
             }
             _ => self.apply_system(s, d, cx),
         }

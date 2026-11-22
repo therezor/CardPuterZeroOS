@@ -51,6 +51,8 @@ pub struct Task {
     /// Running behind and told to `pause`: it draws nothing and reads no
     /// keys, so the shell needs neither its pixels nor a guard.
     pub quiet: bool,
+    /// Sent `awake 1`: the screen stays on while it is in front.
+    pub awake: bool,
 }
 
 impl Task {
@@ -238,6 +240,7 @@ mod tests {
             linked: false,
             background: false,
             quiet: false,
+            awake: false,
         }
     }
 

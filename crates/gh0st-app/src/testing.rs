@@ -160,6 +160,11 @@ impl Driver {
         self
     }
 
+    /// The app asked the shell to keep the screen on.
+    pub fn awake(&self) -> bool {
+        self.rt.awake
+    }
+
     /// The toast showing now, if any.
     pub fn toast(&self) -> Option<&str> {
         self.rt.toast_text()

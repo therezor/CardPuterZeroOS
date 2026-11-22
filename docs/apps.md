@@ -184,8 +184,8 @@ slots belong to those keys. `design.md` has the rules; in short:
   return. While another app is in front it reads that app's keys and its
   drawing shows over it.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
-  and leaves them in front. The screen still goes dark over one, but it won't
-  lock: "Close <app> to lock".
+  and leaves them in front. One keeps the screen on too: the shell can't stop
+  it drawing over the lock screen.
 
 ## The app menu
 

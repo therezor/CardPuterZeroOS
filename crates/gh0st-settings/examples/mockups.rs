@@ -132,6 +132,7 @@ fn sample_state() -> State {
             ip6_privacy: true,
         },
         lock_password: true,
+        lock_after: 300,
         country_zones: Vec::new(),
         now: "2026-11-21 14:32".into(),
         gpu_mem: GpuMem::Set(128),

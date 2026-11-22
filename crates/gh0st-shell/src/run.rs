@@ -6,6 +6,7 @@
 //! Dark, neither runs.
 
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
+use crate::lock::{self, Lock};
 use crate::overlay::Overlay;
 use crate::switcher::{Card, Switcher};
 use crate::tasks::{self, Task, Tasks};
@@ -19,6 +20,7 @@ use gh0st_core::evdev;
 use gh0st_core::job::{self, Job};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::link::Link;
+use gh0st_core::password::{self, Account, Tries};
 use gh0st_core::rt;
 use gh0st_core::script::Script;
 use gh0st_core::status::{self, Net, Watch};
@@ -26,7 +28,7 @@ use gh0st_core::usage::{self, Sampler};
 use gh0st_ui::display::{Display, Frames};
 use gh0st_ui::drm;
 use gh0st_ui::fb::{self, Framebuffer};
-use gh0st_ui::theme::{self, Theme};
+use gh0st_ui::theme::{self, Theme, Tone};
 use gh0st_ui::widgets::{self, Battery, Status, Visual};
 use gh0st_ui::{Canvas, Rect, snapshot};
 use std::collections::HashMap;
@@ -40,6 +42,14 @@ const STOP_WAIT_MS: u64 = 100;
 /// How often the shell looks for rows a background app drew over it.
 const GUARD_MS: u64 = 500;
 const DEFAULT_DARK_SECS: i64 = 30;
+/// `gh0st.lock.after`: dark this long, the lock asks for the password.
+const DEFAULT_LOCK_AFTER_SECS: i64 = 300;
+/// The backlight dims this long before it goes off.
+const DIM_MS: u64 = 5000;
+const DIM_PERCENT: u8 = 10;
+/// The lock screen at rest goes dark sooner, so a pocket keeps it lit
+/// only briefly.
+const LOCK_DARK_MS: u64 = 10_000;
 const TOAST_MS: u64 = 1500;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
@@ -88,7 +98,7 @@ enum Screen {
     Home,
     Switcher,
     Locked,
-    /// Backlight off after `dark_time`. The next key only wakes it.
+    /// Backlight off after `dark_time`. The next key wakes the lock screen.
     Off,
 }
 
@@ -111,6 +121,10 @@ enum Pending {
 #[derive(Clone, PartialEq, Eq)]
 enum JobKind {
     Volume,
+    /// `passwd -S`: does the account have a password?
+    Passwd,
+    /// `unix_chkpwd`: was that the password?
+    Chkpwd,
 }
 
 /// Where keys come from: the keyboard, or a script in `--sim`.
@@ -158,9 +172,11 @@ impl Input {
         }
     }
 
-    fn grab(&mut self, on: bool) {
-        if let Input::Device(d) = self {
-            d.grab(on);
+    /// False when the grab failed: an app holds the keyboard.
+    fn grab(&mut self, on: bool) -> bool {
+        match self {
+            Input::Device(d) => d.grab(on),
+            Input::Script(_) => true,
         }
     }
 
@@ -181,8 +197,29 @@ struct Shell {
     /// (true: app folders, rescan; false: status, re-read sysfs).
     watches: Vec<(bool, Watch)>,
     pictures: HashMap<PathBuf, (Option<SystemTime>, Rc<Picture>)>,
-    /// Screen to go back to when the backlight comes on.
-    woke_to: Screen,
+    lock: Lock,
+    /// This lock asks for the password however short the dark: locked by
+    /// hand or at start.
+    lock_secure: bool,
+    /// When the screen first went dark since the last unlock.
+    dark_since: Option<u64>,
+    /// Where unlocking goes.
+    unlock_to: Back,
+    /// `gh0st.lock.password`.
+    lock_password: bool,
+    /// `gh0st.lock.after`, or None for only by hand.
+    lock_after_ms: Option<u64>,
+    /// What `passwd -S` said; None before it answered or when it failed.
+    account: Option<Account>,
+    probing: bool,
+    /// `unix_chkpwd` could not run: the lock can't check, so it doesn't ask.
+    checker_missing: bool,
+    tries: Tries,
+    /// Where the try count is kept, so a restarted shell still waits.
+    tries_path: Option<PathBuf>,
+    user: String,
+    /// The backlight before it dimmed.
+    dimmed: Option<u32>,
     /// Write every row next frame: the mapping may not match the glass.
     full_flush: bool,
     config: Config,
@@ -323,7 +360,20 @@ impl Shell {
             signals,
             watches,
             pictures: HashMap::new(),
-            woke_to: Screen::Home,
+            lock: Lock::default(),
+            lock_secure: false,
+            dark_since: None,
+            unlock_to: Back::Home,
+            lock_password: lock_password_of(&config),
+            lock_after_ms: lock_after_of(&config),
+            account: None,
+            probing: false,
+            checker_missing: false,
+            tries: Tries::default(),
+            tries_path: None,
+            // SAFETY: getuid has no failure mode.
+            user: password::user_name(unsafe { libc::getuid() }).unwrap_or_default(),
+            dimmed: None,
             full_flush: true,
             dirs,
             apps: Vec::new(),
@@ -375,6 +425,19 @@ impl Shell {
         }
         s.rescan();
         s.refresh_status();
+        if on_device {
+            let dir = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            let path = dir.join("gh0st-lock");
+            s.tries = Tries::load(&path, password::boottime());
+            s.tries_path = Some(path);
+        }
+        // A restart or a power cycle must not skip the lock.
+        if s.lock_password {
+            s.lock_secure = true;
+            s.enter_locked(rt::now_ms());
+        }
         Ok(s)
     }
 
@@ -384,16 +447,24 @@ impl Shell {
         self.switcher.set_animations(on);
     }
 
-    fn start_job(&mut self, kind: JobKind, argv: &[&str]) {
-        self.start_job_with(kind, argv, None);
+    fn start_job(&mut self, kind: JobKind, argv: &[&str]) -> bool {
+        self.start_job_with(kind, argv, None)
     }
 
-    /// As `start_job`, with `input` written to the helper's stdin.
-    fn start_job_with(&mut self, kind: JobKind, argv: &[&str], input: Option<&[u8]>) {
+    /// As `start_job`, with `input` written to the helper's stdin. False
+    /// when it could not start.
+    fn start_job_with(&mut self, kind: JobKind, argv: &[&str], input: Option<&[u8]>) -> bool {
         match job::spawn(argv, input) {
-            Ok(j) => self.jobs.push((kind, j)),
-            Err(e) if self.debug => eprintln!("gh0st shell: {}: {e}", argv[0]),
-            Err(_) => {}
+            Ok(j) => {
+                self.jobs.push((kind, j));
+                true
+            }
+            Err(e) => {
+                if self.debug {
+                    eprintln!("gh0st shell: {}: {e}", argv[0]);
+                }
+                false
+            }
         }
     }
 
@@ -405,7 +476,54 @@ impl Shell {
                     self.muted = Some(muted);
                 }
             }
+            JobKind::Passwd => {
+                self.probing = false;
+                self.account = j
+                    .ok()
+                    .then(|| password::parse_status(&j.output()))
+                    .flatten();
+                if self.debug {
+                    eprintln!("gh0st shell: account {:?}", self.account);
+                }
+                self.dirty = true;
+            }
+            JobKind::Chkpwd => {
+                let ok = j.ok();
+                if self.debug {
+                    eprintln!(
+                        "gh0st shell: password {}",
+                        if ok { "right" } else { "wrong" }
+                    );
+                }
+                if ok {
+                    self.tries = Tries::default();
+                    self.save_tries();
+                }
+                // Dark meanwhile rested the field: the answer is stale.
+                if self.screen == Screen::Locked && self.lock.checking {
+                    self.lock.checked(ok, rt::now_ms());
+                    if ok {
+                        self.unlock();
+                    }
+                }
+                self.dirty = true;
+            }
         }
+    }
+
+    fn save_tries(&self) {
+        if let Some(p) = &self.tries_path {
+            let _ = self.tries.save(p);
+        }
+    }
+
+    /// Asks `passwd -S` again: Settings may have changed the password.
+    fn probe_account(&mut self) {
+        if self.probing {
+            return;
+        }
+        let prog = std::env::var("GH0ST_PASSWD").unwrap_or_else(|_| "passwd".into());
+        self.probing = self.start_job(JobKind::Passwd, &[&prog, "-S"]);
     }
 
     /// What stock APPLaunch did at boot, and every stock app does at start:
@@ -431,6 +549,8 @@ impl Shell {
         self.home.set_layout(layout_of(&self.config));
         self.terminal = terminal_of(&self.config);
         self.dark_ms = dark_ms_of(&self.config);
+        self.lock_password = lock_password_of(&self.config);
+        self.lock_after_ms = lock_after_of(&self.config);
         self.set_animations();
         self.dirty = true;
     }
@@ -545,7 +665,12 @@ impl Shell {
                 (shell && self.screen == Screen::Switcher && self.next_frame(now).is_none())
                     .then_some(self.stats_at)
                     .flatten(),
-                self.dark_ms.filter(|_| shell).map(|d| self.last_input + d),
+                self.dark_at(),
+                self.dim_at(),
+                (shell && self.screen == Screen::Locked)
+                    .then(|| self.lock.next_at())
+                    .flatten(),
+                (shell && self.lock_waiting()).then_some(now + 1000),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
                 shell
@@ -726,10 +851,20 @@ impl Shell {
     }
 
     fn on_timers(&mut self, now: u64) {
-        let app = self.app_front();
         if let Some(k) = self.kb.repeat_due(now) {
             self.on_key(k, now);
         }
+        if self.dim_at().is_some_and(|t| now >= t) {
+            self.dim();
+        }
+        if self.dark_at().is_some_and(|t| now >= t) {
+            if self.app_front() {
+                self.dark_over_app(now);
+            } else {
+                self.screen_off(now);
+            }
+        }
+        let app = self.app_front();
         if self.toast.as_ref().is_some_and(|t| now >= t.1) {
             self.toast = None;
             self.level = None;
@@ -764,13 +899,15 @@ impl Shell {
         }
         if self.tab_down.is_some_and(|t| now >= t + LOCK_HOLD_MS) {
             self.tab_down = None;
-            self.screen = Screen::Locked;
+            self.lock_now(now);
+        }
+        if self.screen == Screen::Locked && (self.lock.tick(now) || self.lock_waiting()) {
             self.dirty = true;
         }
-        if self.screen != Screen::Off && self.dark_ms.is_some_and(|d| now >= self.last_input + d) {
-            self.screen_off();
-        }
         if self.low.warning() == Warning::Countdown {
+            if self.screen == Screen::Off {
+                self.screen_on(now);
+            }
             self.dirty = true;
             if self.low.take_shutdown(now) {
                 child::fire(&["systemctl", "poweroff", "-i"]);
@@ -883,34 +1020,241 @@ impl Shell {
         }));
     }
 
-    fn screen_off(&mut self) {
-        if let Some(bl) = &self.backlight {
-            self.saved_raw = bl.get().filter(|&r| r > 0);
-            let _ = bl.set(0);
+    /// When the screen goes dark if no key comes first. Never while an
+    /// app in front asked to stay awake; sooner on the lock screen.
+    fn dark_at(&self) -> Option<u64> {
+        if self.screen == Screen::Off && !self.app_front() {
+            return None;
         }
-        self.woke_to = self.screen;
-        self.screen = Screen::Off;
+        let d = self.dark_ms?;
+        let d = match self.tasks.front() {
+            Some(t) if t.awake => return None,
+            Some(_) => d,
+            None if self.screen == Screen::Locked => d.min(LOCK_DARK_MS),
+            None => d,
+        };
+        Some(self.last_input + d)
     }
 
-    fn screen_on(&mut self) {
-        if let (Some(bl), Some(raw)) = (&self.backlight, self.saved_raw.take()) {
+    /// When the backlight dims, a short while before dark.
+    fn dim_at(&self) -> Option<u64> {
+        if self.backlight.is_none() || self.dimmed.is_some() {
+            return None;
+        }
+        let at = self.dark_at()?;
+        let lead = DIM_MS.min(at.saturating_sub(self.last_input) / 2);
+        Some(at - lead)
+    }
+
+    fn dim(&mut self) {
+        let Some(bl) = &self.backlight else {
+            return;
+        };
+        let raw = bl.get().unwrap_or(bl.max);
+        let low = bl.raw(DIM_PERCENT);
+        // Kept even when it is already low, so dark knows what to restore.
+        self.dimmed = Some(raw);
+        if raw > low {
+            let _ = bl.set(low);
+        }
+    }
+
+    fn undim(&mut self) {
+        if let (Some(bl), Some(raw)) = (&self.backlight, self.dimmed.take()) {
             let _ = bl.set(raw);
         }
-        self.screen = self.woke_to;
+    }
+
+    /// Dark from home, the switcher or the lock screen.
+    fn screen_off(&mut self, now: u64) {
+        match self.screen {
+            Screen::Home => self.unlock_to = Back::Home,
+            Screen::Switcher => self.unlock_to = self.back.clone(),
+            _ => {}
+        }
+        if self.screen != Screen::Locked {
+            self.dark_since = Some(now);
+        }
+        self.go_dark();
+    }
+
+    /// Dark over an app: the shell takes the keyboard, then parks the app
+    /// as Fn+K does. An app that holds the keyboard itself or can't be
+    /// paused keeps the screen on: the shell can't see its keys or stop
+    /// its drawing.
+    fn dark_over_app(&mut self, now: u64) {
+        if !self.input.grab(true) {
+            self.last_input = now;
+            self.undim();
+            return;
+        }
+        match self.park_front(now) {
+            Ok(id) => {
+                // Locked first, so take_screen keeps the keyboard.
+                self.screen = Screen::Locked;
+                self.take_screen();
+                self.unlock_to = Back::App(id);
+                self.dark_since = Some(now);
+                self.go_dark();
+            }
+            Err(_) => {
+                self.input.grab(false);
+                self.last_input = now;
+                self.undim();
+            }
+        }
+    }
+
+    fn go_dark(&mut self) {
+        if let Some(bl) = &self.backlight {
+            let raw = self.dimmed.take().or_else(|| bl.get());
+            self.saved_raw = raw.filter(|&r| r > 0);
+            let _ = bl.set(0);
+        }
+        self.lock.rest();
+        self.home_menu = None;
+        self.confirm_all = false;
+        self.tab_down = None;
+        self.screen = Screen::Off;
+        self.sync_grab();
+    }
+
+    /// A key in the dark: the lock screen, at rest.
+    fn screen_on(&mut self, now: u64) {
+        if let Some(bl) = &self.backlight {
+            // The panel may have been dark already (stock's timeout), so
+            // fall back to the saved level, then full.
+            let raw = self
+                .saved_raw
+                .take()
+                .or_else(|| {
+                    self.config
+                        .get_int("brightness")
+                        .filter(|&r| r > 0)
+                        .map(|r| r as u32)
+                })
+                .unwrap_or(bl.max);
+            let _ = bl.set(raw);
+        }
+        self.enter_locked(now);
         self.refresh_status();
+    }
+
+    fn enter_locked(&mut self, now: u64) {
+        self.screen = Screen::Locked;
+        self.lock.rest();
+        self.home_menu = None;
+        self.confirm_all = false;
+        self.tab_down = None;
+        self.last_input = now;
+        self.full_flush = true;
+        self.dirty = true;
+        self.probe_account();
+        self.sync_grab();
+    }
+
+    /// Locked by hand, from home or the switcher: the password is asked.
+    fn lock_now(&mut self, now: u64) {
+        self.unlock_to = match self.screen {
+            Screen::Switcher => self.back.clone(),
+            _ => Back::Home,
+        };
+        self.lock_secure = true;
+        self.enter_locked(now);
+    }
+
+    fn unlock(&mut self) {
+        self.lock.rest();
+        self.lock_secure = false;
+        self.dark_since = None;
+        self.dirty = true;
+        if self.debug {
+            eprintln!("gh0st shell: unlocked");
+        }
+        match std::mem::replace(&mut self.unlock_to, Back::Home) {
+            // The lock screen stays until the app is back, so home never
+            // flashes in between.
+            Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.resumable()) => {
+                self.pending = Some(Pending::Resume(id));
+            }
+            _ => {
+                self.screen = Screen::Home;
+                self.sync_grab();
+            }
+        }
+    }
+
+    fn wants_password(&self, now: u64) -> bool {
+        !self.checker_missing
+            && asks_password(
+                self.lock_secure,
+                self.dark_since,
+                self.lock_after_ms,
+                now,
+                self.lock_password,
+                self.account,
+                self.probing,
+            )
+    }
+
+    /// The field is open and wrong tries ran out for now.
+    fn lock_waiting(&self) -> bool {
+        self.screen == Screen::Locked
+            && self.lock.field_open()
+            && self.tries.wait(password::boottime()) > 0
+    }
+
+    /// The lock screen or the dark, with no app in front.
+    fn locked(&self) -> bool {
+        !self.app_front() && matches!(self.screen, Screen::Locked | Screen::Off)
+    }
+
+    /// Runs `unix_chkpwd` on what was typed. The try counts before the
+    /// check, so a restart in between can't skip the wait.
+    fn check_password(&mut self, mut typed: Vec<u8>) {
+        self.tries.fails += 1;
+        self.tries.last = password::boottime();
+        self.save_tries();
+        let mut input = password::chkpwd_input(&typed);
+        password::wipe(&mut typed);
+        let prog = std::env::var("GH0ST_CHKPWD").unwrap_or_else(|_| password::CHKPWD.into());
+        let user = self.user.clone();
+        let started = self.start_job_with(JobKind::Chkpwd, &[&prog, &user, "nonull"], Some(&input));
+        password::wipe(&mut input);
+        if !started {
+            // No checker means no way in: let the user in, and stop asking.
+            self.checker_missing = true;
+            self.tries = Tries::default();
+            self.save_tries();
+            self.unlock();
+        }
     }
 
     /// Messages from the app in group `pgid`.
     fn read_link(&mut self, pgid: i32) {
         let mut toasts = Vec::new();
+        let mut slept = false;
         if let Some(t) = self.tasks.iter_mut().find(|t| t.pgid == pgid) {
             while let Some(m) = t.link.as_ref().and_then(|l| l.recv()) {
                 match m.first().map(String::as_str) {
                     Some("hello") => t.linked = true,
                     Some("toast") => toasts.extend(m.get(1).cloned()),
+                    Some("awake") => {
+                        let on = m.get(1).is_some_and(|v| v == "1");
+                        slept |= t.awake && !on;
+                        t.awake = on;
+                    }
                     _ => {}
                 }
             }
+        }
+        // The full timeout again from here, not at once.
+        if slept {
+            self.last_input = rt::now_ms();
+        }
+        // What an app says stays private while the device is locked.
+        if self.locked() {
+            return;
         }
         for text in toasts {
             self.toast(text);
@@ -932,6 +1276,37 @@ impl Shell {
             })
             .collect();
         home::draw_menu(&mut self.canvas, &t, &rows, sel);
+    }
+
+    fn draw_lock(&mut self, clock: &str) {
+        let t = self.t;
+        let mut bar = status_of("", self.battery, self.net, &[], None);
+        bar.bluetooth = self.bluetooth;
+        let date = rt::date_text();
+        let wait = self.tries.wait(password::boottime());
+        let pw_on = self.lock_password && !self.checker_missing;
+        let wait_note = format!("Try again in {wait} s");
+        let note = if !self.lock.field_open() {
+            let no_password =
+                pw_on && !self.probing && self.account.is_some_and(|a| a != Account::Password);
+            no_password.then_some((Tone::Info, "No password set"))
+        } else if self.lock.checking {
+            Some((Tone::Info, "Checking\u{2026}"))
+        } else if wait > 0 {
+            Some((Tone::Warning, wait_note.as_str()))
+        } else if self.lock.wrong {
+            Some((Tone::Critical, "Wrong password"))
+        } else {
+            None
+        };
+        let l = widgets::Lock {
+            clock,
+            date: &date,
+            field: self.lock.field_open().then(|| self.lock.typed()),
+            ready: !self.lock.checking && wait == 0,
+            note,
+        };
+        widgets::lock_screen(&mut self.canvas, &t, &bar, &l);
     }
 
     /// The switcher's Close all window.
@@ -1027,6 +1402,7 @@ impl Shell {
         }
         if k.state == State::Press {
             self.last_input = now;
+            self.undim();
         }
         if self.app_front() {
             self.app_key(&k);
@@ -1035,7 +1411,11 @@ impl Shell {
         if self.screen == Screen::Off {
             if k.state == State::Press {
                 self.swallow_release = Some(k.code);
-                self.screen_on();
+                self.screen_on(now);
+                // Tab may wake it: Enter then unlocks.
+                if k.is(code::TAB) {
+                    self.lock.key(&k, now, false, false);
+                }
             }
             return;
         }
@@ -1052,9 +1432,16 @@ impl Shell {
             return;
         }
         if self.screen == Screen::Locked {
-            if k.is(code::ENTER) && k.state == State::Release {
-                self.screen = Screen::Home;
-                self.dirty = true;
+            let password = self.wants_password(now);
+            let waiting = self.tries.wait(password::boottime()) > 0;
+            match self.lock.key(&k, now, password, waiting) {
+                lock::Action::None => {}
+                lock::Action::Redraw => self.dirty = true,
+                lock::Action::Unlock => self.unlock(),
+                lock::Action::Check(typed) => {
+                    self.check_password(typed);
+                    self.dirty = true;
+                }
             }
             return;
         }
@@ -1325,9 +1712,7 @@ impl Shell {
                 let at = 0;
                 self.open_switcher(Back::Home, at);
             }
-            MenuAct::Lock => {
-                self.screen = Screen::Locked;
-            }
+            MenuAct::Lock => self.lock_now(rt::now_ms()),
         }
     }
 
@@ -1505,6 +1890,7 @@ impl Shell {
             linked: false,
             background: app.entry.background,
             quiet: false,
+            awake: false,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -1512,6 +1898,21 @@ impl Shell {
 
     /// Fn+K over an app: pause it, keep its frame, open the switcher.
     fn pause_front(&mut self, now: u64) {
+        match self.park_front(now) {
+            Ok(id) => {
+                self.take_screen();
+                let at = self.card_of(&id);
+                self.open_switcher(Back::App(id), at);
+            }
+            Err(Some(name)) => self.toast(format!("{name} can't be paused")),
+            Err(None) => {}
+        }
+    }
+
+    /// Takes the app in front off the panel: an app that may run behind is
+    /// told to pause, any other is stopped, its last frame kept. The caller
+    /// takes the screen. Err with the app's name when it can't be stopped.
+    fn park_front(&mut self, now: u64) -> Result<String, Option<String>> {
         if let Some(b) = self.banner.take() {
             self.spare = Some(b.hide(self.display.as_mut()));
         }
@@ -1520,7 +1921,8 @@ impl Shell {
         }
         let mut frame = self.canvas_for_overlay();
         let Some(t) = self.tasks.front_mut() else {
-            return;
+            self.spare = Some(frame);
+            return Err(None);
         };
         let background = self
             .config
@@ -1535,42 +1937,35 @@ impl Shell {
                     .is_some_and(|l| l.send(&["pause"]) && l.wait_for("paused", STOP_WAIT_MS));
             if t.quiet {
                 t.pixels = None;
+                self.spare = Some(frame);
             } else {
                 self.display.read_into(&mut frame);
                 t.pixels = Some(frame);
             }
-            let id = t.id.clone();
             t.state = tasks::State::Background;
             t.used = now;
-            self.take_screen();
-            let at = self.card_of(&id);
-            self.open_switcher(Back::App(id), at);
-            return;
+            return Ok(t.id.clone());
         }
         let sent = child::stop(t.pgid);
         if !t.leader_done && child::wait_stopped(t.pgid, STOP_WAIT_MS) == Stopped::Exited {
             t.leader_done = true;
         }
         // An app run through sudo is root's: the stop does not reach it,
-        // and a "paused" app that keeps drawing would sit over the switcher.
+        // and a "paused" app that keeps drawing would sit over the shell.
         if !sent || !child::group_stopped(t.pgid, STOP_WAIT_MS) {
             child::cont(t.pgid);
             let name = t.name.clone();
             self.spare = Some(frame);
-            self.toast(format!("{name} can't be paused"));
-            return;
+            return Err(Some(name));
         }
         self.display.read_into(&mut frame);
-        let id = t.id.clone();
         t.pixels = Some(frame);
         t.state = tasks::State::Paused;
         t.used = now;
         if self.debug {
             eprintln!("gh0st shell: paused {} at {}", t.name, now - self.t0);
         }
-        self.take_screen();
-        let at = self.card_of(&id);
-        self.open_switcher(Back::App(id), at);
+        Ok(t.id.clone())
     }
 
     /// Brings a paused app back: its last frame on the panel, the keyboard
@@ -1631,9 +2026,11 @@ impl Shell {
     }
 
     /// The keyboard is the shell's alone while it is in front and some app
-    /// is paused, so a paused app queues none of the shell's keys.
+    /// is paused, so a paused app queues none of the shell's keys, and while
+    /// locked or dark, so no app behind reads the password.
     fn sync_grab(&mut self) {
-        let want = !self.app_front() && self.tasks.any_paused();
+        let want = !self.app_front()
+            && (self.tasks.any_paused() || matches!(self.screen, Screen::Locked | Screen::Off));
         self.input.grab(want);
     }
 
@@ -1786,9 +2183,7 @@ impl Shell {
                     self.confirm_all = true;
                 }
             }
-            _ if k.ch == Some('6') && k.state == State::Press => {
-                self.screen = Screen::Locked;
-            }
+            _ if k.ch == Some('6') && k.state == State::Press => self.lock_now(now),
             _ => return,
         }
         self.dirty = true;
@@ -1818,18 +2213,7 @@ impl Shell {
         let mut status = status_of(&clock, self.battery, self.net, &dock, front);
         status.bluetooth = self.bluetooth;
         match self.screen {
-            Screen::Locked => {
-                let mut bar = status_of("", self.battery, self.net, &[], None);
-                bar.bluetooth = self.bluetooth;
-                let lock = widgets::Lock {
-                    clock: &clock,
-                    date: "",
-                    field: None,
-                    ready: true,
-                    note: None,
-                };
-                widgets::lock_screen(&mut self.canvas, &t, &bar, &lock)
-            }
+            Screen::Locked => self.draw_lock(&clock),
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
@@ -1843,7 +2227,10 @@ impl Shell {
         }
         drop(dock);
         drop(cards);
-        if matches!(self.screen, Screen::Home | Screen::Switcher) {
+        if matches!(
+            self.screen,
+            Screen::Home | Screen::Switcher | Screen::Locked
+        ) {
             self.draw_low_battery();
             if let Some((icon, label, pct)) = self.level {
                 widgets::level_bar(&mut self.canvas, &t, icon, label, pct);
@@ -2058,6 +2445,39 @@ fn dark_ms_of(c: &Config) -> Option<u64> {
     (secs > 0).then_some(secs as u64 * 1000)
 }
 
+fn lock_password_of(c: &Config) -> bool {
+    c.get_bool("gh0st.lock.password").unwrap_or(true)
+}
+
+/// `gh0st.lock.after` in seconds; -1 means only by hand.
+fn lock_after_of(c: &Config) -> Option<u64> {
+    let secs = c
+        .get_int("gh0st.lock.after")
+        .unwrap_or(DEFAULT_LOCK_AFTER_SECS);
+    (secs >= 0).then_some(secs as u64 * 1000)
+}
+
+/// Whether a lock asks for the password: one made by hand or at start, or
+/// dark at least `after`, with the password lock on and a password to ask.
+fn asks_password(
+    secure: bool,
+    dark_since: Option<u64>,
+    after: Option<u64>,
+    now: u64,
+    on: bool,
+    account: Option<Account>,
+    probing: bool,
+) -> bool {
+    let real = secure || matches!((dark_since, after), (Some(d), Some(a)) if now >= d + a);
+    let has = match account {
+        Some(Account::Password) => true,
+        // Until passwd -S answers, ask: a probe that fails says no.
+        None => probing,
+        Some(_) => false,
+    };
+    real && on && has
+}
+
 fn status_of<'a>(
     clock: &'a str,
     battery: Option<Reading>,
@@ -2130,6 +2550,30 @@ fn parse_volume(s: &str) -> Option<(u8, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_password_comes_with_a_real_lock_only() {
+        let pw = Some(Account::Password);
+        let ask =
+            |secure, since, after, now| asks_password(secure, since, after, now, true, pw, false);
+        assert!(ask(true, None, Some(300_000), 0), "by hand or at start");
+        assert!(
+            !ask(false, Some(1000), Some(300_000), 200_000),
+            "a short dark"
+        );
+        assert!(ask(false, Some(1000), Some(300_000), 301_000), "a long one");
+        assert!(ask(false, Some(1000), Some(0), 1000), "at once");
+        assert!(!ask(false, Some(1000), None, u64::MAX / 2), "only by hand");
+        assert!(
+            !asks_password(true, None, None, 0, false, pw, false),
+            "the toggle off"
+        );
+        let none = |account, probing| asks_password(true, None, None, 0, true, account, probing);
+        assert!(!none(Some(Account::NoPassword), false));
+        assert!(!none(Some(Account::Locked), false), "no lockout");
+        assert!(none(None, true), "asked until passwd answers");
+        assert!(!none(None, false), "a failed probe asks nothing");
+    }
 
     #[test]
     fn only_system_apps_take_theme_colours() {

@@ -340,9 +340,9 @@ the date under it in Caption.
   Caption says "No password set".
 - **The password field.** Focused, so the bottom bar shows key hints: Enter
   unlock, Esc back. Each key shows a dot. A wrong password empties the field,
-  gives it a `critical` edge and says "Wrong password" under it. From the
-  fourth wrong try the field waits: "Try again in 5 s", counting down. The
-  wait doubles each time, up to 5 minutes. Esc, or 10 s without a key, wipes
+  gives it a `critical` edge and says "Wrong password" under it. After three
+  wrong tries the field waits: "Try again in 5 s", counting down. The wait
+  doubles with each wrong try after that, up to 5 minutes. Esc, or 10 s without a key, wipes
   it and goes back to rest.
 
 It asks for the password when Settings > System > Unlock with password is on,
@@ -357,8 +357,9 @@ It locks:
 - at start, when a password is asked;
 - whenever the screen goes dark.
 
-At rest it goes dark again after 10 s without a key, so a pocket keeps it lit
-only briefly. The brightness, volume and screenshot keys work on it, and the
+At rest it goes dark again after 10 s without a key (sooner when Screen off
+after is shorter, never when it is Never), so a pocket keeps it lit only
+briefly. The brightness, volume and screenshot keys work on it, and the
 low battery banner shows. Toasts from apps don't.
 
 ## Dark

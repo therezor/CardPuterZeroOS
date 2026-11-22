@@ -8,6 +8,9 @@ use gh0st_core::sysconf::{self, CpuMode, GpuMem, NmPrivacy};
 
 /// Screen-off choices, in seconds. 0 is never.
 pub const DARK_TIMES: &[i64] = &[15, 30, 60, 120, 300, 0];
+/// `gh0st.lock.after` in seconds of dark; -1 locks only by hand.
+pub const LOCK_AFTERS: &[i64] = &[0, 60, 300, 900, -1];
+pub const DEFAULT_LOCK_AFTER: i64 = 300;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Logs {
@@ -176,6 +179,8 @@ pub struct State {
     pub nm: NmPrivacy,
     /// `gh0st.lock.password`: the lock screen asks for the password.
     pub lock_password: bool,
+    /// `gh0st.lock.after`: seconds of dark before it asks.
+    pub lock_after: i64,
     /// The local date and time, "2026-11-21 14:32", when System opened.
     pub now: String,
     /// `gpu_mem` in config.txt, and what the firmware runs with now.
@@ -256,6 +261,14 @@ impl State {
             .iter()
             .find(|n| n.active)
             .map(|n| n.ssid.as_str())
+    }
+}
+
+pub fn lock_after_label(secs: i64) -> String {
+    match secs {
+        s if s < 0 => "By hand".into(),
+        0 => "At once".into(),
+        s => format!("{} min", s / 60),
     }
 }
 
@@ -854,6 +867,12 @@ fn system(s: &State) -> Vec<Item> {
             "Unlock with password",
             Value::Toggle(s.lock_password),
             Act::Set(Setting::LockPassword),
+        ),
+        Item::new(
+            "timer",
+            "Lock after",
+            Value::Choice(lock_after_label(s.lock_after)),
+            Act::Set(Setting::LockAfter),
         ),
         Item::new(
             "sliders-horizontal",
@@ -1481,6 +1500,15 @@ mod tests {
             find("Unlock with password").unwrap().value,
             Value::Toggle(true)
         );
+        s.lock_after = 300;
+        let p = build(&PageId::System, &s);
+        let find = |l: &str| (0..p.len()).find_map(|i| p.item(i).filter(|it| it.label == l));
+        assert_eq!(
+            find("Lock after").unwrap().value,
+            Value::Choice("5 min".into())
+        );
+        assert_eq!(lock_after_label(0), "At once");
+        assert_eq!(lock_after_label(-1), "By hand");
     }
 
     #[test]

@@ -215,6 +215,7 @@ pub(crate) enum Request {
     Adopt(i32),
     Redraw,
     Notify(String),
+    KeepAwake(bool),
     ShowKeys,
     Ask(u32, Dialog),
 }
@@ -459,6 +460,12 @@ impl Cx<'_> {
     /// a [`toast`](Cx::toast).
     pub fn notify(&mut self, text: &str) {
         self.s.requests.push(Request::Notify(text.to_string()));
+    }
+
+    /// Keeps the screen on while the app is in front, for a player or a
+    /// clock the user watches without typing. False lets it go dark again.
+    pub fn keep_awake(&mut self, on: bool) {
+        self.s.requests.push(Request::KeepAwake(on));
     }
 
     /// False while the shell has another app, or itself, in front.
