@@ -1,0 +1,7 @@
+# User services for UID 1000. PipeWire starts from its socket only when an
+# app plays or records.
+enable gh0st.service
+enable pipewire.socket
+enable pipewire-pulse.socket
+enable wireplumber.service
+disable *

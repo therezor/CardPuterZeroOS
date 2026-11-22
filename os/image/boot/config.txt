@@ -1,0 +1,29 @@
+# CPZeroOS boot configuration for the M5Stack CardputerZero (CM0).
+# gpu_mem stays first: Settings > System > Advanced edits it there.
+gpu_mem=64
+arm_64bit=1
+arm_boost=1
+boot_delay=0
+disable_splash=1
+disable_overscan=1
+camera_auto_detect=0
+display_auto_detect=0
+dtparam=i2c_arm=on
+dtparam=i2s=on
+dtparam=spi=on
+dtparam=audio=off
+dtoverlay=vc4-kms-v3d,cma-64
+max_framebuffers=2
+disable_fw_kms_setup=1
+dtoverlay=imx219
+# The mini UART stays on serial0 (GPIO14/15) for Cap apps and the console.
+# It also fixes the core clock at 400 MHz, which the panel's 50 MHz SPI
+# clock comes from.
+enable_uart=1
+dtoverlay=dwc2
+dtoverlay=cardputerzero-v5-overlay
+dtoverlay=gh0st-panel-te
+dtoverlay=bq27220_v5
+dtoverlay=bmi270_bmm150_overlay
+dtoverlay=gpio-ir,gpio_pin=13,gpio_pull=up
+dtoverlay=gpio-ir-tx,gpio_pin=12

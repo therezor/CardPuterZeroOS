@@ -1,0 +1,4 @@
+APT::Install-Recommends "false";
+APT::Install-Suggests "false";
+Acquire::Languages "none";
+APT::Periodic::Enable "0";

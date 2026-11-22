@@ -1,0 +1,17 @@
+# The boot logo on the LCD, from M5's st7789v driver repo. It draws once and
+# exits: gh0st takes the panel next. Until gh0st draws the splash (M7).
+[Unit]
+Description=Boot logo on the CardputerZero LCD
+DefaultDependencies=no
+After=systemd-udev-trigger.service systemd-udevd.service systemd-modules-load.service
+ConditionPathExists=/usr/sbin/fb_load
+ConditionVirtualization=!container
+
+# simple, as stock: a oneshot would hold up boot if fb_load ever hung.
+[Service]
+Type=simple
+ExecStart=/usr/sbin/fb_load
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

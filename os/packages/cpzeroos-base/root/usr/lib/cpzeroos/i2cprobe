@@ -1,0 +1,15 @@
+#!/bin/sh
+# Loads the driver for an I2C or SPI device-tree node (see
+# 15-cpzeroos-i2c-modprobe.rules). udev passes the node in the environment.
+aliases=/usr/lib/modules/$(uname -r)/modules.alias
+n=0
+while :; do
+    eval "comp=\${OF_COMPATIBLE_$n:-}"
+    [ -n "$comp" ] || break
+    part=${comp#*,}
+    if grep -q "^alias $SUBSYSTEM:$part " "$aliases"; then
+        modprobe -q "$SUBSYSTEM:$part" && exit 0
+    fi
+    n=$((n + 1))
+done
+modprobe -q "$MODALIAS" || modprobe -q "of:N${OF_NAME}T<NULL>C${OF_COMPATIBLE_0}"

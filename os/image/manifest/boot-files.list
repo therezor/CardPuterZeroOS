@@ -1,0 +1,11 @@
+# What the CM0 needs on the FAT partition. Overlays are all kept: they are
+# small, and config.txt may name any of them.
+bootcode.bin
+start.elf
+fixup.dat
+start_cd.elf
+fixup_cd.dat
+kernel8.img
+bcm2710-rpi-cm0.dtb
+LICENCE.broadcom
+overlays/

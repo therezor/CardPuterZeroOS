@@ -1,0 +1,19 @@
+# The shell runs as UID 1000 with linger, like the stock launcher it
+# replaces. It does not pull in PipeWire: audio starts from its socket when
+# an app plays.
+[Unit]
+Description=Gh0stdeck shell
+# Never give up restarting: a shell that stays dead leaves a blank device.
+StartLimitIntervalSec=0
+
+[Service]
+# No desktop session runs xdg-user-dirs-update, and stock apps save to
+# ~/Music, ~/Pictures and the rest.
+ExecStartPre=-/usr/bin/xdg-user-dirs-update
+ExecStart=/usr/bin/gh0st shell
+WorkingDirectory=/usr/share/APPLaunch
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=default.target

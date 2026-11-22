@@ -1,7 +1,10 @@
 # CPZeroOS: base distro and optimization plan
 
-Status: research, 2026-11-20. Nothing here has been measured on a device yet. Figures marked
-**measured** come from community repos (linked); everything else is a target to measure.
+Status: research, 2026-11-20. Figures marked **measured** come from community repos (linked);
+everything else is a target to measure. The image is now built: `image-build.md` has how, and
+what the build changed (2026-11-21). Debian supplies everything except the Raspberry Pi
+packages `os/lock.json` pins; the kernel boots without an initramfs; stock apps need
+`libcamera0.7`, not 0.8.
 
 ## 1. Recommendation
 
@@ -16,7 +19,7 @@ Why not another distro:
   M5 modules (`m5stack/m5stack-linux-dtoverlays`), proven only against the RPi `6.18.x+rpt-rpi-v8`
   kernel. Any distro must carry that kernel + those modules.
 - **Apps:** the whole CardputerZero app ecosystem (M5 apt repo, AppStore, GitHub releases) is
-  **arm64 glibc `.deb`s built for trixie** that depend on `libpulse0`, `libcamera0.8`,
+  **arm64 glibc `.deb`s built for trixie** that depend on `libpulse0`, `libcamera0.7`,
   `ffmpeg`, etc. Buildroot/Alpine (musl) break all of them.
 - **Precedent:** `on-my-machine-works/kali-on-cardputerzero` already builds a working image this
   way (mmdebstrap minbase + RPi kernel/firmware + M5 modules), so the path is proven.

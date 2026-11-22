@@ -1,0 +1,37 @@
+# The packages the image asks for. apt adds their dependencies, which the
+# lock file records. One package per line, then why it is here.
+systemd-sysv            init: systemd as PID 1
+udev                    device nodes and our rules
+dbus                    system bus: NetworkManager, BlueZ, logind
+dbus-user-session       session bus for UID 1000: PipeWire, gh0st
+libpam-systemd          logind, and linger for UID 1000
+kmod                    module loading
+sudo                    the AppStore installs through sudo
+procps                  ps, free, sysctl
+iproute2                ip and ss
+fdisk                   sfdisk, for the first-boot grow
+ca-certificates         TLS for apt and apps
+tzdata                  time zones, Settings > Date & time
+systemd-timesyncd       network time; the RTC keeps time offline
+systemd-zram-generator  swap in compressed RAM
+rfkill                  radio switches, Settings
+network-manager         Wi-Fi and Ethernet, Settings and nmcli
+wpasupplicant           Wi-Fi authentication for NetworkManager
+wireless-regdb          Wi-Fi regulatory database
+bluez                   Bluetooth, Settings and bluetoothctl
+polkitd                 authorizes Settings' root helper
+pkexec                  runs Settings' root helper
+openssh-server          SSH, off until the user turns it on in Settings
+cpzeroos-base           our configuration
+cpzeroos-kernel         kernel, drivers and firmware, pinned together
+xdg-user-dirs           ~/Music, ~/Pictures for the stock apps
+pipewire-pulse          audio server; stock apps speak PulseAudio
+wireplumber             PipeWire session manager; wpctl for volume
+pulseaudio-utils        pactl, which Music and Recorder run
+gh0st                   the shell and Settings
+gh0st-term              the terminal
+cpzeroos-m5-appstore    M5's AppStore until ours exists
+camera                  stock Camera app
+m5cardputerzero-files   stock Files app
+m5cardputerzero-music   stock Music app
+m5cardputerzero-recorder stock Recorder app

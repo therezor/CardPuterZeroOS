@@ -1,0 +1,167 @@
+{
+  "base_image": "debian@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6",
+  "rust": "1.98.1",
+  "debian": {
+    "snapshot": "20261121T000000Z",
+    "suites": [
+      "trixie",
+      "trixie-updates"
+    ],
+    "security_suite": "trixie-security",
+    "components": [
+      "main"
+    ]
+  },
+  "kernel": {
+    "release": "6.18.60+rpt-rpi-v8",
+    "version": "1:6.18.60-1+rpt1"
+  },
+  "rpt": [
+    {
+      "name": "linux-image-6.18.60+rpt-rpi-v8",
+      "version": "1:6.18.60-1+rpt1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/l/linux/linux-image-6.18.60+rpt-rpi-v8_6.18.60-1+rpt1_arm64.deb",
+      "sha256": "fbd80d4c6b488b099cfd17370a9b219b17215ee1c909c1839f8c040d098acf73",
+      "use": "image"
+    },
+    {
+      "name": "linux-base-6.18.60+rpt-rpi-v8",
+      "version": "1:6.18.60-1+rpt1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/l/linux/linux-base-6.18.60+rpt-rpi-v8_6.18.60-1+rpt1_arm64.deb",
+      "sha256": "0d27ecbe7e8e48328d4c293e9c61e8e0e1b0536d63bb3194b8d0050b24b96626",
+      "use": "image"
+    },
+    {
+      "name": "linux-headers-6.18.60+rpt-rpi-v8",
+      "version": "1:6.18.60-1+rpt1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/l/linux/linux-headers-6.18.60+rpt-rpi-v8_6.18.60-1+rpt1_arm64.deb",
+      "sha256": "193e10c22029b7b6929faebebcf30b759a9fd093ec361cc9a0aaa5e67f27eb09",
+      "use": "build"
+    },
+    {
+      "name": "linux-headers-6.18.60+rpt-common-rpi",
+      "version": "1:6.18.60-1+rpt1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/l/linux/linux-headers-6.18.60+rpt-common-rpi_6.18.60-1+rpt1_all.deb",
+      "sha256": "9fa4c401d127e9e5842a3a2aa55227cca1d1eeb02d6cfdab74adeb9e9d2c401c",
+      "use": "build"
+    },
+    {
+      "name": "linux-kbuild-6.18.60+rpt",
+      "version": "1:6.18.60-1+rpt1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/l/linux/linux-kbuild-6.18.60+rpt_6.18.60-1+rpt1_arm64.deb",
+      "sha256": "eaa57999f1350590b40f4a654fa0c8cc12bb8a282d6dd95792b0fa7ed7b57b35",
+      "use": "build"
+    },
+    {
+      "name": "raspi-firmware",
+      "version": "1:1.20260915-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/raspi-firmware/raspi-firmware_1.20260915-1_all.deb",
+      "sha256": "56b6f8792fb27bcc22f101a5a0d27af637e0d13e85dfc0fde5ff140abc929b0f",
+      "use": "image"
+    },
+    {
+      "name": "firmware-brcm80211",
+      "version": "1:20260519-1~bpo13+1+rpt2",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-brcm80211_20260519-1~bpo13+1+rpt2_all.deb",
+      "sha256": "9b590c64eaa4415140cdc3b6848ebe5e70231613aac62e39f7165b8637afb49d",
+      "use": "image"
+    },
+    {
+      "name": "bluez-firmware",
+      "version": "1.2-13+rpt2",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/b/bluez-firmware/bluez-firmware_1.2-13+rpt2_all.deb",
+      "sha256": "bfa0cb7a3806fb30a50b9f5756efee4530075aab192ba245758881efb2f24421",
+      "use": "image"
+    },
+    {
+      "name": "libpisp1",
+      "version": "1.8.0-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/libp/libpisp/libpisp1_1.8.0-1_arm64.deb",
+      "sha256": "eead0b062e596c3308ee1bef795465fcee257181169725179ca6737fec56579e",
+      "use": "image"
+    },
+    {
+      "name": "libpisp-common",
+      "version": "1.8.0-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/libp/libpisp/libpisp-common_1.8.0-1_all.deb",
+      "sha256": "f10fe3eedd046c6ad1d099fa44a93344a39d746cc8942330a6fbbed755869115",
+      "use": "image"
+    },
+    {
+      "name": "libtensorflow-lite2.20.0",
+      "version": "2.20.0-1+rpt1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/t/tensorflow/libtensorflow-lite2.20.0_2.20.0-1+rpt1_arm64.deb",
+      "sha256": "147f938692eb5856ac95f94e6b65c85eb30f9d5e6ee3f39e358b47869d24202b",
+      "use": "image"
+    },
+    {
+      "name": "raspi-utils-core",
+      "version": "20260626-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/raspi-utils/raspi-utils-core_20260626-1_arm64.deb",
+      "sha256": "3df579a81d76081e283409840beb9b1df26a9487c50aef95293743a4ba689fb9",
+      "use": "image"
+    },
+    {
+      "name": "libgpiolib0",
+      "version": "20260626-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/raspi-utils/libgpiolib0_20260626-1_arm64.deb",
+      "sha256": "594956f65e16d1fcbfd7b76046e11800ff12c0784936ed6fc3b792e707cee8f9",
+      "use": "image"
+    },
+    {
+      "name": "libcamera0.7",
+      "version": "0.7.2+rpt20260817-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera0.7_0.7.2+rpt20260817-1_arm64.deb",
+      "sha256": "c7dfaadcf9cd3b03fc41f0d457c88736d2638fa79d1cca11fc3637777cdae3c9",
+      "use": "image"
+    },
+    {
+      "name": "libcamera-ipa",
+      "version": "0.7.2+rpt20260817-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera-ipa_0.7.2+rpt20260817-1_arm64.deb",
+      "sha256": "0de238bc7f0a23bf4ab90604d232c88e92c0b5fa724272d555fdc570ca4d30f4",
+      "use": "image"
+    }
+  ],
+  "apps": [
+    {
+      "name": "camera",
+      "version": "1.0.2-m5stack1",
+      "url": "https://github.com/CardputerZero/Camera/releases/download/v1.0.2/Camera_1.0.2_m5stack1_arm64.deb",
+      "sha256": "acaddb8297132f1437d29a0cb9c369a8616c26014e4704400129592d057bc5c1"
+    },
+    {
+      "name": "m5cardputerzero-files",
+      "version": "1.0.2",
+      "url": "https://github.com/CardputerZero/Files/releases/download/v1.0.2/m5cardputerzero-files_1.0.2_m5stack1_arm64.deb",
+      "sha256": "6994a3f2b1152beb9cc734808103e7d59cb7c7b63856f95c836c401511b8c060"
+    },
+    {
+      "name": "m5cardputerzero-music",
+      "version": "0.1.7",
+      "url": "https://github.com/CardputerZero/Music/releases/download/v0.1.7/m5cardputerzero-music_0.1.7_m5stack1_arm64.deb",
+      "sha256": "f48e1d2e09ff5bf9ec2e15b4f5e6dfc45a1d2241be06fce06f2c2378901a19ca"
+    },
+    {
+      "name": "m5cardputerzero-recorder",
+      "version": "0.1.8",
+      "url": "https://github.com/CardputerZero/Recorder/releases/download/v0.1.8/m5cardputerzero-recorder_0.1.8_m5stack1_arm64.deb",
+      "sha256": "1143236750c38be7851a846886fea16ad35fb6cf543f1072cbce9e2d3d0e2fba"
+    }
+  ],
+  "repack": [
+    {
+      "name": "applaunch",
+      "version": "0.6.111",
+      "url": "https://github.com/CardputerZero/launcher/releases/download/launcher-v0.6.111/applaunch_0.6.111-m5stack1_arm64.deb",
+      "sha256": "8b1097120bd1abb3e264674e5f25a7bc715a2495ecd2cc008002b6dcc277c2b2"
+    }
+  ],
+  "git": [
+    {
+      "name": "m5stack-linux-dtoverlays",
+      "url": "https://github.com/m5stack/m5stack-linux-dtoverlays.git",
+      "commit": "a3fd3e83c0247e16e194e7e40f7fc1f5be933dd4"
+    }
+  ]
+}

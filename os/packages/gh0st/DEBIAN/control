@@ -1,0 +1,13 @@
+Package: gh0st
+Version: @GH0ST_VERSION@
+Architecture: arm64
+Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Section: x11
+Priority: optional
+Depends: cpzeroos-panel-modules, xdg-user-dirs, network-manager, wireplumber,
+ bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd
+Description: Gh0stdeck, the CardputerZero shell and Settings
+ The home screen, switcher and OS bars (gh0st shell), Settings
+ (gh0st-settings) and its root helper. Static binaries; the Depends are the
+ commands they run: nmcli, wpctl, bluetoothctl, rfkill, pkexec, vcgencmd,
+ unix_chkpwd, passwd, and systemd's systemctl, timedatectl and hostnamectl.

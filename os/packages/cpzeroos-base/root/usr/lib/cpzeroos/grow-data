@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+disk=/dev/mmcblk0
+stamp=/var/lib/cpzeroos/data-grown
+if [ -b "${disk}p3" ]; then
+    # p3 is not mounted yet, so the kernel can take its new size while the
+    # root partition on the same card stays mounted.
+    echo ", +" | sfdisk -q --no-reread --no-tell-kernel -N 3 "$disk"
+    partx -u -n 3 "$disk"
+fi
+mkdir -p "${stamp%/*}"
+touch "$stamp"

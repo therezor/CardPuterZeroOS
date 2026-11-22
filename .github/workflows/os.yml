@@ -1,0 +1,41 @@
+# Builds the CPZeroOS release image on an arm64 runner and runs the tier 1
+# checks. Same script as on the Mac (os/build.sh). Signing and publishing
+# the apt repo come later (roadmap M6).
+name: os
+
+on:
+  push:
+    branches: [main, image]
+    paths: [os/**, crates/**, packaging/**, Cargo.lock, .github/workflows/os.yml]
+  pull_request:
+    paths: [os/**, crates/**, packaging/**, Cargo.lock, .github/workflows/os.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Fetch pinned inputs
+        run: os/build.sh fetch
+      - name: Build packages
+        run: os/build.sh debs
+      - name: Build the release image
+        run: os/build.sh image release
+      - name: Tier 1 checks
+        run: os/build.sh check release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpzeroos-release
+          path: |
+            os/out/*.img.xz
+            os/out/*.bmap
+            os/out/*.sha256
+            os/out/*.packages.tsv
+          retention-days: 14

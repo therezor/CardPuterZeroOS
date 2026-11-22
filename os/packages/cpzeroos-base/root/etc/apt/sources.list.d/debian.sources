@@ -1,0 +1,13 @@
+# The device gets Debian from Debian and the rest from the CPZeroOS repo.
+# Nothing here runs on a timer: apt updates only when the user asks.
+Types: deb
+URIs: https://deb.debian.org/debian
+Suites: trixie trixie-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp
+
+Types: deb
+URIs: https://deb.debian.org/debian-security
+Suites: trixie-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp

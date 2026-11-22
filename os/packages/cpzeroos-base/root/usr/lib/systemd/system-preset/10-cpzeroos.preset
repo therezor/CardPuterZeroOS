@@ -1,0 +1,8 @@
+# The only system services CPZeroOS starts at boot. Everything else a
+# package enables is reset by `systemctl preset-all` at image build.
+enable NetworkManager.service
+enable systemd-timesyncd.service
+enable bluetooth.service
+enable fb_load.service
+enable cpzeroos-grow-data.service
+disable *

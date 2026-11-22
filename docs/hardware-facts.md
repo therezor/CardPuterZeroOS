@@ -4,7 +4,12 @@ Measured on the device unless marked.
 
 ## Measured
 
-- Debian 13 trixie, kernel `6.18.39+rpt-rpi-v8`, 352 MB RAM visible to Linux.
+- Debian 13 trixie, kernel `6.18.39+rpt-rpi-v8`, 352 MB RAM visible to Linux
+  at `gpu_mem=128`, 414 MB at `gpu_mem=64` (read 2026-11-21).
+- Bluetooth attaches in the kernel: `hci_uart_bcm` on `serial0` from the device
+  tree finds the CYW4343A2. No `hciuart` or `pi-bluetooth` (2026-11-21).
+- The kernel has ext4 and the SD host drivers built in, and `CONFIG_LSM` is
+  empty: root mounts without an initramfs, and no AppArmor (2026-11-21).
 - CPU features: `fp asimd evtstrm crc32 cpuid`. No `aes` or `sha2`: building
   with `target-cpu=cortex-a53` alone gives SIGILL, hence
   `-C target-feature=-aes,-sha2` in `.cargo/config.toml`.
@@ -34,6 +39,13 @@ Measured on the device unless marked.
   period (blanking).
 - TE is wired to GPIO5 (M5's overlay has the line commented out). With
   TEON sent it pulses once per refresh.
+- The dev device runs the official 2026-09-29 image, drivers from
+  m5stack-linux-dtoverlays `7551854` (`/etc/cardputerzero-dtoverlays.commit`).
+  Its M5 panel module is the newest M5 version: the sysfs reset is in, and
+  there is no TE code (M5 turned TE off on 2026-09-23 "until timing is
+  verified"). That file is unchanged through `a3fd3e8` (2026-11-19), which the
+  official 2026-11-19 image and CPZeroOS build from. Our driver started from it.
+  Read 2026-11-21.
 - The init file sets MADCTL 0xA0 (MV|MY): the panel refreshes across the
   landscape rows. gh0st's driver (`os/kernel/panel-mipi-dbi-m`) sends along
   the scan lines with MADCTL 0x90 and runs the panel at 50.6 Hz.
@@ -307,6 +319,23 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
 | `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |
 | Swap on the image | `zram-size` in `/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf` beats `50-cpzeroos.conf`; 0 leaves no zram0 | Advanced |
 | Swap compression and swappiness on the image | the same drop-ins work without rpi-swap | Advanced |
+
+## Stock system baseline (`scripts/measure.sh system`)
+
+Read 2026-11-21 on the stock M5 image with gh0st installed, 30 s idle, screen
+on, over SSH.
+
+| | Stock |
+|---|---|
+| MemTotal / MemAvailable | 415 / 212 MB, 108 MB in zram swap |
+| CMA | 64 MB, 11 MB free |
+| Packages, `/usr` | 1699, 5.1 GB |
+| Running services | 20, including LightDM, avahi, rpcbind, udisks2, cron, rtkit |
+| Timers | 9, including apt-daily and rpi-zram-writeback |
+| Listening | sshd 22, rpcbind 111, avahi 5353, two random UDP ports |
+| Boot | 5.1 s kernel + 30.2 s userspace |
+| IRQs on dwc2, mmc, spi | about 8,000 a second |
+| Battery current | 349 mA |
 
 ## Baseline (stock APPLaunch)
 

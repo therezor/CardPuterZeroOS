@@ -1,0 +1,34 @@
+# Packages that must never be in an image: phone-home, idle daemons, a boot
+# path we don't use, or build tools. Shell globs on package names.
+initramfs-tools*
+dracut*
+cloud-init
+rpi-connect*
+raspberrypi-sys-mods
+rpi-swap
+rpi-update
+rpi-eeprom
+udisks2
+modemmanager
+cups*
+rpcbind
+lightdm
+rtkit
+packagekit*
+unattended-upgrades
+apt-listchanges
+systemd-coredump
+popularity-contest
+apparmor
+cron
+cron-daemon-common
+man-db
+linux-image-*2712*
+linux-headers-*
+linux-kbuild-*
+gcc
+gcc-1[0-9]
+cpp
+binutils
+make
+build-essential

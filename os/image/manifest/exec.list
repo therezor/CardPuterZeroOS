@@ -1,0 +1,22 @@
+# Commands our static binaries run (crates/gh0st*), and what checks use.
+# Each must resolve in the image; the gh0st deb's Depends bring them.
+nmcli
+wpctl
+bluetoothctl
+rfkill
+pkexec
+systemctl
+timedatectl
+hostnamectl
+journalctl
+vcgencmd
+passwd
+reboot
+poweroff
+/usr/sbin/unix_chkpwd
+/bin/sh
+xdg-user-dirs-update
+ss
+pactl
+ffmpeg
+ffprobe

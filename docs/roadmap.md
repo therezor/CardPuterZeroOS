@@ -32,8 +32,8 @@ The user made these on 2026-11-20 and 2026-11-21.
 
 ## What is missing
 
-None of the phases in `distro-plan.md` is built. There is no image build and
-no system baseline. The dev device runs the stock desktop image, with LightDM,
+The image build exists (`image-build.md`, 2026-11-21): M1b's image and most of
+M6's build and CI, not yet booted on a device. There is no system baseline. The dev device runs the stock desktop image, with LightDM,
 avahi, rpcbind, udisks2 and cron up, and 93 MB in swap at idle.
 
 These gaps were in no doc before this one:
@@ -201,6 +201,8 @@ problems early.
 - The M2 and M4 tests run on this card. They turn SSH off and drop inbound
   traffic, which would lock us out of the dev card.
 - Done when it boots to gh0st and stock apps run.
+- Built 2026-11-21 as `os/build.sh image dev` (`image-build.md`). It passes the
+  offline checks; the boot on the spare card is next.
 
 **A1. App SDK v0.** `crates/gh0st-app` with pages, OS bars, soft keys, lists,
 text fields, jobs with stdin, timers, watched fds, raw keys, a sim backend

@@ -56,8 +56,11 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
-  our `.desktop` entries.
+  our `.desktop` entries. The `gh0st` package installs from here too.
+- `os/`: the image build. `os/build.sh` runs it in a container, `os/lock.json`
+  pins every input, `os/packages/` holds our debs. How: `docs/image-build.md`.
 - `scripts/deploy.sh`, `scripts/measure.sh`: install on a device, measure it.
+  `scripts/flash.sh`: write an image to an SD card.
 
 ## Rules
 
@@ -87,6 +90,12 @@ battery in `/sys/class/power_supply`. Details and sources in
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release --target aarch64-unknown-linux-musl   # static, rust-lld
+```
+
+The image (Docker Desktop running; details in `docs/image-build.md`):
+
+```sh
+os/build.sh fetch && os/build.sh debs && os/build.sh image release && os/build.sh check release
 ```
 
 Mockups. Both env vars are optional: without `GH0ST_STOCK` app tiles fall back

@@ -1,0 +1,5 @@
+# Dev tooling never ships.
+cpzeroos-dev
+avahi-daemon
+strace
+evtest

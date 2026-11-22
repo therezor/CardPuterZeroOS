@@ -1,0 +1,9 @@
+Package: gh0st-term
+Version: @GH0ST_VERSION@
+Architecture: arm64
+Maintainer: CPZeroOS <15324879+therezor@users.noreply.github.com>
+Section: x11
+Priority: optional
+Depends: gh0st
+Description: the Gh0stdeck terminal
+ A terminal app for the CardputerZero: tabs, history, bitmap fonts.

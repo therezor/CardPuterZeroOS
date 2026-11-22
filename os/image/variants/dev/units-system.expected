@@ -1,0 +1,16 @@
+NetworkManager-dispatcher.service enabled
+NetworkManager.service enabled
+avahi-daemon.service enabled
+avahi-daemon.socket enabled
+bluetooth.service enabled
+cpzeroos-grow-data.service enabled
+cryptdisks-early.service masked
+cryptdisks.service masked
+fb_load.service enabled
+hwclock.service masked
+ssh.service enabled
+sudo.service masked
+systemd-backlight@backlight:backlight.service masked
+systemd-timesyncd.service enabled
+systemd-tmpfiles-clean.timer masked
+x11-common.service masked
