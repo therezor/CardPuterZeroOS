@@ -21,6 +21,7 @@ use gh0st_core::job::{self, Job};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::link::Link;
 use gh0st_core::password::{self, Account, Tries};
+use gh0st_core::rfkill;
 use gh0st_core::rt;
 use gh0st_core::script::Script;
 use gh0st_core::status::{self, Net, Watch};
@@ -220,6 +221,14 @@ struct Shell {
     user: String,
     /// The backlight before it dimmed.
     dimmed: Option<u32>,
+    /// `gh0st.dark.wifi_off`: Wi-Fi goes off this long into the dark.
+    dark_wifi_ms: Option<u64>,
+    /// When the screen last went dark.
+    off_at: u64,
+    /// This dark has had its Wi-Fi turn.
+    wifi_done: bool,
+    /// The shell turned Wi-Fi off, so the wake turns it back on.
+    wifi_slept: bool,
     /// Write every row next frame: the mapping may not match the glass.
     full_flush: bool,
     config: Config,
@@ -374,6 +383,10 @@ impl Shell {
             // SAFETY: getuid has no failure mode.
             user: password::user_name(unsafe { libc::getuid() }).unwrap_or_default(),
             dimmed: None,
+            dark_wifi_ms: dark_wifi_of(&config),
+            off_at: 0,
+            wifi_done: false,
+            wifi_slept: false,
             full_flush: true,
             dirs,
             apps: Vec::new(),
@@ -432,6 +445,10 @@ impl Shell {
             let path = dir.join("gh0st-lock");
             s.tries = Tries::load(&path, password::boottime());
             s.tries_path = Some(path);
+        }
+        // A shell that stopped in the dark left Wi-Fi off.
+        if on_device && std::fs::remove_file(wifi_marker()).is_ok() {
+            child::fire(&["nmcli", "radio", "wifi", "on"]);
         }
         // A restart or a power cycle must not skip the lock.
         if s.lock_password {
@@ -556,6 +573,7 @@ impl Shell {
         self.dark_ms = dark_ms_of(&self.config);
         self.lock_password = lock_password_of(&self.config);
         self.lock_after_ms = lock_after_of(&self.config);
+        self.dark_wifi_ms = dark_wifi_of(&self.config);
         self.set_animations();
         self.dirty = true;
     }
@@ -676,6 +694,7 @@ impl Shell {
                     .then(|| self.lock.next_at())
                     .flatten(),
                 (shell && self.lock_waiting()).then_some(now + 1000),
+                self.wifi_off_at(),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
                 shell
@@ -862,6 +881,9 @@ impl Shell {
         }
         if self.dim_at().is_some_and(|t| now >= t) {
             self.dim();
+        }
+        if self.wifi_off_at().is_some_and(|t| now >= t) {
+            self.wifi_sleep();
         }
         if self.dark_at().is_some_and(|t| now >= t) {
             if self.app_front() {
@@ -1137,11 +1159,45 @@ impl Shell {
         self.confirm_all = false;
         self.tab_down = None;
         self.screen = Screen::Off;
+        self.off_at = rt::now_ms();
+        self.wifi_done = false;
         self.sync_grab();
+    }
+
+    /// When Wi-Fi goes off in this dark, if the user asked for that.
+    fn wifi_off_at(&self) -> Option<u64> {
+        let dark = self.screen == Screen::Off && !self.app_front();
+        (dark && !self.wifi_done)
+            .then(|| self.dark_wifi_ms.map(|ms| self.off_at + ms))
+            .flatten()
+    }
+
+    /// Wi-Fi off through NetworkManager, which our polkit rule allows. Only
+    /// a radio that is on, so the wake never turns on one the user left off.
+    fn wifi_sleep(&mut self) {
+        self.wifi_done = true;
+        if self.backlight.is_none() || !rfkill::wlan_on(Path::new("/sys/class/rfkill")) {
+            return;
+        }
+        if self.debug {
+            eprintln!("gh0st shell: Wi-Fi off for the dark");
+        }
+        let _ = std::fs::write(wifi_marker(), b"");
+        child::fire(&["nmcli", "radio", "wifi", "off"]);
+        self.wifi_slept = true;
+    }
+
+    fn wifi_wake(&mut self) {
+        if !std::mem::take(&mut self.wifi_slept) {
+            return;
+        }
+        let _ = std::fs::remove_file(wifi_marker());
+        child::fire(&["nmcli", "radio", "wifi", "on"]);
     }
 
     /// A key in the dark: the lock screen, at rest.
     fn screen_on(&mut self, now: u64) {
+        self.wifi_wake();
         if let Some(bl) = &self.backlight {
             // The panel may have been dark already (stock's timeout), so
             // fall back to the saved level, then full.
@@ -2475,6 +2531,21 @@ fn dark_ms_of(c: &Config) -> Option<u64> {
 
 fn lock_password_of(c: &Config) -> bool {
     c.get_bool("gh0st.lock.password").unwrap_or(true)
+}
+
+/// `gh0st.dark.wifi_off` in seconds; absent or negative means never.
+fn dark_wifi_of(c: &Config) -> Option<u64> {
+    c.get_int("gh0st.dark.wifi_off")
+        .filter(|&s| s >= 0)
+        .map(|s| s as u64 * 1000)
+}
+
+/// Marks Wi-Fi as turned off by the dark, so a restarted shell turns it on.
+fn wifi_marker() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("gh0st-wifi-slept")
 }
 
 /// `gh0st.lock.after` in seconds; -1 means only by hand.

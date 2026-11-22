@@ -24,9 +24,43 @@ pub fn set(radio: Radio, blocked: bool) -> std::io::Result<()> {
     f.write_all(&event(radio, blocked))
 }
 
+/// Whether any Wi-Fi radio is free to run: neither switch blocks it.
+/// `root` is `/sys/class/rfkill`.
+pub fn wlan_on(root: &std::path::Path) -> bool {
+    let read = |p: std::path::PathBuf| std::fs::read_to_string(p).unwrap_or_default();
+    std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .any(|d| {
+            read(d.join("type")).trim() == "wlan"
+                && read(d.join("soft")).trim() == "0"
+                && read(d.join("hard")).trim() == "0"
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wlan_on_needs_both_switches_open() {
+        let root = std::env::temp_dir().join(format!("gh0st-rfkill-{}", std::process::id()));
+        let sw = |n: &str, kind: &str, soft: &str| {
+            let d = root.join(n);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("type"), format!("{kind}\n")).unwrap();
+            std::fs::write(d.join("soft"), format!("{soft}\n")).unwrap();
+            std::fs::write(d.join("hard"), "0\n").unwrap();
+        };
+        sw("rfkill0", "bluetooth", "0");
+        sw("rfkill1", "wlan", "1");
+        assert!(!wlan_on(&root), "blocked");
+        sw("rfkill1", "wlan", "0");
+        assert!(wlan_on(&root));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn the_event_changes_all_switches_of_one_type() {

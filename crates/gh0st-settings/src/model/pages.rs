@@ -11,6 +11,8 @@ pub const DARK_TIMES: &[i64] = &[15, 30, 60, 120, 300, 0];
 /// `gh0st.lock.after` in seconds of dark; -1 locks only by hand.
 pub const LOCK_AFTERS: &[i64] = &[0, 60, 300, 900, -1];
 pub const DEFAULT_LOCK_AFTER: i64 = 300;
+/// `gh0st.dark.wifi_off`: seconds of dark before the radio goes off.
+pub const DARK_WIFI: &[Option<i64>] = &[None, Some(60), Some(300), Some(900)];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Logs {
@@ -181,6 +183,10 @@ pub struct State {
     pub lock_password: bool,
     /// `gh0st.lock.after`: seconds of dark before it asks.
     pub lock_after: i64,
+    /// `gh0st.dark.wifi_off`: Wi-Fi goes off this long into the dark.
+    pub dark_wifi: Option<i64>,
+    /// The built-in Ethernet chip may suspend; None without it.
+    pub usb_power: Option<bool>,
     /// The local date and time, "2026-11-21 14:32", when System opened.
     pub now: String,
     /// `gpu_mem` in config.txt, and what the firmware runs with now.
@@ -264,6 +270,13 @@ impl State {
     }
 }
 
+pub fn dark_wifi_label(secs: Option<i64>) -> String {
+    match secs {
+        None => "Never".into(),
+        Some(s) => format!("After {} min", s / 60),
+    }
+}
+
 pub fn lock_after_label(secs: i64) -> String {
     match secs {
         s if s < 0 => "By hand".into(),
@@ -305,6 +318,12 @@ pub fn build(id: &PageId, s: &State) -> Page {
                     "Screen off after",
                     Value::Choice(dark_label(s.dark_secs)),
                     Act::Set(Setting::DarkTime),
+                ),
+                Item::new(
+                    "wifi-off",
+                    "Wi-Fi off in the dark",
+                    Value::Choice(dark_wifi_label(s.dark_wifi)),
+                    Act::Set(Setting::DarkWifi),
                 ),
             ]),
             vec![],
@@ -954,6 +973,14 @@ fn advanced(s: &State) -> Vec<Item> {
             Act::Run(Command::DeviceName),
         ),
     ];
+    if let Some(on) = s.usb_power {
+        out.push(Item::new(
+            "usb",
+            "USB power saving",
+            Value::Toggle(on),
+            Act::Set(Setting::UsbPower),
+        ));
+    }
     // Last, so the rows above keep their places when it comes and goes.
     if s.restart_needed() {
         out.push(Item::new(
@@ -1505,6 +1532,8 @@ mod tests {
             Value::Choice("5 min".into())
         );
         assert_eq!(lock_after_label(0), "At once");
+        assert_eq!(dark_wifi_label(None), "Never");
+        assert_eq!(dark_wifi_label(Some(300)), "After 5 min");
         assert_eq!(lock_after_label(-1), "By hand");
     }
 

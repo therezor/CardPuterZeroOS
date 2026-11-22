@@ -133,6 +133,8 @@ fn sample_state() -> State {
         },
         lock_password: true,
         lock_after: 300,
+        dark_wifi: None,
+        usb_power: Some(true),
         country_zones: Vec::new(),
         now: "2026-11-21 14:32".into(),
         gpu_mem: GpuMem::Set(128),

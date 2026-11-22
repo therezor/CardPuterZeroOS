@@ -76,6 +76,10 @@ pub enum Setting {
     LockPassword,
     /// How long dark before the lock asks for it.
     LockAfter,
+    /// How long dark before Wi-Fi goes off.
+    DarkWifi,
+    /// The built-in Ethernet chip may suspend.
+    UsbPower,
 }
 
 /// A value picked on its own page, each option with a note. The gated

@@ -373,6 +373,17 @@ the background. The shell draws nothing and runs no timer. A key wakes the
 screen on the lock screen at rest: no app sees it. An app can ask to stay
 awake (`sdk.md`, `keep_awake`), for a player or a clock.
 
+Two more savers, each its own setting:
+
+- **Wi-Fi off in the dark** (Display: Never, or after 1, 5 or 15 minutes).
+  The radio goes off that long into the dark and comes back on wake, so SSH
+  and downloads stop meanwhile. About 28 mA. It never turns on a radio the
+  user left off.
+- **USB power saving** (System > Advanced, on by default). The built-in
+  Ethernet chip suspends while it has no work, and with it the whole USB
+  bus: about 93 mA, with the screen on too. A USB device that can't suspend
+  keeps the bus awake, so unplug dongles that aren't in use.
+
 ## Words
 
 - One word on a chip, five letters or fewer when the bar is full.

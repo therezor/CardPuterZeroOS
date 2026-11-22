@@ -336,9 +336,9 @@ critical-chain`. Done when the time to the home screen is gated.
 
 **M8. Deep idle and power loss.** There is no suspend (`PM_SLEEP` is off),
 so deep idle is the dark state made cheaper. M4 pauses the app in front and
-stops every shell timer. Still to do: the panel sleeps (`SLPIN` on blank,
-which `panel_mipi_dbi_disable` doesn't send yet, and wake re-runs the init),
-Wi-Fi saves power, audio suspends. When
+stops every shell timer. Built 2026-11-22: USB power saving and Wi-Fi off in
+the dark (`hardware-facts.md`, Dark current). Panel sleep measured at about
+7 mA, within noise, so it waits. When
 power fails (GPIO6), the device syncs and shuts down. Done when screen-off
 current is measured against the 173 mA floor.
 

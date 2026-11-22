@@ -4,7 +4,7 @@
 //! in and out, so both sides use the same parser and the transforms test
 //! on any host.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const CONFIG: &str = "config.txt";
 pub const CMDLINE: &str = "cmdline.txt";
@@ -375,6 +375,51 @@ pub fn swap_max(meminfo: &str) -> u32 {
 // /usr/lib/NetworkManager/conf.d/50-cpzeroos.conf; Settings and setup write
 // one whole file per setting in /etc, which NetworkManager reads after it.
 
+/// The built-in USB Ethernet chip on the board's hub. Left awake, it keeps
+/// the hub and the USB host up at about 8,100 IRQ/s: 93 mA, measured.
+pub const ETH_USB_ID: (&str, &str) = ("0fe6", "9900");
+/// Settings' USB power saving, after the image's `60-cpzeroos.rules`.
+pub const USB_POWER_RULE: &str = "/etc/udev/rules.d/61-gh0st-usb-power.rules";
+
+/// The USB devices with this vendor and product id under `devices`
+/// (`/sys/bus/usb/devices`).
+pub fn usb_devices(devices: &Path, id: (&str, &str)) -> Vec<PathBuf> {
+    let read = |p: PathBuf| std::fs::read_to_string(p).map(|s| s.trim().to_string());
+    let mut out: Vec<PathBuf> = std::fs::read_dir(devices)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|d| {
+            read(d.join("idVendor")).is_ok_and(|v| v == id.0)
+                && read(d.join("idProduct")).is_ok_and(|v| v == id.1)
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Whether the built-in Ethernet chip may suspend: `power/control` reads
+/// `auto`. None without the chip.
+pub fn usb_power(devices: &Path) -> Option<bool> {
+    let d = usb_devices(devices, ETH_USB_ID).into_iter().next()?;
+    let c = std::fs::read_to_string(d.join("power/control")).ok()?;
+    Some(c.trim() == "auto")
+}
+
+/// The udev rule that keeps the choice across a restart.
+pub fn usb_power_rule(save: bool) -> String {
+    format!(
+        "# Settings > System > Advanced > USB power saving.\n\
+         ACTION==\"add\", SUBSYSTEM==\"usb\", ATTR{{idVendor}}==\"{}\", \
+         ATTR{{idProduct}}==\"{}\", TEST==\"power/control\", \
+         ATTR{{power/control}}=\"{}\"\n",
+        ETH_USB_ID.0,
+        ETH_USB_ID.1,
+        if save { "auto" } else { "on" }
+    )
+}
+
 pub const NM_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-mac.conf";
 pub const NM_SCAN_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf";
 pub const NM_HOSTNAME_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-dhcp-hostname.conf";
@@ -534,6 +579,25 @@ pub fn valid_user_name(s: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usb_power_reads_the_chip_and_writes_its_rule() {
+        let root = std::env::temp_dir().join(format!("gh0st-usb-{}", std::process::id()));
+        let dev = root.join("1-1.1");
+        std::fs::create_dir_all(dev.join("power")).unwrap();
+        assert_eq!(super::usb_power(&root), None, "no chip");
+        std::fs::write(dev.join("idVendor"), "0fe6\n").unwrap();
+        std::fs::write(dev.join("idProduct"), "9900\n").unwrap();
+        std::fs::write(dev.join("power/control"), "on\n").unwrap();
+        assert_eq!(super::usb_power(&root), Some(false));
+        std::fs::write(dev.join("power/control"), "auto\n").unwrap();
+        assert_eq!(super::usb_power(&root), Some(true));
+        std::fs::remove_dir_all(&root).unwrap();
+        let rule = super::usb_power_rule(true);
+        assert!(rule.contains(r#"ATTR{idVendor}=="0fe6""#), "{rule}");
+        assert!(rule.contains(r#"ATTR{power/control}="auto""#), "{rule}");
+        assert!(super::usb_power_rule(false).contains(r#"ATTR{power/control}="on""#));
+    }
+
     use super::*;
 
     #[test]

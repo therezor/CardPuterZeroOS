@@ -4,7 +4,8 @@
 //! time it takes the screen back, so home follows what changed here.
 
 use crate::model::pages::{
-    self, APP_ICONS, AppRow, DARK_TIMES, DEFAULT_LOCK_AFTER, LOCK_AFTERS, Logs, State as PageState,
+    self, APP_ICONS, AppRow, DARK_TIMES, DARK_WIFI, DEFAULT_LOCK_AFTER, LOCK_AFTERS, Logs,
+    State as PageState,
 };
 use crate::model::{
     self, Act, Body, Choice, Command, ConnField, Cursor, Dialog, Page as View, PageId, Setting,
@@ -323,6 +324,7 @@ impl Settings {
         s.lock_after = config
             .get_int("gh0st.lock.after")
             .unwrap_or(DEFAULT_LOCK_AFTER);
+        s.dark_wifi = config.get_int("gh0st.dark.wifi_off").filter(|&t| t >= 0);
         let (y, mon, d, h, min) = rt::local_ymdhm();
         s.now = format!("{y}-{mon:02}-{d:02} {h:02}:{min:02}");
     }
@@ -529,6 +531,24 @@ impl Settings {
             Setting::LockPassword => {
                 let on = self.state.lock_password;
                 cx.settings().set_bool("gh0st.lock.password", !on);
+            }
+            Setting::DarkWifi => {
+                let i = DARK_WIFI
+                    .iter()
+                    .position(|&t| t == self.state.dark_wifi)
+                    .unwrap_or(0);
+                let next = DARK_WIFI[cycle(i, d, DARK_WIFI.len())];
+                cx.settings()
+                    .set_int("gh0st.dark.wifi_off", next.unwrap_or(-1));
+            }
+            Setting::UsbPower => {
+                let on = self.state.usb_power == Some(true);
+                let done = if on {
+                    "USB power saving off"
+                } else {
+                    "USB power saving on"
+                };
+                self.helper(cx, &["usb-power", if on { "off" } else { "on" }], done);
             }
             Setting::LockAfter => {
                 let i = LOCK_AFTERS
@@ -1278,6 +1298,7 @@ impl Settings {
             .unwrap_or_default()
             .trim()
             .to_string();
+        s.usb_power = sysconf::usb_power(Path::new("/sys/bus/usb/devices"));
         s.hostname = read(Path::new("/proc/sys/kernel/hostname"))
             .unwrap_or_default()
             .trim()

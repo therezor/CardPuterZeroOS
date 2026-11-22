@@ -18,6 +18,7 @@
 //!     gh0st-helper dhcp-hostname on|off          password
 //!     gh0st-helper ip6-privacy on|off            password
 //!     gh0st-helper rfkill bluetooth|wlan on|off
+//!     gh0st-helper usb-power on|off
 //!     gh0st-helper power off|reboot
 //!     gh0st-helper user-create NAME              setup only, the new password
 //!     gh0st-helper setup-finish                  setup only
@@ -86,6 +87,8 @@ pub enum Verb {
     DhcpHostname(bool),
     Ip6Privacy(bool),
     Rfkill(Radio, bool),
+    /// The built-in Ethernet chip may suspend.
+    UsbPower(bool),
     Power(bool),
     UserCreate(String),
     SetupFinish,
@@ -111,7 +114,11 @@ impl Verb {
             | Verb::ScanMac(_)
             | Verb::DhcpHostname(_)
             | Verb::Ip6Privacy(_) => true,
-            Verb::Rfkill(..) | Verb::Power(_) | Verb::UserCreate(_) | Verb::SetupFinish => false,
+            Verb::Rfkill(..)
+            | Verb::UsbPower(_)
+            | Verb::Power(_)
+            | Verb::UserCreate(_)
+            | Verb::SetupFinish => false,
         }
     }
 
@@ -153,6 +160,7 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["setup-finish"] => Verb::SetupFinish,
         ["rfkill", "bluetooth", s] => Verb::Rfkill(Radio::Bluetooth, on(s)?),
         ["rfkill", "wlan", s] => Verb::Rfkill(Radio::Wlan, on(s)?),
+        ["usb-power", s] => Verb::UsbPower(on(s)?),
         ["power", "off"] => Verb::Power(false),
         ["power", "reboot"] => Verb::Power(true),
         _ => return None,
@@ -329,6 +337,17 @@ fn set_swappiness(n: u32) -> Result<(), String> {
     write_conf(sysconf::SWAPPINESS_DROPIN, &sysconf::swappiness_conf(n))?;
     std::fs::write(sysconf::SWAPPINESS_NOW, n.to_string())
         .map_err(|e| format!("{}: {e}", sysconf::SWAPPINESS_NOW))
+}
+
+/// The rule for later boots and replugs, then the chip now.
+fn usb_power(save: bool) -> Result<(), String> {
+    write_conf(sysconf::USB_POWER_RULE, &sysconf::usb_power_rule(save))?;
+    let value = if save { "auto" } else { "on" };
+    for d in sysconf::usb_devices(Path::new("/sys/bus/usb/devices"), sysconf::ETH_USB_ID) {
+        let f = d.join("power/control");
+        std::fs::write(&f, value).map_err(|e| format!("{}: {e}", f.display()))?;
+    }
+    Ok(())
 }
 
 /// A whole drop-in of ours, its directory made if missing.
@@ -613,6 +632,7 @@ fn act(v: Verb) -> Result<(), String> {
         }
         Verb::SetupFinish => setup_finish(),
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
+        Verb::UsbPower(on) => usb_power(on),
         Verb::Power(reboot) => run(&["systemctl", if reboot { "reboot" } else { "poweroff" }]),
     }
 }
@@ -624,7 +644,8 @@ pub fn main(args: &[String]) -> i32 {
              regdom XX | cpu balanced|power-saver|performance | hostname NAME | swap MB | \
              swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | set-time EPOCH | ntp on|off | \
              mac random|stable|device | scan-mac random|device | dhcp-hostname on|off | \
-             ip6-privacy on|off | rfkill bluetooth|wlan on|off | power off|reboot | \
+             ip6-privacy on|off | rfkill bluetooth|wlan on|off | usb-power on|off | \
+             power off|reboot | \
              user-create NAME | setup-finish"
         );
         return 2;
@@ -793,6 +814,7 @@ mod tests {
             ("dhcp-hostname off", true),
             ("ip6-privacy on", true),
             ("rfkill wlan on", false),
+            ("usb-power on", false),
             ("power off", false),
             ("user-create alex", false),
             ("setup-finish", false),

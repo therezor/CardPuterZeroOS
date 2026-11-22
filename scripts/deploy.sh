@@ -35,6 +35,7 @@ if [ "${1:-}" = rollback ]; then
         /etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf \
         /etc/NetworkManager/conf.d/90-gh0st-dhcp-hostname.conf \
         /etc/NetworkManager/conf.d/90-gh0st-ip6-privacy.conf \
+        /etc/udev/rules.d/61-gh0st-usb-power.rules \
         && sudo systemctl daemon-reload && sudo nmcli general reload conf'
     restart_launcher
     echo "stock launcher restored on $host"
