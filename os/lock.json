@@ -116,6 +116,13 @@
       "use": "image"
     },
     {
+      "name": "libcamera-dev",
+      "version": "0.7.2+rpt20260817-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera-dev_0.7.2+rpt20260817-1_arm64.deb",
+      "sha256": "b799340d3f753563f583f705af26411b45d8426b6f13d0b734b4da0872bb3b62",
+      "use": "camera-build"
+    },
+    {
       "name": "libcamera-ipa",
       "version": "0.7.2+rpt20260817-1",
       "url": "https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera-ipa_0.7.2+rpt20260817-1_arm64.deb",

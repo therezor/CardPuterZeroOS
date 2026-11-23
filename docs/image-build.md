@@ -68,7 +68,13 @@ both install from it.
    applaunch deb the AppStore is repacked from. The M5 driver repo is fetched
    at its pinned commit. `cargo fetch` runs here, so later steps are offline.
 2. **debs.** The pinned debs become a local repo. Our packages build:
-   - `cargo build` for gh0st, gh0st-settings and gh0st-term.
+   - `cargo build` for gh0st, gh0st-settings, gh0st-term, gh0st-update and
+     gh0st-camera.
+   - The camera helper (C++), against `libcamera-dev` unpacked into a
+     sysroot. That deb's `use` is `camera-build`, so it is fetched but never
+     installed. `os/build.sh camd` builds the helper alone into
+     `os/out/camd`. The `gh0st-camera` deb is built but not in
+     `roots.list` until it replaces M5's Camera (`docs/camera.md`).
    - The M5 drivers and our panel driver, against the pinned kernel headers.
      M5's `make install` writes to absolute paths, so only `make all` runs
      and an explicit file list goes into the package. Every module's
