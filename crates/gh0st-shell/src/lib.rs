@@ -10,6 +10,5 @@ pub mod motion;
 pub mod notices;
 pub mod overlay;
 pub mod run;
-pub mod search;
 pub mod switcher;
 pub mod tasks;

@@ -1,5 +1,6 @@
 //! The OS bars a page asks for. The page draws in what is left.
 
+use crate::search::Search;
 use gh0st_ui::widgets::Look;
 use gh0st_ui::{Rect, Theme};
 
@@ -124,6 +125,8 @@ pub struct Bars {
     pub(crate) menu: bool,
     /// The hint bar while typing.
     pub(crate) hints: Vec<(String, String)>,
+    /// The query, while a search is active: it takes the hint bar's place.
+    pub(crate) search: Option<String>,
 }
 
 impl Bars {
@@ -136,6 +139,7 @@ impl Bars {
             chips: [None, None, None],
             menu: true,
             hints: Vec::new(),
+            search: None,
         }
     }
 
@@ -190,6 +194,13 @@ impl Bars {
             .into_iter()
             .map(|(k, l)| (k.to_string(), l.to_string()))
             .collect();
+        self
+    }
+
+    /// While `search` is active the action bar shows its query, a caret and
+    /// how to leave, in place of the hints. The page must be typing then.
+    pub fn search(mut self, search: &Search) -> Bars {
+        self.search = search.active().then(|| search.query().to_string());
         self
     }
 

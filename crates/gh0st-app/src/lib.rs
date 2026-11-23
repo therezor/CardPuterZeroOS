@@ -14,6 +14,7 @@ mod menu;
 mod page;
 mod run;
 mod runtime;
+mod search;
 mod steps;
 pub mod system;
 /// Notices in the shell's notifications: the file format and folders, for
@@ -36,6 +37,7 @@ pub use key::{Key, codes};
 pub use list::{Action, List, Row, cycle};
 pub use page::{Cx, Job, JobEvent, Page, Settings, Timer, Watch};
 pub use run::{Options, run, run_with};
+pub use search::Search;
 pub use steps::Steps;
 pub use ui::Ui;
 
@@ -47,6 +49,6 @@ pub use gh0st_ui as gfx;
 pub mod prelude {
     pub use crate::{
         Action, Answer, Bars, Chip, Command, Commands, Cx, Dialog, Edit, Form, Job, JobEvent, Key,
-        List, Page, Row, Step, Steps, TextField, Timer, Tone, Ui, Watch,
+        List, Page, Row, Search, Step, Steps, TextField, Timer, Tone, Ui, Watch,
     };
 }

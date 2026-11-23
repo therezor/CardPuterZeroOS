@@ -1278,6 +1278,10 @@ impl Runtime {
                 widgets::action_bar(&mut self.canvas, &t, &chips);
             }
             Overlay::None if !bars.bottom => {}
+            Overlay::None if page.typing() && bars.search.is_some() => {
+                let q = bars.search.as_deref().unwrap_or_default();
+                widgets::search_bar(&mut self.canvas, &t, q);
+            }
             // A mode with no chips, such as moving a row, explains its keys.
             Overlay::None
                 if page.typing()

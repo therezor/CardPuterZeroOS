@@ -22,6 +22,7 @@ pub mod procfs;
 pub mod rfkill;
 pub mod rt;
 pub mod script;
+pub mod search;
 pub mod status;
 pub mod sysconf;
 pub mod update;

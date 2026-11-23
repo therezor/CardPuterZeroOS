@@ -510,6 +510,75 @@ let page = Account {
 
 A form zeroes its fields when dropped, and its `Debug` shows labels only.
 
+### Search
+
+A long list gets type-to-search, as home has. Keep a `Search` in the page.
+Start it from a Find chip on 6 or the `s` key. While it is active the page
+is typing, and `Bars::search` puts the query in the action bar in place of
+the chips. Fn+F and Fn+X move, Enter picks, and Esc leaves search before it
+leaves the page:
+
+```rust
+use gh0st_app::prelude::*;
+
+const NAMES: &[&str] = &["Camera", "Music", "Notes"];
+
+struct Apps {
+    list: List,
+    search: Search,
+}
+
+impl Apps {
+    /// The rows that match, best first.
+    fn shown(&self) -> Vec<usize> {
+        self.search.rank(NAMES.len(), |i| self.search.score(&[NAMES[i]]))
+    }
+}
+
+impl Page for Apps {
+    fn title(&self) -> &str {
+        "Apps"
+    }
+
+    fn bars(&self) -> Bars {
+        Bars::top()
+            .chip(6, Chip::new("search", "Find"))
+            .search(&self.search)
+    }
+
+    fn typing(&self) -> bool {
+        self.search.active()
+    }
+
+    fn back(&mut self, _: &mut Cx) -> bool {
+        !self.search.cancel()
+    }
+
+    fn key(&mut self, key: Key, cx: &mut Cx) {
+        if !self.search.active() && matches!(key, Key::Soft(6) | Key::Char('s')) {
+            return self.search.start();
+        }
+        if self.search.key(key) == Some(Edit::Changed) {
+            return self.list.select(0);
+        }
+        if let Some(Action::Open(i)) = self.list.key(key) {
+            cx.toast(NAMES[self.shown()[i]]);
+            self.search.cancel();
+        }
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        let rows: Vec<Row> = self.shown().into_iter().map(|i| Row::text(NAMES[i])).collect();
+        ui.list(&self.list, &rows);
+    }
+}
+```
+
+`score` takes the fields to search, best first: a match in a later field
+ranks one step lower. It ranks a match at the start of a field first, then
+at the start of a word, then anywhere, then the letters in order. Home
+ranks the same way (`gh0st_core::search`).
+
 ## Drawing
 
 Each `Ui` call stacks below the last, inside the page's area, with the OS

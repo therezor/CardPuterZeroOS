@@ -1,4 +1,5 @@
-//! Type-to-search ranking, from pt35's launcher.
+//! Type-to-search ranking, from pt35's launcher. The shell and SDK apps
+//! share it, so search behaves the same everywhere.
 
 /// How well `needle` matches `hay`, lower is better, `None` for no match: the
 /// start of it, the start of a word, anywhere, then its letters in order.

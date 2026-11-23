@@ -8,7 +8,7 @@
 //! draws frames only while one runs.
 
 use crate::motion::{self, lerp, lerp_rect};
-use crate::search::score;
+use gh0st_core::search::score;
 use gh0st_ui::Canvas;
 use gh0st_ui::geom::Rect;
 use gh0st_ui::image::Image;
