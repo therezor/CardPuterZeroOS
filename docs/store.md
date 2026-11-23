@@ -57,11 +57,13 @@ page says it:
 | Flag | Seen how | Shown as |
 |---|---|---|
 | `scripts` | the deb has `preinst`, `postinst`, `prerm` or `postrm` | Setup runs as root |
-| `paths` | files outside `/usr/bin`, `/usr/lib/<pkg>`, `/usr/share/<pkg>`, `/usr/share/doc/<pkg>`, `/usr/share/APPLaunch`, or a setuid file | System files |
+| `paths` | a file where root reads and acts: `/etc` outside `/etc/<pkg>`, udev rules, sysctl, modprobe, polkit, NetworkManager, `/boot`, tmpfiles that reach past the app's own folders, or a setuid file | System files |
 | `service` | M5's `background_service`, or a systemd unit in the deb | Service |
 | `network`, `camera`, `microphone`, `hardware`, `display`, `imu` | M5's permissions | Uses network, camera |
 
-Installing an app with any of the first three asks first, and names them.
+dpkg never lets a package overwrite another's files, so a file elsewhere
+is only data. Installing an app with any of the first three asks first, and
+names them.
 An update doesn't ask.
 CI drops an app whose dependencies our sources don't have (14 of 179 on
 2026-11-23: Pi camera tools, `raspi-utils-core`, M5's launcher).

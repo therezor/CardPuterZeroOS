@@ -73,9 +73,29 @@ UNIT_DIRS = (
     "etc/systemd/",
     "etc/init.d/",
 )
+# Where root reads files and acts on them. dpkg never lets a package
+# overwrite another's files, so elsewhere a file is only data.
+ROOT_READS = (
+    "etc/",
+    "boot/",
+    "lib/udev/",
+    "usr/lib/udev/",
+    "usr/lib/sysctl.d/",
+    "usr/lib/modprobe.d/",
+    "usr/lib/modules-load.d/",
+    "usr/lib/sysusers.d/",
+    "usr/lib/polkit-1/",
+    "usr/share/polkit-1/",
+    "usr/lib/NetworkManager/",
+    "usr/lib/environment.d/",
+)
+TMPFILES = ("usr/lib/tmpfiles.d/", "etc/tmpfiles.d/")
+# The last column dates the facts: rows from an older rule are checked again.
+FACTS = "2"
 CHECKED_COLS = [
     "sha256", "package", "version", "arch", "depends", "provides",
     "replaces", "conflicts", "breaks", "scripts", "paths", "service", "desktop",
+    "facts",
 ]
 
 URL_RE = re.compile(r"^https://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$")
@@ -252,33 +272,64 @@ def control_fields(deb):
     return fields
 
 
-def members(deb, part):
-    """The tar members of a deb's control or data part, listed only."""
+def members(deb, part, read=lambda name: False):
+    """The tar members of a deb's control or data part: name, is_dir, mode,
+    and the bytes of the small files `read` asks for, from the stream.
+    Nothing touches the disk."""
     p = subprocess.Popen(["dpkg-deb", f"--{part}-tarfile", "--", deb], stdout=subprocess.PIPE)
+    out = []
     try:
         with tarfile.open(fileobj=p.stdout, mode="r|") as t:
-            return [(m.name, m.isdir(), m.mode) for m in t]
+            for m in t:
+                data = None
+                if m.isfile() and m.size <= 65536 and read(m.name):
+                    data = t.extractfile(m).read()
+                out.append((m.name, m.isdir(), m.mode, data))
+        return out
     finally:
         p.stdout.close()
         if p.wait() != 0:
             raise ValueError(f"{deb}: dpkg-deb --{part}-tarfile failed")
 
 
+def rel(name):
+    return name[2:] if name.startswith("./") else name.lstrip("/")
+
+
+def own_tmpfiles(text, pkg):
+    """Whether a tmpfiles.d file reaches only the app's own folders."""
+    own = tuple(f"{d}/{pkg}" for d in ("/var/lib", "/var/cache", "/var/log", "/run", "/tmp"))
+    for line in text.decode("utf-8", "replace").splitlines():
+        f = line.split()
+        if not f or f[0].startswith("#"):
+            continue
+        if len(f) < 2 or not (f[1] in own or f[1].startswith(tuple(o + "/" for o in own))):
+            return False
+        if ".." in f[1].split("/"):
+            return False
+    return True
+
+
 def facts(deb, sha256):
     """What a deb holds, for checked.tsv."""
     f = control_fields(deb)
-    ctrl = {os.path.basename(n) for n, _, _ in members(deb, "ctrl")}
-    data = members(deb, "fsys")
+    ctrl = {os.path.basename(n) for n, _, _, _ in members(deb, "ctrl")}
+    data = members(deb, "fsys", lambda n: rel(n).startswith(TMPFILES))
     pkg = f.get("Package", "")
-    own = (f"usr/lib/{pkg}/", f"usr/share/{pkg}/", f"usr/share/doc/{pkg}/",
-           "usr/bin/", "usr/share/APPLaunch/")
+    # Its own config is the app's business.
+    own = (f"etc/{pkg}/", f"etc/default/{pkg}")
     paths = service = False
     desktop = ""
-    for name, is_dir, mode in data:
-        n = name[2:] if name.startswith("./") else name.lstrip("/")
+    for name, is_dir, mode, body in data:
+        n = rel(name)
         if is_dir or not n:
             continue
-        if not n.startswith(own) or mode & 0o6000:
+        if n.startswith(TMPFILES):
+            if body is None or not own_tmpfiles(body, pkg):
+                paths = True
+        elif n.startswith(ROOT_READS) and not n.startswith(own) and not n.startswith(UNIT_DIRS):
+            paths = True
+        if mode & 0o6000:
             paths = True
         if n.startswith(UNIT_DIRS):
             service = True
@@ -300,6 +351,7 @@ def facts(deb, sha256):
         "paths": "1" if paths else "0",
         "service": "1" if service else "0",
         "desktop": desktop,
+        "facts": FACTS,
     }
 
 

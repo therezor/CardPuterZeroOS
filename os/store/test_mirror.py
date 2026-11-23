@@ -21,7 +21,7 @@ DATA = os.path.join(HERE, "testdata")
 def row(sha, pkg, **kw):
     r = {c: "" for c in mirror.CHECKED_COLS}
     r.update(sha256=sha, package=pkg, version=kw.pop("version", "1.0"), arch="arm64",
-             scripts="0", paths="0", service="0")
+             scripts="0", paths="0", service="0", facts=mirror.FACTS)
     r.update(kw)
     return r
 
@@ -120,12 +120,22 @@ class Icons(unittest.TestCase):
         self.assertEqual(mirror.read_pack(b"junk"), {})
 
 
+class Tmpfiles(unittest.TestCase):
+    def test_tmpfiles_stay_in_the_apps_own_folders(self):
+        self.assertTrue(mirror.own_tmpfiles(b"d /var/lib/demo 0755\nd /run/demo/x\n", "demo"))
+        self.assertFalse(mirror.own_tmpfiles(b"d /var/lib/demo2\n", "demo"))
+        self.assertFalse(mirror.own_tmpfiles(b"d /var/lib/demo/../../etc\n", "demo"))
+        self.assertFalse(mirror.own_tmpfiles(b"L+ /etc/x - - - - /y\n", "demo"))
+
+
+
 @unittest.skipUnless(shutil.which("dpkg-deb"), "needs dpkg-deb")
 class Debs(unittest.TestCase):
     def test_facts_see_scripts_paths_units_and_the_desktop_file(self):
         with tempfile.TemporaryDirectory() as d:
             root = os.path.join(d, "root")
-            for p in ["DEBIAN", "usr/bin", "usr/share/APPLaunch/applications", "etc/systemd/system"]:
+            for p in ["DEBIAN", "usr/bin", "usr/share/APPLaunch/applications", "etc/systemd/system",
+                      "etc/demo", "usr/lib/tmpfiles.d"]:
                 os.makedirs(os.path.join(root, p))
             with open(os.path.join(root, "DEBIAN/control"), "w") as f:
                 f.write("Package: demo\nVersion: 1.2-1\nArchitecture: arm64\nMaintainer: x <x@example.invalid>\n"
@@ -134,15 +144,31 @@ class Debs(unittest.TestCase):
                 f.write("#!/bin/sh\n")
             os.chmod(os.path.join(root, "DEBIAN/postinst"), 0o755)
             for p in ["usr/bin/demo", "usr/share/APPLaunch/applications/demo.desktop",
-                      "etc/systemd/system/demo.service"]:
+                      "etc/systemd/system/demo.service", "etc/demo/config.json"]:
                 open(os.path.join(root, p), "w").close()
+            tmpfiles = os.path.join(root, "usr/lib/tmpfiles.d/demo.conf")
+            with open(tmpfiles, "w") as f:
+                f.write("# its state\nd /var/lib/demo 0755 root root -\n")
             deb = os.path.join(d, "demo.deb")
-            subprocess.run(["dpkg-deb", "--root-owner-group", "-b", root, deb],
-                           check=True, capture_output=True)
-            f = mirror.facts(deb, "0" * 64)
+
+            def build():
+                subprocess.run(["dpkg-deb", "--root-owner-group", "-b", root, deb],
+                               check=True, capture_output=True)
+                return mirror.facts(deb, "0" * 64)
+
+            f = build()
             self.assertEqual((f["package"], f["version"], f["arch"]), ("demo", "1.2-1", "arm64"))
-            self.assertEqual((f["scripts"], f["paths"], f["service"]), ("1", "1", "1"))
+            # A unit is a service, its own /etc folder and tmpfiles are fine.
+            self.assertEqual((f["scripts"], f["paths"], f["service"]), ("1", "0", "1"))
             self.assertEqual((f["depends"], f["desktop"]), ("libc6", "demo"))
+            with open(tmpfiles, "a") as t:
+                t.write("z /etc/shadow 0644 root root -\n")
+            self.assertEqual(build()["paths"], "1", "tmpfiles past its own folders")
+            with open(tmpfiles, "w") as t:
+                t.write("d /var/lib/demo 0755\n")
+            os.makedirs(os.path.join(root, "etc/sudoers.d"))
+            open(os.path.join(root, "etc/sudoers.d/demo"), "w").close()
+            self.assertEqual(build()["paths"], "1", "a file root reads")
 
 
 if __name__ == "__main__":
