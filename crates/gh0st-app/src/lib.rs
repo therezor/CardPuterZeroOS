@@ -33,7 +33,7 @@ pub use gh0st_core::keys::{Key as RawKey, State as KeyState};
 /// What a toast or a top-bar word says about itself.
 pub use gh0st_ui::theme::Tone;
 pub use key::{Key, codes};
-pub use list::{Action, List, Row};
+pub use list::{Action, List, Row, cycle};
 pub use page::{Cx, Job, JobEvent, Page, Settings, Timer, Watch};
 pub use run::{Options, run, run_with};
 pub use steps::Steps;

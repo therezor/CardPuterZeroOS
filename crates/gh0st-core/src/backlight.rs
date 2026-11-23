@@ -32,6 +32,11 @@ impl Backlight {
         read(&self.dir.join("brightness"))
     }
 
+    /// The level now, or full if it can't be read: what a step starts from.
+    pub fn level(&self) -> u32 {
+        self.get().unwrap_or(self.max)
+    }
+
     /// As dark as the panel goes. On the CardputerZero the m5stack
     /// pwm-backlight switches its PWM off at 0, and the LED then runs at
     /// full: 0 draws as much as 90. The lowest level, 1, is a 1% duty and

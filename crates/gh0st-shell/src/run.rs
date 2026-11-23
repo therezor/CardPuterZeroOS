@@ -44,9 +44,6 @@ use std::time::{Instant, SystemTime};
 const STOP_WAIT_MS: u64 = 100;
 /// How often the shell looks for rows a background app drew over it.
 const GUARD_MS: u64 = 500;
-const DEFAULT_DARK_SECS: i64 = 30;
-/// `gh0st.lock.after`: dark this long, the lock asks for the password.
-const DEFAULT_LOCK_AFTER_SECS: i64 = 300;
 /// The backlight dims this long before it goes off.
 const DIM_MS: u64 = 5000;
 const DIM_PERCENT: u8 = 10;
@@ -58,7 +55,6 @@ const TOAST_MS: u64 = 1500;
 const NOTICE_TOAST_MS: u64 = 3000;
 const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
-const VOLUME_STEP: i32 = 10;
 /// The switcher's figures: the first CPU reading after this, then one every
 /// `STATS_MS`. Read only while the switcher shows. 250 ms is 100 ticks over
 /// four cores at `CLK_TCK` 100: whole percents, as shown.
@@ -341,11 +337,6 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| "/".into())
 }
 
-/// `gh0st.clock`: `12h`, or a 24-hour clock.
-fn clock_24h(c: &Config) -> bool {
-    c.get_str("gh0st.clock") != Some("12h")
-}
-
 impl Shell {
     fn start(t0: u64, sim: Option<PathBuf>) -> Result<Shell, String> {
         child::become_subreaper();
@@ -358,7 +349,7 @@ impl Shell {
         ])
         .map_err(|e| format!("signals: {e}"))?;
         let config = Config::load(&config::default_path());
-        let t = Theme::new(palette_of(&config));
+        let t = Theme::new(theme::named(config.palette_name()));
         let (display, input): (Box<dyn Display>, Input) = match &sim {
             Some(dir) => {
                 let frames = Frames::new(dir.clone(), t.m.width, t.m.height)
@@ -373,9 +364,9 @@ impl Shell {
             }
         };
         let on_device = sim.is_none();
-        let layout = layout_of(&config);
+        let layout = Layout::of(&config);
         let terminal = terminal_of(&config);
-        let dark_ms = dark_ms_of(&config);
+        let dark_ms = config.dark_ms();
 
         let dirs = Dirs::from_env();
         let watches = if on_device {
@@ -399,7 +390,9 @@ impl Shell {
             level: None,
             spare: None,
             jobs: Vec::new(),
-            volume: config.get_int("volume").map(|v| v.clamp(0, 100) as u8),
+            volume: config
+                .get_int(config::key::VOLUME)
+                .map(|v| v.clamp(0, 100) as u8),
             muted: None,
             t,
             display,
@@ -413,8 +406,8 @@ impl Shell {
             dark_since: None,
             unlock_to: Back::Home,
             wake_to: None,
-            lock_password: lock_password_of(&config),
-            lock_after_ms: lock_after_of(&config),
+            lock_password: config.lock_password(),
+            lock_after_ms: config.lock_after_ms(),
             account: None,
             probing: false,
             probe_retried: false,
@@ -425,7 +418,7 @@ impl Shell {
             // SAFETY: getuid has no failure mode.
             user: password::user_name(unsafe { libc::getuid() }).unwrap_or_default(),
             dimmed: None,
-            dark_wifi_ms: dark_wifi_of(&config),
+            dark_wifi_ms: config.dark_wifi_ms(),
             off_at: 0,
             wifi_done: false,
             wifi_slept: false,
@@ -508,7 +501,7 @@ impl Shell {
     }
 
     fn set_animations(&mut self) {
-        let on = self.config.get_bool("gh0st.animations").unwrap_or(true);
+        let on = self.config.animations();
         self.home.set_animations(on);
         self.switcher.set_animations(on);
     }
@@ -619,10 +612,13 @@ impl Shell {
         // As stock: the saved level, or full when none is saved. The panel
         // may be dark from the previous launcher's idle timeout.
         if let Some(bl) = &self.backlight {
-            let saved = self.config.get_int("brightness").filter(|&r| r > 0);
+            let saved = self
+                .config
+                .get_int(config::key::BRIGHTNESS)
+                .filter(|&r| r > 0);
             let _ = bl.set(saved.map(|r| r as u32).unwrap_or(bl.max));
         }
-        if let Some(v) = self.config.get_int("volume") {
+        if let Some(v) = self.config.get_int(config::key::VOLUME) {
             let v = format!("{}%", v.clamp(0, 100));
             child::fire(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &v]);
         }
@@ -642,13 +638,13 @@ impl Shell {
     /// waits, so it is read again after every app and before every write.
     fn reload_config(&mut self) {
         self.config = Config::load(&config::default_path());
-        self.t = Theme::new(palette_of(&self.config));
-        self.home.set_layout(layout_of(&self.config));
+        self.t = Theme::new(theme::named(self.config.palette_name()));
+        self.home.set_layout(Layout::of(&self.config));
         self.terminal = terminal_of(&self.config);
-        self.dark_ms = dark_ms_of(&self.config);
-        self.lock_password = lock_password_of(&self.config);
-        self.lock_after_ms = lock_after_of(&self.config);
-        self.dark_wifi_ms = dark_wifi_of(&self.config);
+        self.dark_ms = self.config.dark_ms();
+        self.lock_password = self.config.lock_password();
+        self.lock_after_ms = self.config.lock_after_ms();
+        self.dark_wifi_ms = self.config.dark_wifi_ms();
         self.set_animations();
         self.dirty = true;
     }
@@ -717,7 +713,7 @@ impl Shell {
     }
 
     fn refresh_status(&mut self) {
-        let (clock, at) = rt::clock_text(clock_24h(&self.config));
+        let (clock, at) = rt::clock_text(self.config.clock_24h());
         self.clock = clock;
         self.clock_at = at;
         self.battery = self.battery_dir.as_deref().and_then(battery::sample);
@@ -1192,7 +1188,7 @@ impl Shell {
         let Some(bl) = &self.backlight else {
             return;
         };
-        let raw = bl.get().unwrap_or(bl.max);
+        let raw = bl.level();
         let low = bl.raw(DIM_PERCENT);
         // Kept even when it is already low, so dark knows what to restore.
         self.dimmed = Some(raw);
@@ -1368,7 +1364,7 @@ impl Shell {
                 .take()
                 .or_else(|| {
                     self.config
-                        .get_int("brightness")
+                        .get_int(config::key::BRIGHTNESS)
                         .filter(|&r| r > 0)
                         .map(|r| r as u32)
                 })
@@ -2009,19 +2005,19 @@ impl Shell {
         match k.code {
             code::BRIGHTNESSUP | code::BRIGHTNESSDOWN => {
                 if let Some(bl) = &self.backlight {
-                    let raw = bl.step(bl.get().unwrap_or(bl.max), k.code == code::BRIGHTNESSUP);
+                    let raw = bl.step(bl.level(), k.code == code::BRIGHTNESSUP);
                     let _ = bl.set(raw);
                     let pct = bl.percent(raw);
-                    self.save_config(|c| c.set_int("brightness", raw as i64));
+                    self.save_config(|c| c.set_int(config::key::BRIGHTNESS, raw as i64));
                     self.show_level("sun", "Brightness", pct);
                 }
                 true
             }
             code::VOLUMEUP | code::VOLUMEDOWN => {
                 let step = if k.code == code::VOLUMEUP {
-                    VOLUME_STEP
+                    config::VOLUME_STEP
                 } else {
-                    -VOLUME_STEP
+                    -config::VOLUME_STEP
                 };
                 let v = (self.volume.unwrap_or(50) as i32 + step).clamp(0, 100) as u8;
                 self.apply_volume(v);
@@ -2053,7 +2049,7 @@ impl Shell {
         let arg = format!("{v}%");
         child::fire(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &arg]);
         self.volume = Some(v);
-        self.save_config(|c| c.set_int("volume", v as i64));
+        self.save_config(|c| c.set_int(config::key::VOLUME, v as i64));
     }
 
     fn apply_mute(&mut self, muted: bool) {
@@ -2195,7 +2191,7 @@ impl Shell {
 
     fn toggle_layout(&mut self) {
         let l = self.home.layout().toggled();
-        self.save_config(|c| c.set_str("gh0st.home_layout", l.config_name()));
+        self.save_config(|c| c.set_str(config::key::HOME_LAYOUT, l.config_name()));
         self.home.set_layout(l);
         self.dirty = true;
     }
@@ -2376,10 +2372,9 @@ impl Shell {
             self.spare = Some(frame);
             return Err(None);
         };
-        let background = self
-            .config
-            .get_bool(&apps::app_key(&t.id, "background"))
-            .unwrap_or(t.background && t.linked);
+        // An app that declares it but never joined the link can't be told
+        // to pause, so it runs behind only if the user said so.
+        let background = apps::runs_behind(&self.config, &t.id, t.background && t.linked);
         if background {
             // An app on the link stops drawing and reading keys when told;
             // one that doesn't answer is guarded as before.
@@ -2929,39 +2924,10 @@ fn icon_for(
     }
 }
 
-fn palette_of(c: &Config) -> theme::Palette {
-    c.get_str("gh0st.palette")
-        .and_then(theme::find)
-        .unwrap_or(theme::MINT)
-}
-
-fn layout_of(c: &Config) -> Layout {
-    c.get_str("gh0st.home_layout")
-        .and_then(Layout::from_config)
-        .unwrap_or_default()
-}
-
 fn terminal_of(c: &Config) -> String {
-    c.get_str("gh0st.terminal")
+    c.get_str(config::key::TERMINAL)
         .unwrap_or(child::DEFAULT_TERMINAL)
         .to_string()
-}
-
-/// `dark_time` in seconds, as stock stores it. 0 means never.
-fn dark_ms_of(c: &Config) -> Option<u64> {
-    let secs = c.get_int("dark_time").unwrap_or(DEFAULT_DARK_SECS);
-    (secs > 0).then_some(secs as u64 * 1000)
-}
-
-fn lock_password_of(c: &Config) -> bool {
-    c.get_bool("gh0st.lock.password").unwrap_or(true)
-}
-
-/// `gh0st.dark.wifi_off` in seconds; absent or negative means never.
-fn dark_wifi_of(c: &Config) -> Option<u64> {
-    c.get_int("gh0st.dark.wifi_off")
-        .filter(|&s| s >= 0)
-        .map(|s| s as u64 * 1000)
 }
 
 /// Marks Wi-Fi as turned off by the dark, so a restarted shell turns it on.
@@ -2970,14 +2936,6 @@ fn wifi_marker() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)
         .join("gh0st-wifi-slept")
-}
-
-/// `gh0st.lock.after` in seconds; -1 means only by hand.
-fn lock_after_of(c: &Config) -> Option<u64> {
-    let secs = c
-        .get_int("gh0st.lock.after")
-        .unwrap_or(DEFAULT_LOCK_AFTER_SECS);
-    (secs >= 0).then_some(secs as u64 * 1000)
 }
 
 /// Whether a wake finds the device locked: by hand or at start, or dark at

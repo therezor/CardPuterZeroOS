@@ -27,6 +27,39 @@ pub struct Config {
     broken: bool,
 }
 
+/// The keys more than one program reads. Each has one reader below, so the
+/// shell and every app agree on its default.
+pub mod key {
+    pub const BRIGHTNESS: &str = "brightness";
+    pub const VOLUME: &str = "volume";
+    /// Seconds before the screen goes dark, as stock stores it. 0 is never.
+    pub const DARK_TIME: &str = "dark_time";
+    pub const PALETTE: &str = "gh0st.palette";
+    /// `12h`, else 24-hour.
+    pub const CLOCK: &str = "gh0st.clock";
+    pub const ANIMATIONS: &str = "gh0st.animations";
+    pub const HOME_LAYOUT: &str = "gh0st.home_layout";
+    pub const LOCK_PASSWORD: &str = "gh0st.lock.password";
+    /// Seconds dark before the lock; -1 locks only by hand.
+    pub const LOCK_AFTER: &str = "gh0st.lock.after";
+    /// Seconds dark before Wi-Fi goes off; absent or negative is never.
+    pub const DARK_WIFI_OFF: &str = "gh0st.dark.wifi_off";
+    /// The terminal home opens. Set by hand; none is the built-in one.
+    pub const TERMINAL: &str = "gh0st.terminal";
+}
+
+pub const DEFAULT_DARK_SECS: i64 = 30;
+pub const DEFAULT_LOCK_AFTER_SECS: i64 = 300;
+/// Volume keys and Settings' Sound row move this many percent.
+pub const VOLUME_STEP: i32 = 10;
+
+/// Seconds to milliseconds, capped so a hand-edited huge value can't wrap a
+/// sum of times.
+fn secs_ms(secs: i64) -> u64 {
+    const MAX_SECS: u64 = 1 << 32;
+    (secs.max(0) as u64).min(MAX_SECS) * 1000
+}
+
 pub fn default_path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -90,6 +123,51 @@ impl Config {
             },
             _ => None,
         }
+    }
+
+    pub fn clock_24h(&self) -> bool {
+        self.get_str(key::CLOCK) != Some("12h")
+    }
+
+    pub fn palette_name(&self) -> Option<&str> {
+        self.get_str(key::PALETTE)
+    }
+
+    pub fn animations(&self) -> bool {
+        self.get_bool(key::ANIMATIONS).unwrap_or(true)
+    }
+
+    pub fn dark_secs(&self) -> i64 {
+        self.get_int(key::DARK_TIME).unwrap_or(DEFAULT_DARK_SECS)
+    }
+
+    /// When the screen goes dark; None is never.
+    pub fn dark_ms(&self) -> Option<u64> {
+        let s = self.dark_secs();
+        (s > 0).then(|| secs_ms(s))
+    }
+
+    pub fn lock_password(&self) -> bool {
+        self.get_bool(key::LOCK_PASSWORD).unwrap_or(true)
+    }
+
+    pub fn lock_after_secs(&self) -> i64 {
+        self.get_int(key::LOCK_AFTER)
+            .unwrap_or(DEFAULT_LOCK_AFTER_SECS)
+    }
+
+    /// How long dark before the lock; None locks only by hand.
+    pub fn lock_after_ms(&self) -> Option<u64> {
+        let s = self.lock_after_secs();
+        (s >= 0).then(|| secs_ms(s))
+    }
+
+    pub fn dark_wifi_secs(&self) -> Option<i64> {
+        self.get_int(key::DARK_WIFI_OFF).filter(|&s| s >= 0)
+    }
+
+    pub fn dark_wifi_ms(&self) -> Option<u64> {
+        self.dark_wifi_secs().map(secs_ms)
     }
 
     pub fn set_int(&mut self, key: &str, v: i64) {
@@ -508,5 +586,29 @@ mod tests {
             .map(|e| e.file_name())
             .collect();
         assert_eq!(left, vec![std::ffi::OsString::from("config.json")]);
+    }
+
+    #[test]
+    fn typed_keys_have_one_default_and_never_wrap() {
+        let mut c = Config::default();
+        assert!(c.clock_24h() && c.animations() && c.lock_password());
+        assert_eq!(c.dark_ms(), Some(30_000));
+        assert_eq!(c.lock_after_ms(), Some(300_000));
+        assert_eq!(c.dark_wifi_ms(), None);
+        c.set_str(key::CLOCK, "12h");
+        c.set_int(key::DARK_TIME, 0);
+        c.set_int(key::LOCK_AFTER, -1);
+        c.set_int(key::DARK_WIFI_OFF, -5);
+        assert!(!c.clock_24h());
+        assert_eq!(
+            (c.dark_ms(), c.lock_after_ms(), c.dark_wifi_ms()),
+            (None, None, None)
+        );
+        c.set_int(key::LOCK_AFTER, i64::MAX);
+        let a = c.lock_after_ms().unwrap();
+        assert!(
+            a.checked_add(u64::MAX / 2).is_some(),
+            "a sum of times stays in range"
+        );
     }
 }

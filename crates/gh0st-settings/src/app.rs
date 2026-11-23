@@ -4,8 +4,7 @@
 //! time it takes the screen back, so home follows what changed here.
 
 use crate::model::pages::{
-    self, APP_ICONS, AppRow, DARK_TIMES, DARK_WIFI, DEFAULT_LOCK_AFTER, LOCK_AFTERS, Logs,
-    State as PageState,
+    self, APP_ICONS, AppRow, DARK_TIMES, DARK_WIFI, LOCK_AFTERS, Logs, State as PageState,
 };
 use crate::model::{
     self, Act, Body, Choice, Command, ConnField, Cursor, Dialog, Page as View, PageId, Setting,
@@ -14,10 +13,10 @@ use crate::model::{
 use crate::model::{bt, net};
 use gh0st_app::gfx::theme::{self, Theme};
 use gh0st_app::prelude::*;
-use gh0st_app::{codes, system};
+use gh0st_app::{codes, cycle, system};
 use gh0st_core::apps::{self, Dirs, Layout};
 use gh0st_core::backlight::Backlight;
-use gh0st_core::config::{self, Config};
+use gh0st_core::config::{self, Config, key};
 use gh0st_core::hotspot;
 use gh0st_core::sysconf::{self, CpuMode, GpuMem};
 use gh0st_core::{desktop, rfkill, rt};
@@ -31,8 +30,6 @@ const HELPER: &str = helper::PATH;
 const LOGGING_DIR: &str = "/etc/systemd/journald.conf.d";
 const GOVERNOR: &str = "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor";
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
-const DEFAULT_DARK_SECS: i64 = 30;
-const VOLUME_STEP: i32 = 10;
 
 /// What a dialog's answer is for.
 enum Ask {
@@ -295,19 +292,16 @@ impl Settings {
             .backlight
             .as_ref()
             .and_then(|bl| bl.get().map(|r| bl.percent(r)));
-        s.dark_secs = config.get_int("dark_time").unwrap_or(DEFAULT_DARK_SECS);
-        s.layout = config
-            .get_str("gh0st.home_layout")
-            .and_then(Layout::from_config)
-            .unwrap_or_default();
+        s.dark_secs = config.dark_secs();
+        s.layout = Layout::of(&config);
         // The SDK switches the theme only after this key is handled, so the
         // file, not the theme, has the palette just picked.
         s.palette = config
-            .get_str("gh0st.palette")
+            .palette_name()
             .and_then(theme::find)
             .map_or(cx.theme().c.name, |p| p.name);
-        s.animations = config.get_bool("gh0st.animations").unwrap_or(true);
-        s.clock_24h = config.get_str("gh0st.clock") != Some("12h");
+        s.animations = config.animations();
+        s.clock_24h = config.clock_24h();
         let pins = apps::load_pins();
         let mut rows: Vec<AppRow> =
             apps::scan_all(&Dirs::from_env(), &config, &pins, desktop::is_executable)
@@ -318,9 +312,7 @@ impl Settings {
                         .get_str(&apps::app_key(&a.file, "icon"))
                         .unwrap_or("")
                         .to_string(),
-                    background: config
-                        .get_bool(&apps::app_key(&a.file, "background"))
-                        .unwrap_or(a.entry.background),
+                    background: apps::runs_behind(&config, &a.file, a.entry.background),
                     pinned: pins.contains(&a.file),
                     file: a.file,
                     name: a.entry.name,
@@ -336,13 +328,10 @@ impl Settings {
         s.about = about();
         s.logs = logs_level();
         s.updates = gh0st_core::update::State::load();
-        s.update_cache = apt_cache_bytes();
         s.nm = sysconf::nm_privacy(&nm_files());
-        s.lock_password = config.get_bool("gh0st.lock.password").unwrap_or(true);
-        s.lock_after = config
-            .get_int("gh0st.lock.after")
-            .unwrap_or(DEFAULT_LOCK_AFTER);
-        s.dark_wifi = config.get_int("gh0st.dark.wifi_off").filter(|&t| t >= 0);
+        s.lock_password = config.lock_password();
+        s.lock_after = config.lock_after_secs();
+        s.dark_wifi = config.dark_wifi_secs();
         s.hotspot.on = gh0st_core::status::hotspot();
         let (y, mon, d, h, min) = rt::local_ymdhm();
         s.now = format!("{y}-{mon:02}-{d:02} {h:02}:{min:02}");
@@ -454,9 +443,9 @@ impl Settings {
         match s {
             Setting::Brightness => {
                 if let Some(bl) = &self.backlight {
-                    let raw = bl.step(bl.get().unwrap_or(100), d >= 0);
+                    let raw = bl.step(bl.level(), d >= 0);
                     let _ = bl.set(raw);
-                    cx.settings().set_int("brightness", raw as i64);
+                    cx.settings().set_int(key::BRIGHTNESS, raw as i64);
                 }
             }
             Setting::DarkTime => {
@@ -465,14 +454,14 @@ impl Settings {
                     .position(|&t| t == self.state.dark_secs)
                     .unwrap_or(1);
                 let next = DARK_TIMES[cycle(i, d, DARK_TIMES.len())];
-                cx.settings().set_int("dark_time", next);
+                cx.settings().set_int(key::DARK_TIME, next);
             }
             Setting::Volume => {
-                let v = (self.state.volume.unwrap_or(50) as i32 + d.signum() * VOLUME_STEP)
+                let v = (self.state.volume.unwrap_or(50) as i32 + d.signum() * config::VOLUME_STEP)
                     .clamp(0, 100) as u8;
                 let arg = format!("{v}%");
                 self.run(cx, NetJob::Ignore, &["wpctl", "set-volume", SINK, &arg]);
-                cx.settings().set_int("volume", v as i64);
+                cx.settings().set_int(key::VOLUME, v as i64);
                 self.state.volume = Some(v);
             }
             Setting::Mute => {
@@ -483,7 +472,7 @@ impl Settings {
             }
             Setting::Layout => {
                 let l = self.state.layout.toggled();
-                cx.settings().set_str("gh0st.home_layout", l.config_name());
+                cx.settings().set_str(key::HOME_LAYOUT, l.config_name());
             }
             Setting::Palette => {
                 // Built-ins, then the user's colour schemes. Phantom joins
@@ -501,16 +490,16 @@ impl Settings {
                     .unwrap_or(0);
                 let p = all[cycle(i, d, all.len())];
                 // The SDK follows this key, so the new palette shows at once.
-                cx.settings().set_str("gh0st.palette", p.name);
+                cx.settings().set_str(key::PALETTE, p.name);
             }
             Setting::Animations => {
                 cx.settings()
-                    .set_bool("gh0st.animations", !self.state.animations);
+                    .set_bool(key::ANIMATIONS, !self.state.animations);
             }
             Setting::Clock => {
                 let h24 = !self.state.clock_24h;
                 cx.settings()
-                    .set_str("gh0st.clock", if h24 { "24h" } else { "12h" });
+                    .set_str(key::CLOCK, if h24 { "24h" } else { "12h" });
             }
             Setting::AppShown(file) => {
                 let shown = self.app(file).is_some_and(|a| a.shown);
@@ -532,8 +521,7 @@ impl Settings {
             }
             Setting::AppBackground(file) => {
                 let on = !self.app(file).is_some_and(|a| a.background);
-                cx.settings()
-                    .set_bool(&apps::app_key(file, "background"), on);
+                cx.settings().set_bool(&apps::background_key(file), on);
                 if on {
                     cx.toast("Runs on when you leave it; it may draw over the screen");
                 }
@@ -550,7 +538,7 @@ impl Settings {
             }
             Setting::LockPassword => {
                 let on = self.state.lock_password;
-                cx.settings().set_bool("gh0st.lock.password", !on);
+                cx.settings().set_bool(key::LOCK_PASSWORD, !on);
             }
             Setting::DarkWifi => {
                 let i = DARK_WIFI
@@ -559,7 +547,7 @@ impl Settings {
                     .unwrap_or(0);
                 let next = DARK_WIFI[cycle(i, d, DARK_WIFI.len())];
                 cx.settings()
-                    .set_int("gh0st.dark.wifi_off", next.unwrap_or(-1));
+                    .set_int(key::DARK_WIFI_OFF, next.unwrap_or(-1));
             }
             Setting::UsbPower => {
                 let on = self.state.usb_power == Some(true);
@@ -576,7 +564,7 @@ impl Settings {
                     .position(|&t| t == self.state.lock_after)
                     .unwrap_or(2);
                 let next = LOCK_AFTERS[cycle(i, d, LOCK_AFTERS.len())];
-                cx.settings().set_int("gh0st.lock.after", next);
+                cx.settings().set_int(key::LOCK_AFTER, next);
             }
             _ => self.apply_system(s, d, cx),
         }
@@ -890,8 +878,6 @@ impl Settings {
             // The shell brings Updates up over Settings, and Settings back
             // when it closes.
             Command::OpenUpdates => cx.open("update"),
-            Command::CheckUpdates => self.helper(cx, &["update-check"], "Checking for updates"),
-            Command::ClearDownloads => self.helper(cx, &["apt-clean"], "Downloads cleared"),
             Command::HotspotName => self.ask(
                 Dialog::Text {
                     title: "Hotspot name".into(),
@@ -1290,10 +1276,6 @@ impl Settings {
                     self.refresh(cx);
                 }
                 known
-            }
-            PageId::Updates if k == Key::Char('r') => {
-                self.run_command(Command::CheckUpdates, cx);
-                true
             }
             PageId::Hotspot if k == Key::Char('r') => {
                 self.query_hotspot(cx);
@@ -2251,10 +2233,6 @@ fn wipe(s: &mut String) {
     s.clear();
 }
 
-fn cycle(i: usize, d: i32, n: usize) -> usize {
-    (i as i64 + if d < 0 { -1 } else { 1 }).rem_euclid(n as i64) as usize
-}
-
 /// Readouts for About, from procfs and sysfs.
 fn about() -> Vec<(String, String)> {
     let mut out = vec![(
@@ -2326,19 +2304,6 @@ fn size(b: u64) -> String {
     } else {
         format!("{} MB", b / 1_000_000)
     }
-}
-
-/// Bytes of the debs apt keeps after a download.
-fn apt_cache_bytes() -> u64 {
-    std::fs::read_dir("/var/cache/apt/archives")
-        .map(|d| {
-            d.flatten()
-                .filter(|e| e.path().extension().is_some_and(|x| x == "deb"))
-                .filter_map(|e| e.metadata().ok())
-                .map(|m| m.len())
-                .sum()
-        })
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

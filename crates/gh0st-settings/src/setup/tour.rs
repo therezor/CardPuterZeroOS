@@ -36,7 +36,7 @@ const PARANOIA: [&str; 3] = ["Low", "Healthy", "Max"];
 const PASS_MS: u64 = 1100;
 /// Config keys: training done unlocks Phantom; the palette to wear it.
 const TOUR_DONE: &str = "gh0st.tour_done";
-const PALETTE: &str = "gh0st.palette";
+const PALETTE: &str = gh0st_core::config::key::PALETTE;
 
 const NEXT_LESSON: u32 = 901;
 const SKIP_TOUR: u32 = 902;

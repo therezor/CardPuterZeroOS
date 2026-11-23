@@ -11,7 +11,6 @@ use gh0st_core::sysconf::{self, CpuMode, GpuMem, NmPrivacy};
 pub const DARK_TIMES: &[i64] = &[15, 30, 60, 120, 300, 0];
 /// `gh0st.lock.after` in seconds of dark; -1 locks only by hand.
 pub const LOCK_AFTERS: &[i64] = &[0, 60, 300, 900, -1];
-pub const DEFAULT_LOCK_AFTER: i64 = 300;
 /// `gh0st.dark.wifi_off`: seconds of dark before the radio goes off.
 pub const DARK_WIFI: &[Option<i64>] = &[None, Some(60), Some(300), Some(900)];
 
@@ -250,8 +249,6 @@ pub struct State {
     pub updates: gh0st_core::update::State,
     /// The daily check's timer is enabled; None before the query answers.
     pub update_daily: Option<bool>,
-    /// Bytes of downloaded debs apt keeps.
-    pub update_cache: u64,
     /// The pinned app being moved on the Apps page.
     pub moving: Option<String>,
     pub about: Vec<(String, String)>,
@@ -907,8 +904,9 @@ fn bluetooth(s: &State) -> Vec<Item> {
 }
 
 /// The private defaults, each switchable. Settings > Privacy and setup's
-/// privacy step show the same rows. SSH and Bluetooth stay on their own
-/// pages, System and Bluetooth, not here too.
+/// privacy step show the same rows. Each setting has one home: SSH and
+/// network time are on System, Bluetooth on its page, the daily update
+/// check on Updates.
 pub fn privacy(s: &State) -> Vec<Item> {
     let set = |icon, label, on, what| Item::new(icon, label, Value::Toggle(on), Act::Set(what));
     vec![
@@ -936,23 +934,11 @@ pub fn privacy(s: &State) -> Vec<Item> {
             s.nm.ip6_privacy,
             Setting::Ip6Privacy,
         ),
-        set(
-            "clock",
-            "Network time",
-            s.network_time,
-            Setting::NetworkTime,
-        ),
         Item::new(
             "hard-drive",
             "Keep logs",
             Value::TextChevron(s.logs.label().into()),
             Act::Open(PageId::Choose(Choice::Logs)),
-        ),
-        set(
-            "refresh-cw",
-            "Check for updates",
-            s.update_daily.unwrap_or(true),
-            Setting::UpdateDaily,
         ),
     ]
 }
@@ -988,12 +974,7 @@ fn updates(s: &State) -> Vec<Item> {
     let last = if u.checked == 0 {
         "Never".to_string()
     } else {
-        check_time(u.checked)
-    };
-    let cache = if s.update_cache > 0 {
-        update::size_text(s.update_cache)
-    } else {
-        "None".into()
+        check_time(u.checked, s.clock_24h)
     };
     vec![
         Item::new(
@@ -1011,32 +992,19 @@ fn updates(s: &State) -> Vec<Item> {
         Item::new(
             "flag",
             "Channel",
-            Value::Choice(
-                if u.channel == "edge" {
-                    "Edge"
-                } else {
-                    "Stable"
-                }
-                .into(),
-            ),
+            Value::Choice(update::channel_name(&u.channel).into()),
             Act::Set(Setting::UpdateChannel),
         ),
         Item::new("clock", "Last check", Value::Text(last), Act::None),
-        Item::new(
-            "trash-2",
-            "Clear downloads",
-            Value::Text(cache),
-            Act::Run(Command::ClearDownloads),
-        ),
     ]
 }
 
 /// "Today 09:12", "21 Nov 09:12".
-fn check_time(epoch: u64) -> String {
+fn check_time(epoch: u64, h24: bool) -> String {
     use gh0st_core::rt;
     let t = rt::local_at(epoch as i64);
     let now = rt::local_at(gh0st_core::notify::now_secs() as i64);
-    let clock = format!("{:02}:{:02}", t.hour, t.minute);
+    let clock = rt::clock_format(t.hour, t.minute, h24);
     if (t.year, t.yday) == (now.year, now.yday) {
         format!("Today {clock}")
     } else {
@@ -1813,7 +1781,6 @@ mod tests {
             ip6_privacy: true,
             wifi_powersave: true,
         };
-        s.network_time = true;
         let p = build(&PageId::Privacy, &s);
         let labels: Vec<&str> = (0..p.len())
             .map(|i| p.item(i).unwrap().label.as_str())
@@ -1825,23 +1792,41 @@ mod tests {
                 "Random address in scans",
                 "Send device name",
                 "IPv6 privacy address",
-                "Network time",
                 "Keep logs",
-                "Check for updates",
             ]
         );
-        let on: Vec<Value> = (0..5).map(|i| p.item(i).unwrap().value.clone()).collect();
-        assert_eq!(
-            on,
-            [true, true, false, true, true].map(Value::Toggle).to_vec()
-        );
+        let on: Vec<Value> = (0..4).map(|i| p.item(i).unwrap().value.clone()).collect();
+        assert_eq!(on, [true, true, false, true].map(Value::Toggle).to_vec());
         assert_eq!(p.item(1).unwrap().act, Act::Set(Setting::ScanMac));
-        // The daily check: on until the timer query says otherwise.
-        assert_eq!(p.item(6).unwrap().value, Value::Toggle(true));
-        s.update_daily = Some(false);
-        let p = build(&PageId::Privacy, &s);
-        assert_eq!(p.item(6).unwrap().value, Value::Toggle(false));
-        assert_eq!(p.item(6).unwrap().act, Act::Set(Setting::UpdateDaily));
+    }
+
+    /// Each setting has one home, so no row's action shows up on two pages.
+    #[test]
+    fn no_setting_is_on_two_pages() {
+        let s = state();
+        let pages = [
+            PageId::Privacy,
+            PageId::System,
+            PageId::Updates,
+            PageId::Display,
+            PageId::Sound,
+            PageId::Appearance,
+            PageId::Advanced,
+        ];
+        let mut seen: Vec<(Act, &PageId)> = Vec::new();
+        for id in &pages {
+            let p = build(id, &s);
+            for i in 0..p.len() {
+                let act = p.item(i).unwrap().act.clone();
+                if !matches!(act, Act::Set(_)) {
+                    continue;
+                }
+                if let Some((_, other)) = seen.iter().find(|(a, _)| *a == act) {
+                    panic!("{act:?} is on {other:?} and {id:?}");
+                }
+                seen.push((act, id));
+            }
+        }
     }
 
     #[test]
@@ -1859,7 +1844,13 @@ mod tests {
         let p = build(&PageId::Updates, &s);
         assert_eq!(p.item(0).unwrap().label, "3 updates ready");
         assert_eq!(p.item(0).unwrap().act, Act::Run(Command::OpenUpdates));
+        assert_eq!(p.item(1).unwrap().act, Act::Set(Setting::UpdateDaily));
         assert_eq!(p.item(2).unwrap().value, Value::Choice("Stable".into()));
+        assert_eq!(
+            p.len(),
+            4,
+            "the Updates app owns Check now and its downloads"
+        );
         s.updates.packages.clear();
         s.updates.outcome = Outcome::Offline;
         s.updates.why = "No network".into();

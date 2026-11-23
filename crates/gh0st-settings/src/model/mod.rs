@@ -133,9 +133,6 @@ pub enum Command {
     SetTime,
     /// Brings up the Updates app over Settings.
     OpenUpdates,
-    CheckUpdates,
-    /// `apt-get clean`.
-    ClearDownloads,
     HotspotName,
     HotspotPassword,
 }
@@ -393,9 +390,6 @@ pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Ch
         }
         PageId::Apps if !moving => {
             v.push((6, Chip::new("arrow-up-down", "Move"), Key::Char('m')));
-        }
-        PageId::Updates => {
-            v.push((6, Chip::new("refresh-cw", "Check"), Key::Char('r')));
         }
         _ => {}
     }

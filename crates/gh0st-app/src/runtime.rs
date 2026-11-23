@@ -208,12 +208,8 @@ pub(crate) struct Runtime {
 impl Runtime {
     pub fn new(page: Box<dyn Page>, config: Option<PathBuf>) -> Runtime {
         let mut s = Shared::new(Theme::default(), config);
-        let palette = s
-            .settings
-            .get_str("gh0st.palette")
-            .unwrap_or("")
-            .to_string();
-        s.theme = Theme::new(theme::find(&palette).unwrap_or(theme::MINT));
+        let palette = s.settings.config().palette_name().unwrap_or("").to_string();
+        s.theme = Theme::new(theme::named(Some(&palette)));
         let t = s.theme;
         Runtime {
             stack: vec![page],
@@ -256,7 +252,7 @@ impl Runtime {
 
     /// The clock style the shell uses: `gh0st.clock` is `12h` or 24-hour.
     fn h24(&self) -> bool {
-        self.s.settings.get_str("gh0st.clock") != Some("12h")
+        self.s.settings.config().clock_24h()
     }
 
     pub fn depth(&self) -> usize {
@@ -417,10 +413,10 @@ impl Runtime {
 
     /// Follows `gh0st.palette`, so a change to it shows at once.
     pub(crate) fn retheme(&mut self) {
-        let name = self.s.settings.get_str("gh0st.palette").unwrap_or("");
+        let name = self.s.settings.config().palette_name().unwrap_or("");
         if name != self.palette {
             self.palette = name.to_string();
-            self.s.theme = Theme::new(theme::find(name).unwrap_or(theme::MINT));
+            self.s.theme = Theme::new(theme::named(Some(name)));
             self.dirty = true;
         }
     }

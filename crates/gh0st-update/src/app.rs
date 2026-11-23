@@ -437,7 +437,7 @@ impl Page for Updates {
     }
 
     fn start(&mut self, cx: &mut Cx) {
-        self.h24 = cx.settings().get_str("gh0st.clock") != Some("12h");
+        self.h24 = cx.settings().config().clock_24h();
         self.reload();
         if let Some(w) = watch_dirs() {
             let id = cx.watch(w.fd());

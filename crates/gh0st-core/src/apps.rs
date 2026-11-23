@@ -61,6 +61,13 @@ pub enum Layout {
 }
 
 impl Layout {
+    /// `gh0st.home_layout`, or the default.
+    pub fn of(c: &crate::config::Config) -> Layout {
+        c.get_str(crate::config::key::HOME_LAYOUT)
+            .and_then(Layout::from_config)
+            .unwrap_or_default()
+    }
+
     pub fn from_config(s: &str) -> Option<Layout> {
         match s {
             "grid" => Some(Layout::Grid),
@@ -219,6 +226,16 @@ pub fn stock_key(file: &str) -> String {
 
 /// Our per-app setting `leaf` for `file`: `gh0st.app.<file>.<leaf>`, with
 /// the file name's dots and odd bytes made `_` so the key does not nest.
+/// Whether the app runs on behind other screens: the user's choice in
+/// Settings > Apps, else what the app declares (`X-Gh0st-Background`).
+pub fn runs_behind(c: &crate::config::Config, file: &str, declared: bool) -> bool {
+    c.get_bool(&background_key(file)).unwrap_or(declared)
+}
+
+pub fn background_key(file: &str) -> String {
+    app_key(file, "background")
+}
+
 pub fn app_key(file: &str, leaf: &str) -> String {
     let id: String = file
         .bytes()

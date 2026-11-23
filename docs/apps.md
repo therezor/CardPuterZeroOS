@@ -293,8 +293,9 @@ the same.
 
 ## Terminal
 
-- The terminal command comes from `gh0st.terminal` in config.json. The default
-  is `/usr/bin/gh0st-term -e`, built from `crates/gh0st-term`.
+- The terminal command comes from `gh0st.terminal` in config.json, a key set
+  by hand: no screen sets it. The default is `/usr/bin/gh0st-term -e`, built
+  from `crates/gh0st-term`.
 - The shell runs a `Terminal=true` entry as `<terminal> /bin/sh -c "<Exec>"`.
 - With `GH0ST_SYSPLAUSE=1`, the terminal waits for a key press after the
   command exits, then exits.

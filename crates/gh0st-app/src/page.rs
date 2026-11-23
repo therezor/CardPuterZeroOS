@@ -238,6 +238,12 @@ impl Settings {
         }
     }
 
+    /// The whole file, for the typed readers of shared keys such as
+    /// [`Config::clock_24h`].
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
     pub fn get_str(&self, key: &str) -> Option<&str> {
         self.config.get_str(key)
     }

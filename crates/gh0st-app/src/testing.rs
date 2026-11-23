@@ -155,7 +155,10 @@ impl Driver {
 
     /// Shows the app in another palette, as when `gh0st.palette` changes.
     pub fn palette(&mut self, name: &str) -> &mut Driver {
-        self.rt.s.settings.set_str("gh0st.palette", name);
+        self.rt
+            .s
+            .settings
+            .set_str(gh0st_core::config::key::PALETTE, name);
         self.rt.retheme();
         self
     }

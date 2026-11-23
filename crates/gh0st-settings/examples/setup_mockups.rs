@@ -301,10 +301,7 @@ fn privacy(t: &Theme, selected: usize) -> Canvas {
         ),
         row(t, "tag", "Send device name", Trailing::Toggle(false)),
         row(t, "globe", "IPv6 privacy address", Trailing::Toggle(true)),
-        row(t, "clock", "Network time", Trailing::Toggle(true)),
         row(t, "hard-drive", "Keep logs", Trailing::ValueChevron("Off")),
-        row(t, "square-terminal", "SSH", Trailing::Toggle(false)),
-        row(t, "bluetooth", "Bluetooth", Trailing::Toggle(false)),
     ];
     let first = selected.saturating_sub(4);
     rows(&mut c, t, list_top(t), &items[first..], selected - first);
@@ -602,7 +599,7 @@ fn main() {
             privacy(t, 0)
         }),
         ("20-privacy-logs", "Keep logs opens its list", |t| {
-            privacy(t, 5)
+            privacy(t, 4)
         }),
         ("21-network", "Enter joins, 5 Scan, 7 Skip", network),
         (

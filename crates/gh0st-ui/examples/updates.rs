@@ -622,8 +622,6 @@ fn s_privacy(t: &Theme) -> Canvas {
     let rows = [
         row("eye", a, "Send device name", Trailing::Toggle(false)),
         row("globe", a, "IPv6 privacy address", Trailing::Toggle(true)),
-        row("clock", a, "Network time", Trailing::Toggle(true)),
-        row("refresh-cw", a, "Check for updates", Trailing::Toggle(true)),
         row("hard-drive", a, "Keep logs", Trailing::Choice("Off")),
     ];
     settings_list(

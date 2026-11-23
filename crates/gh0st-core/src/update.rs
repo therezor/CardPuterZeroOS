@@ -494,6 +494,11 @@ pub fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
     crate::config::write_atomic(path, data.as_bytes())
 }
 
+/// The channel's name for the user.
+pub fn channel_name(c: &str) -> &'static str {
+    if c == "edge" { "Edge" } else { "Stable" }
+}
+
 /// "34 MB", "820 kB": a size for the user, in decimal units as apt shows.
 pub fn size_text(bytes: u64) -> String {
     match bytes {

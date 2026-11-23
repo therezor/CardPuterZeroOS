@@ -171,9 +171,9 @@ System > Updates:
   may break. Going back to Stable keeps the edge build until Stable passes
   it. Nothing downgrades.
 - Last check: the time, or what went wrong.
-- Clear downloads, with the size.
 
-Privacy has "Check for updates" too, so setup's privacy step shows it.
+Each setting has one home. Check now and Clear downloads are in the app's
+menu only; the daily check and the channel are in Settings only.
 
 ## Notifications
 

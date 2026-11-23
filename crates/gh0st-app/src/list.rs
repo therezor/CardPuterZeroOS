@@ -13,6 +13,15 @@ pub enum Action {
     Change(usize, i32),
 }
 
+/// The next of `n` choices from `i`, one step in `d`'s direction, wrapping:
+/// what a choice row does on Left and Right.
+pub fn cycle(i: usize, d: i32, n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    (i as i64 + if d < 0 { -1 } else { 1 }).rem_euclid(n as i64) as usize
+}
+
 /// The selection and scroll of a list. Keep one in the page and pass it to
 /// [`Ui::list`](crate::Ui::list) when drawing; it learns the row count there.
 #[derive(Debug, Default)]

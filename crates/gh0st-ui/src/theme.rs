@@ -367,6 +367,11 @@ pub fn palette_dirs() -> Vec<std::path::PathBuf> {
     dirs
 }
 
+/// The palette `gh0st.palette` names, or Mint.
+pub fn named(name: Option<&str>) -> Palette {
+    name.and_then(find).unwrap_or(MINT)
+}
+
 /// The value of `gh0st.palette`: a built-in, else a scheme file by that
 /// name. None if there is neither or the file is unreadable on screen.
 pub fn find(name: &str) -> Option<Palette> {

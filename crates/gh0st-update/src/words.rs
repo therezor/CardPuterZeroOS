@@ -105,9 +105,7 @@ pub fn current_note(st: &State, gh0st: &str, now: u64, h24: bool) -> String {
     s
 }
 
-pub fn channel_name(c: &str) -> &'static str {
-    if c == "edge" { "Edge" } else { "Stable" }
-}
+pub use gh0st_core::update::channel_name;
 
 #[cfg(test)]
 mod tests {

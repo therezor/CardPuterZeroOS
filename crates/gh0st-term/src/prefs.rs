@@ -41,10 +41,10 @@ impl Default for Prefs {
     }
 }
 
-/// Steps `cur` through `all` by `d`, wrapping.
+/// Steps `cur` through `all` in `d`'s direction, wrapping.
 fn step<T: PartialEq + Copy>(all: &[T], cur: T, d: i32) -> T {
-    let i = all.iter().position(|&x| x == cur).unwrap_or(0) as i32;
-    all[(i + d).rem_euclid(all.len() as i32) as usize]
+    let i = all.iter().position(|&x| x == cur).unwrap_or(0);
+    all[gh0st_app::cycle(i, d, all.len())]
 }
 
 impl Page for Prefs {

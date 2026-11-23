@@ -167,7 +167,6 @@ fn sample_state() -> State {
         moving: None,
         updates: updates_state(),
         update_daily: Some(true),
-        update_cache: 120_000_000,
         about: [
             ("Version", "Gh0stdeck 0.1.0"),
             ("Build", "202611221438.2a760d9"),

@@ -25,7 +25,7 @@ pub type Shared = Rc<RefCell<Answers>>;
 
 /// The root helper, through pkexec as Settings calls it. Setup runs as
 /// root, so its gated verbs ask no password.
-const HELPER: &str = "/usr/libexec/gh0st-helper";
+use gh0st_app::helper::{PATH as HELPER, failure};
 
 /// The account's step: the notice, the welcome, the training, then five
 /// settings before it. A resume never starts past it: the password isn't
@@ -128,13 +128,4 @@ fn power_answer(id: u32, answer: &Answer, cx: &mut Cx) -> bool {
         cx.spawn(&["pkexec", HELPER, "power", "off"]);
     }
     true
-}
-
-/// The helper's last word, for a toast.
-fn failure(out: &str) -> String {
-    out.lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .map(|l| l.trim_start_matches("gh0st-helper: ").to_string())
-        .unwrap_or_else(|| "Failed".into())
 }
