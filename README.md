@@ -1,158 +1,157 @@
-# Gh0st OS
+<div align="center">
 
-The CardputerZero OS it should have shipped with. Faster, private, a cleaner UI
-and more features. Fully compatible with CardputerZero apps.
+# 👻 Gh0st OS
 
-<img src="docs/screenshots/home.png" width="640" alt="The home screen on a CardputerZero">
+**A lean, private OS for the M5Stack CardputerZero.**
+Faster than stock, private by default, and every CardputerZero app still runs.
 
-Gh0st OS is Linux for the M5Stack CardputerZero, built on Debian like the
-stock OS. So every CardputerZero app runs as it is, and so does the Store.
-Today it installs on the stock image and replaces its launcher. Its own lean
-Debian 13 image is next.
+[⬇️ Download v0.2.0 alpha](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.2.0) ·
+[⚡ Flash in 5 minutes](#-flash-it) ·
+[🧪 Tester notes](docs/alpha.md) ·
+[🗺️ Roadmap](docs/roadmap.md)
 
-## Why switch
+<img src="docs/screenshots/home.png" width="640" alt="The Gh0st OS home screen on a CardputerZero">
 
-**Light on the battery.** When you're not using it, the home screen does
-almost nothing. The CPU sleeps, apps get the memory, and the battery isn't
-spent on an idle menu.
+</div>
 
-**The screen never tears.** On stock, every app tears as it scrolls. Our panel
-driver sends each frame in step with the screen, at a steady 50 frames a
-second. Stock apps get this too.
+## ✨ What you get
 
-**Jump between apps.** Fn+K pauses the app you're in and shows every open
-app, with how much memory each one uses. Go back to one where you left it, or
-close it with Del.
+<img src="docs/screenshots/lock.png" width="400" alt="The lock screen over the Aurora wallpaper"> <img src="docs/screenshots/switcher.png" width="400" alt="The app switcher">
 
-**Find any app in a keystroke.** Press S and type. Pin your favourites with P.
-Show apps as a grid or a list, in the Mint, Nord or Paper theme.
+🎨 **A look made for 320x170.** Small text is Terminus, a pixel font that stays
+sharp on the panel. Icons sit on coloured tiles, and each action sits right
+above the key that runs it. Pick a wallpaper (Aurora, Contour or your own
+photo) and a palette (Mint, Nord or Paper).
 
-**Settings and a terminal, built in.** Wi-Fi, Bluetooth, display, sound, look,
-time zone, SSH and logs, all from the keyboard. The terminal has tabs, zoom and
-history you can search. Both are new and not yet tested on the device.
+🔀 **Jump between apps.** Fn+K pauses the app in front and shows every open
+app with the memory it uses. Go back to one where you left it, or close it.
 
-**Your apps keep working.** Apps install and launch the way they always have.
-Hold Esc for 3 seconds to close one that hangs.
+🔍 **Find any app in a keystroke.** Press S and type. Pin favourites with P.
+Show home as a grid or a list.
 
-**Safe to try.** One command installs it. One command puts stock back.
+🔒 **A real lock screen.** Your password, the time large over your wallpaper,
+and how many notifications wait, but never what they say. Keys pressed in a
+pocket can't unlock it, because it takes Tab and then Enter.
 
-<img src="docs/screenshots/switcher.png" width="380" alt="The app switcher"> <img src="docs/screenshots/settings.png" width="380" alt="Settings, Appearance page">
+🛍️ **Our own Store.** Browse CardputerZero apps by category, install, update
+and remove them. The app list is signed, and the Store sends no account and
+no device ID.
 
-## Compared with stock
+📷 **A new Camera.** Photos and video with zoom, exposure, a grid and a timer,
+on the CardputerZero's camera.
 
-Measured on a CardputerZero. The first four rows are the launcher alone, over
-one minute idle on the home screen. Stock is APPLaunch 0.6.105.
+⚙️ **Settings, a terminal and Updates, built in.** Wi-Fi, a Wi-Fi hotspot with
+a QR code, Bluetooth, display, sound, look, time zone, SSH and logs, all from
+the keyboard. The terminal has tabs, zoom and searchable history.
 
-| | Stock OS | Gh0st OS |
+🔄 **Updates over the air.** The device checks once a day, tells you what it
+found, and installs only when you say so. Your files and settings stay.
+
+🧩 **Your apps keep working.** CardputerZero apps install and launch the way
+they always have. Hold Esc to close one that hangs.
+
+<img src="docs/screenshots/settings.png" width="400" alt="Settings"> <img src="docs/screenshots/store.png" width="400" alt="The Store">
+
+<img src="docs/screenshots/camera.png" width="400" alt="The Camera app"> <img src="docs/screenshots/paper.png" width="400" alt="Home in the Paper palette">
+
+## 📊 Compared with stock
+
+Measured on a CardputerZero. Stock is the M5Stack image with APPLaunch 0.6.105.
+
+| | Stock | Gh0st OS |
 |---|---|---|
-| RAM used by the launcher (lower is better) | ❌ 9.6 MB | ✅ 1.3 MB |
-| CPU time (lower is better) | ❌ 5,430 ms | ✅ 10 ms |
-| Wakeups (lower is better) | ❌ 35,026 | ✅ 24 |
-| Threads (lower is better) | ❌ 14 | ✅ 1 |
-| Full-screen redraws (higher is better) | ❌ 25 fps, tearing | ✅ 50.8 fps, no tearing |
-| CardputerZero apps and the Store | ✅ Yes | ✅ Yes |
+| 🧠 Launcher memory | ❌ 9.6 MB | ✅ 2.1 MB |
+| 💤 Launcher CPU, one idle minute | ❌ 5,430 ms | ✅ 0 to 10 ms |
+| ⏰ Launcher wakeups, one idle minute | ❌ 35,026 | ✅ 12 to 24 |
+| 🧵 Launcher threads | ❌ 14 | ✅ 1 |
+| 🖥️ Full-screen redraws | ❌ 25 fps, tearing | ✅ 50.8 fps, no tearing |
+| 💾 RAM used at idle | ❌ 216 MB, plus 93 MB in swap | ✅ About 140 MB, no swap |
+| 🔋 Battery current, screen off | ❌ 305 mA, no saver | ✅ 212 mA with USB power saving |
+| 🔐 SSH | ❌ On by default | ✅ Off until you turn it on |
+| 📝 Logs | ❌ Kept on the SD card | ✅ Off until you turn them on |
+| 📡 Name on the network | ❌ Announced over mDNS, sent when joining | ✅ Not announced, not sent |
+| 🔄 Updates | ❌ Checks run on timers | ✅ Once a day, asks before it installs |
+| 🧩 CardputerZero apps | ✅ Yes | ✅ Yes |
 
-## Coming with the Gh0st OS image
+The sources for each number are in [docs/hardware-facts.md](docs/hardware-facts.md).
 
-The image is not built yet. Today you get the launcher and the panel driver on
-top of stock, with stock's defaults. These change once the image ships.
+## ⚡ Flash it
 
-| | Stock image | Gh0st OS image |
-|---|---|---|
-| RAM used at idle | 216 MB, and 93 MB more in swap | ⏳ To be measured |
-| Battery at idle, screen on | About 4.2 hours | ⏳ To be measured |
-| SSH | ❌ On by default | ✅ Off until you turn it on |
-| Logs | ❌ Kept on the SD card | ✅ Off unless you turn them on in Settings |
-| Your device on the network | ❌ Announced by name over mDNS | ✅ Not announced |
-| Joining a network | ❌ Sends the name `cardputerzero` | ✅ Sends no name |
-| Update checks | ❌ Run on timers | ✅ Only when you ask |
-| Incoming connections | ❌ Accepted | ✅ Blocked by a firewall |
+You need a CardputerZero, a genuine microSD card of 8 GB or more, and
+[Raspberry Pi Imager](https://www.raspberrypi.com/software/) 2.0.2 or later.
+Flashing erases the card.
 
-The stock column comes from our dev device and from community measurements, in
-[docs/hardware-facts.md](docs/hardware-facts.md) and
-[docs/distro-plan.md](docs/distro-plan.md).
+1. ⬇️ From the [v0.2.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.2.0),
+   download `gh0st-release-DATE.img.xz`.
+2. 🍓 In Imager, pick **Raspberry Pi Zero 2 W** as the device, then
+   **Use custom** as the OS, and choose the `.img.xz`. Don't unpack it.
+3. 💳 Pick the microSD card as the storage. Check its size, because Imager
+   erases what you pick.
+4. 🚫 When Imager offers OS customisation, answer **No**. Setup on the device
+   does that job.
+5. ✍️ Write, and let Imager verify.
+6. 🔌 Put the card in the CardputerZero and power it on.
 
-Also planned: a PIN on the lock screen, per-app limits on network and files,
-signed updates and a faster boot. The full list is in [docs/roadmap.md](docs/roadmap.md).
+Setup starts within about 15 seconds. It teaches the keys in nine short
+lessons (6 skips them), then asks for your country, time zone, privacy
+choices, Wi-Fi, account and look. The full walk-through, checksums and known
+issues are in the [tester notes](docs/alpha.md).
 
-## Keys
+## ⌨️ Keys
 
 | Key | Does |
 |---|---|
+| Enter / Esc | Open / back |
+| 4 to 8 | The action named above the key. 8 opens the menu |
 | F, Z, X, C or the Fn arrows | Move |
-| Enter or a digit | Open an app |
 | S | Search |
-| P | Pin an app |
-| Fn+K, or Tab at home | Switch apps |
-| Del, in the switcher | Close an app |
-| Hold Esc for 3 seconds | Close a stuck app |
-| Hold Tab for 3 seconds | Lock the screen |
+| Fn+H | Help for the screen in front |
+| Fn+K | Switch apps |
+| Hold Esc | Close the app in front |
+| Hold Tab | Lock |
+| Tab, then Enter | Unlock |
 
 The brightness, volume, mute and screenshot keys work everywhere, over apps
-too. At 3% battery the device counts down and powers off.
+too.
 
-## Install
+## 🚧 Status
 
-From a Mac or Linux machine with Rust and SSH access to the device:
+**v0.2.0 is an alpha.** It runs every day on our test device, but it can
+still break, and the SDK and the design can still change. To report a bug,
+open an issue with the Build from Settings > About. The
+[tester notes](docs/alpha.md) list what else to include.
 
-```sh
-GH0ST_HOST=<user>@<device> scripts/deploy.sh            # install
-GH0ST_HOST=<user>@<device> scripts/deploy.sh rollback   # back to stock
-```
+Next on the [roadmap](docs/roadmap.md): per-app limits on network and files,
+a faster boot, and the key training as its own app.
 
-The script installs `/usr/bin/gh0st` next to the stock launcher. A systemd
-drop-in makes the stock `APPLaunch.service` start ours, so launcher upgrades
-and the first-boot wizard keep working.
+## 🛠️ For developers
 
-The panel driver builds on the device, against the running kernel:
-
-```sh
-cd os/kernel/panel-mipi-dbi-m && sudo ./install.sh   # then reboot
-sudo ./install.sh uninstall                         # M5Stack's driver back
-```
-
-## Status
-
-The launcher, the app switcher and the panel driver run on the device. Settings
-and the terminal run in the simulator and are not yet tested on the device.
-
-## For developers
-
-The Gh0st OS launcher is written in Rust. It is one static binary of about
-1 MB, with its fonts and icons built in, and it runs on one thread. It reads
-the battery, network and clock when the kernel reports a change, so nothing
-polls. How the panel driver times frames is in
-[docs/panel-driver.md](docs/panel-driver.md).
+Gh0st OS is Debian 13, built from pinned inputs in a container
+([docs/image-build.md](docs/image-build.md)). The shell, Settings, the
+terminal, the Store, Updates and Camera are Rust. Each is a static binary of
+1 to 2 MB with its fonts and icons built in, and each runs one thread with one
+`poll` loop.
 
 ```sh
 cargo test --workspace
-cargo build --release --target aarch64-unknown-linux-musl   # static binary
+cargo build --release --target aarch64-unknown-linux-musl   # static, no cross compiler
+cargo run -p gh0st -- shell --sim DIR                       # the shell on any host
+GH0ST_HOST=<user>@<device> scripts/deploy.sh                # install on a device
 ```
 
-The release build links with the `rust-lld` that ships with rustup, so it
-needs no cross compiler. `cargo run -p gh0st -- shell --sim DIR` runs the
-shell on any host. Keys come from a script on stdin, and frames land in DIR
-as PNGs. The screenshots above, apart from the home screen, come from the
+Under `--sim`, keys come from a script on stdin and frames land in DIR as
+PNGs. Apart from the home screen, the screenshots above come from the
 simulator.
 
-Apps for Gh0st OS use the app SDK. The guide is [docs/sdk.md](docs/sdk.md),
-and [docs/apps.md](docs/apps.md) covers what the launcher gives any app.
+- 📘 [docs/sdk.md](docs/sdk.md): write an app with the Gh0st SDK.
+- 🎨 [docs/design.md](docs/design.md): the design system.
+- 📦 [docs/apps.md](docs/apps.md): what the shell gives any app.
+- 🔄 [docs/updates.md](docs/updates.md): the update engine and the apt repo.
+- 🖥️ [docs/panel-driver.md](docs/panel-driver.md): how a frame reaches the panel.
 
-- `crates/gh0st-ui`: drawing, fonts, icons, widgets, themes.
-- `crates/gh0st-core`: config, `.desktop` parsing, the keyboard map, the event
-  loop and child processes.
-- `crates/gh0st-shell`: the home screen and the shell process.
-- `crates/gh0st-app`: the app SDK.
-- `crates/gh0st-settings`: Settings.
-- `crates/gh0st-term`: the terminal. The guide is
-  [docs/terminal.md](docs/terminal.md).
-- `crates/gh0st`: the `gh0st` binary.
-- `os/kernel/panel-mipi-dbi-m`: the panel driver and its overlay.
-- `docs/`: hardware facts, the panel driver, the app contract, the distro plan.
+## 📜 Licenses
 
-## Licenses
-
-The Rust code is MIT, see [LICENSE](LICENSE). The panel driver is GPL-2.0, from
-M5Stack and Noralf Trønnes. Inter, JetBrains Mono and Terminus are under the
-SIL Open Font License, and the Lucide icons under ISC. The mark is the Tabler
-"components" icon, MIT.
+The Rust code is MIT, see [LICENSE](LICENSE). The panel driver is GPL-2.0,
+from M5Stack and Noralf Trønnes. Inter, JetBrains Mono and Terminus are under
+the SIL Open Font License, and the Lucide icons under ISC. The mark is the
+Tabler "components" icon, MIT.

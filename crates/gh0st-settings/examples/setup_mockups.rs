@@ -596,7 +596,7 @@ fn every_step_keeps_the_design_rules() {
 }
 
 const SCREENS: &[Screen] = &[
-    ("00-notice", "pre-alpha, first of all", |t| {
+    ("00-notice", "alpha, first of all", |t| {
         real(tour::Notice, "", 0, t)
     }),
     ("01-welcome", "Enter trains, 6 skips to settings", |t| {

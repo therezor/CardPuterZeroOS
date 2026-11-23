@@ -21,9 +21,9 @@ Mockups in `mockups/setup` (`cargo run -p gh0st-settings --example setup_mockups
 320x170: the top bar, 132 px of content, the action bar. One idea per screen and at most
 four lines of body text.
 
-First, while builds are pre-alpha, a notice: "A pre-alpha test build.
+First, while builds are alpha, a notice: "An alpha test build.
 It can be unstable, and the SDK and design may change." Enter goes on.
-`tour::PRE_ALPHA` drops it.
+`tour::ALPHA` drops it.
 
 After the welcome, setup comes in two parts: a **training** of the keys and the design
 system, then the **settings**. The welcome screen offers both: Enter
