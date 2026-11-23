@@ -1,8 +1,7 @@
 # Building the Gh0st OS image
 
 The image is Debian 13 trixie arm64, built from pinned inputs in a container.
-The reasons behind each choice are in `distro-plan.md`; the milestones in
-`roadmap.md`. Everything here runs the same on the Mac and on CI.
+The reasons behind each choice are in `distro-plan.md`. Everything here runs the same on the Mac and on CI.
 
 ## Quick start
 
@@ -107,10 +106,9 @@ from it would not resolve.
 
 **Base apps.** gh0st, Settings, Updates, the Store, the terminal and
 Camera, which are ours, and the stock Files, Music and Recorder at the
-versions the dev device runs. M5's AppStore, repacked until then as
-`gh0st-m5-appstore`, is gone: migration `0002-store` removes it from
-devices that had it. M5's Camera is gone too: migration `0003-camera`
-installs ours and removes it.
+versions the dev device runs. M5's AppStore and Camera are not in the
+image: migration `0002-store` removes the AppStore from older devices, and
+`0003-camera` swaps M5's Camera for ours.
 
 **Command-line tools.** What a Linux user reaches for in the terminal:
 curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,
@@ -127,7 +125,7 @@ cost more than the pages are worth here.
 **ffmpeg.** Files runs `ffmpeg` and `ffprobe` for video previews. Debian's
 ffmpeg is a desktop build: its device library pulls OpenGL, so Mesa and
 LLVM, and its filters pull speech synthesis and recognition. That is 148
-packages and 367 MB of the 842 MB installed. Kept by decision (2026-11-21).
+packages and 367 MB of the 842 MB installed. It stays.
 
 **Packages.**
 
@@ -169,7 +167,7 @@ masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the ch
 | p3 | ext4 | 256 MiB, grows to the end of the card | `/home` |
 
 All mount `noatime,commit=60`. The disk ID is fixed (`0x67683073`, "gh0s"),
-so every card shares PARTUUIDs; randomizing it at first boot is still to do.
+so every card shares PARTUUIDs.
 On first boot `gh0st-grow-data.service` grows p3, and `x-systemd.growfs`
 grows its filesystem online. The grow runs before `local-fs-pre.target`
 and waits for udev: the new size makes the card's device units flap for a
@@ -229,19 +227,8 @@ start is a device test.
   `lock.json` together. `gh0st-panel-modules` rebuilds against the new
   headers and its version follows.
 - **Update a stock app:** change its URL, version and SHA-256 in
-  `lock.json`. Camera and libcamera move as a pair.
-
-## Spikes
-
-| Spike | Result |
-|---|---|
-| S1 container | Docker Desktop and mmdebstrap root mode: needs `SYS_ADMIN` plus unconfined seccomp and AppArmor for clean mounts. `mke2fs -d` from the tar keeps owners, setuid bits and hard links. |
-| S2 kernel in chroot | Our provider satisfies the kernel; no initramfs-tools. The firmware hooks fill `/boot/firmware`. |
-| S3 boot on a clone | To do, on the device. |
-| S4 apps without applaunch | To do, on the device. |
-| S5 RPi glue | Bluetooth attaches in the kernel (`hci_uart_bcm` from the device tree): no `pi-bluetooth`, no `hciuart`. The udev rules we need from `raspberrypi-sys-mods` are in `gh0st-base`. |
-| S6 ffmpeg cost | 148 packages, 367 MB. Kept. |
-| S7 AppStore | Replaced by our Store (`docs/store.md`). |
+  `lock.json`. libcamera and `gh0st-camera` move as a pair: the camera
+  helper links the pinned libcamera.
 
 ## Numbers
 
@@ -251,13 +238,6 @@ start is a device test.
 | Installed | 5.1 GB `/usr` | 842 MB |
 | Download | 14.8 GiB image | 224 MB `.img.xz` |
 | Enabled system services | 30+ and 9 timers | 6, one timer (the daily update check) |
-
-## Not done yet
-
-- On the device: the first boot on the spare card, and spikes S3, S4 and S7.
-- The archive key and Pages setup (`os/repo/README.md`); the repo itself is
-  built (`updates.md`).
-- The CI workflow has not run.
 
 ## Before the first public release
 

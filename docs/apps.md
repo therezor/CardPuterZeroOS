@@ -55,9 +55,11 @@ use this page directly.
 
 ## Shell link
 
-Status: the transport and `hello`, `pause`, `paused`, `resume`, `redraw`,
-`toast` and `awake` are built. The bars are not yet (roadmap A1): apps still draw
-their own, as the SDK does for Rust apps.
+The shell handles `hello`, `pause`, `paused`, `resume`, `redraw`, `toast`,
+`awake` and `open`. It does not draw the OS bars, and that is not planned:
+`bars`, `title`, `softkeys`, `hints`, `softkey`, `content`, `theme` and
+`X-Gh0st-Bars` are not built. Apps draw their own bars, as the SDK does for
+Rust apps.
 
 An app can ask the shell to draw the OS top bar (title, network, battery and
 clock) and an OS bottom bar (soft keys or key hints). The app then draws only

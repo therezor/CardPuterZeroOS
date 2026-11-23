@@ -11,9 +11,7 @@ The pictures come from `crates/gh0st-ui/examples/updates.rs`:
 cargo run -p gh0st-ui --example updates   # writes mockups/updates
 ```
 
-## What the user decided
-
-2026-11-22:
+## Rules
 
 - Check daily by default. Install only after the user confirms. There is no
   mode that installs on its own.
@@ -22,8 +20,6 @@ cargo run -p gh0st-ui --example updates   # writes mockups/updates
   above 50%.
 - Install and the update settings ask for the password, once per 5 minutes.
   Checking does not.
-
-This replaces "updates only when the user asks" from 2026-11-20.
 
 ## How it fits together
 
@@ -272,7 +268,7 @@ and the stock app debs.
 
 ## Tested
 
-The spike on 2026-11-22 ran in a container made from the release image's
+The spike ran in a container made from the release image's
 own root tree (`rootfs.tar`), with a throwaway Ed25519 key:
 
 - The image's apt (sqv) checks the Ed25519 signature.

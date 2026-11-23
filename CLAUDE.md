@@ -68,7 +68,7 @@ battery in `/sys/class/power_supply`. Details and sources in
   home is an app built to it: Settings, the terminal.
 - `docs/updates.md`: the update engine, the Updates app, notifications and
   our apt repo on GitHub Pages (`os/repo/publish.sh`).
-- `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
+- `docs/roadmap.md`: what comes next.
 - `docs/testing.md`: the test layers, the design lint, and what a change
   must add.
 - `docs/store.md`: the Store, its signed catalog, what the signature does

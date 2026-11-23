@@ -72,7 +72,7 @@ is only data. Installing an app with any of the first three asks first, and
 names them.
 An update doesn't ask.
 CI leaves out an app whose dependencies our sources don't have, or whose
-name clashes with Debian's. The dry run of 2026-11-23 listed 168 of 179: ten
+name clashes with Debian's. A dry run of CI listed 168 of 179: ten
 need Pi camera tools or M5's launcher, and `loki` is a Debian package's
 name. About 80 of the 168 ask before install.
 
@@ -244,6 +244,6 @@ which held every deb it downloaded, and says how much came back.
 
 **Budgets.** A first frame from the cache in under 150 ms. No wakeups at
 idle. Icons decode only for rows near the selection, 20 px, at most 24 kept.
-One screenshot in memory. No CJK font. Titles are in English for now; M5's
-`zh-CN` and `ja` text is a later step. PSS is measured against M5's Store
+One screenshot in memory. No CJK font. Titles are in English; M5's
+`zh-CN` and `ja` text is not shown. PSS is measured against M5's Store
 with `scripts/measure.sh` and recorded in `hardware-facts.md`.

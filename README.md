@@ -121,8 +121,12 @@ still break, and the SDK and the design can still change. To report a bug,
 open an issue with the Build from Settings > About. The
 [tester notes](docs/alpha.md) list what else to include.
 
-Next on the [roadmap](docs/roadmap.md): per-app limits on network and files,
-a faster boot, and the key training as its own app.
+Next on the [roadmap](docs/roadmap.md):
+
+- ⌨️ A keyboard app for Bluetooth and USB keyboards.
+- 📁 A file manager.
+- 🎨 Custom colour schemes, made on the device.
+- 🛡️ App isolation: network, files, camera and mic per app.
 
 ## 🛠️ For developers
 

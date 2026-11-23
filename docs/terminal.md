@@ -17,8 +17,8 @@ screen at each size.
 | 20 | 10x20 | 32x7 | 32x8 |
 
 Terminus is a bitmap face: every pixel is on or off, so text stays sharp.
-Anti-aliased faces blurred on the panel, as nothing hints them; JetBrains
-Mono and Fixed were tried and dropped on 2026-11-21. Box drawing, blocks,
+Anti-aliased faces blur on the panel, as nothing hints them; JetBrains
+Mono and Fixed were tried and dropped. Box drawing, blocks,
 braille and powerline arrows and rounded caps are drawn per cell, so lines
 join at any size.
 

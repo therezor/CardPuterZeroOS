@@ -1,5 +1,5 @@
 # The boot logo on the LCD, from M5's st7789v driver repo. It draws once and
-# exits: gh0st takes the panel next. Until gh0st draws the splash (M7).
+# exits: gh0st takes the panel next.
 [Unit]
 Description=Boot logo on the CardputerZero LCD
 DefaultDependencies=no

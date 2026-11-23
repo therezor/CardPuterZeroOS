@@ -4,12 +4,10 @@
 an SDK app: the screen, the keys, the settings and the files. A helper it
 starts, `gh0st-camd`, owns libcamera and the encoders.
 
-Status: the app, its protocol and a fake helper are built and tested on a
-host. The helper (`camd/`) takes the preview, photos and video, and has
-run on a device: 8 MP photos with EXIF, zoom, thumbnails, 1080p30 and 720p30
-video, the probe. Sound comes next. The image ships it in place of M5's
-Camera, and migration `0003-camera` swaps them on devices flashed before.
-The milestones are at the end.
+The helper (`camd/`) takes the preview, 8 MP photos with EXIF, zoom,
+thumbnails, and 1080p30 and 720p30 video. The image ships it in place of
+M5's Camera, and migration `0003-camera` swaps them on older devices. What
+is missing is at the end.
 
 ## The camera and its ceiling
 
@@ -249,12 +247,12 @@ Builds:
 - `make -C crates/gh0st-camera/camd stub O=$PWD/target/camd` builds the
   stub on any host with libjpeg-turbo.
 - `GH0ST_HOST=<user>@<device> scripts/deploy.sh camera` installs the app
-  and the helper. The device also needs a shell that sends every linked
-  app `pause` (this branch): an older one stops the app without it, and
-  the helper keeps the sensor streaming in the background.
+  and the helper. The shell must send every linked app `pause`: an older
+  shell stops the app without it, and the helper keeps the sensor
+  streaming in the background.
 - `/usr/libexec/gh0st-camd --probe DIR` on a device prints the modes, the
   preview configs and their fps, CMA free in each, and the time of a full
-  photo and its JPEG at q95 and q85. Those figures settle milestone 1.
+  photo and its JPEG at q95 and q85.
 
 ## Tests
 
@@ -273,26 +271,12 @@ Builds:
   GH0ST_CAMD_TEST=$PWD/target/camd/gh0st-camd-stub cargo test -p gh0st-camera
   ```
 
-## Milestones
+## Missing
 
-1. **Measure on a device.** A `gh0st-camd --probe` build lists the modes
-   and fps, the lane count and rotation, CMA free in each mode, the time of
-   an 8 MP JPEG, 1080p30 for ten minutes (CPU, heat, card speed), and the
-   shading with the stock tuning. Each figure goes in `hardware-facts.md`
-   and settles a choice above.
-2. **Preview and photos.** The helper's preview and still modes, JPEG with
-   EXIF, thumbnails, and its deb (`gh0st-camera`, which pins
-   `libcamera0.7`), built in the image container.
-3. **Video.** Done: H.264 by V4L2 M2M on dmabufs, the preview from the
-   second ISP output, fragmented MP4 written by hand. Still to check: ten
-   minutes at 1080p (heat, card speed), and the frame rate on the real
-   screen rather than `--sim`.
-4. **Sound.** The mic to AAC-LC at 48 kHz, muxed by timestamp.
-5. **More.** DNG, a level from the BMI270 and EXIF orientation, shutter,
-   ISO and white balance by hand, and a tuning file for this lens.
-6. **Replace stock.** Once these all hold, the image drops M5's `camera`
-   and this package replaces it on upgrade:
-   - [ ] preview, photos, zoom that reaches the photo
-   - [ ] review and delete
-   - [ ] video with sound
-   - [ ] no keyboard grab, Fn+K and the lock pause it
+- **Sound.** Video is silent: the helper takes `mic` and ignores it. Sound
+  means the mic to AAC-LC at 48 kHz, muxed by timestamp.
+- **Unmeasured.** Ten minutes at 1080p30 (CPU, heat, card speed), the frame
+  rate on the panel rather than `--sim`, and lens shading with the stock
+  tuning.
+- **Not built.** DNG, a level from the BMI270 and EXIF orientation, shutter,
+  ISO and white balance by hand, and a tuning file for this lens.

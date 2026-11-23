@@ -27,7 +27,7 @@ it. It runs nmcli as root, so polkit needs no `wifi.share` rule. A change
 while the hotspot runs restarts it, so clients join again.
 
 The verbs need no password. They carry the trust the device user already has
-over NetworkManager through our polkit rule (roadmap M3).
+over NetworkManager through our polkit rule (`packaging/polkit/50-gh0st.rules`).
 
 ## Settings
 
@@ -98,8 +98,7 @@ Automated, in `cargo test --workspace`:
 Mockups: `cargo run -p gh0st-settings --example mockups` writes the hotspot
 pages to `mockups/settings/*hotspot*`.
 
-On the device (checked 2026-11-22 on the stock card over a cable, unless
-marked):
+On the device (checked on the stock card over a cable, unless marked):
 
 | Check | Result |
 |---|---|

@@ -2,13 +2,12 @@
 
 A freshly flashed card has no user. Setup runs once, on the device, and makes it the
 user's: who they are, where they are, how private the device is, and how it looks. Then
-it hands over to the shell. This is roadmap M4's first part. The image side is in
+it hands over to the shell. The image side is in
 `image-build.md`.
 
-Status: designed 2026-11-21, moved onto the design system (`design.md`) the same day.
 Mockups in `mockups/setup` (`cargo run -p gh0st-settings --example setup_mockups`).
 
-## What the user decided
+## Rules
 
 - The account name is chosen at setup. The release image ships with no user.
 - A password is required. Settings has **Unlock with password** (on by default), so the
@@ -125,14 +124,13 @@ RestartSec=1
 WantedBy=multi-user.target home.mount
 ```
 
-**Why ExecCondition too.** systemd skips `Condition` lines on an automatic restart. On
-the first device run, setup exited after `setup-finish`, came back a second later and
-drew its first screen over the shell on every key. `ExecCondition` runs on every start,
+**Why ExecCondition too.** systemd skips `Condition` lines on an automatic restart.
+Without it, setup exits after `setup-finish`, comes back a second later and draws its
+first screen over the shell on every key. `ExecCondition` runs on every start,
 and `Restart=always` stops when it fails.
 
 **Why root.** Stock's wizard runs as root before any user session, for the same reason:
-there is no user yet. `nmcli` and `timedatectl` need no polkit as root, which also holds
-once NetworkManager gets `auth-polkit=root-only` (roadmap M2).
+there is no user yet. `nmcli` and `timedatectl` need no polkit as root.
 
 **The program.** `gh0st-settings --setup`. The same binary as Settings, so setup reuses
 its Wi-Fi, country, time zone, appearance and logs code without making it public. Root
@@ -148,7 +146,7 @@ choices land in its own `config.json` through `Cx::settings()`, and theme setup 
 `user-create` installs that file into the new home.
 
 **No shell runs during setup.** Setup lights the panel at start when it is dark. Fn+K and
-holding Esc do nothing; the training only describes them. Not built yet: the brightness keys,
+holding Esc do nothing; the training only describes them. Missing: the brightness keys,
 and powering off after 10 idle minutes on battery.
 
 ## Power cuts
@@ -173,8 +171,8 @@ finishes what is missing. A cut after it starts the shell.
 ## Helper verbs
 
 The password always goes on stdin, never in the arguments. Setup runs as root, so the
-gated verbs don't ask it. Each verb has its arm in `Verb::gated`, and parser tests. Built
-2026-11-21 in `crates/gh0st/src/helper.rs`, the text in `gh0st_core::sysconf`.
+gated verbs don't ask it. Each verb has its arm in `Verb::gated`, and parser tests. The verbs
+are in `crates/gh0st/src/helper.rs`, the text in `gh0st_core::sysconf`.
 
 | Verb | Stdin | Allowed |
 |---|---|---|
@@ -201,9 +199,9 @@ writes the linger file and syncs it and its directory, removes the marker and sy
 `/var/lib/gh0st`, then starts `user@1000.service`. The existing verbs stay as they are:
 `regdom`, `hostname`, `logs`, `ssh`, `rfkill`, `power`.
 
-## What gets built
+## The code
 
-**SDK** (`crates/gh0st-app`), built 2026-11-21 with tests; the guide is `sdk.md`. The
+**SDK** (`crates/gh0st-app`), with tests; the guide is `sdk.md`. The
 chips, hint bar, menu, help and dialogs came with the design system.
 
 - `Steps`: one page per step, each made as it opens with its label ("Setup 6 of 8").
@@ -217,7 +215,7 @@ chips, hint bar, menu, help and dialogs came with the design system.
   password. Zeroed when dropped.
 - `testing::Driver::jobs` runs jobs to the end, so tests see their lines and codes.
 
-**Settings** (`crates/gh0st-settings`), built 2026-11-21:
+**Settings** (`crates/gh0st-settings`):
 
 - `Settings::embedded(Embed { page, label, skip, done })`: one page as a setup step. It
   asks only what that page shows (no volume: no PipeWire as root), carries the step's
@@ -231,7 +229,7 @@ chips, hint bar, menu, help and dialogs came with the design system.
 - System > **Unlock with password**, config key `gh0st.lock.password`, default true.
 - `PageId::Look`, setup's device name and look.
 
-**The setup module** (`src/setup`), built 2026-11-21: `gh0st-settings --setup` runs
+**The setup module** (`src/setup`): `gh0st-settings --setup` runs
 `setup::steps` under `run_with(.., Options { closable: false })`. The notice, the welcome
 and the training are in `tour.rs`; Country, Time zone (`PageId::CountryZones`),
 Privacy, Network and Device and look are embedded Settings; `clock.rs`, `account.rs` and
@@ -245,12 +243,12 @@ each wrong try. It starts locked, and locks on wake after `gh0st.lock.after` sec
 (System > Lock after, 5 minutes by default). A shorter dark goes straight back. `design.md`
 has the screen; `apps.md`, Pausing, has what happens to the app in front.
 
-**Image** (`docs/image-build.md`, First-boot setup), built 2026-11-22:
+**Image** (`docs/image-build.md`, First-boot setup):
 
 - No user and no linger; the marker and setup's `HOME`; `gh0st-setup.service`
   enabled by the preset; the shell's unit waits for the marker to go. Its checks: the
   marker, no UID 1000, root locked.
-- One image, no dev variant (2026-11-22): a device under test runs setup too.
+- One image, no dev variant: a device under test runs setup too.
 - A cable connects on its own: NetworkManager makes the wired profile. The privacy
   defaults (a stable address, no hostname sent, no connectivity check) cover it.
 - `fb_load.service` is `Type=oneshot` with a 10 s timeout, so the logo is done before
@@ -259,7 +257,7 @@ has the screen; `apps.md`, Pausing, has what happens to the app in front.
 
 ## Tests
 
-- Built: `tests/setup_sim.rs` runs `gh0st-settings --setup --sim` from a key script, with
+- `tests/setup_sim.rs` runs `gh0st-settings --setup --sim` from a key script, with
   fake `pkexec`, `nmcli` and `timedatectl` first on `PATH`. It checks every helper call,
   `user-create` before `setup-finish`, the password on stdin only, and none in
   `setup.state`. `tests/embed.rs` checks the embedded steps' chips and Esc.

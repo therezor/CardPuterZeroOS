@@ -11,8 +11,7 @@ The SDK draws all of it, so an app follows it by using the SDK.
 Settings (`crates/gh0st-settings`) is built on this SDK, plus `gh0st-core`
 for the app list, pins and the backlight. Read it for a full app. Apps in other languages use the contract in `apps.md` directly.
 
-Status: the SDK draws the OS bars inside the app for now. Once the shell link
-lands (roadmap A1), the shell draws them instead. Apps don't change.
+The SDK draws the OS bars inside the app.
 
 ## Hello
 
@@ -901,8 +900,8 @@ root:
 | `memory()`, `storage(path)` | Used and total, in MB; `storage` for the filesystem holding `path` |
 | `kernel()`, `version()`, `build()` | The kernel release, the gh0st version, and the image build's time and commit |
 
-Wi-Fi, Bluetooth, time and the other root jobs come with the root helper
-(roadmap M3). Its sensitive verbs ask for the user's password on stdin, so an
+Wi-Fi, Bluetooth, time and the other root jobs go through the root helper,
+`gh0st-helper`. Its sensitive verbs ask for the user's password on stdin, so an
 app can't flip them unseen.
 
 ## Steps

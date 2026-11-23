@@ -1,8 +1,8 @@
 # Gh0st OS: base distro and optimization plan
 
-Status: research, 2026-11-20. Figures marked **measured** come from community repos (linked);
-everything else is a target to measure. The image is now built: `image-build.md` has how, and
-what the build changed (2026-11-21). Debian supplies everything except the Raspberry Pi
+The research behind the image. Figures marked **measured** come from community repos (linked);
+everything else is a target to measure. `image-build.md` has how the image is built and where
+it differs from this plan. Debian supplies everything except the Raspberry Pi
 packages `os/lock.json` pins; the kernel boots without an initramfs; stock apps need
 `libcamera0.7`, not 0.8.
 
@@ -10,8 +10,7 @@ packages `os/lock.json` pins; the kernel boots without an initramfs; stock apps 
 
 **Base: Debian 13 "trixie" arm64, built additively with `mmdebstrap --variant=minbase`,
 plus the Raspberry Pi `rpt` 6.18 kernel/firmware and M5Stack's CardputerZero drivers,
-with the kernel pinned.** Camera included, `gpu_mem=64`. No desktop in the base image (desktop
-mode comes later as an app). No cloud-init; logging and network services are off by default.
+with the kernel pinned.** Camera included, `gpu_mem=64`. No desktop in the image. No cloud-init; logging and network services are off by default.
 
 Why not another distro:
 
@@ -102,14 +101,13 @@ LightDM + LXDE (Kali image).
    returns to Linux directly (~12.5% of total RAM). The camera stays in the base image (IMX219 via
    `unicam` + libcamera, whose ISP runs on the VPU), and 64 MB is expected to cover the ISP and H.264
    codec (to verify). Check the custom-`start.elf` boot splash, camera preview/capture and H.264 at 64.
-2. **No desktop in the base image.** No `rpd-*` metapackages, LightDM, labwc or Xorg. Desktop mode
-   comes later as an installable launcher app (§6). **Measured:** a running desktop costs ~55 MB RAM
+2. **No desktop in the base image.** No `rpd-*` metapackages, LightDM, labwc or Xorg. **Measured:** a running desktop costs ~55 MB RAM
    and ~20 mA (`cz-desk-mode`); LXDE costs 75–90 MB (Kali image).
 3. **Keep `vc4-kms-v3d,cma-64`.** Under KMS the GPU and camera pipeline draw from CMA, not
    `gpu_mem`, so `gpu_mem` can still be cut (item 1). HDMI needs vc4, and the future desktop app
    depends on it. The camera is in the base image, so CMA must fit full-res capture: IMX219
-   3280×2464 raw is ≈10 MB per buffer, with several buffers in flight. Verify full-res stills and
-   preview with `cma-64` in the image spike (`roadmap.md` M1b). Idle CMA isn't wasted: movable pages (page cache, anon) borrow
+   3280×2464 raw is ≈10 MB per buffer, with several buffers in flight. Full-res stills and
+   preview fit in `cma-64` with three raw buffers (`hardware-facts.md`, Camera). Idle CMA isn't wasted: movable pages (page cache, anon) borrow
    it until HDMI or the camera needs it.
 4. **Never installed.** The build is additive (minbase), so these are a checklist against
    Recommends pulling them in, not a removal step: `cloud-init`, `avahi-daemon`,
@@ -135,10 +133,9 @@ LightDM + LXDE (Kali image).
    Small image + first-boot root resize instead of a fixed 14.8 GiB image. **Risk to test:** M5
    deliberately removed first-boot resize (their notes were deleted in `3b0e6f6`), while Kali's
    `cz-firstboot-resize` works on this device.
-9. **Kernel (`roadmap.md` L2).** Build our own `rpt` 6.18 kernel package with the M5 drivers in-tree and a
-   trimmed config (no unused SoC/FS/net drivers). Until then, **pin** the kernel (`apt-mark hold`)
-   and ship the M5 modules as our own `.deb` built in CI per kernel version, with the driver commit
-   pinned.
+9. **Kernel.** No kernel of our own. The `rpt` 6.18 kernel is **pinned** in `os/lock.json`, and the
+   M5 modules ship as our own `.deb` (`gh0st-panel-modules`) built per kernel version, with the
+   driver commit pinned.
 
 ## 5. Boot and performance
 
@@ -159,37 +156,7 @@ LightDM + LXDE (Kali image).
   50 ms before each send. gh0st's patched driver cuts that to one jiffy (4 ms) for every fbdev app,
   uses the TE pin and runs the panel at 50 Hz. gh0st also calls `fsync()` after each flush.
 
-## 6. Desktop mode: later, as an app
-
-Not part of the base image. On the stock image the HDMI desktop can't be driven from the built-in
-keyboard, which sits on its own seat (`ID_SEAT`) so the desktop never sees it. Desktop mode will be
-built later as an installable launcher app that fixes this. In the base OS, plugging in HDMI starts
-nothing.
-
-**What the base OS keeps so the app can be added later:**
-
-- `vc4-kms-v3d` + CMA (§4 item 3).
-- UID 1000 in the `video` and `input` groups.
-- The LCD and built-in keyboard stay off the default seat.
-
-**Notes for the future app** (prior art: `InstantComet/cz-desk-mode`, which solves the keyboard
-problem on this device):
-
-- **Keyboard:** `EVIOCGRAB` the TCA8418 and replay keys through `/dev/uinput` on the default seat,
-  translating the Sym-layer codes to standard key + Shift. Give it back on `Ctrl+Alt+Esc`, HDMI
-  unplug or exit. While the keyboard is handed over, the LCD is off and the launcher doesn't render.
-  The app's package adds a udev rule letting `input` use `/dev/uinput`.
-- **Compositor:** `labwc` as a UID 1000 user unit with `LIBSEAT_BACKEND=noop` on the vc4 card only.
-  It shares the launcher's PipeWire/D-Bus session. **Never LightDM:** its greeter's PipeWire takes
-  the sound card and deadlocks the launcher's audio.
-- **Packages:** ship the desktop with the app, not the image. Leave out PackageKit, the panel's
-  updater widget, `rpi-connect` and `wayvnc` autostart (privacy, §7). Keep the browser optional
-  because of RAM.
-- **Polkit:** no logind session, so polkit rules for UID 1000 are needed for NetworkManager/BlueZ
-  actions from the desktop.
-- **Cost:** ~55 MB RAM and ~20 mA while running, so stop it on HDMI unplug after a debounce.
-
-## 7. Privacy: no telemetry, logging off by default
+## 6. Privacy: no telemetry, logging off by default
 
 **What was audited:** every URL string in every executable of the `applaunch` 0.6.111 deb
 (`bin/`, `libexec/`), cross-checked against its public source (`CardputerZero/launcher`), plus the
@@ -208,7 +175,7 @@ Findings in the launcher package:
   or patch the probe out.
 - **AppStore** fetches `cardputerzero.github.io/generated/registry.json` and
   `cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/packages/cn/registry.json`, on every open,
-  and all 179 icons with it (measured 2026-11-23, `hardware-facts.md`). Done: our Store
+  and all 179 icons with it (measured, `hardware-facts.md`). Our Store
   (`store.md`) reads a signed copy on our Pages, only when the user refreshes or with the daily
   check, and sends no account or device ID.
 - M5's imager fork ships with `TELEMETRY_URL ""` (RPi Imager's download stats removed).
@@ -233,7 +200,7 @@ The bigger leaks are in the base OS and its defaults:
 | ADB gadget | Serial derived from `machine-id` hash | Already off by default; keep off |
 | `systemd-coredump`, `popularity-contest`, `reportbug` | Crash/usage reporting | Not installed (minbase); `kernel.core_pattern=|/bin/false` |
 | Kernel log | Readable by any user | Set `kernel.dmesg_restrict=1` and `kernel.kptr_restrict=2` explicitly (Debian kernels default to restrict; the rpt config is unverified) |
-| M5 Imager (host tool) | RPi Imager telemetry stripped in the fork. OS customisation uses `init_format: "systemd"` (a `firstrun.sh` on the FAT partition calling `raspberrypi-sys-mods` helpers), **not cloud-init** | **Decided: no Imager customisation; all setup happens in the launcher.** Don't ship `raspberrypi-sys-mods`. Our os-list entry uses `init_format: "none"`. We publish `.img.xz` + `bmap`; flash with `bmaptool`/`dd`/any imager, and flashing docs say to skip OS customisation |
+| M5 Imager (host tool) | RPi Imager telemetry stripped in the fork. OS customisation uses `init_format: "systemd"` (a `firstrun.sh` on the FAT partition calling `raspberrypi-sys-mods` helpers), **not cloud-init** | **No Imager customisation; all setup happens on the device (`setup.md`).** Don't ship `raspberrypi-sys-mods`. Our os-list entry uses `init_format: "none"`. We publish `.img.xz` + `bmap`; flash with `bmaptool`/`dd`/any imager, and flashing docs say to skip OS customisation |
 
 **Logging design (default off, toggle in the launcher):**
 
@@ -247,7 +214,7 @@ The bigger leaks are in the base OS and its defaults:
 - The launcher's own logs go to stderr → journald, so they follow the same switch.
 - No rsyslog, no `/var/log` text logs; `apt`/`dpkg` logs can stay (local only).
 
-## 8. Rust launcher: OS contract and design rules
+## 7. Rust launcher: OS contract and design rules
 
 **Contract to keep so stock apps and the AppStore keep working:**
 
@@ -264,7 +231,7 @@ The bigger leaks are in the base OS and its defaults:
   `WorkingDirectory=/usr/share/APPLaunch`.
 - `fb_load` (boot splash) hard-codes the stock launcher and `LaunchWizard` paths and holds the
   panel until one of them runs. `packaging/systemd/fb_load.service.d` drops `--keep-open`, so it
-  draws the logo and lets go. M8 replaces it.
+  draws the logo and lets go.
 - **Radios:** `rfkill default_state=0` blocks Wi-Fi and BT at every boot. The launcher unblocks
   them when the user enables them; `systemd-rfkill` persists that state across boots.
 - **Hardware controls** via sysfs:
@@ -274,13 +241,11 @@ The bigger leaks are in the base OS and its defaults:
     with access granted by M5's `cardputerzero-leds.conf` / `60-cardputerzero-leds.rules`;
   - low-battery shutdown (cz-battery-saver defaults to 8%).
 
-**Design rules.** The shell is built, so its rules live in `CLAUDE.md` and the
-code: one `poll` loop with no threads, fbdev with row-level flushes, no
-dependencies past `libc`, `png` and `ab_glyph`. What it gives apps is in
-`apps.md`. The privacy settings, first-boot setup and the root helper are
-milestones in `roadmap.md`.
+**Design rules.** The shell's rules live in `CLAUDE.md` and the code: one
+`poll` loop with no threads, fbdev with row-level flushes. What it gives apps
+is in `apps.md`. First-boot setup and the privacy settings are in `setup.md`.
 
-## 9. Baseline to measure on a device (before changing anything)
+## 8. Baseline to measure on a device (before changing anything)
 
 ```sh
 free -m; grep -E 'MemTotal|MemAvailable|Cma' /proc/meminfo; vcgencmd get_mem gpu
@@ -298,10 +263,10 @@ device contacts.
 
 Repeat the same set on each build to track the effect of every change.
 
-## 10. Roadmap
+## 9. Roadmap
 
-Moved to `roadmap.md`, with the decisions made since this research: stock apps
-and the Store keep working (so Debian, not Buildroot), and a dev device exists.
+See `roadmap.md`. Stock apps and the Store keep working, so the base is Debian, not
+Buildroot.
 
 ## Sources
 

@@ -5,11 +5,11 @@ Measured on the device unless marked.
 ## Measured
 
 - Debian 13 trixie, kernel `6.18.39+rpt-rpi-v8`, 352 MB RAM visible to Linux
-  at `gpu_mem=128`, 414 MB at `gpu_mem=64` (read 2026-11-21).
+  at `gpu_mem=128`, 414 MB at `gpu_mem=64`.
 - Bluetooth attaches in the kernel: `hci_uart_bcm` on `serial0` from the device
-  tree finds the CYW4343A2. No `hciuart` or `pi-bluetooth` (2026-11-21).
+  tree finds the CYW4343A2. No `hciuart` or `pi-bluetooth`.
 - The kernel has ext4 and the SD host drivers built in, and `CONFIG_LSM` is
-  empty: root mounts without an initramfs, and no AppArmor (2026-11-21).
+  empty: root mounts without an initramfs, and no AppArmor.
 - CPU features: `fp asimd evtstrm crc32 cpuid`. No `aes` or `sha2`: building
   with `target-cpu=cortex-a53` alone gives SIGILL, hence
   `-C target-feature=-aes,-sha2` in `.cargo/config.toml`.
@@ -26,14 +26,14 @@ Measured on the device unless marked.
   `keymap1` for Sym, `keymap2` for Fn). Fn changes every key but R, T, Y, G,
   V, Space, Enter, Tab, Esc and the modifiers: Fn+Q/W/E media keys,
   Fn+U/I brightness, Fn+J SysRq, Fn+L/M PgUp/PgDn, Fn+N End, Fn+B Insert,
-  Fn+1..0 F1 to F10, Fn+O/P F11/F12, Fn+Bksp Delete. Read 2026-11-21.
+  Fn+1..0 F1 to F10, Fn+O/P F11/F12, Fn+Bksp Delete.
 - Fn+Esc keeps the Esc code: the reader sees Fn (389) down, Esc down, Esc
   up, Fn up. A tapped Fn gives the same sequence as a held one: the driver
   holds a one-shot Fn down until the next key comes up. Plain Esc comes alone.
-  Measured 2026-11-21 with a raw evdev read.
+  Measured with a raw evdev read.
 - The only side button is power/boot. It sends no key event.
 - First boot of the Gh0st OS image (kernel `6.18.60+rpt-rpi-v8`, stock
-  firmware), read off the card 2026-11-22: userspace in 6.5 s, 9.3 s in all.
+  firmware), read off the card: userspace in 6.5 s, 9.3 s in all.
   vc4 takes DRM minor 0, the panel minor 1 at 8.5 s; `fb_load` waits for
   `/dev/dri/card1` and shows the logo at 9.0 s. The keyboard, battery,
   Wi-Fi (BCM43439) and Bluetooth (CYW4343A2) all probe. The RTC
@@ -41,10 +41,10 @@ Measured on the device unless marked.
   The panel logs one "Timeout waiting for TE signal" before the logo.
 - The data partition grown from 256 MiB to a 64 GB card with 1 KiB blocks
   came up with corrupt group descriptors (group 4128) and `/home` would not
-  mount. The image now makes it with 4 KiB blocks (2026-11-22). The cause
+  mount. The image makes it with 4 KiB blocks. The cause
   was the card, not the block size: see "A fake card" below. Group 4128 sits
   about 32 GiB into p3, past the card's real capacity.
-- **A fake card** (read 2026-11-22). The 64 GB test card, sold as Sony,
+- **A fake card**. The 64 GB test card, sold as Sony,
   reports manfid 0x05, OEM 0x000c, name "asdfg", serial 0x12, made 07/2025.
   On it, ext4's backup superblocks read back right up to 18 GiB and as
   garbage at 33 GiB and 46 GiB, so its real capacity is between them. Data
@@ -64,7 +64,6 @@ Measured on the device unless marked.
   there is no TE code (M5 turned TE off on 2026-09-23 "until timing is
   verified"). That file is unchanged through `a3fd3e8` (2026-11-19), which the
   official 2026-11-19 image and Gh0st OS build from. Our driver started from it.
-  Read 2026-11-21.
 - The init file sets MADCTL 0xA0 (MV|MY): the panel refreshes across the
   landscape rows. gh0st's driver (`os/kernel/panel-mipi-dbi-m`) sends along
   the scan lines with MADCTL 0x90 and runs the panel at 50.6 Hz.
@@ -75,22 +74,21 @@ Measured on the device unless marked.
   The driver is `m5stack,pwm-backlight` on M5IOE1's pwm-3 (50 us period,
   levels 0 to 5500 ns). At 0 it switches the PWM off, and the LED then runs
   at full: battery current 385 mA at 0, 381 mA at 90, 340 mA at 5, 336 mA at
-  1, on home, discharging. So dark writes 1 and a black frame. Measured
-  2026-11-22.
+  1, on home, discharging. So dark writes 1 and a black frame.
 - Battery: `bq27220-0`, `type=Battery`, with no interrupt in the device tree.
   The kernel polls it every 360 s (`poll_interval`). Nothing tells the kernel
   about the charger: no expander input, USB event or log line follows the
   cable. Reads of `status` follow plug and unplug, and a read makes the driver
   send a `change` uevent when something moved. On stock, `wf-panel-pi` (the
   HDMI desktop's panel) reads it every 5 s, so most uevents come from that.
-  Measured 2026-11-21. The delay from the cable to `status` is not timed.
+  The delay from the cable to `status` is not timed.
   gh0st reads it every 2 s while a bar is lit.
 - LEDs: `ext_5v_out`, `grove_5v_out`, `ext_usb_gpio_fun`, `grove_fun`.
 - `wpctl`, `pw-play`, `aplay`, `bluetoothctl`, `nmcli`, `timedatectl`,
   `gpioset` are installed. `fb_load.service` has exited by the time the
   launcher runs. LightDM and labwc run too (HDMI desktop).
 
-## Gh0st OS memory, read 2026-11-22
+## Gh0st OS memory
 
 On the release image after setup, idle on home, Wi-Fi up, read over SSH.
 
@@ -130,7 +128,7 @@ On the release image after setup, idle on home, Wi-Fi up, read over SSH.
   open: unicam, ISP, codec, legacy V4L2, MMAL and `vc_sm_cma`.
 - No swap in use. Keys were made by the first SSH start in under a second.
 
-## M5's Store, read 2026-11-23
+## M5's Store
 
 `gh0st-m5-appstore` 0.6.111+gh0st1 on the release image, opened from home
 over Ethernet, read over SSH with `scripts/measure.sh` and `/proc`. The
@@ -147,7 +145,7 @@ baseline our Store is measured against (docs/store.md).
   whole core: 5.1 s of CPU in every 5 s, about 600 context switches a
   second. Dark, the shell pauses it and the CPU stops.
 
-## Our Store, read 2026-11-23
+## Our Store
 
 `gh0st-store` built for the device, run as the user with `--sim` (frames to
 PNG, no panel) against CI's catalog of 163 apps, keys from a script: scroll,
@@ -163,7 +161,7 @@ through the shell on the panel: that needs the engine deployed as root.
   the icon pack, 532 KB, only when their hash changes. Opening the Store
   downloads nothing.
 
-## The stock system, read 2026-11-20
+## The stock system
 
 Read without changing anything, on the stock M5 image with gh0st installed.
 
@@ -189,9 +187,9 @@ Read without changing anything, on the stock M5 image with gh0st installed.
   (`PM_SLEEP` is off), and a PSCI CPU idle driver.
 - `/proc/PID/task/TID/children` is there (`CONFIG_PROC_CHILDREN`), so the
   switcher's figures walk the shell's own tree instead of all 167 processes.
-  `CLK_TCK` is 100. Read 2026-11-21.
+  `CLK_TCK` is 100.
 
-## Dark current (measured 2026-11-22)
+## Dark current
 
 The dev device on the stock image, shell dark (backlight 1, app paused),
 Wi-Fi joined on the built-in `wlan0` (brcmfmac, SDIO), battery current
@@ -332,7 +330,7 @@ following the send order (MADCTL ML).
 
 ## Paused apps and the keyboard
 
-Measured 2026-11-20 with `python3` reading the evdev node directly.
+Measured with `python3` reading the evdev node directly.
 
 - A client that stops reading keeps queuing keys. A paused app replays them
   on SIGCONT.
@@ -349,7 +347,7 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
   the user while a session is open. `pkexec` is installed.
 - `/etc/systemd/journald.conf.d/persist.conf` sets `Storage=persistent`.
 
-## Boot files and root checks, read 2026-11-21
+## Boot files and root checks
 
 - `/boot/firmware` is vfat (`fmask=0022`), so UID 1000 can read `config.txt`
   and `cmdline.txt`. A copy of `config.txt` is the test fixture in
@@ -366,7 +364,7 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
   (raspberrypi-sys-mods) sets ondemand when the CPUs appear.
 - pkexec passes stdin through: a wrong password piped to
   `pkexec gh0st-helper gpu-mem 64` exits 11, no stdin exits 10, and the
-  fourth wrong try exits 12 (`locked 5`). Measured 2026-11-21.
+  fourth wrong try exits 12 (`locked 5`).
 - `/etc/hosts` has two `127.0.1.1` lines, `cardputerzero` and `RZR-ZERO`.
   `iw` is not installed. `/usr/share/zoneinfo/iso3166.tab` is.
 - Swap on stock, the helper run as root over SSH (not yet through pkexec
@@ -374,14 +372,14 @@ Measured 2026-11-20 with `python3` reading the evdev node directly.
   `/etc/rpi/swap.conf.d/90-gh0st-swap.conf`. After a restart zram0 is
   268435456 bytes. `swap 0` (`Mechanism=none`) boots with no swap and
   deletes `/var/swap`; `swap 256` after it brings both back. No failed units
-  at any step; 900 is refused (cap 828 with 414 MB RAM). Measured 2026-11-21.
+  at any step; 900 is refused (cap 828 with 414 MB RAM).
 - Stock runs zstd (the kernel's default; rpi-swap sets none) and swappiness 60
   (rpi-swap sets only `vm.page-cluster=0`, in `/run/sysctl.d/70-rpi-swap.conf`).
   `swap-comp lz4` boots zram0 with `[lz4]`, rpi-swap's size kept.
   `swappiness 150` applies at once and holds after a restart. Same root run
-  over SSH. Measured 2026-11-21.
+  over SSH.
 
-## Wi-Fi access point (measured 2026-11-22, stock card)
+## Wi-Fi access point (stock card)
 
 Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 6.18.39+rpt-rpi-v8, brcmfmac firmware BCM43439/5 7.95.75, NetworkManager
@@ -419,7 +417,7 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 - Timing as UID 1000: `pkexec gh0st-helper` 150 to 300 ms, an nmcli call
   about 150 ms, `hotspot on` 2.4 s.
 
-## Wi-Fi firmware at boot (read 2026-11-22, release image)
+## Wi-Fi firmware at boot (release image)
 
 - The BCM43439's firmware download can fail at boot: `brcmf_sdio_verifymemory:
   Downloaded RAM image is corrupted, block offset is 0, len is 780`, then
@@ -434,7 +432,7 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 - `iw phy` on the built-in chip lists IBSS, managed, AP and the P2P modes: no
   monitor (firmware 7.95.75).
 
-## Camera (measured 2026-11-23, `gh0st-camd --probe`)
+## Camera (`gh0st-camd --probe`)
 
 - IMX219 at `/base/soc/i2c0mux/i2c@1/imx219@10`, libcamera v0.7.2+rpt20260817.
   Pixel array 3280x2464. Modes: 640x480, 1640x1232, 1920x1080, 3280x2464.
@@ -493,8 +491,8 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 
 ## Stock system baseline (`scripts/measure.sh system`)
 
-Read 2026-11-21 on the stock M5 image with gh0st installed, 30 s idle, screen
-on, over SSH.
+Read on the stock M5 image with gh0st installed, 30 s idle, screen on, over
+SSH.
 
 | | Stock |
 |---|---|

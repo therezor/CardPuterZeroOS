@@ -163,7 +163,7 @@ impl Verb {
             | Verb::StoreRemove(_)
             | Verb::StoreUpgrade(_) => true,
             // The hotspot carries the trust NetworkManager's polkit grant
-            // already gives the device user (roadmap M3).
+            // already gives the device user.
             Verb::Rfkill(..)
             | Verb::WifiPowersave(_)
             | Verb::Hotspot(_)
