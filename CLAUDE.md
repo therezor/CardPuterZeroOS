@@ -142,7 +142,9 @@ GH0ST_HOST=pi@<device> scripts/tear-test.sh 10    # full-screen stripes at the p
 ```
 
 `GH0ST_LOG=debug` logs the first frame time and, for each frame, the rows flushed and
-the wake-to-draw, draw and flush times.
+the wake-to-draw, draw and flush times. SDK apps log each wake and what caused it (`signal`,
+`shell`, `keys`, `job`, `watch`, or none for a timer). The shell doesn't pass
+`GH0ST_LOG` on: set it in a wrapper around the app's binary.
 
 ## Host runs
 

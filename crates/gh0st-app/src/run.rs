@@ -96,6 +96,9 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result
 
     let mut raw = Vec::new();
     let mut full = false;
+    // GH0ST_LOG=debug: what woke the loop, as the shell logs it.
+    let debug = std::env::var("GH0ST_LOG").is_ok_and(|v| v == "debug");
+    let t0 = rt::now_ms();
     while !rt_.quit {
         let jobs = rt_.job_fds();
         let watches = rt_.watch_fds();
@@ -127,6 +130,25 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result
         let deadline = rt::earliest([rt_.next_at(), script_at]);
         rt::wait(&mut fds, deadline).map_err(|e| format!("poll: {e}"))?;
         let now = rt::now_ms();
+        if debug {
+            let what = |i: usize| match i {
+                0 => "signal",
+                i if Some(i) == link_at => "shell",
+                i if Some(i) == input_at => "keys",
+                i if i >= watch_at => "watch",
+                i if i >= jobs_at => "job",
+                _ => "?",
+            };
+            let ready: Vec<&str> = (0..fds.len())
+                .filter(|&i| rt::readable(&fds[i]))
+                .map(what)
+                .collect();
+            eprintln!(
+                "wake at {} {ready:?} deadline {:?}",
+                now - t0,
+                deadline.map(|d| d as i64 - now as i64)
+            );
+        }
 
         if rt::readable(&fds[0]) {
             for sig in signals.drain() {
