@@ -148,7 +148,7 @@ LightDM + LXDE (Kali image).
   so the driver isn't certain). This alone is −105 mA and removes the ~8000 IRQ/s storm, which
   also frees CPU.
 - **CPU:** governor `schedutil`, keep stock 1.0 GHz (no overclock in a sealed handheld).
-- **Storage:** ext4 `noatime,commit=60`, no persistent journal by default (§7). `/tmp` on tmpfs
+- **Storage:** ext4 `noatime,commit=60`, no persistent journal by default (§6). `/tmp` on tmpfs
   **capped at `size=32M`**: the tmpfs default is 50% of RAM, and ffmpeg/camera/apt temp files land
   there. Big temp files belong in `/var/tmp` (on disk).
 - **Display throughput (measured, `hardware-facts.md`):** SPI runs at 50 MHz (400 MHz VPU / 8). A
@@ -161,7 +161,7 @@ LightDM + LXDE (Kali image).
 **What was audited:** every URL string in every executable of the `applaunch` 0.6.111 deb
 (`bin/`, `libexec/`), cross-checked against its public source (`CardputerZero/launcher`), plus the
 image build scripts. **Not audited:** the other stock apps (Music, Files, Camera, Recorder, Cap
-apps, …) and runtime traffic. The acceptance test for "no phone-home" is the §9 idle `tcpdump`.
+apps, …) and runtime traffic. The acceptance test for "no phone-home" is the §8 idle `tcpdump`.
 
 Findings in the launcher package:
 
@@ -196,7 +196,7 @@ The bigger leaks are in the base OS and its defaults:
 | `systemd-timesyncd` | NTP to the Debian pool (reveals IP) | Keep for TLS (RTC is present), make the server configurable; optional chrony + NTS |
 | SSH on, `pi`/`raspberry` | Security, not telemetry | SSH off by default; password set at first boot |
 | `Asia/Shanghai` TZ, `regdom=AE` cmdline | Wrong defaults | UTC default; regdomain chosen at first boot |
-| Bluetooth | Discoverable name | Off by default (`rfkill default_state=0` blocks **all** radios at boot, Wi-Fi included; keep it, and the launcher unblocks on demand, §8) |
+| Bluetooth | Discoverable name | Off by default (`rfkill default_state=0` blocks **all** radios at boot, Wi-Fi included; keep it, and the launcher unblocks on demand, §7) |
 | ADB gadget | Serial derived from `machine-id` hash | Already off by default; keep off |
 | `systemd-coredump`, `popularity-contest`, `reportbug` | Crash/usage reporting | Not installed (minbase); `kernel.core_pattern=|/bin/false` |
 | Kernel log | Readable by any user | Set `kernel.dmesg_restrict=1` and `kernel.kptr_restrict=2` explicitly (Debian kernels default to restrict; the rpt config is unverified) |
