@@ -57,7 +57,9 @@ impl Filter {
             Filter::All => "All apps",
             Filter::Updates => "Updates",
             Filter::Installed => "Installed",
-            Filter::Category(c) => c,
+            // The short name: the top bar drops a context that doesn't fit
+            // beside the battery.
+            Filter::Category(c) => words::category(c).1,
         }
     }
 }
