@@ -163,7 +163,9 @@ impl Script {
                     eprintln!("sim: unknown key {line:?}");
                     return;
                 };
-                let (k, mods) = codes.split_last().unwrap();
+                let Some((k, mods)) = codes.split_last() else {
+                    return;
+                };
                 for &m in mods {
                     self.push(now, m, 1);
                 }
@@ -177,8 +179,11 @@ impl Script {
 
     /// Events whose time has come.
     pub fn due(&mut self, now: u64, out: &mut Vec<(u16, i32)>) {
-        while self.queue.front().is_some_and(|e| e.0 <= now) {
-            let (_, c, v) = self.queue.pop_front().unwrap();
+        while let Some(&(at, c, v)) = self.queue.front() {
+            if at > now {
+                break;
+            }
+            self.queue.pop_front();
             out.push((c, v));
         }
     }

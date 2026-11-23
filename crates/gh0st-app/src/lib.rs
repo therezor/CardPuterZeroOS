@@ -1,3 +1,5 @@
+// Release builds abort on a panic, and here a panic takes the screen with it.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![doc = include_str!("../../../docs/sdk.md")]
 
 mod bars;

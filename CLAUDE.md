@@ -102,6 +102,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release --target aarch64-unknown-linux-musl   # static, rust-lld
 ```
 
+`.github/workflows/ci.yml` runs these and `cargo fmt --check` on every push
+and PR. Core, the shell and the SDK deny `unwrap` outside tests: release
+builds abort on a panic.
+
 The image (Docker Desktop running; details in `docs/image-build.md`):
 
 ```sh
