@@ -48,6 +48,8 @@ pub mod key {
     pub const TERMINAL: &str = "gh0st.terminal";
     /// Where the Store downloads apps from: auto, github or china.
     pub const STORE_MIRROR: &str = "gh0st.store.mirror";
+    /// The Store's home: `grid` or `list`.
+    pub const STORE_LAYOUT: &str = "gh0st.store.layout";
 }
 
 pub const DEFAULT_DARK_SECS: i64 = 30;

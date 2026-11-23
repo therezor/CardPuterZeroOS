@@ -105,9 +105,13 @@ fn install_with_the_password_and_confirm_a_risky_one() {
         d.toast()
     );
 
-    // Enter opens AcidZero, Enter installs it: the helper wants the
-    // password, so the dialog asks.
-    d.keys("enter").wait(50).keys("enter");
+    // Home opens on its tiles: Enter on All apps, Enter on AcidZero, Enter
+    // installs it. The helper wants the password, so the dialog asks.
+    d.keys("enter")
+        .wait(50)
+        .keys("enter")
+        .wait(50)
+        .keys("enter");
     d.jobs(5000);
     d.keys("type secret\nenter");
     d.jobs(5000);

@@ -626,6 +626,12 @@ impl Page for About {
 }
 ```
 
+`ui.tiles` draws the same items as home's grid: a badge and a name each, four
+to a row, as many rows as fit. A `Grid` holds the selection: Left and Right
+step along the rows, Up and Down move a row, and `key` returns the tile Enter
+opened. The Store's home is one, with a list in its place when the user
+picks List.
+
 ## Drawing
 
 Each `Ui` call stacks below the last, inside the page's area, with the OS

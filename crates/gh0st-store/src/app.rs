@@ -9,7 +9,7 @@ use crate::{shots, words};
 use gh0st_app::cycle;
 use gh0st_app::gfx::Rect;
 use gh0st_app::gfx::image::Image;
-use gh0st_app::gfx::widgets::{self, AppItem, Hint, Visual};
+use gh0st_app::gfx::widgets::{self, AppItem, Visual};
 use gh0st_app::helper::{Finished, Helper};
 use gh0st_app::prelude::*;
 use gh0st_core::config::key;
@@ -33,6 +33,7 @@ const CMD_REFRESH: u32 = 10;
 const CMD_UPDATE_ALL: u32 = 11;
 const CMD_MIRROR: u32 = 12;
 const CMD_FIND: u32 = 13;
+const CMD_LAYOUT: u32 = 14;
 /// A started unit has this long to show progress before the page stops
 /// saying "Starting".
 const START_MS: u64 = 15_000;
@@ -61,8 +62,18 @@ impl Filter {
     }
 }
 
+/// How the Store's home shows its categories, as home shows apps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layout {
+    Grid,
+    List,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum View {
+    /// Home: Updates, Installed, All apps, then the categories.
+    Browse,
+    /// The apps of one filter, or a search through all of them.
     List,
     Detail(String),
     /// An app's screenshots, full screen, and which one.
@@ -112,6 +123,9 @@ pub struct Store {
     filter: Filter,
     search: Search,
     list: List,
+    layout: Layout,
+    browse_grid: Grid,
+    browse_list: List,
     view: View,
     about: Option<About>,
     scroll: Scroll,
@@ -158,7 +172,10 @@ impl Store {
             filter: Filter::All,
             search: Search::new(),
             list: List::new(),
-            view: View::List,
+            layout: Layout::Grid,
+            browse_grid: Grid::new(),
+            browse_list: List::new(),
+            view: View::Browse,
             about: None,
             scroll: Scroll::new(),
             shot: None,
@@ -271,6 +288,48 @@ impl Store {
             );
         }
         f
+    }
+
+    /// Home's entries: Updates and Installed when they have apps, All
+    /// apps, then each category.
+    fn browse(&self) -> Vec<Filter> {
+        let mut f = Vec::new();
+        if !self.updates().is_empty() {
+            f.push(Filter::Updates);
+        }
+        if !self.installed.is_empty() {
+            f.push(Filter::Installed);
+        }
+        f.push(Filter::All);
+        if let Some(c) = &self.catalog {
+            f.extend(
+                c.categories()
+                    .into_iter()
+                    .map(|s| Filter::Category(s.to_string())),
+            );
+        }
+        f
+    }
+
+    fn browse_selected(&self) -> usize {
+        match self.layout {
+            Layout::Grid => self.browse_grid.selected(),
+            Layout::List => self.browse_list.selected(),
+        }
+    }
+
+    fn open_filter(&mut self, f: Filter) {
+        self.filter = f;
+        self.list.select(0);
+        self.view = View::List;
+    }
+
+    /// Find starts from any list: it searches every app.
+    fn find(&mut self) {
+        self.filter = Filter::All;
+        self.view = View::List;
+        self.search.start();
+        self.list.select(0);
     }
 
     /// The catalog indexes the list shows: a search looks through every
@@ -705,6 +764,79 @@ impl Store {
         ui.apps(&self.list, &items);
     }
 
+    fn draw_browse(&self, ui: &mut Ui) {
+        let Some(c) = &self.catalog else {
+            return self.draw_empty(ui);
+        };
+        let t = *ui.theme();
+        let n_updates = self.updates().len();
+        let count = |f: &Filter| {
+            c.apps
+                .iter()
+                .filter(|a| match f {
+                    Filter::All => true,
+                    Filter::Updates => self.has_update(a),
+                    Filter::Installed => self.installed.contains_key(&a.package),
+                    Filter::Category(name) => a.category == *name,
+                })
+                .count()
+        };
+        let entries = self.browse();
+        let notes: Vec<String> = entries
+            .iter()
+            .map(|f| match f {
+                Filter::Updates => words::updates(n_updates),
+                f => words::apps(count(f)),
+            })
+            .collect();
+        let grid = self.layout == Layout::Grid;
+        let items: Vec<AppItem> = entries
+            .iter()
+            .enumerate()
+            .map(|(k, f)| {
+                let (visual, label) = match f {
+                    Filter::Updates => (Visual::System { icon: "download" }, "Updates"),
+                    Filter::Installed => (
+                        Visual::System {
+                            icon: "circle-check",
+                        },
+                        "Installed",
+                    ),
+                    Filter::All => (
+                        Visual::System {
+                            icon: "layout-grid",
+                        },
+                        "All apps",
+                    ),
+                    Filter::Category(name) => {
+                        let (icon, short) = words::category(name);
+                        let tint = t.c.tints[k % t.c.tints.len()];
+                        (
+                            Visual::Badge { icon, tint },
+                            if grid { short } else { name.as_str() },
+                        )
+                    }
+                };
+                AppItem {
+                    label,
+                    note: &notes[k],
+                    visual,
+                    pinned: false,
+                    count: if *f == Filter::Updates {
+                        n_updates as u32
+                    } else {
+                        0
+                    },
+                    tag: None,
+                }
+            })
+            .collect();
+        match self.layout {
+            Layout::Grid => ui.tiles(&self.browse_grid, &items),
+            Layout::List => ui.apps(&self.browse_list, &items),
+        }
+    }
+
     fn draw_empty(&self, ui: &mut Ui) {
         if matches!(self.work(), Some(Work::Refresh)) {
             return ui.notice("download", None, "Getting the app list\u{2026}", "", &[]);
@@ -737,14 +869,12 @@ impl Store {
         let x = area.x + t.m.margin + 3;
         let w = area.w - 2 * (t.m.margin + 3);
         let top = area.y + 5;
-        let enter = if self.busy_with(package) || self.queue.contains(&a.package) {
-            None
-        } else if self.has_update(a) {
-            Some("update")
+        let status = if self.has_update(a) {
+            Some(("Update", Tone::Info))
         } else if self.installed.contains_key(package) {
-            Some("open")
+            Some(("Installed", Tone::Ok))
         } else {
-            Some("install")
+            None
         };
         let pic = self.pics.get(self.icons.as_ref(), package, DETAIL_ICON);
         let c = ui.canvas();
@@ -760,14 +890,9 @@ impl Store {
         widgets::badge(c, &t, br, &visual, false);
         let tx = br.right() + 9;
         let mut right = x + w;
-        if let Some(word) = enter {
-            let keys = [Hint {
-                key: "Enter",
-                label: word,
-            }];
-            let kw = widgets::key_row_w(&t, &keys);
-            widgets::key_row(c, &t, right - kw, top + 1, &keys);
-            right -= kw + 8;
+        if let Some((word, tone)) = status {
+            let row = Rect::new(x, top, w, t.f.body_bold.cap() + 6);
+            right = widgets::tag(c, &t, x + w, row, word, tone) - 8;
         }
         t.f.body_bold.draw_elided(
             c,
@@ -786,18 +911,22 @@ impl Store {
             widgets::progress(c, &t, Rect::new(x, y, w, 24), &label, pct, self.phase);
             y += 28;
         } else {
-            let (warn, uses) = words::flags(a.flags);
-            if !warn.is_empty() {
-                let line = warn.join(" \u{b7} ");
-                widgets::text_in(c, t.f.small, Rect::new(x, y, w, 16), &line, t.c.warning);
-                y += 16;
+            // Pills in one row: the risks first. What doesn't fit is in Help.
+            let row = Rect::new(x, y, w, 16);
+            let mut px = x;
+            let mut any = false;
+            for (word, tone) in words::pills(a.flags) {
+                let pw = widgets::tag_w(&t, word);
+                if px + pw > x + w {
+                    break;
+                }
+                widgets::tag(c, &t, px + pw, row, word, tone);
+                px += pw + 5;
+                any = true;
             }
-            let u = words::uses(&uses);
-            if !u.is_empty() {
-                widgets::text_in(c, t.f.small, Rect::new(x, y, w, 16), &u, t.c.muted);
-                y += 16;
+            if any {
+                y += 20;
             }
-            y += 2;
         }
         ui.space(y - top - 5);
         let text = match &self.about {
@@ -860,9 +989,8 @@ impl Page for Store {
 
     fn context(&self) -> Option<&str> {
         match &self.view {
-            View::List if self.catalog.is_some() && !self.search.active() => {
-                Some(self.filter.name())
-            }
+            View::Browse => None,
+            View::List if !self.search.active() => Some(self.filter.name()),
             View::List => None,
             View::Detail(p) | View::Shots(p, _) => self.app(p).map(|a| a.title.as_str()),
         }
@@ -879,12 +1007,12 @@ impl Page for Store {
             .and_then(Mirror::parse)
             .unwrap_or_default();
         self.zone = store::local_zone();
+        self.layout = match cx.settings().get_str(key::STORE_LAYOUT) {
+            Some("list") => Layout::List,
+            _ => Layout::Grid,
+        };
         self.load_catalog();
         self.load_engine();
-        // Updates waiting: open on them.
-        if !self.updates().is_empty() {
-            self.filter = Filter::Updates;
-        }
         if let Some(w) = watch_dirs() {
             let id = cx.watch(w.fd());
             self.watch = Some((w, id));
@@ -979,6 +1107,10 @@ impl Page for Store {
 
     fn back(&mut self, cx: &mut Cx) -> bool {
         match std::mem::replace(&mut self.view, View::List) {
+            View::Browse => {
+                self.view = View::Browse;
+                true
+            }
             View::Shots(p, _) => {
                 self.view = View::Detail(p);
                 self.shot = None;
@@ -989,19 +1121,28 @@ impl Page for Store {
                 self.sync_segment(cx);
                 false
             }
-            View::List => !self.search.cancel(),
+            View::List => {
+                if !self.search.cancel() {
+                    self.view = View::Browse;
+                }
+                false
+            }
         }
     }
 
     fn bars(&self) -> Bars {
+        let update_all = Chip::new("download", "Update")
+            .main()
+            .busy(self.engine_busy());
         match &self.view {
-            View::List if self.catalog.is_none() => Bars::top(),
-            View::List if self.filter == Filter::Updates && !self.search.active() => {
-                Bars::top().chip(5, Chip::new("search", "Find")).chip(
-                    7,
-                    Chip::new("download", "All").main().busy(self.engine_busy()),
-                )
-            }
+            View::Browse if self.catalog.is_none() => Bars::top(),
+            View::Browse if !self.updates().is_empty() => Bars::top()
+                .chip(5, Chip::new("search", "Find"))
+                .chip(7, update_all),
+            View::Browse => Bars::top().chip(6, Chip::new("search", "Find")),
+            View::List if self.filter == Filter::Updates && !self.search.active() => Bars::top()
+                .chip(5, Chip::new("search", "Find"))
+                .chip(7, update_all),
             View::List => Bars::top()
                 .chip(6, Chip::new("search", "Find"))
                 .search(&self.search),
@@ -1015,6 +1156,7 @@ impl Page for Store {
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
         match self.view.clone() {
+            View::Browse => self.browse_key(key, cx),
             View::List => self.list_key(key, cx),
             View::Detail(p) => {
                 let chip = match key {
@@ -1022,7 +1164,7 @@ impl Page for Store {
                     _ => None,
                 };
                 match (key, chip.map(|c| c.2)) {
-                    (Key::Enter, _) => self.main_action(cx, &p),
+                    (Key::Enter, _) | (_, Some(DetailDo::Main)) => self.main_action(cx, &p),
                     (_, Some(DetailDo::Shots)) => self.open_shots(cx, p),
                     (_, Some(DetailDo::Delete)) => self.remove(cx, &p),
                     (k, _) => {
@@ -1046,7 +1188,7 @@ impl Page for Store {
     }
 
     fn commands(&self, c: &mut Commands) {
-        let list = self.view == View::List;
+        let list = matches!(self.view, View::List | View::Browse);
         let n = self.updates().len();
         c.group("Store");
         c.add(
@@ -1076,13 +1218,30 @@ impl Page for Store {
             Mirror::China => "China",
         };
         c.add(Command::choice(CMD_MIRROR, "Download from", m));
+        let l = match self.layout {
+            Layout::Grid => "Grid",
+            Layout::List => "List",
+        };
+        c.add(Command::choice(CMD_LAYOUT, "Categories as", l));
     }
 
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
         match id {
-            CMD_FIND => {
-                self.search.start();
-                self.list.select(0);
+            CMD_FIND => self.find(),
+            CMD_LAYOUT => {
+                self.layout = match self.layout {
+                    Layout::Grid => Layout::List,
+                    Layout::List => Layout::Grid,
+                };
+                let i = self.browse_selected();
+                self.browse_grid.select(i);
+                self.browse_list.select(i);
+                let word = if self.layout == Layout::Grid {
+                    "grid"
+                } else {
+                    "list"
+                };
+                cx.settings().set_str(key::STORE_LAYOUT, word);
             }
             CMD_UPDATE_ALL => self.update_all(cx),
             CMD_REFRESH => self.refresh(cx),
@@ -1101,6 +1260,7 @@ impl Page for Store {
 
     fn draw(&self, ui: &mut Ui) {
         match &self.view {
+            View::Browse => self.draw_browse(ui),
             View::List => self.draw_list(ui),
             View::Detail(p) => self.draw_detail(ui, p),
             View::Shots(_, i) => self.draw_shot(ui, *i),
@@ -1112,24 +1272,87 @@ impl Page for Store {
 #[derive(Clone, Copy)]
 enum DetailDo {
     Shots,
+    /// Install, Update or Open: what Enter does too.
+    Main,
     Delete,
 }
 
 impl Store {
-    /// One chip on 6, a pair on 5 and 7. The key runs what its chip shows.
+    /// Shots, the main action, Delete: one chip on 6, two on 5 and 7, three
+    /// on 5, 6 and 7. The key runs what its chip shows.
     fn detail_chips(&self, package: &str) -> Vec<(u8, Chip, DetailDo)> {
         let mut c = Vec::new();
         if self.about.as_ref().is_some_and(|a| !a.shots.is_empty()) {
             c.push((Chip::new("images", "Shots"), DetailDo::Shots));
         }
-        if self.installed.contains_key(package) && !self.busy_with(package) {
+        let installed = self.installed.contains_key(package);
+        let update = self.app(package).is_some_and(|a| self.has_update(a));
+        let busy = self.busy_with(package);
+        let removing = self.removing.as_deref() == Some(package);
+        // Busy: the percent when the engine says one. A busy chip adds "…",
+        // which Install and Update have no room for.
+        let pct = self
+            .progress
+            .as_ref()
+            .filter(|p| p.item == package)
+            .and_then(|p| p.percent)
+            .map(|p| format!("{p}%"));
+        let main = if busy {
+            let word = match (&pct, removing) {
+                (_, true) => "Wait".to_string(),
+                (Some(p), _) => p.clone(),
+                (None, _) => "Wait".to_string(),
+            };
+            Chip::new("download", &word).busy(true)
+        } else if self.queue.iter().any(|q| q == package) {
+            Chip::new("timer", "Queued").disabled(true)
+        } else if update {
+            Chip::new("download", "Update").main()
+        } else if installed {
+            Chip::new("square", "Open").main()
+        } else {
+            Chip::new("download", "Install").main()
+        };
+        c.push((main, DetailDo::Main));
+        if installed && !busy {
             c.push((Chip::new("trash-2", "Delete").hold(), DetailDo::Delete));
         }
-        let keys: &[u8] = if c.len() == 1 { &[6] } else { &[5, 7] };
+        let keys: &[u8] = match c.len() {
+            1 => &[6],
+            2 => &[5, 7],
+            _ => &[5, 6, 7],
+        };
         c.into_iter()
             .zip(keys)
             .map(|((chip, d), &n)| (n, chip, d))
             .collect()
+    }
+
+    fn browse_key(&mut self, key: Key, cx: &mut Cx) {
+        if self.catalog.is_none() {
+            if key == Key::Enter {
+                self.refresh(cx);
+            }
+            return;
+        }
+        let updates = !self.updates().is_empty();
+        match key {
+            Key::Soft(5) if updates => return self.find(),
+            Key::Soft(6) if !updates => return self.find(),
+            Key::Soft(7) if updates => return self.update_all(cx),
+            _ => {}
+        }
+        let entries = self.browse();
+        let open = match self.layout {
+            Layout::Grid => self.browse_grid.key(key),
+            Layout::List => match self.browse_list.key(key) {
+                Some(Action::Open(i)) => Some(i),
+                _ => None,
+            },
+        };
+        if let Some(f) = open.and_then(|i| entries.get(i).cloned()) {
+            self.open_filter(f);
+        }
     }
 
     fn list_key(&mut self, key: Key, cx: &mut Cx) {
@@ -1146,13 +1369,11 @@ impl Store {
                 None => {}
             }
         }
-        let chip_find = if self.filter == Filter::Updates { 5 } else { 6 };
+        let updates_page = self.filter == Filter::Updates && !self.search.active();
+        let chip_find = if updates_page { 5 } else { 6 };
         match key {
-            Key::Soft(n) if n == chip_find => {
-                self.search.start();
-                self.list.select(0);
-            }
-            Key::Soft(7) => self.update_all(cx),
+            Key::Soft(n) if n == chip_find => self.find(),
+            Key::Soft(7) if updates_page => self.update_all(cx),
             Key::Left if !self.search.active() => self.step_filter(-1),
             Key::Right if !self.search.active() => self.step_filter(1),
             Key::Enter => self.open_selected(cx),

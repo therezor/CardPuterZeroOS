@@ -1583,10 +1583,15 @@ pub fn level_bar(c: &mut Canvas, t: &Theme, icon_name: &str, label: &str, level:
     r
 }
 
+/// How wide [`tag`] draws `word`.
+pub fn tag_w(t: &Theme, word: &str) -> i32 {
+    t.f.small_bold.measure(word) + 8
+}
+
 /// A count or a word in a tone, right-aligned to `right`. Returns its left.
 pub fn tag(c: &mut Canvas, t: &Theme, right: i32, r: Rect, word: &str, tone: Tone) -> i32 {
     let col = t.c.tone(tone);
-    let w = t.f.small_bold.measure(word) + 8;
+    let w = tag_w(t, word);
     let tr = Rect::new(right - w, r.y + (r.h - 13) / 2, w, 13);
     c.round_rect(tr, t.m.radius_small, mix(t.c.bg, col, 60));
     text_centre(c, t.f.small_bold, tr, word, col);

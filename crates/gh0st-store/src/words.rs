@@ -1,5 +1,6 @@
 //! What the Store says, in one place.
 
+use gh0st_app::Tone;
 use gh0st_core::store::{Flags, Outcome};
 use gh0st_core::update::size_text;
 
@@ -36,6 +37,45 @@ pub fn flags(f: Flags) -> (Vec<&'static str>, Vec<&'static str>) {
     .map(|(_, w)| w)
     .collect();
     (warn, uses)
+}
+
+/// The flags as pills for the app's page: risks first, in warning, then
+/// what it uses.
+pub fn pills(f: Flags) -> Vec<(&'static str, Tone)> {
+    [
+        (Flags::SCRIPTS, "Root setup", Tone::Warning),
+        (Flags::PATHS, "System files", Tone::Warning),
+        (Flags::SERVICE, "Service", Tone::Warning),
+        (Flags::NETWORK, "Network", Tone::Info),
+        (Flags::CAMERA, "Camera", Tone::Info),
+        (Flags::MICROPHONE, "Mic", Tone::Info),
+        (Flags::HARDWARE, "Pins", Tone::Info),
+        (Flags::DISPLAY, "Display", Tone::Info),
+        (Flags::IMU, "Motion", Tone::Info),
+    ]
+    .into_iter()
+    .filter(|(b, _, _)| f.has(*b))
+    .map(|(_, w, t)| (w, t))
+    .collect()
+}
+
+/// A category's Lucide icon and its short name for a tile.
+pub fn category(name: &str) -> (&'static str, &str) {
+    match name {
+        "Games" => ("gamepad-2", "Games"),
+        "Radio & Comms" => ("radio-tower", "Radio"),
+        "Hardware & IoT" => ("cpu", "Hardware"),
+        "System Tools" => ("wrench", "Tools"),
+        "Media" => ("music", "Media"),
+        "Creative & Office" => ("palette", "Creative"),
+        "Security" => ("shield", "Security"),
+        "Lifestyle" => ("heart", "Lifestyle"),
+        "AI" => ("sparkles", "AI"),
+        "Development" => ("code-xml", "Dev"),
+        "Education" => ("graduation-cap", "Learn"),
+        "Emulators" => ("joystick", "Emulators"),
+        other => ("package", other),
+    }
 }
 
 /// The risks as a sentence, for the install question: "It runs setup as

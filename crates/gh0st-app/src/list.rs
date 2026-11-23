@@ -81,6 +81,71 @@ impl List {
     }
 }
 
+/// The selection and scroll of a grid of tiles, as home's. Keep one in the
+/// page and pass it to [`Ui::tiles`](crate::Ui::tiles); it learns the tile
+/// count and the columns there.
+#[derive(Debug, Default)]
+pub struct Grid {
+    selected: Cell<usize>,
+    first_row: Cell<usize>,
+    len: Cell<usize>,
+    cols: Cell<usize>,
+}
+
+impl Grid {
+    pub fn new() -> Grid {
+        Grid::default()
+    }
+
+    pub fn selected(&self) -> usize {
+        self.selected.get()
+    }
+
+    pub fn select(&mut self, i: usize) {
+        self.selected.set(i);
+    }
+
+    /// Moves on the arrows: Left and Right along the row and on to the
+    /// next, Up and Down a row, stopping at the ends. Returns the tile Enter
+    /// opened.
+    pub fn key(&mut self, key: Key) -> Option<usize> {
+        let (len, cols) = (self.len.get(), self.cols.get().max(1));
+        if len == 0 {
+            return None;
+        }
+        let i = self.selected.get().min(len - 1);
+        let to = match key {
+            Key::Left => i.saturating_sub(1),
+            Key::Right => (i + 1).min(len - 1),
+            Key::Up => i.checked_sub(cols).unwrap_or(i),
+            // Down from a row above a short last row lands on its end.
+            Key::Down if i / cols < (len - 1) / cols => (i + cols).min(len - 1),
+            Key::Enter => return Some(i),
+            _ => i,
+        };
+        self.selected.set(to);
+        None
+    }
+
+    /// Records the tile count and the columns, and scrolls by rows so the
+    /// selection shows. Returns the first visible tile.
+    pub(crate) fn layout(&self, len: usize, cols: usize, rows: usize) -> usize {
+        self.len.set(len);
+        self.cols.set(cols.max(1));
+        let sel = self.selected.get().min(len.saturating_sub(1));
+        self.selected.set(sel);
+        let row = sel / cols.max(1);
+        let mut first = self.first_row.get();
+        if row < first {
+            first = row;
+        } else if rows > 0 && row >= first + rows {
+            first = row + 1 - rows;
+        }
+        self.first_row.set(first);
+        first * cols.max(1)
+    }
+}
+
 /// Where a long text is scrolled to. Keep one in the page and pass it to
 /// [`Ui::scroll_text`](crate::Ui::scroll_text); it learns the line count
 /// there.
@@ -259,6 +324,31 @@ impl<'a> Row<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_grid_moves_by_tiles_and_rows_and_stops_at_its_ends() {
+        let mut g = Grid::new();
+        // Seven tiles, four to a row: 0 1 2 3 / 4 5 6.
+        assert_eq!(g.layout(7, 4, 2), 0);
+        g.key(Key::Left);
+        assert_eq!(g.selected(), 0, "the first tile stays");
+        g.key(Key::Right);
+        g.key(Key::Right);
+        g.key(Key::Right);
+        assert_eq!(g.selected(), 3);
+        g.key(Key::Down);
+        assert_eq!(g.selected(), 6, "below 3 is past the end: the last tile");
+        g.key(Key::Down);
+        assert_eq!(g.selected(), 6, "no row below");
+        g.key(Key::Up);
+        assert_eq!(g.selected(), 2);
+        g.key(Key::Right);
+        g.key(Key::Right);
+        assert_eq!(g.selected(), 4, "Right runs on to the next row");
+        assert_eq!(g.key(Key::Enter), Some(4));
+        // One row on screen: the selected one scrolls into view.
+        assert_eq!(g.layout(7, 4, 1), 4);
+    }
 
     #[test]
     fn moves_wrap_and_actions_name_the_row() {

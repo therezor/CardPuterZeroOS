@@ -292,6 +292,42 @@ impl<'a> Ui<'a> {
         self.y = rest.bottom();
     }
 
+    /// Tiles, as home's grid: a badge and a name each, `t.m.cols` to a row,
+    /// as many rows as fit. The selection is framed.
+    pub fn tiles(&mut self, grid: &crate::list::Grid, items: &[widgets::AppItem]) {
+        let t = self.t;
+        let rest = if self.y == self.area.y + t.m.margin_v {
+            self.area
+        } else {
+            self.rest()
+        };
+        let area = Rect::new(
+            rest.x + t.m.margin,
+            rest.y + t.m.grid_v,
+            rest.w - 2 * t.m.margin - t.m.scrollbar_w,
+            rest.h - 2 * t.m.grid_v,
+        );
+        let cols = t.m.cols.max(1) as usize;
+        let rows = t.m.rows.max(1) as usize;
+        let tile_w = (area.w - (cols as i32 - 1) * t.m.gap) / cols as i32;
+        let tile_h = (area.h - (rows as i32 - 1) * t.m.gap) / rows as i32;
+        let first = grid.layout(items.len(), cols, rows);
+        for (i, item) in items.iter().enumerate().skip(first).take(cols * rows) {
+            let k = i - first;
+            let r = Rect::new(
+                area.x + (k % cols) as i32 * (tile_w + t.m.gap),
+                area.y + (k / cols) as i32 * (tile_h + t.m.gap),
+                tile_w,
+                tile_h,
+            );
+            widgets::tile(self.c, t, r, item, i == grid.selected());
+        }
+        let total_rows = items.len().div_ceil(cols);
+        let track = Rect::new(area.x, area.y, area.w + t.m.scrollbar_w, area.h);
+        widgets::scrollbar(self.c, t, track, first / cols, rows, total_rows);
+        self.y = rest.bottom();
+    }
+
     /// A QR code for a phone camera on the left, as large as the rest
     /// allows, and labelled values beside it for when there is no camera.
     pub fn qr(&mut self, text: &str, lines: &[(&str, &str)]) {

@@ -205,27 +205,37 @@ China mirror, an unlisted app and a system package refused, a removal.
 `crates/gh0st-store`, binary `gh0st-store`. `examples/mockups.rs` renders
 every screen into `mockups/store`.
 
-**List.** Several apps on screen: icon, name, summary, and a tag for
-Installed, Update, a percent or Queued. Left and Right step through All,
-Updates, Installed and the categories. With updates waiting the Store opens
-on Updates. Find (6 or s, as on the home screen) searches every app by
-name, share code, summary and author.
+**Home.** Tiles, as home's grid: Updates with its count, Installed, All
+apps, then a tile per category with its own icon. The menu's "Categories
+as" turns them into a list with app counts (`gh0st.store.layout`). Enter
+opens one. Find (6 or s, as on the home screen) searches every app by name,
+share code, summary and author. With updates waiting, Find moves to 5 and
+7 updates them all.
 
-| Key | List | App page | Screenshot |
-|---|---|---|---|
-| Enter | open the app's page | install, update or open | try again |
-| Left, Right | the filter | | the previous or next one |
-| Up, Down | move | scroll the description | as Left and Right |
-| 5 | Find (on Updates) | Shots | |
-| 6 | Find | the one chip there | |
-| 7 | Update all (on Updates) | Delete, held | |
-| s, u, r | find, update all, refresh | | |
-| Esc | leave the search | back to the list | back to the page |
+**A list.** Several apps on screen: icon, name, summary, and a tag for
+Installed, Update, a percent or Queued. Left and Right step to the next
+category.
+
+**An app's page.** The icon, name, author, version and size, a pill for
+Installed or Update, then pills for its flags: the risks in amber, what it
+uses in blue. Under the screen sit what it can do: Shots, the main action
+(Install, Update or Open, which Enter does too) and Delete, held. While it
+works the main chip shows the percent. One chip goes on 6, two on 5 and 7,
+three on 5, 6 and 7.
+
+| Key | Home | A list | App page | Screenshot |
+|---|---|---|---|---|
+| Enter | open the tile | open the app's page | install, update or open | try again |
+| Arrows | move | move; Left and Right, the category | scroll the description | the previous or next one |
+| 5, 6, 7 | Find; Update all | Find; Update all | Shots, the main action, Delete | |
+| s, u, r | find, update all, refresh | the same | | |
+| Esc | hold to exit | back home | back to the list | back to the page |
 
 On an app's page the top bar names the app. The menu (8) has Find, Update
-all, Refresh and Download from (Auto, GitHub, China; `gh0st.store.mirror`).
-Help opens with an About section that says Gh0st doesn't review the apps. Auto picks China's mirror in a Chinese time
-zone, as M5's Store does, with no network call.
+all, Refresh, Download from (Auto, GitHub, China; `gh0st.store.mirror`) and
+Categories as. Help opens with an About section that says Gh0st doesn't
+review the apps. Auto picks China's mirror in a Chinese time zone, as M5's
+Store does, with no network call.
 
 An install runs in a system unit, so it carries on when the user leaves the
 page or closes the app. Installs asked for meanwhile queue in the app. On

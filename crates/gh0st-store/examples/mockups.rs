@@ -281,91 +281,103 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
     let c = Fixture::Catalog;
     let scenes = [
         Scene {
-            name: "01-updates",
+            name: "01-home",
             fixture: c,
             progress: None,
             keys: "",
         },
         Scene {
-            name: "02-all",
+            name: "02-home-list",
             fixture: c,
             progress: None,
-            keys: "z",
+            keys: "8\nx\nx\nx\nx\nc\nesc",
         },
         Scene {
             name: "03-category",
             fixture: c,
             progress: None,
-            keys: "c\nc\nc",
+            keys: "x\nwait\nenter",
         },
         Scene {
-            name: "04-search",
+            name: "04-updates",
             fixture: c,
             progress: None,
-            keys: "z\n6\ntype ma",
+            keys: "enter",
         },
         Scene {
-            name: "05-no-match",
+            name: "05-search",
             fixture: c,
             progress: None,
-            keys: "z\n6\ntype zzz",
+            keys: "5\ntype ma",
         },
         Scene {
-            name: "06-detail",
+            name: "06-no-match",
             fixture: c,
             progress: None,
-            keys: "z\nwait\nenter",
+            keys: "5\ntype zzz",
         },
         Scene {
-            name: "07-detail-risky",
+            name: "07-detail-update",
             fixture: c,
             progress: None,
-            keys: "z\nwait\nx\nx\nx\nx\nx\nenter",
+            keys: "enter\nwait\nenter",
         },
         Scene {
-            name: "08-confirm",
+            name: "08-detail-new",
             fixture: c,
             progress: None,
-            keys: "z\nwait\nx\nx\nx\nx\nx\nenter\nwait\nenter",
+            keys: "c\nc\nenter\nwait\nx\nenter",
         },
         Scene {
-            name: "09-downloading",
+            name: "09-confirm",
+            fixture: c,
+            progress: None,
+            keys: "c\nc\nenter\nwait\nx\nenter\nwait\nenter",
+        },
+        Scene {
+            name: "10-installing",
             fixture: c,
             progress: Some(downloading.clone()),
-            keys: "z\nwait\nenter",
+            keys: "enter\nwait\nenter",
         },
         Scene {
-            name: "10-list-busy",
+            name: "11-list-busy",
             fixture: c,
             progress: Some(downloading.clone()),
-            keys: "z",
+            keys: "enter",
         },
         Scene {
-            name: "11-screenshot",
+            name: "12-detail-installed",
             fixture: c,
             progress: None,
-            keys: "z\nwait\nenter\nwait\n5",
+            keys: "c\nenter\nwait\nx\nenter",
         },
         Scene {
-            name: "12-menu",
+            name: "13-screenshot",
+            fixture: c,
+            progress: None,
+            keys: "enter\nwait\nenter\nwait\n5",
+        },
+        Scene {
+            name: "14-menu",
             fixture: c,
             progress: None,
             keys: "8",
         },
         Scene {
-            name: "13-empty",
+            name: "15-empty",
             fixture: Fixture::Empty,
             progress: None,
             keys: "",
         },
         Scene {
-            name: "14-offline",
+            name: "16-offline",
             fixture: Fixture::Offline,
             progress: None,
             keys: "",
         },
         Scene {
-            name: "15-help",
+            name: "17-help",
             fixture: c,
             progress: None,
             keys: "help",
@@ -413,8 +425,11 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             std::env::set_var("GH0ST_DPKG_STATUS", &status_path);
             std::env::set_var("XDG_CACHE_HOME", &cache);
             std::env::set_var("TZ", "Europe/London");
+            // Settings the scene changes stay in its folder.
+            std::env::set_var("HOME", &dir);
         }
         let mut d = Driver::new(Store::new());
+        d.wait(100);
         // A list learns its rows when drawn, so a key after a view change
         // waits for a frame, as on the device.
         for step in s.keys.split('\n').filter(|k| !k.is_empty()) {
