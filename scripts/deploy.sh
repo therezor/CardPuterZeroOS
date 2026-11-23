@@ -18,8 +18,14 @@ remote() {
 }
 
 restart_launcher() {
-    # The launcher is a user unit of UID 1000 with linger, as in stock.
-    remote "export XDG_RUNTIME_DIR=/run/user/\$(id -u); $user_unit daemon-reload; $user_unit restart APPLaunch.service"
+    # A user unit of UID 1000 with linger: gh0st.service on our image,
+    # APPLaunch.service with our drop-in on the stock one.
+    remote "export XDG_RUNTIME_DIR=/run/user/\$(id -u); $user_unit daemon-reload
+        if $user_unit cat gh0st.service >/dev/null 2>&1; then
+            $user_unit restart gh0st.service
+        else
+            $user_unit restart APPLaunch.service
+        fi"
 }
 
 if [ "${1:-}" = rollback ]; then
