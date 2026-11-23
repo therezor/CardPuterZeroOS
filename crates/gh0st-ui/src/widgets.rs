@@ -617,6 +617,12 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
 /// the main action, red for danger. Pressed, the bar thickens and the word
 /// drops a row, as a key does. `w` is the room it may take.
 pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
+    chip_on(c, t, cx, top, ch, w, false);
+}
+
+/// A chip; with `shadow`, its word, icon and bar cast a 1 px shadow, so it
+/// reads straight on a picture with nothing behind it.
+fn chip_on(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32, shadow: bool) {
     // A chip with a word shows the word alone: only a chip with no word
     // shows its icon.
     let bare;
@@ -640,9 +646,16 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
         Look::Pressed => (k.fg, k.accent, k.accent, 3),
         Look::Busy => (k.muted, k.muted, k.muted, 2),
     };
+    let foot = top + t.m.chip_h + t.m.chip_foot;
+    if shadow {
+        let plate = theme::PICTURE_PLATE;
+        let sr = Rect::new(r.x + 1, r.y + 1, r.w, r.h);
+        chip_ink(c, t, sr, ch, plate, plate);
+        let bw = t.m.chip_bar_w;
+        c.fill(Rect::new(cx - bw / 2 + 1, foot - 1, bw, 2), plate);
+    }
     chip_ink(c, t, r, ch, ink, icon_ink);
     // The bar's foot sits `chip_foot` under the chip, wherever it is drawn.
-    let foot = top + t.m.chip_h + t.m.chip_foot;
     let bw = t.m.chip_bar_w;
     if let Look::Hold(pc) = ch.look {
         // Held, the bar runs the chip's width and fills as the hold goes.
@@ -660,22 +673,21 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
 pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
     crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
     c.clear(hint_rect(t), t.c.bg);
-    action_chips(c, t, chips);
+    action_chips(c, t, chips, false);
 }
 
-/// The action bar over a picture: the page's background, mostly opaque,
-/// so the chips read in every palette and the picture shows through.
+/// The action bar over a picture: nothing behind the chips, so the
+/// picture shows whole. Each chip casts a shadow instead.
 pub fn action_bar_over(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
     crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
-    c.fill_alpha(hint_rect(t), t.c.bg, 190);
-    action_chips(c, t, chips);
+    action_chips(c, t, chips, true);
 }
 
-fn action_chips(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
+fn action_chips(c: &mut Canvas, t: &Theme, chips: &[Chip; 5], shadow: bool) {
     let top = t.m.height - t.m.chip_foot - t.m.chip_h;
     let w = bar_widths(t, chips);
     for (i, ch) in chips.iter().enumerate().filter(|(_, ch)| !ch.is_empty()) {
-        chip(c, t, t.m.softkey_x[i], top, ch, w[i]);
+        chip_on(c, t, t.m.softkey_x[i], top, ch, w[i], shadow);
     }
 }
 

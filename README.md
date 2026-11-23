@@ -33,9 +33,9 @@ Show home as a grid or a list.
 and how many notifications wait, but never what they say. Keys pressed in a
 pocket can't unlock it, because it takes Tab and then Enter.
 
-🛍️ **Our own Store.** Browse CardputerZero apps by category, install, update
-and remove them. The app list is signed, and the Store sends no account and
-no device ID.
+🛍️ **A better Store.** The same CardputerZero apps as M5's Store, from a
+signed mirror of its catalog. Browse by category, search, and install,
+update or remove with real progress. It sends no account and no device ID.
 
 📷 **A new Camera.** Photos and video with zoom, exposure, a grid and a timer,
 on the CardputerZero's camera.
@@ -128,7 +128,7 @@ a faster boot, and the key training as its own app.
 
 Gh0st OS is Debian 13, built from pinned inputs in a container
 ([docs/image-build.md](docs/image-build.md)). The shell, Settings, the
-terminal, the Store, Updates and Camera are Rust. Each is a static binary of
+terminal, the Store app, Updates and Camera are Rust. Each is a static binary of
 1 to 2 MB with its fonts and icons built in, and each runs one thread with one
 `poll` loop.
 

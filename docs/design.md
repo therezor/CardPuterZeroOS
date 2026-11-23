@@ -38,7 +38,8 @@ A page may drop either bar. Games and the terminal while typing take the
 whole 320x170. A full-screen page that keeps the menu on 8 can leave the
 bottom right corner to its ≡ chip (`Bars::full`): a rail `rail_w` (47 px)
 wide. The camera drops the top bar and lays the action bar over its
-picture (`Bars::over`), so the picture keeps all 170 rows and the icon
+picture with nothing behind the chips (`Bars::over`): each casts a 1 px
+shadow instead. The picture keeps all 170 rows and the icon
 chips over 4 to 8 still name what each key does. Its 4:3 picture leaves a
 47 px rail each side for zoom and light; nothing in the rails or on the
 picture goes below the bar's top. With no top bar, it draws its own REC
