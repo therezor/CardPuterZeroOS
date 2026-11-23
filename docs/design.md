@@ -328,8 +328,12 @@ and a frost. A frame copies them and never blends a picture.
 
 The bake dithers to RGB565, so a soft gradient doesn't band.
 
+Settings > Appearance > Wallpaper steps through them. Your picture lists
+the PNGs in ~/Pictures; Enter on one makes it the wallpaper.
+
 A picture of the user's own is cropped to the screen's shape, from its
-middle, when it is picked. The source is read a row at a time and only the
+middle, when it is picked. Settings runs the crop in a child of its own
+(`gh0st-settings --import-wallpaper`), so the page never waits on it. The source is read a row at a time and only the
 320x170 crop is kept, beside config.json as `wallpaper.png`, so a large
 photo never sits in memory. The shell refuses a kept file of any other
 size.

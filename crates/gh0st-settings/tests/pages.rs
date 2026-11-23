@@ -32,6 +32,7 @@ fn pages() -> Vec<PageId> {
         PageId::Look,
         PageId::CountryZones,
         PageId::Hotspot,
+        PageId::Pictures,
     ]
 }
 

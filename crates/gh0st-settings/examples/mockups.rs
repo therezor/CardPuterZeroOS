@@ -40,6 +40,13 @@ fn sample_state() -> State {
         muted: false,
         layout: Layout::Grid,
         palette: "Mint",
+        wallpaper: "aurora".into(),
+        own_picture: true,
+        pictures: vec![
+            "beach.png".into(),
+            "cat on the sofa.png".into(),
+            "IMG_2041.PNG".into(),
+        ],
         animations: true,
         clock_24h: true,
         apps: vec![
@@ -318,7 +325,8 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                 ("root-scrolled", s(PageId::Root, 8)),
                 ("display", s(PageId::Display, 0)),
                 ("sound", s(PageId::Sound, 0)),
-                ("appearance", s(PageId::Appearance, 1)),
+                ("appearance", s(PageId::Appearance, 2)),
+                ("pictures", s(PageId::Pictures, 1)),
                 ("apps", s(PageId::Apps, 0)),
                 (
                     "apps-move",

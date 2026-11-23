@@ -113,6 +113,7 @@ fn busy_label(kind: &NetJob) -> Option<&'static str> {
         NetJob::SetRadio(_) | NetJob::TimeSet(_) | NetJob::BtPower | NetJob::BtUnblock => {
             Some("Applying\u{2026}")
         }
+        NetJob::Wallpaper => Some("Fitting the picture\u{2026}"),
         _ => None,
     }
 }
@@ -165,6 +166,8 @@ enum NetJob {
     HotspotQuery,
     /// `iw dev wlan0 station dump`: who has joined the hotspot.
     Stations,
+    /// The crop of a picture to the wallpaper.
+    Wallpaper,
     /// Its answer doesn't matter: `wpctl set-volume`, a leftover delete.
     Ignore,
 }
@@ -312,6 +315,11 @@ impl Settings {
             .and_then(theme::find)
             .map_or(cx.theme().c.name, |p| p.name);
         s.animations = config.animations();
+        s.wallpaper = config.wallpaper().to_string();
+        s.own_picture = crate::wallpaper::kept().is_file();
+        s.pictures = crate::wallpaper::pictures_dir()
+            .map(|d| crate::wallpaper::pictures(&d))
+            .unwrap_or_default();
         s.clock_24h = config.clock_24h();
         let pins = apps::load_pins();
         let mut rows: Vec<AppRow> =
@@ -502,6 +510,15 @@ impl Settings {
                 let p = all[cycle(i, d, all.len())];
                 // The SDK follows this key, so the new palette shows at once.
                 cx.settings().set_str(key::PALETTE, p.name);
+            }
+            Setting::Wallpaper => {
+                let all = crate::model::pages::wallpapers(self.state.own_picture);
+                let i = all
+                    .iter()
+                    .position(|w| *w == self.state.wallpaper)
+                    .unwrap_or(0);
+                cx.settings()
+                    .set_str(key::WALLPAPER, all[cycle(i, d, all.len())]);
             }
             Setting::Animations => {
                 cx.settings()
@@ -889,6 +906,14 @@ impl Settings {
             // The shell brings Updates up over Settings, and Settings back
             // when it closes.
             Command::OpenUpdates => cx.open("update"),
+            Command::SetPicture(name) => {
+                let Some(src) = crate::wallpaper::pictures_dir().map(|d| d.join(&name)) else {
+                    return;
+                };
+                let me = std::env::current_exe().unwrap_or_else(|_| "gh0st-settings".into());
+                let (me, src) = (me.to_string_lossy(), src.to_string_lossy());
+                self.run(cx, NetJob::Wallpaper, &[&me, "--import-wallpaper", &src]);
+            }
             Command::HotspotName => self.ask(
                 Dialog::Text {
                     title: "Hotspot name".into(),
@@ -1703,6 +1728,15 @@ impl Settings {
         let ok = code == Some(0);
         let (mut requery, mut rescan) = (false, false);
         match &kind {
+            NetJob::Wallpaper => {
+                if ok {
+                    cx.settings()
+                        .set_str(key::WALLPAPER, gh0st_app::gfx::wallpaper::OWN);
+                    cx.toast("Wallpaper set");
+                } else {
+                    cx.toast("Couldn't read that picture");
+                }
+            }
             NetJob::Join {
                 ssid,
                 known,

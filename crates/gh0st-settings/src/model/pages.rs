@@ -190,6 +190,11 @@ pub struct State {
     pub muted: bool,
     pub layout: Layout,
     pub palette: &'static str,
+    /// `gh0st.wallpaper` as set, whether an own picture is kept, and the
+    /// PNGs in ~/Pictures.
+    pub wallpaper: String,
+    pub own_picture: bool,
+    pub pictures: Vec<String>,
     pub animations: bool,
     pub clock_24h: bool,
     pub apps: Vec<AppRow>,
@@ -340,6 +345,27 @@ fn on_off(on: bool) -> String {
     if on { "On" } else { "Off" }.into()
 }
 
+/// The wallpaper setting as the Appearance row shows it.
+pub fn wallpaper_label(v: &str) -> &'static str {
+    match v {
+        "aurora" => "Aurora",
+        "contour" => "Contour",
+        "picture" => "Yours",
+        _ => "Off",
+    }
+}
+
+/// The wallpapers a step goes through: the built-ins, the user's own once
+/// one is kept, then none.
+pub fn wallpapers(own: bool) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = gh0st_app::gfx::wallpaper::BUILTINS.to_vec();
+    if own {
+        v.push(gh0st_app::gfx::wallpaper::OWN);
+    }
+    v.push(gh0st_app::gfx::wallpaper::OFF);
+    v
+}
+
 pub fn build(id: &PageId, s: &State) -> Page {
     let (title, body, keys): (&str, Body, Vec<(&'static str, &'static str)>) = match id {
         PageId::Root => ("Settings", Body::List(root(s)), vec![]),
@@ -396,6 +422,18 @@ pub fn build(id: &PageId, s: &State) -> Page {
                     Act::Set(Setting::Palette),
                 ),
                 Item::new(
+                    "images",
+                    "Wallpaper",
+                    Value::Choice(wallpaper_label(&s.wallpaper).into()),
+                    Act::Set(Setting::Wallpaper),
+                ),
+                Item::new(
+                    "folder",
+                    "Your picture",
+                    Value::Chevron,
+                    Act::Open(PageId::Pictures),
+                ),
+                Item::new(
                     "arrow-left-right",
                     "Animations",
                     Value::Toggle(s.animations),
@@ -408,6 +446,31 @@ pub fn build(id: &PageId, s: &State) -> Page {
                     Act::Set(Setting::Clock),
                 ),
             ]),
+            vec![],
+        ),
+        PageId::Pictures => (
+            "Your picture",
+            Body::List(if s.pictures.is_empty() {
+                vec![Item {
+                    icon: Some("images"),
+                    label: "No PNG in ~/Pictures".into(),
+                    value: Value::None,
+                    act: Act::None,
+                    danger: false,
+                }]
+            } else {
+                s.pictures
+                    .iter()
+                    .map(|f| {
+                        Item::new(
+                            "images",
+                            f.clone(),
+                            Value::None,
+                            Act::Run(Command::SetPicture(f.clone())),
+                        )
+                    })
+                    .collect()
+            }),
             vec![],
         ),
         PageId::Apps => (

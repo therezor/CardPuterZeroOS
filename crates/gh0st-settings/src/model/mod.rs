@@ -48,6 +48,8 @@ pub enum PageId {
     Hotspot,
     /// The hotspot's QR code, name and password, for joining it.
     HotspotQr,
+    /// PNGs in ~/Pictures, to make one the wallpaper.
+    Pictures,
 }
 
 /// A value a row changes in place: Enter flips a toggle, Z and C step the rest.
@@ -59,6 +61,8 @@ pub enum Setting {
     Mute,
     Layout,
     Palette,
+    /// The picture behind home and the lock.
+    Wallpaper,
     Animations,
     Clock,
     /// Shown on home, by `.desktop` file name.
@@ -135,6 +139,8 @@ pub enum Command {
     OpenUpdates,
     HotspotName,
     HotspotPassword,
+    /// Crop a picture in ~/Pictures, by file name, to the wallpaper.
+    SetPicture(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -443,6 +449,7 @@ pub fn icon(id: &PageId) -> &'static str {
         PageId::Display => "sun",
         PageId::Sound => "volume-2",
         PageId::Appearance => "palette",
+        PageId::Pictures => "images",
         PageId::Apps | PageId::App(_) => "layout-grid",
         PageId::System | PageId::Advanced | PageId::Swap => "cpu",
         PageId::TimeZone(_) | PageId::CountryZones => "clock",
