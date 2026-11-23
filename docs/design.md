@@ -176,7 +176,7 @@ lights.
 
 ![Chip states](design/05-chips.png)
 
-The screen sits right over the number row. A chip is a tab standing on the
+The screen sits right over the number row. A chip is a pill at the
 screen's bottom edge, right above its key, and pressing that key runs it.
 
 | Key | Holds |
@@ -194,24 +194,23 @@ and 7.
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
 needs saying, a dialog or message names them in key pills.
 
-**What a chip is.** A tab over its key, with no fill: one word in Label
-style, centred over a 2 px bar along the screen's bottom edge. The bar is 48
-px, a little short of the key, so each one underlines its own key and
-neighbours read apart. At 15 px an icon and a word don't fit a key, so a chip
-with a word shows the word alone; a chip with no word, the menu's ≡, shows
-its icon. Keep words to 54 px: Reload fits, Refresh doesn't.
+**What a chip is.** A pill over its key, 48 px wide and 16 tall, two rows
+above the screen's edge: a little short of the key, so neighbours read
+apart. It is a lit pane, with a bright row along its top. The word is in
+Chip style, Terminus 12 bold, so seven letters fit. A chip with a word
+shows the word alone; a chip with no word, the menu's ≡, shows its icon.
 
 | State | Looks | For |
 |---|---|---|
-| normal | an accent bar, plain word | most actions |
-| on | a pale accent wash, accent word | a toggle that is on: Flash |
-| danger | the word in `critical`, over a red bar | Forget, Stop, Close |
+| normal | a lit pane, plain word | most actions |
+| on | an accent wash, accent word | a toggle that is on: Flash |
+| danger | the word in `critical` | Forget, Stop, Close |
 | danger, held | fills `critical` left to right | Erase, close all apps: hold it 0.7 s |
-| armed | a pale red wash, a thicker red bar | pressed once, press again |
-| main | accent word, a thicker bar | an action that is the page's main one but not on Enter |
-| disabled | faint word, a `border` bar | can't be used now; the key does nothing |
-| pressed | the bar doubles, the word drops a row | while its key is down |
-| busy | the word and "…", a muted bar | working: no second press |
+| armed | a red wash, red word | pressed once, press again |
+| main | filled `accent`, `accent_fg` word | an action that is the page's main one but not on Enter |
+| disabled | faint word | can't be used now; the key does nothing |
+| pressed | sinks a row, loses its light | while its key is down |
+| busy | the word and "…", muted | working: no second press |
 
 Rows change the chips. On a choice row, 5 and 7 read Prev and Next and z and
 c do the same; on a level row they read Less and More.
@@ -265,8 +264,10 @@ Letters are lowercase; an uppercase letter means Shift and that letter.
 
 ## Lists and rows
 
-The selected row has a `surface` fill and a 3 px accent bar on the left.
-What a row shows on its right says what it is:
+The selected row is a lit `surface`: lighter at its top, with a bright
+row along its edge. A settings row's icon sits on a lit square of its own
+tint, dark or light ink as reads best, and an icon keeps its tint on every
+page (`Palette::icon_tint`). What a row shows on its right says what it is:
 
 | Right side | Means |
 |---|---|
@@ -294,6 +295,17 @@ use it.
 
 Progress is a 4 px bar with a label and a percent. When there is no percent a
 segment moves along it, and only while it is on screen.
+
+## Surfaces
+
+Depth comes from light, not lines. A surface that stands up (a chip, a
+selected row, a badge, a card) is lit from above: `theme::lit` at its top,
+its colour or `theme::shade` at its foot, and a `theme::rim` row along its
+top edge. A card or toast also has a soft shadow around it. Corners are
+round and smoothed: 4 px on rows and chips, 5 on app badges, 6 on tiles
+and panes, 7 on cards, 2 on key pills. Every effect is a flat fill, a fill
+that steps from one colour to another, or a picture baked once: nothing
+blurs or polls per frame.
 
 ## Dialogs
 

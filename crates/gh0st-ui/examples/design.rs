@@ -172,13 +172,37 @@ fn blit(dst: &mut Canvas, src: &Canvas, ox: i32, oy: i32) {
 // ---------------------------------------------------------------- screens
 
 fn settings_rows(t: &Theme) -> Vec<Row<'static>> {
-    let a = t.c.accent;
     vec![
-        row("wifi", a, "Wi-Fi", Trailing::ValueChevron("HomeNet")),
-        row("bluetooth", a, "Bluetooth", Trailing::Toggle(true)),
-        row("palette", a, "Palette", Trailing::Choice("Mint")),
-        row("sun", a, "Brightness", Trailing::Level(80)),
-        row("volume-2", a, "Sound", Trailing::ValueChevron("60%")),
+        row(
+            "wifi",
+            t.c.icon_tint("wifi"),
+            "Wi-Fi",
+            Trailing::ValueChevron("HomeNet"),
+        ),
+        row(
+            "bluetooth",
+            t.c.icon_tint("bluetooth"),
+            "Bluetooth",
+            Trailing::Toggle(true),
+        ),
+        row(
+            "palette",
+            t.c.icon_tint("palette"),
+            "Palette",
+            Trailing::Choice("Mint"),
+        ),
+        row(
+            "sun",
+            t.c.icon_tint("sun"),
+            "Brightness",
+            Trailing::Level(80),
+        ),
+        row(
+            "volume-2",
+            t.c.icon_tint("volume-2"),
+            "Sound",
+            Trailing::ValueChevron("60%"),
+        ),
     ]
 }
 
@@ -426,12 +450,26 @@ fn chip_states(t: &Theme) -> Canvas {
 fn rows_a(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &sub("cpu", "System", "Settings"));
-    let a = t.c.accent;
     let (y, h) = (20, t.m.row_h);
     let rows = [
-        row("info", a, "Version", Trailing::Value("0.4.1")),
-        row("globe", a, "English (UK)", Trailing::Check),
-        row("download", a, "Updates", Trailing::Tag("3", Tone::Info)),
+        row(
+            "info",
+            t.c.icon_tint("info"),
+            "Version",
+            Trailing::Value("0.4.1"),
+        ),
+        row(
+            "globe",
+            t.c.icon_tint("globe"),
+            "English (UK)",
+            Trailing::Check,
+        ),
+        row(
+            "download",
+            t.c.icon_tint("download"),
+            "Updates",
+            Trailing::Tag("3", Tone::Info),
+        ),
     ];
     for (i, rw) in rows.iter().enumerate() {
         widgets::list_row(&mut c, t, rows_from(t, y, h, i), rw, false);
@@ -526,7 +564,6 @@ fn rows_b(t: &Theme) -> Canvas {
 fn picker(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &sub("palette", "Palette", "Settings"));
-    let a = t.c.accent;
     let (area, _) = widgets::rows_area(t, t.m.row_h);
     for (i, name) in ["Mint", "Nord", "Paper"].iter().enumerate() {
         let tr = if i == 0 {
@@ -535,7 +572,13 @@ fn picker(t: &Theme) -> Canvas {
             Trailing::None
         };
         let r = rows_from(t, area.y, t.m.row_h, i);
-        widgets::list_row(&mut c, t, r, &row("palette", a, name, tr), i == 1);
+        widgets::list_row(
+            &mut c,
+            t,
+            r,
+            &row("palette", t.c.icon_tint("palette"), name, tr),
+            i == 1,
+        );
     }
     widgets::action_bar(&mut c, t, &[NONE, NONE, NONE, NONE, menu()]);
     c
@@ -683,15 +726,22 @@ fn dialog_three(t: &Theme) -> Canvas {
 fn app_menu(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &sub("menu", "Menu", "Settings"));
-    let a = t.c.accent;
     let (x, w, kw) = (6, t.m.width - 12, 40);
     let mut y = 20;
     widgets::section(&mut c, t, Rect::new(x, y, w, 15), "Settings");
     y += 15;
     let rows: [(Row, &str); 2] = [
-        (row("search", a, "Search", Trailing::None), "n"),
         (
-            row("layout-grid", a, "Top bar", Trailing::Toggle(true)),
+            row("search", t.c.icon_tint("search"), "Search", Trailing::None),
+            "n",
+        ),
+        (
+            row(
+                "layout-grid",
+                t.c.icon_tint("layout-grid"),
+                "Top bar",
+                Trailing::Toggle(true),
+            ),
             "b",
         ),
     ];
@@ -701,7 +751,12 @@ fn app_menu(t: &Theme) -> Canvas {
     }
     widgets::section(&mut c, t, Rect::new(x, y, w, 15), "App");
     y += 15;
-    let help = row("keyboard", a, "Help", Trailing::Chevron);
+    let help = row(
+        "keyboard",
+        t.c.icon_tint("keyboard"),
+        "Help",
+        Trailing::Chevron,
+    );
     widgets::menu_row(
         &mut c,
         t,
@@ -788,10 +843,9 @@ const NOTES: [(&str, &str); 4] = [
 fn notes_first(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &top("pencil", "Notes"));
-    let a = t.c.accent;
     let (area, _) = widgets::rows_area(t, t.m.row_h);
     for (i, (s, v)) in NOTES.iter().enumerate() {
-        let rw = row("pencil", a, s, Trailing::Value(v));
+        let rw = row("pencil", t.c.icon_tint("pencil"), s, Trailing::Value(v));
         widgets::list_row(&mut c, t, rows_from(t, area.y, t.m.row_h, i), &rw, i == 0);
     }
     widgets::action_bar(&mut c, t, &[NONE, NONE, n("plus", "New"), NONE, menu()]);
@@ -963,7 +1017,12 @@ fn find(t: &Theme) -> Canvas {
         &mut c,
         t,
         r,
-        &row("download", a, "Updates", Trailing::None),
+        &row(
+            "download",
+            t.c.icon_tint("download"),
+            "Updates",
+            Trailing::None,
+        ),
         false,
     );
     let h = hints(&[("Esc", "cancel"), ("Enter", "open")]);

@@ -214,7 +214,11 @@ impl<'a> Ui<'a> {
         };
         for (i, row) in rows.iter().enumerate().skip(first).take(visible) {
             let r = Rect::new(x, top + (i - first) as i32 * row_h, w, row_h);
-            let tint = if row.dim { t.c.muted } else { t.c.accent };
+            let tint = if row.dim {
+                t.c.muted
+            } else {
+                t.c.icon_tint(row.icon)
+            };
             if let Some(why) = row.off {
                 widgets::disabled_row(self.c, t, r, row.icon, row.label, why);
                 continue;

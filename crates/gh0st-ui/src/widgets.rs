@@ -9,7 +9,7 @@ use crate::font::Font;
 use crate::geom::Rect;
 use crate::icon::{self, IconSize};
 use crate::image::Image;
-use crate::theme::{Theme, Tone};
+use crate::theme::{self, Theme, Tone};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Net {
@@ -181,8 +181,7 @@ pub fn status_bar(c: &mut Canvas, t: &Theme, s: &Status) {
 /// False when the title needs Bluetooth's room and `bluetooth` may give it.
 fn draw_status(c: &mut Canvas, t: &Theme, s: &Status, bluetooth: bool) -> bool {
     let r = Rect::new(0, 0, t.m.width, t.m.bar_h);
-    c.fill(r, t.c.bg);
-    c.hline(0, r.w, r.bottom() - 1, t.c.border);
+    c.clear(r, t.c.bg);
     let inner = Rect::new(t.m.pad, 0, r.w - 2 * t.m.pad, r.h - 1);
 
     let mut x = text_right(c, t.f.small_bold, inner.right(), inner, s.clock, t.c.fg) - 9;
@@ -467,9 +466,8 @@ fn hint_rect(t: &Theme) -> Rect {
 /// "Fn h help".
 pub fn hint_bar(c: &mut Canvas, t: &Theme, hints: &[Hint], right: Option<Hint>) {
     let r = hint_rect(t);
-    c.fill(r, t.c.surface);
-    c.hline(0, r.w, r.y, t.c.border);
-    let y = r.y + (r.h - t.m.pill_h + 1) / 2;
+    c.clear(r, t.c.bg);
+    let y = r.y + (r.h - t.m.pill_h) / 2;
     let end = key_row(c, t, t.m.pad, y, hints);
     if let Some(h) = right {
         let lw = t.f.small.measure(h.label);
@@ -578,10 +576,10 @@ pub fn chip_w(t: &Theme, ch: &Chip) -> i32 {
     chip_ink_w(t, ch) + 2 * t.m.chip_pad
 }
 
-/// Widths for a bar: every chip as wide as its key, less a gap, so each
-/// underline sits over its key alone.
+/// Widths for a bar: every chip as wide as its key, less a gap each side,
+/// so neighbouring pills read apart.
 pub fn bar_widths(t: &Theme, chips: &[Chip; 5]) -> [i32; 5] {
-    let key = t.m.softkey_x[1] - t.m.softkey_x[0] - 2;
+    let key = t.m.softkey_x[1] - t.m.softkey_x[0] - 2 * t.m.chip_inset;
     chips.map(|ch| if ch.is_empty() { 0 } else { key })
 }
 
@@ -594,8 +592,7 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
     } else {
         ch.word
     };
-    // Inside the top edge, above the bar at the foot.
-    let inner = Rect::new(r.x, r.y + 1, r.w, r.h - 1 - TICK_H);
+    let inner = r;
     // Centred, so the padding is even on both sides.
     let x = inner.x + (inner.w - chip_ink_w(t, ch)) / 2;
     let s = IconSize::Tiny as i32;
@@ -615,13 +612,12 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
     text_in(c, t.f.chip, tr, word, ink);
 }
 
-/// One chip: an underlined tab centred on `cx`, its top at `top`, `w` wide.
-/// No fill: the icon and word sit over a bar along the foot, which in the
-/// action bar is the screen's edge, right over the key. Pressed, the bar
-/// thickens and the ink drops a row, as a key does.
+/// One chip: a pill over its key, centred on `cx`, its top at `top`, `w`
+/// wide. A lit pane for most; filled for the main action; red ink for
+/// danger. Pressed, it sinks a row and loses its light, as a key does.
 pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
-    // A chip with a word shows the word alone: at the Label size an icon and
-    // a word don't fit a key. Only a chip with no word shows its icon.
+    // A chip with a word shows the word alone: only a chip with no word
+    // shows its icon.
     let bare;
     let ch = if !ch.icon.is_empty() && !ch.word.is_empty() {
         bare = Chip { icon: "", ..*ch };
@@ -629,70 +625,46 @@ pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     } else {
         ch
     };
-    let r = Rect::new(cx - w / 2, top, w, t.m.chip_h);
-    // The ink centres on the whole chip; what marks it stops short.
-    let shape = Rect::new(r.x + t.m.chip_inset, r.y, r.w - 2 * t.m.chip_inset, r.h);
-    let k = &t.c;
-    // Word, icon, bar, bar height, and a wash behind for states that stay.
-    let (ink, icon_ink, bar, bar_h, wash) = match ch.look {
-        Look::Normal => (k.fg, k.accent, k.accent, BAR_H, None),
-        Look::Main => (k.accent, k.accent, k.accent, BAR_H + 1, None),
-        Look::On => (k.accent, k.accent, k.accent, BAR_H, Some(k.accent)),
-        Look::Danger | Look::Hold(_) => (k.critical, k.critical, k.critical, BAR_H, None),
-        Look::DangerMain => (
-            k.critical,
-            k.critical,
-            k.critical,
-            BAR_H + 1,
-            Some(k.critical),
-        ),
-        Look::Disabled => (k.disabled(), k.disabled(), k.border, BAR_H, None),
-        Look::Pressed => (k.fg, k.accent, k.accent, BAR_H_DOWN, None),
-        Look::Busy => (k.muted, k.muted, k.muted, BAR_H, None),
-    };
-    if let Some(wash) = wash {
-        c.fill(shape, mix(k.bg, wash, 50));
-    }
-    c.fill(
-        Rect::new(shape.x, shape.bottom() - bar_h, shape.w, bar_h),
-        bar,
-    );
     let sink = i32::from(ch.look == Look::Pressed);
-    chip_ink(
-        c,
-        t,
-        Rect::new(r.x, r.y + sink, r.w, r.h),
-        ch,
-        ink,
-        icon_ink,
-    );
+    let r = Rect::new(cx - w / 2, top + sink, w, t.m.chip_h);
+    let k = &t.c;
+    let rad = t.m.chip_r;
+    // Word, icon, and the fill: None is a pane.
+    let (ink, icon_ink, fill) = match ch.look {
+        Look::Normal => (k.fg, k.accent, None),
+        Look::Main => (k.accent_fg, k.accent_fg, Some(k.accent)),
+        Look::On => (k.accent, k.accent, Some(mix(k.surface, k.accent, 70))),
+        Look::Danger | Look::Hold(_) => (k.critical, k.critical, None),
+        Look::DangerMain => (k.critical, k.critical, Some(mix(k.surface, k.critical, 80))),
+        Look::Disabled => (k.disabled(), k.disabled(), None),
+        Look::Pressed => (k.fg, k.accent, Some(theme::shade(k.surface))),
+        Look::Busy => (k.muted, k.muted, None),
+    };
+    match fill {
+        Some(f) if ch.look == Look::Pressed => c.round_rect(r, rad, f),
+        Some(f) => c.gradient(r, rad, theme::lit(f), f),
+        None => c.pane(r, rad, k.surface),
+    }
+    if ch.look != Look::Pressed {
+        let lit = theme::rim(fill.unwrap_or(k.surface));
+        c.fill(Rect::new(r.x + rad, r.y, r.w - 2 * rad, 1), lit);
+    }
+    chip_ink(c, t, r, ch, ink, icon_ink);
     if let Look::Hold(pc) = ch.look {
         let old = c.clip();
-        let part = Rect::new(
-            shape.x,
-            shape.y,
-            shape.w * pc.min(100) as i32 / 100,
-            shape.h,
-        );
+        let part = Rect::new(r.x, r.y, r.w * pc.min(100) as i32 / 100, r.h);
         c.set_clip(part.intersect(&old));
-        c.fill(shape, k.critical);
+        c.round_rect(r, rad, k.critical);
         chip_ink(c, t, r, ch, k.bg, k.bg);
         c.set_clip(old);
     }
 }
 
-/// The bar under a chip, and under one whose key is down.
-const BAR_H: i32 = 2;
-const BAR_H_DOWN: i32 = 4;
-
-/// Room kept at a chip's foot for its bar and a row clear of it.
-const TICK_H: i32 = BAR_H + 1;
-
 /// The action bar: a tab over each of keys 4 to 8 that has one, underlined
 /// along the screen's bottom edge right above its key. No fill behind them.
 pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
     crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
-    c.fill(hint_rect(t), t.c.bg);
+    c.clear(hint_rect(t), t.c.bg);
     action_chips(c, t, chips);
 }
 
@@ -705,7 +677,7 @@ pub fn action_bar_over(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
 }
 
 fn action_chips(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
-    let top = t.m.height - t.m.chip_h;
+    let top = t.m.height - t.m.chip_foot - t.m.chip_h;
     let w = bar_widths(t, chips);
     for (i, ch) in chips.iter().enumerate().filter(|(_, ch)| !ch.is_empty()) {
         chip(c, t, t.m.softkey_x[i], top, ch, w[i]);
@@ -720,14 +692,17 @@ pub fn corner_chip(c: &mut Canvas, t: &Theme, ch: &Chip) {
         Rect::new(t.m.width - w, t.m.height - t.m.hint_h, w, t.m.hint_h),
         t.c.bg,
     );
-    chip(c, t, t.m.width - w / 2, t.m.height - t.m.chip_h, ch, w);
+    let top = t.m.height - t.m.chip_foot - t.m.chip_h;
+    chip(c, t, t.m.width - w / 2, top, ch, w - 2 * t.m.chip_inset);
 }
 
 /// Search replaces the hint bar: the query, a caret, and how to leave.
 pub fn search_bar(c: &mut Canvas, t: &Theme, query: &str) {
     let r = hint_rect(t);
-    c.fill(r, t.c.surface);
-    c.hline(0, r.w, r.y, t.c.accent);
+    c.clear(r, t.c.bg);
+    let field = Rect::new(2, r.y + 1, r.w - 4, r.h - 2);
+    c.pane(field, t.m.radius, t.c.surface);
+    c.stroke_round_rect(field, t.m.radius, t.c.accent);
     let x = t.m.pad - 1;
     // Centred on the query's capitals, as a chip's icon is on its word.
     let s = IconSize::Small as i32;
@@ -781,20 +756,23 @@ pub fn neutral_fill(t: &Theme, selected: bool) -> Color {
     if selected {
         mix(t.c.surface, t.c.fg, 36)
     } else {
-        mix(t.c.bg, t.c.surface, 200)
+        mix(t.c.surface, t.c.fg, 16)
     }
 }
 
+/// A lit square: lighter at the top, darker at the foot, a bright rim.
+fn lit_square(c: &mut Canvas, r: Rect, radius: i32, fill: Color) {
+    c.gradient(r, radius, theme::lit(fill), theme::shade(fill));
+    c.fill(
+        Rect::new(r.x + radius, r.y, r.w - 2 * radius, 1),
+        theme::rim(fill),
+    );
+}
+
 pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
-    let tinted = |tint: Color| {
-        if selected {
-            (tint, t.c.bg)
-        } else {
-            (mix(t.c.bg, tint, 46), tint)
-        }
-    };
+    let rad = if r.w >= 32 { t.m.badge_r } else { t.m.radius };
     let symbol = |c: &mut Canvas, name: &str, fill: Color, ink: Color| {
-        c.round_rect(r, t.m.radius, fill);
+        lit_square(c, r, rad, fill);
         let size = if r.w >= 32 {
             IconSize::Medium
         } else {
@@ -809,28 +787,31 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
             symbol(c, name, neutral_fill(t, selected), t.c.accent);
         }
         Visual::Badge { icon: name, tint } => {
-            let (fill, ink) = tinted(*tint);
-            symbol(c, name, fill, ink);
+            symbol(c, name, *tint, theme::on_tint(*tint));
         }
         Visual::Letter { ch, tint } => {
-            let (fill, ink) = tinted(*tint);
-            c.round_rect(r, t.m.radius, fill);
+            lit_square(c, r, rad, *tint);
             let f = if r.w >= 32 { t.f.title } else { t.f.body_bold };
             let mut buf = [0u8; 4];
             let up = ch.to_uppercase().next().unwrap_or(*ch);
-            text_centre(c, f, r, up.encode_utf8(&mut buf), ink);
+            text_centre(c, f, r, up.encode_utf8(&mut buf), theme::on_tint(*tint));
         }
         Visual::Image(img) => {
-            c.round_rect(r, t.m.radius, neutral_fill(t, selected));
+            lit_square(c, r, rad, neutral_fill(t, selected));
             let (x, y) = r.centre(img.w, img.h);
             c.image(x, y, img);
         }
     }
 }
 
-/// The selection behind a tile or app row: a raised fill and an accent edge.
+/// The selection behind a tile or app row: a lit pane.
 pub fn selection(c: &mut Canvas, t: &Theme, r: Rect) {
-    c.round_rect(r, t.m.radius_large, t.c.surface);
+    let rad = t.m.radius_large;
+    c.pane(r, rad, t.c.surface);
+    c.fill(
+        Rect::new(r.x + rad, r.y, r.w - 2 * rad, 1),
+        theme::rim(t.c.surface),
+    );
 }
 
 /// The selection's outline. Drawn after the content, so an icon the frame
@@ -1020,7 +1001,7 @@ pub struct Card<'a> {
 /// then its content.
 pub fn card_content(c: &mut Canvas, t: &Theme, r: Rect, card: &Card, selected: bool) {
     if !selected {
-        c.stroke_round_rect(r, t.m.radius_large, t.c.border);
+        c.pane(r, t.m.radius_large, t.c.surface);
     }
     let b = t.m.badge;
     // Badge, name and line as one block, centred in the card.
@@ -1117,12 +1098,22 @@ pub fn list_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool) {
     if selected {
         row_selection(c, t, r);
     }
-    row_body(c, t, r, row, selected, false);
+    row_body(c, t, r, row, selected, false, true);
 }
 
+/// A selected row: a lit surface.
 fn row_selection(c: &mut Canvas, t: &Theme, r: Rect) {
-    c.round_rect(r, t.m.radius, t.c.surface);
-    c.round_rect(Rect::new(r.x, r.y + 4, 3, r.h - 8), 1, t.c.accent);
+    let rad = t.m.radius;
+    c.gradient(r, rad, theme::lit(t.c.surface), t.c.surface);
+    c.fill(
+        Rect::new(r.x + rad, r.y, r.w - 2 * rad, 1),
+        theme::rim(t.c.surface),
+    );
+}
+
+/// A selected menu row: an accent wash, as the menu is itself a surface.
+fn menu_selection(c: &mut Canvas, t: &Theme, r: Rect) {
+    c.round_rect(r, t.m.radius, mix(t.c.surface, t.c.accent, 70));
 }
 
 /// A row of an app menu: a list row with its keys in pills on the right,
@@ -1140,7 +1131,7 @@ pub fn menu_row(
     dim: bool,
 ) {
     if selected {
-        row_selection(c, t, r);
+        menu_selection(c, t, r);
     }
     let right = r.right() - 8;
     if !keys.is_empty() {
@@ -1150,7 +1141,7 @@ pub fn menu_row(
     }
     let gap = if keys_w > 0 { keys_w + 6 } else { 0 };
     let body = Rect::new(r.x, r.y, r.w - gap, r.h);
-    row_body(c, t, body, row, selected, dim);
+    row_body(c, t, body, row, selected, dim, false);
 }
 
 /// How a key pill is drawn.
@@ -1189,8 +1180,20 @@ pub fn pills(c: &mut Canvas, t: &Theme, x: i32, y: i32, keys: &str, style: Pill)
     let mut x = x;
     for k in keys.split(' ').filter(|k| !k.is_empty()) {
         let pill = Rect::new(x, y, pill_w(t, k), t.m.pill_h);
-        c.round_rect(pill, t.m.radius_small, fill);
-        text_centre(c, t.f.small_bold, pill, k, ink);
+        // A keycap: lit on top, a shaded row at its foot.
+        c.gradient(pill, t.m.radius_small, theme::lit(fill), fill);
+        let r = t.m.radius_small;
+        c.fill(
+            Rect::new(pill.x + r, pill.bottom() - 1, pill.w - 2 * r, 1),
+            theme::shade(fill),
+        );
+        text_centre(
+            c,
+            t.f.small_bold,
+            Rect::new(pill.x, pill.y, pill.w, pill.h - 1),
+            k,
+            ink,
+        );
         x = pill.right() + 3;
     }
     x - 3
@@ -1226,12 +1229,27 @@ pub fn keys_line(
     );
 }
 
-fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: bool) {
+/// A row's icon, label and what is on its right. With `tile`, the icon
+/// sits on a lit square of its tint, as a settings row's does.
+fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: bool, tile: bool) {
     let mut x = r.x + 9;
     if let Some(name) = row.icon {
-        let s = IconSize::Small as i32;
-        icon::draw(c, name, IconSize::Small, x, r.y + (r.h - s) / 2, row.tint);
-        x += s + 9;
+        if tile {
+            let s = t.m.row_icon;
+            let x0 = r.x + 4;
+            let sq = Rect::new(x0, r.y + (r.h - s) / 2, s, s);
+            if !name.is_empty() {
+                lit_square(c, sq, t.m.radius, row.tint);
+                let i = IconSize::Tiny as i32;
+                let (ix, iy) = sq.centre(i, i);
+                icon::draw(c, name, IconSize::Tiny, ix, iy, theme::on_tint(row.tint));
+            }
+            x = sq.right() + 9;
+        } else {
+            let s = IconSize::Small as i32;
+            icon::draw(c, name, IconSize::Small, x, r.y + (r.h - s) / 2, row.tint);
+            x += s + 9;
+        }
     }
     let mut right = r.right() - 8;
     let muted = t.c.muted;
@@ -1511,13 +1529,29 @@ pub fn scrim(c: &mut Canvas, t: &Theme, r: Rect) {
 /// A card with a title, edged in `edge`: `accent`, or `critical` for one
 /// that loses data. Returns the body.
 pub fn card(c: &mut Canvas, t: &Theme, r: Rect, title: &str, edge: Color) -> Rect {
-    c.round_rect(r, t.m.radius_large, t.c.surface);
-    c.stroke_round_rect(r, t.m.radius_large, edge);
+    lifted(c, t, r, t.m.card_r);
+    c.stroke_round_rect(r, t.m.card_r, mix(t.c.surface, edge, 120));
     let head = card_head(t, r);
     text_in(c, t.f.body_bold, head, title, t.c.fg);
     let y = head.bottom() + t.m.card_gap;
     let i = t.m.card_inset;
     Rect::new(r.x + i, y, r.w - 2 * i, r.bottom() - 1 - t.m.card_pad - y)
+}
+
+/// A card's ground: a soft shadow around it, a lit surface, a bright rim.
+fn lifted(c: &mut Canvas, t: &Theme, r: Rect, rad: i32) {
+    for i in 1..4 {
+        c.stroke_round_rect(
+            r.inset(-i),
+            rad + i,
+            mix(t.c.bg, theme::GLOSS_SHADE, 64 - 16 * i as u8),
+        );
+    }
+    c.gradient(r, rad, theme::lit(t.c.surface), t.c.surface);
+    c.fill(
+        Rect::new(r.x + rad, r.y, r.w - 2 * rad, 1),
+        theme::rim(t.c.surface),
+    );
 }
 
 /// The title's line, placed so its capitals start `card_pad` below the edge.
@@ -1550,8 +1584,8 @@ pub fn toast(
     let h = t.m.toast_h;
     let r = Rect::new((t.m.width - w) / 2, bottom - h - 4, w, h);
     let col = t.c.tone(tone);
-    c.round_rect(r, t.m.radius_large, t.c.surface);
-    c.stroke_round_rect(r, t.m.radius_large, mix(t.c.border, col, 110));
+    lifted(c, t, r, t.m.radius_large);
+    c.stroke_round_rect(r, t.m.radius_large, mix(t.c.surface, col, 110));
     icon::draw(
         c,
         tone.icon(),
@@ -1793,7 +1827,7 @@ pub fn note_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, note: &str, selec
         row_selection(c, t, r);
     }
     let body = Row { label: "", ..*row };
-    row_body(c, t, r, &body, selected, false);
+    row_body(c, t, r, &body, selected, false, false);
     let x = r.x
         + 9
         + if row.icon.is_some() {

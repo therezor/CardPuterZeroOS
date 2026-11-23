@@ -1,9 +1,18 @@
 //! The back buffer. Every primitive clips to `clip`, so a redraw of one dirty
 //! rect touches only the pixels inside it.
 
-use crate::color::{Color, blend};
+use crate::color::{Color, blend, mix};
 use crate::geom::Rect;
 use crate::image::Image;
+use std::rc::Rc;
+
+/// What a screen stands on: a picture and a frosted copy of it, each the
+/// canvas's size, baked once. Panes show the frost; [`Canvas::clear`] puts
+/// the picture back.
+pub struct Backdrop {
+    pub back: Vec<Color>,
+    pub frost: Vec<Color>,
+}
 
 /// A `w` x `h` 4-bit coverage mask starting at nibble `off` of `bits`.
 pub struct Mask4<'a> {
@@ -19,6 +28,7 @@ pub struct Canvas {
     h: i32,
     px: Vec<Color>,
     clip: Rect,
+    backdrop: Option<Rc<Backdrop>>,
 }
 
 impl Canvas {
@@ -28,6 +38,82 @@ impl Canvas {
             h,
             px: vec![0; (w * h) as usize],
             clip: Rect::new(0, 0, w, h),
+            backdrop: None,
+        }
+    }
+
+    /// Sets what [`clear`](Self::clear) and [`pane`](Self::pane) show, or
+    /// none for a plain screen. Returns the old one.
+    pub fn set_backdrop(&mut self, b: Option<Rc<Backdrop>>) -> Option<Rc<Backdrop>> {
+        let b = b.filter(|b| b.back.len() == self.px.len() && b.frost.len() == self.px.len());
+        std::mem::replace(&mut self.backdrop, b)
+    }
+
+    pub fn has_backdrop(&self) -> bool {
+        self.backdrop.is_some()
+    }
+
+    /// The ground under `r`: the backdrop's picture, or `bg` without one.
+    pub fn clear(&mut self, r: Rect, bg: Color) {
+        let Some(b) = self.backdrop.clone() else {
+            return self.fill(r, bg);
+        };
+        let r = r.intersect(&self.clip);
+        for y in r.y..r.bottom() {
+            let s = (y * self.w + r.x) as usize;
+            self.px[s..s + r.w as usize].copy_from_slice(&b.back[s..s + r.w as usize]);
+        }
+    }
+
+    /// A pane: the backdrop's frost in a rounded rect, or `surface` without
+    /// one.
+    pub fn pane(&mut self, r: Rect, radius: i32, surface: Color) {
+        let Some(b) = self.backdrop.clone() else {
+            return self.round_rect(r, radius, surface);
+        };
+        let w = self.w;
+        self.round_by(r, radius, |x, y| b.frost[(y * w + x) as usize]);
+    }
+
+    /// A rounded rect that runs from `top` on its first row to `bottom` on
+    /// its last: a lit surface.
+    pub fn gradient(&mut self, r: Rect, radius: i32, top: Color, bottom: Color) {
+        let span = (r.h - 1).max(1);
+        self.round_by(r, radius, |_, y| {
+            mix(top, bottom, ((y - r.y).clamp(0, span) * 255 / span) as u8)
+        });
+    }
+
+    /// Fills a rounded rect with `ink(x, y)`, corners anti-aliased.
+    fn round_by(&mut self, r: Rect, radius: i32, ink: impl Fn(i32, i32) -> Color) {
+        let radius = radius.min(r.w / 2).min(r.h / 2).max(0);
+        let rf = radius as f32;
+        let cl = r.intersect(&self.clip);
+        for y in cl.y..cl.bottom() {
+            let band = y < r.y + radius || y >= r.bottom() - radius;
+            let cy = if y < r.y + radius {
+                (r.y + radius) as f32
+            } else {
+                (r.bottom() - radius) as f32
+            };
+            for x in cl.x..cl.right() {
+                let i = (y * self.w + x) as usize;
+                let corner = band && (x < r.x + radius || x >= r.right() - radius);
+                if !corner {
+                    self.px[i] = ink(x, y);
+                    continue;
+                }
+                let cx = if x < r.x + radius {
+                    (r.x + radius) as f32
+                } else {
+                    (r.right() - radius) as f32
+                };
+                let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+                let a = (rf - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
+                if a > 0.0 {
+                    self.px[i] = blend(self.px[i], ink(x, y), (a * 255.0) as u8);
+                }
+            }
         }
     }
 

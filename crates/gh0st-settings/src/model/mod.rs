@@ -381,7 +381,11 @@ fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
     };
     Row {
         icon: it.icon,
-        tint: if it.danger { t.c.critical } else { t.c.accent },
+        tint: if it.danger {
+            t.c.critical
+        } else {
+            t.c.icon_tint(it.icon.unwrap_or(""))
+        },
         label: &it.label,
         trailing,
     }

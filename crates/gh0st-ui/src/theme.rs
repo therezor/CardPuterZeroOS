@@ -40,6 +40,23 @@ impl Palette {
         mix(self.bg, self.muted, 180)
     }
 
+    /// The tint of a row's icon square, the same for an icon everywhere, so
+    /// Wi-Fi is one colour on every page. Common icons have one picked so
+    /// neighbours on Settings' first page differ; the rest hash.
+    pub fn icon_tint(&self, icon: &str) -> Color {
+        let i = ICON_TINTS
+            .iter()
+            .find(|(name, _)| *name == icon)
+            .map(|&(_, i)| i)
+            .unwrap_or_else(|| {
+                let h = icon.bytes().fold(0x811c_9dc5u32, |h, b| {
+                    (h ^ b as u32).wrapping_mul(0x0100_0193)
+                });
+                h as usize
+            });
+        self.tints[i % self.tints.len()]
+    }
+
     pub fn tone(&self, tone: Tone) -> Color {
         match tone {
             Tone::Info => self.info,
@@ -96,6 +113,11 @@ pub struct Metrics {
     pub radius_large: i32,
     /// Key pills.
     pub radius_small: i32,
+    /// An app badge, and a dialog or toast card.
+    pub badge_r: i32,
+    pub card_r: i32,
+    /// The tinted square behind a settings row's icon.
+    pub row_icon: i32,
     pub cols: i32,
     pub rows: i32,
     /// App badge on a grid tile.
@@ -125,14 +147,15 @@ pub struct Metrics {
     /// Centres of the five bottom slots. The screen sits over the number keys
     /// 4 to 8, so each slot is above its key. Stock's guide gives these.
     pub softkey_x: [i32; 5],
-    /// An action chip, a tab on the screen's bottom edge: its height, its
-    /// top corners, the space each side of its ink, and the least that may
-    /// shrink to when neighbours crowd it.
+    /// An action chip, a pill over its key: its height, its corners, the
+    /// space each side of its ink, and the room under it to the screen's
+    /// edge.
     pub chip_h: i32,
     pub chip_r: i32,
     pub chip_pad: i32,
-    /// How far a chip's bar, wash and fill stop short of each side, so
-    /// neighbouring chips read apart.
+    pub chip_foot: i32,
+    /// How far a pill stops short of its key's edges, so neighbouring
+    /// chips read apart.
     pub chip_inset: i32,
     /// A key pill in the hint bar, a card or a message.
     pub pill_h: i32,
@@ -518,9 +541,12 @@ pub const CARDPUTER: Metrics = Metrics {
     margin_v: 5,
     grid_v: 3,
     gap: 4,
-    radius: 3,
-    radius_large: 4,
+    radius: 4,
+    radius_large: 6,
     radius_small: 2,
+    badge_r: 5,
+    card_r: 7,
+    row_icon: 20,
     cols: 4,
     rows: 2,
     badge: 34,
@@ -538,13 +564,12 @@ pub const CARDPUTER: Metrics = Metrics {
     slot_icon: 12,
     cards: 3,
     softkey_x: [49, 105, 161, 217, 273],
-    // A top edge, two clear rows, a 10 px capital with its shading, then
-    // room for descenders and the 3 px tick that points at the key. One row
-    // of the 20 px bar stays clear above it.
-    chip_h: 19,
-    chip_r: 3,
+    // A 16 px pill two rows above the edge, 48 px wide over a 56 px key.
+    chip_h: 16,
+    chip_r: 4,
     chip_pad: 7,
-    chip_inset: 3,
+    chip_foot: 2,
+    chip_inset: 4,
     pill_h: 15,
     toast_h: 20,
     card_pad: 10,
@@ -562,6 +587,70 @@ pub const CARDPUTER: Metrics = Metrics {
     rail_w: 47,
     tile_gap: 3,
 };
+
+/// Which of the six tints a common icon takes. The order of Settings' first
+/// page decides it: no two neighbours share one.
+const ICON_TINTS: &[(&str, usize)] = &[
+    ("wifi", 1),
+    ("radio-tower", 4),
+    ("network", 5),
+    ("bluetooth", 1),
+    ("sun", 2),
+    ("monitor", 2),
+    ("volume-2", 3),
+    ("palette", 4),
+    ("layout-grid", 0),
+    ("settings", 5),
+    ("clock", 1),
+    ("globe", 5),
+    ("keyboard", 2),
+    ("user", 4),
+    ("lock", 3),
+    ("shield", 0),
+    ("power", 3),
+    ("download", 0),
+    ("refresh-cw", 0),
+    ("info", 1),
+    ("cpu", 5),
+    ("memory-stick", 5),
+    ("hard-drive", 2),
+    ("usb", 4),
+    ("square-terminal", 0),
+];
+
+/// Light and shade mixed into a fill so it reads as lit from above: a
+/// lighter top, a darker foot, a bright rim. On every palette.
+pub const GLOSS_LIGHT: Color = crate::color::rgb(255, 255, 255);
+pub const GLOSS_SHADE: Color = crate::color::rgb(0, 0, 0);
+
+/// The top of a lit fill.
+pub fn lit(c: Color) -> Color {
+    mix(c, GLOSS_LIGHT, 40)
+}
+
+/// The foot of a lit fill.
+pub fn shade(c: Color) -> Color {
+    mix(c, GLOSS_SHADE, 50)
+}
+
+/// The bright row along a lit fill's top edge.
+pub fn rim(c: Color) -> Color {
+    mix(c, GLOSS_LIGHT, 70)
+}
+
+/// Ink on a badge or icon square of `tint`: dark or light, whichever reads
+/// better across the lit fill, top to foot.
+pub fn on_tint(tint: Color) -> Color {
+    use crate::color::contrast;
+    let dark = mix(tint, GLOSS_SHADE, 215);
+    let light = mix(tint, GLOSS_LIGHT, 225);
+    let worst = |ink: Color| contrast(ink, lit(tint)).min(contrast(ink, shade(tint)));
+    if worst(dark) >= worst(light) {
+        dark
+    } else {
+        light
+    }
+}
 
 /// The panel while the screen is off. The backlight never goes fully out,
 /// so this is what shows, on every palette.
@@ -711,6 +800,15 @@ mod tests {
                 "{} accent text",
                 p.name
             );
+            for tint in p.tints.iter().chain([&p.accent]) {
+                // Icons and large letters: 3:1, as for graphics.
+                let ink = on_tint(*tint);
+                assert!(
+                    contrast(ink, lit(*tint)).min(contrast(ink, shade(*tint))) >= 3.0,
+                    "{} ink on a tint",
+                    p.name
+                );
+            }
             // Black is a background colour in the terminal; the rest is text.
             for (i, &c) in p.ansi.iter().enumerate().filter(|&(i, _)| i != 0) {
                 assert!(contrast(c, p.bg) >= 3.0, "{} ansi {i}", p.name);

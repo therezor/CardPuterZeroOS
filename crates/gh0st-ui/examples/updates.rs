@@ -243,7 +243,12 @@ fn u_available_list(t: &Theme) -> Canvas {
             "openssl, libc6, curl",
         ),
         (
-            row("package", a, "System", Trailing::Tag("6", Tone::Info)),
+            row(
+                "package",
+                t.c.icon_tint("package"),
+                "System",
+                Trailing::Tag("6", Tone::Info),
+            ),
             "Debian 13.3 fixes",
         ),
     ];
@@ -442,17 +447,26 @@ fn u_offline(t: &Theme) -> Canvas {
 fn u_list(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &sub("list", "Packages", "Updates"));
-    let a = t.c.accent;
     let mut y = 20;
     widgets::section(&mut c, t, Rect::new(6, y, 300, 15), "Gh0st OS");
     y += 15;
     let g = [
         (
-            row("gh0st-components", a, "gh0st", Trailing::Value("4.1 MB")),
+            row(
+                "gh0st-components",
+                t.c.icon_tint("gh0st-components"),
+                "gh0st",
+                Trailing::Value("4.1 MB"),
+            ),
             "0.4.1 → 0.5.0 · restarts Gh0st",
         ),
         (
-            row("cpu", a, "gh0st-kernel", Trailing::Value("21 MB")),
+            row(
+                "cpu",
+                t.c.icon_tint("cpu"),
+                "gh0st-kernel",
+                Trailing::Value("21 MB"),
+            ),
             "6.12.47 → 6.12.50 · restarts the device",
         ),
     ];
@@ -517,17 +531,40 @@ fn u_detail(t: &Theme) -> Canvas {
 fn u_menu(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &sub("menu", "Menu", "Updates"));
-    let a = t.c.accent;
     let (x, w, kw) = (6, t.m.width - 12, 40);
     let mut y = 20;
     widgets::section(&mut c, t, Rect::new(x, y, w, 15), "Updates");
     y += 15;
     let rows: [(Row, &str); 4] = [
-        (row("download", a, "Install all", Trailing::None), "Enter"),
-        (row("refresh-cw", a, "Check now", Trailing::None), "5"),
-        (row("list", a, "Packages", Trailing::None), "6"),
         (
-            row("trash-2", a, "Clear downloads", Trailing::Value("120 MB")),
+            row(
+                "download",
+                t.c.icon_tint("download"),
+                "Install all",
+                Trailing::None,
+            ),
+            "Enter",
+        ),
+        (
+            row(
+                "refresh-cw",
+                t.c.icon_tint("refresh-cw"),
+                "Check now",
+                Trailing::None,
+            ),
+            "5",
+        ),
+        (
+            row("list", t.c.icon_tint("list"), "Packages", Trailing::None),
+            "6",
+        ),
+        (
+            row(
+                "trash-2",
+                t.c.icon_tint("trash-2"),
+                "Clear downloads",
+                Trailing::Value("120 MB"),
+            ),
             "",
         ),
     ];
@@ -557,12 +594,31 @@ fn settings_list(t: &Theme, status: &Status, rows: &[Row], sel: usize, slots: Sl
 }
 
 fn s_system(t: &Theme) -> Canvas {
-    let a = t.c.accent;
     let rows = [
-        row("lock", a, "Lock after", Trailing::Choice("5 min")),
-        row("sliders-horizontal", a, "Advanced", Trailing::Chevron),
-        row("download", a, "Updates", Trailing::ValueChevron("3 ready")),
-        row("rotate-cw", a, "Restart", Trailing::None),
+        row(
+            "lock",
+            t.c.icon_tint("lock"),
+            "Lock after",
+            Trailing::Choice("5 min"),
+        ),
+        row(
+            "sliders-horizontal",
+            t.c.icon_tint("sliders-horizontal"),
+            "Advanced",
+            Trailing::Chevron,
+        ),
+        row(
+            "download",
+            t.c.icon_tint("download"),
+            "Updates",
+            Trailing::ValueChevron("3 ready"),
+        ),
+        row(
+            "rotate-cw",
+            t.c.icon_tint("rotate-cw"),
+            "Restart",
+            Trailing::None,
+        ),
         row("power", t.c.critical, "Power off", Trailing::None),
     ];
     settings_list(
@@ -583,10 +639,30 @@ fn s_updates(t: &Theme, sel: usize) -> Canvas {
             "12 updates ready",
             Trailing::ValueChevron("34 MB"),
         ),
-        row("refresh-cw", a, "Check daily", Trailing::Toggle(true)),
-        row("flag", a, "Channel", Trailing::Choice("Stable")),
-        row("clock", a, "Last check", Trailing::Value("Today 09:12")),
-        row("trash-2", a, "Clear downloads", Trailing::Value("120 MB")),
+        row(
+            "refresh-cw",
+            t.c.icon_tint("refresh-cw"),
+            "Check daily",
+            Trailing::Toggle(true),
+        ),
+        row(
+            "flag",
+            t.c.icon_tint("flag"),
+            "Channel",
+            Trailing::Choice("Stable"),
+        ),
+        row(
+            "clock",
+            t.c.icon_tint("clock"),
+            "Last check",
+            Trailing::Value("Today 09:12"),
+        ),
+        row(
+            "trash-2",
+            t.c.icon_tint("trash-2"),
+            "Clear downloads",
+            Trailing::Value("120 MB"),
+        ),
     ];
     let slots = if sel == 2 {
         [
@@ -618,11 +694,25 @@ fn s_edge(t: &Theme) -> Canvas {
 }
 
 fn s_privacy(t: &Theme) -> Canvas {
-    let a = t.c.accent;
     let rows = [
-        row("eye", a, "Send device name", Trailing::Toggle(false)),
-        row("globe", a, "IPv6 privacy address", Trailing::Toggle(true)),
-        row("hard-drive", a, "Keep logs", Trailing::Choice("Off")),
+        row(
+            "eye",
+            t.c.icon_tint("eye"),
+            "Send device name",
+            Trailing::Toggle(false),
+        ),
+        row(
+            "globe",
+            t.c.icon_tint("globe"),
+            "IPv6 privacy address",
+            Trailing::Toggle(true),
+        ),
+        row(
+            "hard-drive",
+            t.c.icon_tint("hard-drive"),
+            "Keep logs",
+            Trailing::Choice("Off"),
+        ),
     ];
     settings_list(
         t,
@@ -872,7 +962,6 @@ fn n_empty(t: &Theme) -> Canvas {
 
 fn n_home_menu(t: &Theme) -> Canvas {
     let mut c = n_home(t);
-    let a = t.c.accent;
     let (x, w, kw) = (6, t.m.width - 12, 30);
     let b = widgets::body(t);
     let h = 15 + 3 * 22 + 4;
@@ -884,11 +973,27 @@ fn n_home_menu(t: &Theme) -> Canvas {
     y += 15;
     let rows: [(Row, &str); 3] = [
         (
-            row("bell", a, "Notifications", Trailing::Tag("2", Tone::Info)),
+            row(
+                "bell",
+                t.c.icon_tint("bell"),
+                "Notifications",
+                Trailing::Tag("2", Tone::Info),
+            ),
             "",
         ),
-        (row("pin", a, "Unpin Updates", Trailing::None), "p"),
-        (row("layout-grid", a, "List layout", Trailing::None), "l"),
+        (
+            row("pin", t.c.icon_tint("pin"), "Unpin Updates", Trailing::None),
+            "p",
+        ),
+        (
+            row(
+                "layout-grid",
+                t.c.icon_tint("layout-grid"),
+                "List layout",
+                Trailing::None,
+            ),
+            "l",
+        ),
     ];
     for (i, (rw, k)) in rows.iter().enumerate() {
         widgets::menu_row(
