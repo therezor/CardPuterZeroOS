@@ -1691,7 +1691,6 @@ pub struct Message<'a> {
 pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
     let (icon_name, text, note, keys) = (m.icon, m.text, m.note, m.keys);
     let ink = m.tone.map_or(t.c.muted, |k| t.c.tone(k));
-    let s = IconSize::Large as i32;
     // A note breaks at each `\n`, and wraps where a line is too long.
     let w = area.w - 24;
     let lines: Vec<String> = note
@@ -1700,17 +1699,16 @@ pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
         .flat_map(|l| t.f.small.wrap(l, w))
         .collect();
     let lh = t.f.small.line;
-    let block =
-        s + 8 + 18 + lh * lines.len() as i32 + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
-    let top = area.y + (area.h - block).max(0) / 2;
-    icon::draw(
-        c,
-        icon_name,
-        IconSize::Large,
-        area.x + (area.w - s) / 2,
-        top,
-        ink,
-    );
+    let rest = 8 + 18 + lh * lines.len() as i32 + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
+    // A long note takes a smaller icon, so the whole message fits.
+    let size = if IconSize::Large as i32 + rest <= area.h {
+        IconSize::Large
+    } else {
+        IconSize::Medium
+    };
+    let s = size as i32;
+    let top = area.y + (area.h - s - rest).max(0) / 2;
+    icon::draw(c, icon_name, size, area.x + (area.w - s) / 2, top, ink);
     let tr = Rect::new(area.x + 12, top + s + 8, area.w - 24, 18);
     text_centre(c, t.f.body_bold, tr, text, t.c.fg);
     let mut y = tr.bottom();
