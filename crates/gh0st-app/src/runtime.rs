@@ -84,6 +84,9 @@ struct WatchEntry {
 struct Bar {
     clock: String,
     clock_at: u64,
+    /// The test driver's time starts at 0 and owes the wall clock nothing:
+    /// its minutes fall on whole minutes of its own.
+    own_minutes: bool,
     battery_at: u64,
     battery_dir: Option<PathBuf>,
     battery: Option<Battery>,
@@ -96,6 +99,7 @@ impl Bar {
         Bar {
             clock: "--:--".into(),
             clock_at: 0,
+            own_minutes: false,
             battery_at: 0,
             battery_dir: battery::find(std::path::Path::new("/sys/class/power_supply")),
             battery: None,
@@ -104,10 +108,14 @@ impl Bar {
         }
     }
 
-    fn refresh(&mut self, h24: bool) {
+    fn refresh(&mut self, h24: bool, now: u64) {
         let (clock, at) = rt::clock_text(h24);
         self.clock = clock;
-        self.clock_at = at;
+        self.clock_at = if self.own_minutes {
+            (now / 60_000 + 1) * 60_000
+        } else {
+            at
+        };
         self.battery = self.read_battery();
         self.links();
     }
@@ -239,6 +247,11 @@ impl Runtime {
         }
     }
 
+    /// The test driver's virtual time: the clock ticks on its minutes.
+    pub(crate) fn own_time(&mut self) {
+        self.bar.own_minutes = true;
+    }
+
     /// Under `--sim` and in tests: no battery, as in the shell.
     pub(crate) fn off_device(&mut self) {
         self.bar.battery_dir = None;
@@ -246,7 +259,7 @@ impl Runtime {
     }
 
     pub fn start(&mut self, now: u64) {
-        self.bar.refresh(self.h24());
+        self.bar.refresh(self.h24(), now);
         self.call(0, now, |p, cx| p.start(cx));
     }
 
@@ -1118,7 +1131,7 @@ impl Runtime {
         if !self.paused && self.top_bars().top {
             if now >= self.bar.clock_at {
                 let h24 = self.h24();
-                self.bar.refresh(h24);
+                self.bar.refresh(h24, now);
                 self.dirty = true;
             }
             if self.bar.battery_dir.is_some()

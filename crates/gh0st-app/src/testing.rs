@@ -53,6 +53,7 @@ impl Driver {
         let mut rt = Runtime::new(Box::new(page), Some(config));
         rt.s.closable = opts.closable;
         rt.off_device();
+        rt.own_time();
         rt.start(0);
         Driver { rt, now: 0 }
     }

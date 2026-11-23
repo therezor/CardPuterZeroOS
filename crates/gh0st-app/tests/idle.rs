@@ -24,7 +24,7 @@ impl Page for Ticker {
 #[test]
 fn a_timer_at_idle_shows_up() {
     let quiet = Driver::new(Ticker(false)).idle_wakes(600_000);
-    assert!(quiet <= 10, "the clock's minute only: {quiet}");
+    assert_eq!(quiet, 11, "the first frame, then the clock's minute");
     let busy = Driver::new(Ticker(true)).idle_wakes(600_000);
     assert!(busy >= 600, "{busy}");
 }
