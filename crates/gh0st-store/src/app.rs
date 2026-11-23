@@ -127,6 +127,9 @@ pub struct Store {
     segment: Option<Timer>,
     /// The screen stays on while a run shows its progress.
     awake: bool,
+    /// The package this app asked to remove, until the run ends: the
+    /// engine's progress says install for both.
+    removing: Option<String>,
     watch: Option<(gh0st_core::status::Watch, Watch)>,
     zone: String,
 }
@@ -167,6 +170,7 @@ impl Store {
             phase: 0,
             segment: None,
             awake: false,
+            removing: None,
             watch: None,
             zone: String::new(),
         }
@@ -369,6 +373,7 @@ impl Store {
             return;
         }
         self.starting_for(Work::Apps(vec![package.to_string()]));
+        self.removing = Some(package.to_string());
         self.helper.run(cx, REMOVE, &["store-remove", package]);
     }
 
@@ -393,6 +398,7 @@ impl Store {
         if let Err(why) = f.result {
             self.starting = None;
             self.was_busy = false;
+            self.removing = None;
             if why != "Cancelled" {
                 cx.toast_tone(Tone::Critical, &why);
             }
@@ -410,6 +416,7 @@ impl Store {
 
     /// The engine finished: what happened, then the next in the queue.
     fn ended(&mut self, cx: &mut Cx) {
+        self.removing = None;
         self.load_catalog();
         let st = &self.state;
         let title = |p: &str| {
@@ -804,7 +811,7 @@ impl Store {
         let Some(p) = self.progress.as_ref().filter(|p| p.item == a.package) else {
             return ("Starting\u{2026}".into(), None);
         };
-        let removing = self.state.op == "remove";
+        let removing = self.removing.as_deref() == Some(a.package.as_str());
         let label = match p.phase {
             Phase::Lists => "Checking what it needs".to_string(),
             Phase::Download if p.total > 0 => format!(
