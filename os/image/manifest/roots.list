@@ -12,6 +12,8 @@ iproute2                ip and ss
 fdisk                   sfdisk, for the first-boot grow
 e2fsprogs               fsck.ext4, without which systemd never checks / or /home
 ca-certificates         TLS for apt and apps
+curl                    downloads for the AppStore and the apps it installs
+wget                    downloads for app install scripts that call wget
 tzdata                  time zones, Settings > Date & time
 systemd-timesyncd       network time; the RTC keeps time offline
 systemd-zram-generator  swap in compressed RAM
