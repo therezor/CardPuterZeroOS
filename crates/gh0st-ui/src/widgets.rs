@@ -1664,8 +1664,8 @@ pub fn progress(c: &mut Canvas, t: &Theme, r: Rect, label: &str, value: Option<u
     }
 }
 
-/// Steps in a row, joined by a line: those done get a check, the current
-/// one a ring and its name in bold, the rest a dot. `r` is about 26 px tall.
+/// Steps in a row, joined by a line: a dot each, in the accent once done,
+/// larger for the current one with its name in bold. `r` is about 26 px tall.
 pub fn stepper(c: &mut Canvas, t: &Theme, r: Rect, steps: &[&str], current: usize) {
     if steps.is_empty() {
         return;
@@ -1679,21 +1679,12 @@ pub fn stepper(c: &mut Canvas, t: &Theme, r: Rect, steps: &[&str], current: usiz
             c.fill(Rect::new(cx + 8, line_y, step_w - 16, 1), col);
         }
         let (x, y) = (cx as f32, line_y as f32 + 0.5);
+        // Plain dots: an icon or a ring at this size is too small to read.
         let ink = if i < current {
-            c.circle(x, y, 5.0, t.c.accent);
-            let s = IconSize::Tiny as i32;
-            icon::draw(
-                c,
-                "check",
-                IconSize::Tiny,
-                cx - s / 2,
-                line_y - s / 2,
-                t.c.accent_fg,
-            );
+            c.circle(x, y, 4.0, t.c.accent);
             t.c.accent
         } else if i == current {
             c.circle(x, y, 5.0, t.c.accent);
-            c.circle(x, y, 2.0, t.c.bg);
             t.c.fg
         } else {
             c.circle(x, y, 4.0, t.c.border);
