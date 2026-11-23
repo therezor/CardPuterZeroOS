@@ -579,6 +579,52 @@ ranks one step lower. It ranks a match at the start of a field first, then
 at the start of a word, then anywhere, then the letters in order. Home
 ranks the same way (`gh0st_core::search`).
 
+### Long text and app lists
+
+A text longer than the page scrolls. Keep a `Scroll` in the page, pass it
+Up and Down, and draw with `ui.scroll_text`. It wraps the text, draws from
+the scrolled line and adds a scrollbar.
+
+`ui.apps` draws apps as home's list does: a picture, a name, a line under
+it and a tag on the right, such as "Update" or "45%". Its items are
+`gfx::widgets::AppItem`s, and a `List` holds the selection:
+
+```rust
+use gh0st_app::gfx::widgets::{AppItem, Visual};
+use gh0st_app::prelude::*;
+
+struct About {
+    scroll: Scroll,
+    list: List,
+}
+
+impl Page for About {
+    fn title(&self) -> &str {
+        "About"
+    }
+
+    fn key(&mut self, key: Key, _: &mut Cx) {
+        if !self.scroll.key(key) {
+            self.list.key(key);
+        }
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        let tint = ui.theme().c.tints[0];
+        let app = AppItem {
+            label: "Notes",
+            note: "Write things down",
+            visual: Visual::Letter { ch: 'N', tint },
+            pinned: false,
+            count: 0,
+            tag: Some(("Update", Tone::Info)),
+        };
+        ui.apps(&self.list, &[app]);
+        ui.scroll_text(&self.scroll, "A long text, wrapped to the width.");
+    }
+}
+```
+
 ## Drawing
 
 Each `Ui` call stacks below the last, inside the page's area, with the OS

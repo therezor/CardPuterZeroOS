@@ -634,7 +634,7 @@ impl Store {
             APP_ICON,
             None,
             "No app list yet",
-            "It comes from Gh0st's server, signed.\nNothing about you is sent.",
+            "Gh0st's server lists the apps, signed.\nNo account, no device ID.",
             &[("Enter", "get the list")],
         );
     }

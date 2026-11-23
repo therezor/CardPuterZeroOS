@@ -14,8 +14,8 @@ use gh0st_store::app::Store;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
-/// Real entries from M5's catalog: package, title, category, version,
-/// size, author, flags, summary.
+/// Entries from M5's catalog: package, title, category, version, size,
+/// author, flags, summary. Some flags are made up, to show each look.
 type CatalogRow = (
     &'static str,
     &'static str,
