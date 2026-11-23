@@ -1,0 +1,56 @@
+# Testing
+
+What keeps bugs out, the look the same and the device fast. CI
+(`.github/workflows/ci.yml`) runs all of it on every push and PR, on the
+same arm64 runner the image builds on.
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+## The layers
+
+| Layer | Where | What it holds |
+|---|---|---|
+| Unit tests | next to the code | parsers, models, the config file, the lock field |
+| Driver tests | `crates/*/tests`, `gh0st_app::testing::Driver` | a page's keys, dialogs, toasts and jobs, in virtual time |
+| Sims | `crates/gh0st/tests/lock_sim.rs`, `crates/gh0st-settings/tests/*_sim.rs` | the real binary under `--sim`, keys from a script, fake system tools first on `PATH` |
+| Design lint | `gh0st_ui::lint`, the mockups, `crates/gh0st-settings/tests/pages.rs` | every screen in every palette keeps design.md's rules |
+| Source rules | `crates/gh0st-ui/tests/rules.rs` | colours and faces only from the theme; no em dash |
+| Idle budget | `Driver::idle_wakes`, `crates/gh0st-settings/tests/pages.rs` | an idle page wakes for the clock and nothing else |
+| Device | `scripts/measure.sh` | PSS, wakeups and CPU at idle, before a release |
+
+## The rules
+
+- **A fix comes with the test that failed before it.** Prove a bug from an
+  audit or a report this way before fixing it.
+- **A new page joins the lint.** A Settings page goes in `pages()` in
+  `crates/gh0st-settings/tests/pages.rs`. Any other screen gets a scene in
+  its crate's `examples/mockups.rs`. Those examples are tests (`test = true`
+  in `Cargo.toml`): `cargo test` draws every scene in every palette under
+  the lint, and `cargo run --example mockups` writes the same scenes as PNGs
+  to look at.
+- **No golden images.** The lint holds the rules a picture would; a change
+  of look is reviewed by eye from the mockups.
+- **Shared keys have one reader.** A key more than one program reads is
+  named in `gh0st_core::config::key`, with its default in one place.
+- **Each setting has one home.** `no_setting_is_on_two_pages` fails if an
+  action shows up on two Settings pages.
+
+## The design lint
+
+`gh0st_ui::lint` checks what is drawn while a test turns it on. Release
+builds keep none of it. `Driver::lint()` draws a page's frame under it.
+
+- Text whose ink leaves its box by more than a descender's 2 px.
+- A face under the 15 px floor, but for Mono's figures (design.md, Type).
+- Chips off their keys: one goes on 6, two on 5 and 7, three on 5 to 7.
+
+## What is not covered
+
+- Rows flushed per frame: `GH0ST_LOG=debug` prints them on a device or
+  under `--sim`.
+- The terminal's grid: `crates/gh0st-term/tests/golden.rs` replays recorded
+  programs as text.

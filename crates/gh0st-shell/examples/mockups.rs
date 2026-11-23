@@ -320,6 +320,7 @@ fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
     c
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn main() {
     let stock = std::env::var_os("GH0ST_STOCK").map(PathBuf::from);
     let stock = stock.as_deref();
@@ -332,6 +333,32 @@ fn main() {
         }
     }
     for palette in [theme::MINT, theme::NORD, theme::PAPER] {
+        let tag = palette.name.to_lowercase();
+        for (name, c) in &scenes(palette, stock, false) {
+            write_png(c, &out.join(format!("{tag}-{name}.png")), 1).unwrap();
+            write_png(c, &out.join(format!("{tag}-{name}@3x.png")), 3).unwrap();
+        }
+    }
+    println!("wrote {}", out.display());
+}
+
+/// The mockups are the fixtures: every screen, every palette, under the
+/// design lint.
+#[test]
+fn every_screen_keeps_the_design_rules() {
+    gh0st_ui::lint::start();
+    for palette in theme::PALETTES {
+        scenes(*palette, None, true);
+    }
+    let found = gh0st_ui::lint::take();
+    gh0st_ui::lint::stop();
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+/// The shell's screens in a palette: the full set in Mint, or in each with
+/// `all`.
+fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'static str, Canvas)> {
+    {
         let t = Theme::new(palette);
         let mut scenes: Vec<(&str, Canvas)> = vec![
             ("home-grid", home(&t, stock, Layout::Grid, None)),
@@ -339,7 +366,7 @@ fn main() {
             ("switcher", switcher_scene(&t, stock, 2, 1)),
             ("lock", lock(&t, None, true, None)),
         ];
-        if palette.name == "Mint" {
+        if all || palette.name == "Mint" {
             scenes.extend([
                 (
                     "home-grid-search",
@@ -381,11 +408,6 @@ fn main() {
                 ("home-menu-lock", home_menu(&t, stock)),
             ]);
         }
-        let tag = palette.name.to_lowercase();
-        for (name, c) in &scenes {
-            write_png(c, &out.join(format!("{tag}-{name}.png")), 1).unwrap();
-            write_png(c, &out.join(format!("{tag}-{name}@3x.png")), 3).unwrap();
-        }
+        scenes
     }
-    println!("wrote {}", out.display());
 }

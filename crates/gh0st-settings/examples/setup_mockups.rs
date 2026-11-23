@@ -546,6 +546,7 @@ fn write(dir: &Path, name: &str, c: &Canvas) {
 
 type Screen = (&'static str, &'static str, fn(&Theme) -> Canvas);
 
+#[cfg_attr(test, allow(dead_code))]
 fn main() {
     let out = PathBuf::from("mockups/setup");
     std::fs::create_dir_all(&out).unwrap();
@@ -554,83 +555,10 @@ fn main() {
             let _ = std::fs::remove_file(e.path());
         }
     }
-    let all: &[Screen] = &[
-        ("00-notice", "pre-alpha, first of all", |t| {
-            real(tour::Notice, "", 0, t)
-        }),
-        ("01-welcome", "Enter trains, 6 skips to settings", |t| {
-            real(tour::Welcome::new(answers()), "", 0, t)
-        }),
-        ("02-opsec", "swear in: type opsec", |t| {
-            lesson(0, "type ops", t)
-        }),
-        ("03-sworn", "passed", |t| lesson(0, "type opsec", t)),
-        ("04-caps", "now mean it: caps lock", |t| {
-            lesson(1, "type OPS", t)
-        }),
-        ("05-typo", "a wrong letter", |t| lesson(1, "type OPX", t)),
-        ("06-sobriety", "walk the dot to the ring", |t| {
-            lesson(2, "c", t)
-        }),
-        ("07-sober", "three moves: sober", |t| {
-            lesson(2, "c\nc\nx\nenter", t)
-        }),
-        ("08-email", "a fake email, Sym for @", |t| {
-            lesson(3, "type no", t)
-        }),
-        ("09-dont", "the chip on 7 says Don't", |t| lesson(4, "", t)),
-        ("10-pressed", "everyone presses it", |t| lesson(4, "7", t)),
-        ("11-hat", "a switch and a choice", |t| lesson(5, "", t)),
-        ("12-unreadable", "hat on, paranoia max", |t| {
-            lesson(5, "7\nf\nenter", t)
-        }),
-        ("13-menu", "secret menu on 8", |t| lesson(6, "", t)),
-        ("14-menu-open", "setup's menu, no Close app", |t| {
-            lesson(6, "8", t)
-        }),
-        ("15-boom", "hold 7 to self-destruct", |t| {
-            let label = format!("Training 8 of {}", tour::LESSONS);
-            real(tour::Lesson::new(7, &label, answers()), "down 7", 400, t)
-        }),
-        ("16-graduation", "the reward: Phantom", |t| lesson(8, "", t)),
-        ("17-country", "a letter jumps", country),
-        ("18-time-zone", "Enter picks", time_zone),
-        ("19-privacy", "Enter flips, 6 Done goes on", |t| {
-            privacy(t, 0)
-        }),
-        ("20-privacy-logs", "Keep logs opens its list", |t| {
-            privacy(t, 4)
-        }),
-        ("21-network", "Enter joins, 5 Scan, 7 Skip", network),
-        (
-            "23-wifi-password",
-            "the join dialog: key hints",
-            wifi_password,
-        ),
-        (
-            "24-date-time",
-            "only when the clock has not synced",
-            date_time,
-        ),
-        ("25-account", "name and password, Tab between", |t| {
-            account(t, false)
-        }),
-        ("26-account-short", "an error under the field", |t| {
-            account(t, true)
-        }),
-        ("27-again", "once more, Tab shows it", |t| {
-            account_again(t, false)
-        }),
-        ("28-again-differ", "they differ", |t| account_again(t, true)),
-        ("29-look", "5 and 7 change, 6 Done", look),
-        ("30-done", "what was set", finished),
-        ("31-starting", "the shell comes up", starting),
-        ("32-help", "Fn h on a step", help),
-    ];
     for palette in theme::PALETTES.iter().chain(theme::EARNED) {
         let t = Theme::new(*palette);
         let tag = palette.name.to_lowercase();
-        let screens: Vec<(&str, &str, Canvas)> = all
+        let screens: Vec<(&str, &str, Canvas)> = SCREENS
             .iter()
             .map(|&(name, cap, draw)| (name, cap, draw(&t)))
             .collect();
@@ -645,3 +573,98 @@ fn main() {
     }
     println!("wrote {}", out.display());
 }
+
+/// The mockups are the fixtures: every step, every palette, under the
+/// design lint.
+#[test]
+fn every_step_keeps_the_design_rules() {
+    let mut found = Vec::new();
+    for palette in theme::PALETTES.iter().chain(theme::EARNED) {
+        let t = Theme::new(*palette);
+        for &(name, _, draw) in SCREENS {
+            gh0st_app::gfx::lint::start();
+            draw(&t);
+            let f = gh0st_app::gfx::lint::take();
+            found.extend(
+                f.into_iter()
+                    .map(|f| format!("{name} {}: {f}", palette.name)),
+            );
+        }
+    }
+    gh0st_app::gfx::lint::stop();
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+const SCREENS: &[Screen] = &[
+    ("00-notice", "pre-alpha, first of all", |t| {
+        real(tour::Notice, "", 0, t)
+    }),
+    ("01-welcome", "Enter trains, 6 skips to settings", |t| {
+        real(tour::Welcome::new(answers()), "", 0, t)
+    }),
+    ("02-opsec", "swear in: type opsec", |t| {
+        lesson(0, "type ops", t)
+    }),
+    ("03-sworn", "passed", |t| lesson(0, "type opsec", t)),
+    ("04-caps", "now mean it: caps lock", |t| {
+        lesson(1, "type OPS", t)
+    }),
+    ("05-typo", "a wrong letter", |t| lesson(1, "type OPX", t)),
+    ("06-sobriety", "walk the dot to the ring", |t| {
+        lesson(2, "c", t)
+    }),
+    ("07-sober", "three moves: sober", |t| {
+        lesson(2, "c\nc\nx\nenter", t)
+    }),
+    ("08-email", "a fake email, Sym for @", |t| {
+        lesson(3, "type no", t)
+    }),
+    ("09-dont", "the chip on 7 says Don't", |t| lesson(4, "", t)),
+    ("10-pressed", "everyone presses it", |t| lesson(4, "7", t)),
+    ("11-hat", "a switch and a choice", |t| lesson(5, "", t)),
+    ("12-unreadable", "hat on, paranoia max", |t| {
+        lesson(5, "7\nf\nenter", t)
+    }),
+    ("13-menu", "secret menu on 8", |t| lesson(6, "", t)),
+    ("14-menu-open", "setup's menu, no Close app", |t| {
+        lesson(6, "8", t)
+    }),
+    ("15-boom", "hold 7 to self-destruct", |t| {
+        let label = format!("Training 8 of {}", tour::LESSONS);
+        real(tour::Lesson::new(7, &label, answers()), "down 7", 400, t)
+    }),
+    ("16-graduation", "the reward: Phantom", |t| lesson(8, "", t)),
+    ("17-country", "a letter jumps", country),
+    ("18-time-zone", "Enter picks", time_zone),
+    ("19-privacy", "Enter flips, 6 Done goes on", |t| {
+        privacy(t, 0)
+    }),
+    ("20-privacy-logs", "Keep logs opens its list", |t| {
+        privacy(t, 4)
+    }),
+    ("21-network", "Enter joins, 5 Scan, 7 Skip", network),
+    (
+        "23-wifi-password",
+        "the join dialog: key hints",
+        wifi_password,
+    ),
+    (
+        "24-date-time",
+        "only when the clock has not synced",
+        date_time,
+    ),
+    ("25-account", "name and password, Tab between", |t| {
+        account(t, false)
+    }),
+    ("26-account-short", "an error under the field", |t| {
+        account(t, true)
+    }),
+    ("27-again", "once more, Tab shows it", |t| {
+        account_again(t, false)
+    }),
+    ("28-again-differ", "they differ", |t| account_again(t, true)),
+    ("29-look", "5 and 7 change, 6 Done", look),
+    ("30-done", "what was set", finished),
+    ("31-starting", "the shell comes up", starting),
+    ("32-help", "Fn h on a step", help),
+];

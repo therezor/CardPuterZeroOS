@@ -57,6 +57,8 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `docs/updates.md`: the update engine, the Updates app, notifications and
   our apt repo on GitHub Pages (`os/repo/publish.sh`).
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
+- `docs/testing.md`: the test layers, the design lint, and what a change
+  must add.
 - `docs/setup.md`: first-boot setup, the steps and how it hands over to the
   shell.
 - `docs/hotspot.md`: the Wi-Fi access point, why it takes wlan0, its security

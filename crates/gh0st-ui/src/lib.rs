@@ -10,6 +10,7 @@ pub mod font;
 pub mod geom;
 pub mod icon;
 pub mod image;
+pub mod lint;
 pub mod qr;
 pub mod snapshot;
 pub mod theme;

@@ -14,3 +14,9 @@ path = "src/main.rs"
 gh0st-app.workspace = true
 gh0st-core.workspace = true
 libc.workspace = true
+
+# The mockups double as fixtures: `cargo test` draws every scene under the
+# design lint.
+[[example]]
+name = "mockups"
+test = true

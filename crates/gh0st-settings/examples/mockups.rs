@@ -276,11 +276,24 @@ fn chip_of(ch: &gh0st_app::Chip) -> Chip<'_> {
     Chip { icon, word, look }
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn main() {
     let out = PathBuf::from("mockups/settings");
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
     for palette in [theme::MINT, theme::NORD, theme::PAPER] {
+        let tag = palette.name.to_lowercase();
+        for (name, c) in &scenes(palette, false) {
+            write_png(c, &out.join(format!("{tag}-{name}.png")), 1).unwrap();
+            write_png(c, &out.join(format!("{tag}-{name}@3x.png")), 3).unwrap();
+        }
+    }
+    println!("wrote {}", out.display());
+}
+
+/// Every page in a palette: the full set in Mint, or in each with `all`.
+fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
+    {
         let t = Theme::new(palette);
         let st = sample_state();
         let pending = State {
@@ -299,7 +312,7 @@ fn main() {
             secret: true,
         };
         let mut scenes: Vec<(&str, Canvas)> = vec![("root", scene(&t, &st, PageId::Root, 0, None))];
-        if palette.name == "Mint" {
+        if all || palette.name == "Mint" {
             let s = |id, sel| scene(&t, &st, id, sel, None);
             scenes.extend([
                 ("root-scrolled", s(PageId::Root, 8)),
@@ -524,13 +537,21 @@ fn main() {
                 ),
             ]);
         }
-        let tag = palette.name.to_lowercase();
-        for (name, c) in &scenes {
-            write_png(c, &out.join(format!("{tag}-{name}.png")), 1).unwrap();
-            write_png(c, &out.join(format!("{tag}-{name}@3x.png")), 3).unwrap();
-        }
+        scenes
     }
-    println!("wrote {}", out.display());
+}
+
+/// The mockups are the fixtures: every page, every palette, drawn under the
+/// design lint (gh0st_ui::lint).
+#[test]
+fn every_page_keeps_the_design_rules() {
+    gh0st_app::gfx::lint::start();
+    for palette in theme::PALETTES {
+        scenes(*palette, true);
+    }
+    let found = gh0st_app::gfx::lint::take();
+    gh0st_app::gfx::lint::stop();
+    assert!(found.is_empty(), "{found:#?}");
 }
 
 /// What the update engine wrote: 12 ready, checked ten minutes ago.

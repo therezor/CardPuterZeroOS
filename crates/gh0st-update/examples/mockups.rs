@@ -103,9 +103,34 @@ struct Scene {
     keys: &'static str,
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn main() {
     let out = PathBuf::from("mockups/update-app");
     std::fs::create_dir_all(&out).unwrap();
+    each_scene(|name, d| save(d, &out, name));
+    println!("wrote {}", out.display());
+}
+
+/// The mockups are the fixtures: every scene, in every palette, under the
+/// design lint.
+#[test]
+fn every_scene_keeps_the_design_rules() {
+    let mut found = Vec::new();
+    each_scene(|name, d| {
+        for p in gh0st_app::gfx::theme::PALETTES {
+            d.palette(p.name);
+            found.extend(
+                d.lint()
+                    .into_iter()
+                    .map(|f| format!("{name} {}: {f}", p.name)),
+            );
+        }
+    });
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+/// Runs the app on each scene's state and keys, then hands it over.
+fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
     let base = std::env::temp_dir().join(format!("gh0st-update-mockups-{}", std::process::id()));
     let busy = |install: bool, phase: Phase, percent: Option<u8>, n: u32, item: &str| Progress {
         install,
@@ -248,10 +273,9 @@ fn main() {
             }
         }
         d.wait(100);
-        save(&mut d, &out, s.name);
+        each(s.name, &mut d);
     }
     let _ = std::fs::remove_dir_all(&base);
-    println!("wrote {}", out.display());
 }
 
 fn save(d: &mut Driver, out: &Path, name: &str) {

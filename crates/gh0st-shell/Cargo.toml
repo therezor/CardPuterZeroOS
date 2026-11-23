@@ -9,3 +9,7 @@ license.workspace = true
 gh0st-core.workspace = true
 gh0st-ui.workspace = true
 libc.workspace = true
+
+[[example]]
+name = "mockups"
+test = true

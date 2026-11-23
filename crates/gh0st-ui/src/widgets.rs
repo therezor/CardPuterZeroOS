@@ -133,6 +133,7 @@ pub fn rows_area(t: &Theme, row_h: i32) -> (Rect, usize) {
 
 /// Draws `s` in `r`, centred vertically on the font's capitals.
 pub fn text_in(c: &mut Canvas, f: Font, r: Rect, s: &str, color: Color) -> i32 {
+    crate::lint::text(f, r, s);
     let y = r.y + (r.h + f.cap()) / 2;
     f.draw_elided(c, r.x, y, s, r.w, color)
 }
@@ -690,6 +691,7 @@ const TICK_H: i32 = BAR_H + 1;
 /// The action bar: a tab over each of keys 4 to 8 that has one, underlined
 /// along the screen's bottom edge right above its key. No fill behind them.
 pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
+    crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
     c.fill(hint_rect(t), t.c.bg);
     let top = t.m.height - t.m.chip_h;
     let w = bar_widths(t, chips);

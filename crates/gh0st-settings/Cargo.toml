@@ -15,3 +15,13 @@ gh0st-app.workspace = true
 # The app list, pins, rfkill and the backlight are the device's, shared with
 # the shell.
 gh0st-core.workspace = true
+
+# The mockups double as fixtures: `cargo test` draws every page under the
+# design lint.
+[[example]]
+name = "mockups"
+test = true
+
+[[example]]
+name = "setup_mockups"
+test = true

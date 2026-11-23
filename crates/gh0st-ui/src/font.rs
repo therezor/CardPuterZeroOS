@@ -83,6 +83,18 @@ impl BakedFont {
         ((sum + 32) >> 6) as i32
     }
 
+    /// How far `s`'s ink reaches above and below the baseline. Unbaked
+    /// chars count as capitals.
+    pub fn ink(&self, s: &str) -> (i32, i32) {
+        s.chars()
+            .filter(|c| !c.is_whitespace())
+            .map(|c| match self.find(c as u32) {
+                Some(g) => (-(g.top as i32), g.top as i32 + g.h as i32),
+                None => (self.cap(), 0),
+            })
+            .fold((0, 0), |(a, b), (up, down)| (a.max(up), b.max(down)))
+    }
+
     /// Height of capitals, for centring a line in a box.
     pub fn cap(&self) -> i32 {
         self.find('H' as u32)

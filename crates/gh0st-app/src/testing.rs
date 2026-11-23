@@ -84,6 +84,28 @@ impl Driver {
         self
     }
 
+    /// Lets `ms` pass with no key and counts the times the loop would wake.
+    /// An idle page wakes for the clock's minute and for nothing else
+    /// (CLAUDE.md, Performance first).
+    pub fn idle_wakes(&mut self, ms: u64) -> u32 {
+        let end = self.now + ms;
+        let mut wakes = 0;
+        while let Some(at) = self.rt.next_at().filter(|&at| at <= end) {
+            self.now = self.now.max(at);
+            self.rt.tick(self.now);
+            if self.rt.frame_due(self.now) {
+                self.rt.render();
+                self.rt.last_frame = self.now;
+            }
+            wakes += 1;
+            if wakes > 10_000 {
+                break;
+            }
+        }
+        self.now = end;
+        wakes
+    }
+
     /// Runs the real loop over watched fds for `ms` of wall time: reads,
     /// queued writes and child exits reach the page as on the device.
     pub fn pump(&mut self, ms: u64) -> &mut Driver {
@@ -181,6 +203,17 @@ impl Driver {
     /// The open dialog's title, and what is wrong under its field.
     pub fn dialog(&self) -> Option<(&str, Option<&str>)> {
         self.rt.dialog_text()
+    }
+
+    /// Draws the screen under the design lint (`gh0st_ui::lint`): text that
+    /// doesn't fit its box or the screen, faces under 15 px, chips off their
+    /// keys. Empty when the frame keeps the rules.
+    pub fn lint(&mut self) -> Vec<String> {
+        gh0st_ui::lint::start();
+        self.rt.render();
+        let found = gh0st_ui::lint::take();
+        gh0st_ui::lint::stop();
+        found
     }
 
     /// The screen as the panel would show it now.
