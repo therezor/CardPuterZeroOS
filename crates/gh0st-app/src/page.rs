@@ -269,12 +269,11 @@ impl Settings {
     /// Re-reads the file before each write, so a change the shell or a
     /// stock app made meanwhile survives.
     fn update(&mut self, f: impl FnOnce(&mut Config)) {
-        let mut fresh = Config::load(self.config.path());
-        f(&mut fresh);
-        if let Err(e) = fresh.save() {
-            eprintln!("gh0st app: saving {}: {e}", fresh.path().display());
+        let path = self.config.path().to_path_buf();
+        match Config::update(&path, f) {
+            Ok(fresh) => self.config = fresh,
+            Err(e) => eprintln!("gh0st app: saving {}: {e}", path.display()),
         }
-        self.config = fresh;
     }
 }
 

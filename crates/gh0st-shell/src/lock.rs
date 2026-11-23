@@ -60,14 +60,19 @@ impl Lock {
         if !self.field {
             return self.rest_key(k, now, password);
         }
-        if k.state == State::Release || self.checking {
+        if k.state == State::Release {
             return Action::None;
         }
-        self.last_key = now;
+        // Esc works during a check too, so a hung checker never holds the
+        // field. The shell drops an answer that comes after.
         if k.is(code::ESC) && k.state == State::Press {
             self.rest();
             return Action::Redraw;
         }
+        if self.checking {
+            return Action::None;
+        }
+        self.last_key = now;
         if waiting {
             return Action::None;
         }
@@ -94,6 +99,11 @@ impl Lock {
                 let mut b = [0u8; 4];
                 let s = ch.encode_utf8(&mut b);
                 if self.buf.len() + s.len() <= MAX_PASSWORD {
+                    // All room up front: a grown buffer would free a copy
+                    // of the password unwiped.
+                    if self.buf.is_empty() {
+                        self.buf.reserve_exact(MAX_PASSWORD);
+                    }
                     self.buf.extend_from_slice(s.as_bytes());
                 }
                 wipe(&mut b);
@@ -198,6 +208,36 @@ mod tests {
         assert_eq!(l.key(&press(code::ENTER), 30, true, false), Action::Redraw);
         assert!(l.field_open());
         assert_eq!(l.typed(), 0, "keys at rest were dropped");
+    }
+
+    fn open(l: &mut Lock) {
+        l.key(&press(code::TAB), 0, true, false);
+        l.key(&press(code::ENTER), 10, true, false);
+    }
+
+    #[test]
+    fn esc_leaves_a_check_that_hangs() {
+        let mut l = Lock::default();
+        open(&mut l);
+        typed(&mut l, "hunter2", 20);
+        assert!(matches!(
+            l.key(&press(code::ENTER), 30, true, false),
+            Action::Check(_)
+        ));
+        assert_eq!(l.key(&press(code::ENTER), 40, true, false), Action::None);
+        assert_eq!(l.key(&press(code::ESC), 50, true, false), Action::Redraw);
+        assert!(!l.checking && !l.field_open());
+    }
+
+    #[test]
+    fn the_password_never_moves_while_typed() {
+        let mut l = Lock::default();
+        open(&mut l);
+        typed(&mut l, "h", 20);
+        let at = l.buf.as_ptr();
+        typed(&mut l, &"x".repeat(MAX_PASSWORD), 30);
+        assert_eq!(l.buf.as_ptr(), at, "a move would free an unwiped copy");
+        assert_eq!(l.buf.len(), MAX_PASSWORD);
     }
 
     #[test]

@@ -491,10 +491,7 @@ pub fn engine_running() -> bool {
 /// Writes `data` to `path` through a hidden file and a rename, so a reader
 /// never sees half of it.
 pub fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    let tmp = path.with_file_name(format!(".{name}.tmp"));
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, path)
+    crate::config::write_atomic(path, data.as_bytes())
 }
 
 /// "34 MB", "820 kB": a size for the user, in decimal units as apt shows.

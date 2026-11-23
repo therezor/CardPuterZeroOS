@@ -22,6 +22,9 @@ pub enum Value {
 pub struct Config {
     path: PathBuf,
     map: BTreeMap<String, Value>,
+    /// The file was there but did not parse. A save moves it aside first, so
+    /// its keys are never lost to a write that holds only ours.
+    broken: bool,
 }
 
 pub fn default_path() -> PathBuf {
@@ -35,14 +38,27 @@ impl Config {
     /// Reads `path`. A missing or broken file gives an empty config: the shell
     /// must start with defaults rather than fail.
     pub fn load(path: &Path) -> Config {
-        let map = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| parse(&s))
-            .unwrap_or_default();
+        let (map, broken) = match std::fs::read(path) {
+            Ok(bytes) => match std::str::from_utf8(&bytes).ok().and_then(parse) {
+                Some(map) => (map, false),
+                None => (BTreeMap::new(), true),
+            },
+            Err(_) => (BTreeMap::new(), false),
+        };
         Config {
             path: path.to_path_buf(),
             map,
+            broken,
         }
+    }
+
+    /// Reads the file again, applies `f` and saves. Every writer goes through
+    /// here, so a key another program wrote meanwhile survives.
+    pub fn update(path: &Path, f: impl FnOnce(&mut Config)) -> std::io::Result<Config> {
+        let mut c = Config::load(path);
+        f(&mut c);
+        c.save()?;
+        Ok(c)
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
@@ -98,26 +114,44 @@ impl Config {
 
     /// Writes atomically: a temp file in the same directory, fsync, rename.
     /// A crash leaves the old file or the new one, never half of either.
-    pub fn save(&self) -> std::io::Result<()> {
+    /// A file that would not parse is kept as `config.json.broken`.
+    pub fn save(&mut self) -> std::io::Result<()> {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir)?;
+        }
+        if self.broken {
+            let aside = self.path.with_extension("json.broken");
+            eprintln!(
+                "gh0st: {} did not parse, kept as {}",
+                self.path.display(),
+                aside.display()
+            );
+            std::fs::rename(&self.path, &aside)?;
+            self.broken = false;
         }
         write_atomic(&self.path, to_json(&self.map).as_bytes())
     }
 }
 
+/// Writes through a temp file named for this process, so two programs saving
+/// at once never write the same temp file, then fsync and rename.
 pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    let tmp = path.with_extension("tmp");
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
     let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(data)?;
-    f.sync_all()?;
+    let r = f.write_all(data).and_then(|_| f.sync_all());
     drop(f);
+    if let Err(e) = r {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     std::fs::rename(&tmp, path)
 }
 
 /// Parses a JSON object into dotted keys. `None` if the text is not an object.
 pub fn parse(text: &str) -> Option<BTreeMap<String, Value>> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut p = Parser {
         s: text.as_bytes(),
         i: 0,
@@ -155,6 +189,10 @@ impl Parser<'_> {
         self.eat(b'{')?;
         if self.peek()? == b'}' {
             self.i += 1;
+            // An empty object stays, so a save writes it back.
+            if !prefix.is_empty() {
+                out.insert(prefix.to_string(), Value::Raw("{}".into()));
+            }
             return Some(());
         }
         loop {
@@ -272,8 +310,10 @@ impl Parser<'_> {
                                 let lo = std::str::from_utf8(self.s.get(self.i + 2..self.i + 6)?)
                                     .ok()?;
                                 let lo = u32::from_str_radix(lo, 16).ok()?;
-                                self.i += 6;
-                                cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
+                                if (0xdc00..0xe000).contains(&lo) {
+                                    self.i += 6;
+                                    cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
+                                }
                             }
                             let ch = char::from_u32(cp).unwrap_or('\u{fffd}');
                             out.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
@@ -408,5 +448,65 @@ mod tests {
         assert!(parse("[1]").is_none());
         let c = Config::load(Path::new("/nonexistent/config.json"));
         assert_eq!(c.get_int("brightness"), None);
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gh0st-config-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("config.json")
+    }
+
+    #[test]
+    fn a_save_over_a_broken_file_keeps_it_aside() {
+        let path = scratch("broken");
+        std::fs::write(&path, "{\"brightness\": 80, \"camera\": ").unwrap();
+        Config::update(&path, |c| c.set_int("volume", 40)).unwrap();
+        let kept = std::fs::read_to_string(path.with_extension("json.broken")).unwrap();
+        assert!(kept.contains("\"brightness\": 80"));
+        assert_eq!(Config::load(&path).get_int("volume"), Some(40));
+        // The next save finds a good file and moves nothing.
+        Config::update(&path, |c| c.set_int("volume", 50)).unwrap();
+        let again = std::fs::read_to_string(path.with_extension("json.broken")).unwrap();
+        assert_eq!(kept, again);
+    }
+
+    #[test]
+    fn update_keeps_a_key_written_since_the_last_load() {
+        let path = scratch("stale");
+        std::fs::write(&path, STOCK).unwrap();
+        Config::update(&path, |c| c.set_str("gh0st.palette", "Nord")).unwrap();
+        let c = Config::update(&path, |c| c.set_str("gh0st.home_layout", "list")).unwrap();
+        assert_eq!(c.get_str("gh0st.palette"), Some("Nord"));
+        assert_eq!(c.get_int("camera.resolution.width"), Some(1280));
+    }
+
+    #[test]
+    fn a_byte_order_mark_and_empty_objects_survive() {
+        let text = "\u{feff}{\"a\": 1, \"plugins\": {}, \"b\": {\"c\": {}}}";
+        let map = parse(text).unwrap();
+        assert_eq!(map["a"], Value::Num("1".into()));
+        let again = parse(&to_json(&map)).unwrap();
+        assert_eq!(map, again);
+        assert!(to_json(&map).contains("\"plugins\": {}"));
+    }
+
+    #[test]
+    fn a_lone_surrogate_is_a_replacement_char() {
+        let map = parse(r#"{"s": "\ud800\u0041", "t": "\ud83d\ude00"}"#).unwrap();
+        assert_eq!(map["s"], Value::Str("\u{fffd}A".into()));
+        assert_eq!(map["t"], Value::Str("\u{1f600}".into()));
+    }
+
+    #[test]
+    fn writers_use_their_own_temp_file() {
+        let path = scratch("tmp");
+        write_atomic(&path, b"{}").unwrap();
+        let left: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("config.json")]);
     }
 }

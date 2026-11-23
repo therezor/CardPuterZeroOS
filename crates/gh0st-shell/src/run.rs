@@ -236,8 +236,13 @@ struct Shell {
     /// What `passwd -S` said; None before it answered or when it failed.
     account: Option<Account>,
     probing: bool,
-    /// `unix_chkpwd` could not run: the lock can't check, so it doesn't ask.
-    checker_missing: bool,
+    /// This lock already asked `passwd -S` a second time.
+    probe_retried: bool,
+    /// What the running `unix_chkpwd` was given, kept for one retry and
+    /// wiped when it answers.
+    check_input: Option<Vec<u8>>,
+    /// This check already ran a second time.
+    check_retried: bool,
     tries: Tries,
     /// Where the try count is kept, so a restarted shell still waits.
     tries_path: Option<PathBuf>,
@@ -412,7 +417,9 @@ impl Shell {
             lock_after_ms: lock_after_of(&config),
             account: None,
             probing: false,
-            checker_missing: false,
+            probe_retried: false,
+            check_input: None,
+            check_retried: false,
             tries: Tries::default(),
             tries_path: None,
             // SAFETY: getuid has no failure mode.
@@ -544,6 +551,11 @@ impl Shell {
                 if self.debug {
                     eprintln!("gh0st shell: account {:?}", self.account);
                 }
+                // One more try before a failed probe means no password.
+                if self.account.is_none() && !self.probe_retried {
+                    self.probe_retried = true;
+                    self.probe_account();
+                }
                 self.dirty = true;
             }
             JobKind::Chkpwd => {
@@ -551,22 +563,33 @@ impl Shell {
                 if self.debug {
                     eprintln!("gh0st shell: password {result:?}");
                 }
+                // Dark or Esc meanwhile rested the field: the answer is stale.
+                let current = self.screen == Screen::Locked && self.lock.checking;
+                if result == password::Check::Broken && current && !self.check_retried {
+                    if let Some(input) = self.check_input.take() {
+                        self.check_retried = true;
+                        self.run_check(input);
+                        return;
+                    }
+                }
+                if let Some(mut input) = self.check_input.take() {
+                    password::wipe(&mut input);
+                }
                 match result {
                     password::Check::Right => self.tries = Tries::default(),
                     // Not a try: it never checked.
                     password::Check::Broken => {
-                        self.tries.fails = self.tries.fails.saturating_sub(1);
-                        self.checker_missing = true;
+                        self.tries.fails = self.tries.fails.saturating_sub(1)
                     }
                     password::Check::Wrong => {}
                 }
                 self.save_tries();
-                // Dark meanwhile rested the field: the answer is stale.
-                if self.screen == Screen::Locked && self.lock.checking {
+                if current {
                     let ok = result != password::Check::Wrong;
                     self.lock.checked(ok, rt::now_ms());
                     if ok {
-                        // Broken lets the user in: a lockout means a reflash.
+                        // Broken twice lets the user in this once: a
+                        // lockout means a reflash. The next lock asks again.
                         self.unlock();
                     }
                 }
@@ -602,6 +625,16 @@ impl Shell {
         if let Some(v) = self.config.get_int("volume") {
             let v = format!("{}%", v.clamp(0, 100));
             child::fire(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &v]);
+        }
+    }
+
+    /// Writes one change to config.json, read again first so keys others
+    /// wrote meanwhile stay.
+    fn save_config(&mut self, f: impl FnOnce(&mut Config)) {
+        let path = config::default_path();
+        match Config::update(&path, f) {
+            Ok(c) => self.config = c,
+            Err(e) => eprintln!("gh0st shell: saving {}: {e}", path.display()),
         }
     }
 
@@ -1347,6 +1380,7 @@ impl Shell {
     fn enter_locked(&mut self, now: u64) {
         self.screen = Screen::Locked;
         self.lock.rest();
+        self.probe_retried = false;
         self.home_menu = None;
         self.switcher.cancel_hold();
         self.tab_down = None;
@@ -1390,16 +1424,15 @@ impl Shell {
     }
 
     fn wants_password(&self, now: u64) -> bool {
-        !self.checker_missing
-            && asks_password(
-                self.lock_secure,
-                self.dark_since,
-                self.lock_after_ms,
-                now,
-                self.lock_password,
-                self.account,
-                self.probing,
-            )
+        asks_password(
+            self.lock_secure,
+            self.dark_since,
+            self.lock_after_ms,
+            now,
+            self.lock_password,
+            self.account,
+            self.probing,
+        )
     }
 
     /// The field is open and wrong tries ran out for now.
@@ -1420,19 +1453,30 @@ impl Shell {
         self.tries.fails += 1;
         self.tries.last = password::boottime();
         self.save_tries();
-        let mut input = password::chkpwd_input(&typed);
+        let input = password::chkpwd_input(&typed);
         password::wipe(&mut typed);
+        self.check_retried = false;
+        self.run_check(input);
+    }
+
+    /// Starts `unix_chkpwd` on `input`, once more if it won't start. If it
+    /// still won't, the user is let in this once: no checker means no way
+    /// in, and a lockout means a reflash.
+    fn run_check(&mut self, mut input: Vec<u8>) {
         let prog = std::env::var("GH0ST_CHKPWD").unwrap_or_else(|_| password::CHKPWD.into());
         let user = self.user.clone();
-        let started = self.start_job_with(JobKind::Chkpwd, &[&prog, &user, "nonull"], Some(&input));
-        password::wipe(&mut input);
-        if !started {
-            // No checker means no way in: let the user in, and stop asking.
-            self.checker_missing = true;
-            self.tries = Tries::default();
-            self.save_tries();
-            self.unlock();
+        if self.start_job_with(JobKind::Chkpwd, &[&prog, &user, "nonull"], Some(&input)) {
+            self.check_input = Some(input);
+            return;
         }
+        if !self.check_retried {
+            self.check_retried = true;
+            return self.run_check(input);
+        }
+        password::wipe(&mut input);
+        self.tries = Tries::default();
+        self.save_tries();
+        self.unlock();
     }
 
     /// Messages from the app in group `pgid`.
@@ -1746,7 +1790,7 @@ impl Shell {
         bar.bluetooth = self.bluetooth;
         let date = rt::date_text();
         let wait = self.tries.wait(password::boottime());
-        let pw_on = self.lock_password && !self.checker_missing;
+        let pw_on = self.lock_password;
         let wait_note = format!("Try again in {wait} s");
         // Only how many: what they say stays behind the lock.
         let waiting = match self.notices.len() {
@@ -1968,9 +2012,7 @@ impl Shell {
                     let raw = bl.step(bl.get().unwrap_or(bl.max), k.code == code::BRIGHTNESSUP);
                     let _ = bl.set(raw);
                     let pct = bl.percent(raw);
-                    self.config = Config::load(&config::default_path());
-                    self.config.set_int("brightness", raw as i64);
-                    let _ = self.config.save();
+                    self.save_config(|c| c.set_int("brightness", raw as i64));
                     self.show_level("sun", "Brightness", pct);
                 }
                 true
@@ -2011,9 +2053,7 @@ impl Shell {
         let arg = format!("{v}%");
         child::fire(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &arg]);
         self.volume = Some(v);
-        self.config = Config::load(&config::default_path());
-        self.config.set_int("volume", v as i64);
-        let _ = self.config.save();
+        self.save_config(|c| c.set_int("volume", v as i64));
     }
 
     fn apply_mute(&mut self, muted: bool) {
@@ -2155,8 +2195,7 @@ impl Shell {
 
     fn toggle_layout(&mut self) {
         let l = self.home.layout().toggled();
-        self.config.set_str("gh0st.home_layout", l.config_name());
-        let _ = self.config.save();
+        self.save_config(|c| c.set_str("gh0st.home_layout", l.config_name()));
         self.home.set_layout(l);
         self.dirty = true;
     }
@@ -2210,21 +2249,19 @@ impl Shell {
     }
 
     fn toggle_pin_of(&mut self, id: &str) {
-        let id = id.to_string();
         let name = self
             .apps
             .iter()
             .find(|a| a.file == id)
             .map(|a| a.entry.name.clone())
             .unwrap_or_default();
-        if let Some(i) = self.pins.iter().position(|p| *p == id) {
-            self.pins.remove(i);
-            self.toast(format!("Unpinned {name}"));
-        } else {
-            self.pins.push(id);
-            self.toast(format!("Pinned {name}"));
+        match apps::toggle_pin(id) {
+            Ok((pins, on)) => {
+                self.pins = pins;
+                self.toast(format!("{} {name}", if on { "Pinned" } else { "Unpinned" }));
+            }
+            Err(e) => self.toast(format!("Couldn't save the pins: {e}")),
         }
-        let _ = apps::save_pins(&self.pins);
         self.rescan();
     }
 

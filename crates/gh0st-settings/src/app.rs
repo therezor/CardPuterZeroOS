@@ -539,16 +539,14 @@ impl Settings {
                 }
             }
             Setting::AppPinned(file) => {
-                let mut pins = apps::load_pins();
                 let name = self.app(file).map(|a| a.name.clone()).unwrap_or_default();
-                if let Some(i) = pins.iter().position(|p| p == file) {
-                    pins.remove(i);
-                    cx.toast(&format!("Unpinned {name}"));
-                } else {
-                    pins.push(file.clone());
-                    cx.toast(&format!("Pinned {name}"));
+                match apps::toggle_pin(file) {
+                    Ok((_, true)) => cx.toast(&format!("Pinned {name}")),
+                    Ok((_, false)) => cx.toast(&format!("Unpinned {name}")),
+                    Err(e) => {
+                        cx.toast_tone(Tone::Critical, &format!("Couldn't save the pins: {e}"))
+                    }
                 }
-                let _ = apps::save_pins(&pins);
             }
             Setting::LockPassword => {
                 let on = self.state.lock_password;
@@ -1741,7 +1739,11 @@ impl Settings {
                     cx.toast(&helper::failure(&out));
                 }
                 self.state.wifi_on = true;
-                self.run(cx, NetJob::SetRadio(true), &["nmcli", "radio", "wifi", "on"]);
+                self.run(
+                    cx,
+                    NetJob::SetRadio(true),
+                    &["nmcli", "radio", "wifi", "on"],
+                );
             }
             NetJob::BtUnblock => {
                 if ok {

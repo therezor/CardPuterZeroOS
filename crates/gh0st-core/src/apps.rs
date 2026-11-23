@@ -119,6 +119,24 @@ pub fn save_pins(pins: &[String]) -> std::io::Result<()> {
     crate::config::write_atomic(&path, (pins.join("\n") + "\n").as_bytes())
 }
 
+/// Pins `file`, or unpins it if pinned, in the file as it is now. Returns the
+/// new pins and whether `file` is pinned.
+pub fn toggle_pin(file: &str) -> std::io::Result<(Vec<String>, bool)> {
+    let mut pins = load_pins();
+    let on = match pins.iter().position(|p| p == file) {
+        Some(i) => {
+            pins.remove(i);
+            false
+        }
+        None => {
+            pins.push(file.to_string());
+            true
+        }
+    };
+    save_pins(&pins)?;
+    Ok((pins, on))
+}
+
 /// Swaps `file` with the next pin in direction `d` that `visible` holds.
 /// Pins nobody sees (an uninstalled app, Settings itself) keep their places.
 pub fn move_pin(pins: &[String], visible: &[String], file: &str, d: i32) -> Option<Vec<String>> {
