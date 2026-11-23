@@ -137,8 +137,9 @@ new one, add its SVG there: an unknown name draws nothing.
 | 26 | home tiles |
 | 36 | messages |
 
-At 16 px and under, an icon sits beside Terminus, so it is drawn as one: a
-1 px stroke moved onto the pixel grid, with hard edges. 14 px is the 12 px
+At 16 px and under, an icon sits beside Terminus, so it is drawn near it: a
+1.2 px stroke moved onto the pixel grid and sharpened, so straight strokes
+are hard and curves keep a thin fringe. 14 px is the 12 px
 icon with a pixel of room each side, since Lucide's grid does not divide
 into 14. 26 and 36 keep smooth edges.
 

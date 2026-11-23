@@ -192,15 +192,16 @@ const fn face(
 
 /// Icon sizes in pixels, with the stroke width each one is drawn at. Lucide is
 /// drawn on a 24 grid with a 2 unit stroke; at 14 px that is a blurry 1.2 px.
-const ICON_SIZES: &[(u32, f32)] = &[(12, 1.0), (14, 1.0), (16, 1.0), (26, 2.0), (36, 2.6)];
+const ICON_SIZES: &[(u32, f32)] = &[(12, 1.2), (14, 1.2), (16, 1.2), (26, 2.0), (36, 2.6)];
 
-/// Icons this size and under sit beside Terminus, so they are drawn as it
-/// is: a 1 px stroke moved onto the pixel grid, then hard edges.
+/// Icons this size and under sit beside Terminus, so they are drawn near
+/// it: a thin stroke moved onto the pixel grid, then sharpened.
 const PIXEL_ICON_MAX: u32 = 16;
 
-/// Coverage at or over this is ink in a pixel icon. Under a half, so
-/// curves keep their steps joined.
-const PIXEL_ICON_INK: u8 = 100;
+/// Coverage under this goes to nothing and over one minus it to full,
+/// then an S-curve: straight strokes keep a hard core, curves a thin
+/// fringe.
+const PIXEL_ICON_SHARPEN: f32 = 0.15;
 
 fn main() {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../assets");
@@ -598,8 +599,14 @@ fn bake_icons(dir: &Path, out: &Path) {
                     .map(|(dx, dy)| render(dx, dy))
                     .min_by_key(|a| grey(a))
                     .unwrap();
+                let t = PIXEL_ICON_SHARPEN;
                 best.iter()
-                    .map(|&v| if v >= PIXEL_ICON_INK { 255 } else { 0 })
+                    .map(|&v| {
+                        let c = v as f32 / 255.0;
+                        let c = ((c - t) / (1.0 - 2.0 * t)).clamp(0.0, 1.0);
+                        let c = c * c * (3.0 - 2.0 * c);
+                        (c * 255.0).round() as u8
+                    })
                     .collect()
             } else {
                 render(0.0, 0.0)
