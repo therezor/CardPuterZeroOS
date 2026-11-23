@@ -1496,6 +1496,12 @@ impl Shell {
                     _ => {}
                 }
             }
+            // The app is gone but its group may live on: stop polling a
+            // socket that will only ever say so.
+            if t.link.as_ref().is_some_and(|l| l.closed()) {
+                t.link = None;
+                t.awake = false;
+            }
         }
         // The full timeout again from here, not at once.
         if slept {

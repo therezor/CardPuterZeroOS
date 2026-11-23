@@ -164,6 +164,10 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result
                     _ => {}
                 }
             }
+            // The shell is gone: run on alone rather than spin on its socket.
+            if rt_.link.as_ref().is_some_and(|l| l.closed()) {
+                rt_.link = None;
+            }
         }
         raw.clear();
         match &mut input {

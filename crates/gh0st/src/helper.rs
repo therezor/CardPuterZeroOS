@@ -900,7 +900,11 @@ fn edge_sources(stable: &str) -> Option<String> {
         if line.trim_start().starts_with('#') {
             continue;
         }
-        if line.starts_with("Suites:") {
+        // deb822 field names ignore case.
+        if line
+            .get(..7)
+            .is_some_and(|f| f.eq_ignore_ascii_case("suites:"))
+        {
             found = true;
             out.push_str("Suites: edge\n");
         } else {
@@ -1176,6 +1180,8 @@ mod tests {
         assert!(edge.contains("URIs: https://x/apt\nSuites: edge\nComponents: main\n"));
         assert!(!edge.contains("stable"));
         assert_eq!(edge_sources("Types: deb\n"), None);
+        let lower = edge_sources("Types: deb\nsuites: stable\n").unwrap();
+        assert!(lower.contains("Suites: edge\n") && !lower.contains("stable"));
     }
 
     #[test]

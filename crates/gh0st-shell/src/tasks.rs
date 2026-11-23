@@ -10,9 +10,12 @@ use gh0st_core::link::Link;
 use gh0st_core::usage::AppUsage;
 use gh0st_ui::Canvas;
 
-/// How often to look for a leftover group member once the leader has gone:
-/// such a process may not be our child, so its exit sends no SIGCHLD.
+/// How often to look for a leftover group member once the leader has gone,
+/// where the shell can't be the subreaper. On Linux it is: the last member
+/// of a group is always our child by the time it exits, so its SIGCHLD
+/// wakes the sweep and nothing polls.
 pub const GROUP_RECHECK_MS: u64 = 200;
+const RECHECK: bool = !cfg!(target_os = "linux");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -177,11 +180,8 @@ impl Tasks {
 
     /// When `sweep` next has work that no signal will announce.
     pub fn next_at(&self, now: u64) -> Option<u64> {
-        let recheck = self
-            .list
-            .iter()
-            .any(|t| t.leader_done)
-            .then_some(now + GROUP_RECHECK_MS);
+        let recheck =
+            (RECHECK && self.list.iter().any(|t| t.leader_done)).then_some(now + GROUP_RECHECK_MS);
         let kill = self.list.iter().find_map(|t| match t.state {
             State::Closing {
                 since,
@@ -257,7 +257,8 @@ mod tests {
         t.add(task("b", 999_992, 9));
         assert!(t.sweep(0).is_empty(), "leaders still running");
         t.exited(999_991);
-        assert_eq!(t.next_at(100), Some(100 + GROUP_RECHECK_MS));
+        let recheck = RECHECK.then_some(100 + GROUP_RECHECK_MS);
+        assert_eq!(t.next_at(100), recheck, "Linux waits for SIGCHLD");
         let gone = t.sweep(0);
         assert_eq!(gone.len(), 1);
         assert_eq!(gone[0].id, "a");

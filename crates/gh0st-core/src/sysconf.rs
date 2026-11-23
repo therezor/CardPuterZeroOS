@@ -504,6 +504,23 @@ pub const NM_CONF_DIRS: [&str; 3] = [
 ];
 pub const NM_MAIN_CONF: &str = "/etc/NetworkManager/NetworkManager.conf";
 
+/// The conf.d files NetworkManager reads, in its order: by file name across
+/// all of [`NM_CONF_DIRS`], a later directory's file shadowing one of the
+/// same name (NetworkManager.conf(5)). `files` holds each directory's `.conf`
+/// names, in `NM_CONF_DIRS` order.
+pub fn nm_conf_order(files: &[Vec<String>]) -> Vec<std::path::PathBuf> {
+    let mut by_name: std::collections::BTreeMap<&str, usize> = Default::default();
+    for (dir, names) in files.iter().enumerate() {
+        for n in names {
+            by_name.insert(n, dir);
+        }
+    }
+    by_name
+        .into_iter()
+        .filter_map(|(n, dir)| Some(std::path::Path::new(NM_CONF_DIRS.get(dir)?).join(n)))
+        .collect()
+}
+
 /// The privacy settings NetworkManager runs with, from its config files'
 /// text in read order. Unset ones take NetworkManager's own defaults: the
 /// device's address, a random one while scanning, the name sent, no IPv6
@@ -835,6 +852,25 @@ mod tests {
             assert!(!valid_user_name(bad), "{bad}");
         }
     }
+    #[test]
+    fn nm_conf_files_sort_by_name_and_etc_shadows() {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let order = nm_conf_order(&[
+            names(&["20-gh0st.conf", "90-mac.conf"]),
+            names(&[]),
+            names(&["10-user.conf", "90-mac.conf"]),
+        ]);
+        let shown: Vec<String> = order.iter().map(|p| p.display().to_string()).collect();
+        assert_eq!(
+            shown,
+            [
+                "/etc/NetworkManager/conf.d/10-user.conf",
+                "/usr/lib/NetworkManager/conf.d/20-gh0st.conf",
+                "/etc/NetworkManager/conf.d/90-mac.conf",
+            ]
+        );
+    }
+
     #[test]
     fn nm_privacy_reads_the_last_value_and_defaults_the_rest() {
         let image = "[device]\nwifi.scan-rand-mac-address=yes\n\n[connection]\n\

@@ -214,7 +214,9 @@ says only how many there are.
 - An app off the link, or one that doesn't answer, is guarded as before.
   While the shell is in front it gets no keys (the shell holds the grab),
   and the shell repaints over anything it draws, keeping its pixels for its
-  return. While another app is in front it reads that app's keys and its
+  return. Nothing tells the shell when another process writes the panel, so
+  it looks every 500 ms while such an app runs and the screen is lit: the
+  one check that polls. An app on the link never needs it. While another app is in front it reads that app's keys and its
   drawing shows over it.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
   and leaves them in front. One keeps the screen on too: the shell can't stop

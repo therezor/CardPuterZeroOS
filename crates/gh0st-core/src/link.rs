@@ -12,6 +12,9 @@ pub const MAX: usize = 512;
 
 pub struct Link {
     fd: OwnedFd,
+    /// The other end hung up. Its fd then polls readable for good, so the
+    /// owner drops the link rather than spin.
+    closed: std::cell::Cell<bool>,
 }
 
 fn nonblock_cloexec(fd: RawFd) -> io::Result<()> {
@@ -34,7 +37,7 @@ impl Link {
                 nonblock_cloexec(a.as_raw_fd())?;
                 // SAFETY: fcntl on an fd we own.
                 unsafe { libc::fcntl(b.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
-                return Ok((Link { fd: a }, b));
+                return Ok((Link::new(a), b));
             }
         }
         Err(io::Error::last_os_error())
@@ -52,9 +55,19 @@ impl Link {
         }
         nonblock_cloexec(n).ok()?;
         // SAFETY: the shell gave us this fd and nothing else owns it.
-        Some(Link {
-            fd: unsafe { OwnedFd::from_raw_fd(n) },
-        })
+        Some(Link::new(unsafe { OwnedFd::from_raw_fd(n) }))
+    }
+
+    fn new(fd: OwnedFd) -> Link {
+        Link {
+            fd,
+            closed: std::cell::Cell::new(false),
+        }
+    }
+
+    /// True once `recv` has seen the other end hang up.
+    pub fn closed(&self) -> bool {
+        self.closed.get()
     }
 
     pub fn fd(&self) -> RawFd {
@@ -74,7 +87,8 @@ impl Link {
         unsafe { libc::send(self.fd(), bytes.as_ptr().cast(), bytes.len(), flags) >= 0 }
     }
 
-    /// The next message, split into fields. None when nothing waits.
+    /// The next message, split into fields. None when nothing waits, or
+    /// when the other end is gone: [`closed`](Link::closed) tells which.
     pub fn recv(&self) -> Option<Vec<String>> {
         let mut buf = [0u8; MAX];
         // SAFETY: receives into a stack buffer of its own length.
@@ -86,7 +100,16 @@ impl Link {
                 libc::MSG_DONTWAIT,
             )
         };
-        if n <= 0 {
+        if n < 0 {
+            let e = io::Error::last_os_error().raw_os_error();
+            if !matches!(e, Some(libc::EAGAIN | libc::EINTR)) {
+                self.closed.set(true);
+            }
+            return None;
+        }
+        // We never send an empty message, so none is the end of the stream.
+        if n == 0 {
+            self.closed.set(true);
             return None;
         }
         let s = String::from_utf8_lossy(&buf[..n as usize]);
@@ -120,7 +143,7 @@ mod tests {
     fn messages_keep_their_bounds_and_fields() {
         let (shell, app) = Link::pair().unwrap();
         nonblock_cloexec(app.as_raw_fd()).unwrap();
-        let app = Link { fd: app };
+        let app = Link::new(app);
         assert!(shell.send(&["pause"]));
         assert!(shell.send(&["toast", "Copied 3 lines"]));
         assert_eq!(app.recv().unwrap(), ["pause"]);
@@ -129,5 +152,15 @@ mod tests {
         assert!(app.send(&["paused"]));
         assert!(shell.wait_for("paused", 100));
         assert!(!shell.wait_for("paused", 10));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_hang_up_is_seen() {
+        let (shell, app) = Link::pair().unwrap();
+        assert!(shell.recv().is_none() && !shell.closed(), "nothing yet");
+        drop(app);
+        assert!(shell.recv().is_none());
+        assert!(shell.closed());
     }
 }

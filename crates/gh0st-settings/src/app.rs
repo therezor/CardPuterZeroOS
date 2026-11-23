@@ -2220,17 +2220,19 @@ fn nm_files() -> Vec<String> {
     let mut out: Vec<String> = std::fs::read_to_string(sysconf::NM_MAIN_CONF)
         .into_iter()
         .collect();
-    for dir in sysconf::NM_CONF_DIRS {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            continue;
-        };
-        let mut files: Vec<_> = rd
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "conf"))
-            .collect();
-        files.sort();
-        out.extend(files.iter().filter_map(|f| std::fs::read_to_string(f).ok()));
-    }
+    let names: Vec<Vec<String>> = sysconf::NM_CONF_DIRS
+        .iter()
+        .map(|dir| {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter(|n| n.ends_with(".conf"))
+                .collect()
+        })
+        .collect();
+    let files = sysconf::nm_conf_order(&names);
+    out.extend(files.iter().filter_map(|f| std::fs::read_to_string(f).ok()));
     out
 }
 

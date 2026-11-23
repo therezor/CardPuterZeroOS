@@ -342,6 +342,9 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
         if !retried && apt::retryable(&out) {
             retried = true;
             refresh(st, rep)?;
+            // The fresh lists may want more room, or a new kernel.
+            power_ok(st.kernel())?;
+            space_ok(st)?;
             continue;
         }
         return Err(apt::failure(&out));
@@ -353,7 +356,12 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
     st.installed = now();
     st.installed_count = count;
     st.restart = st.restart.max(needs);
-    list_upgrades(st)?;
+    // The install worked; a list that fails now is only stale until the
+    // next check, not an error.
+    if let Err((_, why)) = list_upgrades(st) {
+        eprintln!("gh0st update: listing after the install: {why}");
+        st.packages.clear();
+    }
     Ok(())
 }
 
