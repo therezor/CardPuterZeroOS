@@ -130,6 +130,23 @@ On the release image after setup, idle on home, Wi-Fi up, read over SSH.
   open: unicam, ISP, codec, legacy V4L2, MMAL and `vc_sm_cma`.
 - No swap in use. Keys were made by the first SSH start in under a second.
 
+## M5's Store, read 2026-11-23
+
+`gh0st-m5-appstore` 0.6.111+gh0st1 on the release image, opened from home
+over Ethernet, read over SSH with `scripts/measure.sh` and `/proc`. The
+baseline our Store is measured against (docs/store.md).
+
+- **Open to list: about 100 s.** "Loading Artwork" then "Preparing Apps",
+  62.5 s of CPU on the way. One app shows at a time.
+- **Each open downloads 8.0 MB** (the interface's receive counter): the
+  catalog again and all 179 icons. Its cache after one open is 11 MB: icons
+  6.7 MB, the catalog 1.6 MB, kept debs 2.0 MB.
+- **Memory on the list: 57 MB PSS**, 42 MB of it private anonymous, 65 MB
+  RSS, 8 threads.
+- **It never rests.** On the list with no key pressed, one thread runs a
+  whole core: 5.1 s of CPU in every 5 s, about 600 context switches a
+  second. Dark, the shell pauses it and the CPU stops.
+
 ## The stock system, read 2026-11-20
 
 Read without changing anything, on the stock M5 image with gh0st installed.

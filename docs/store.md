@@ -7,7 +7,10 @@ AppStore, from the same packages. It replaces M5's AppStore binary
 ## What was wrong with M5's
 
 Read from its source (`CardputerZero/Store` at 1ceeaed7, the commit
-launcher-v0.6.111 pins):
+launcher-v0.6.111 pins) and measured on the device (`hardware-facts.md`):
+
+- It takes about 100 s from open to the list, and holds 57 MB PSS there.
+- On screen and idle, one thread spins a whole CPU core.
 
 - **On every open** it wipes its cache and downloads the 754 KB catalog
   again, uncompressed and with no ETag. Then it fetches all 179 icons, 6.6 MB
