@@ -386,7 +386,6 @@ impl Switcher {
             };
             widgets::card_content(c, t, r, &card, index == self.selected);
         }
-        widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         self.meters(c, t);
         // 8 closes the app in front of you, at once; 4 held closes them

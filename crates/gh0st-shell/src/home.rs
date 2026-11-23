@@ -522,9 +522,6 @@ impl Home {
             let item = self.item(t, index, false);
             widgets::tile_content(c, t, r, &item, index == self.selected);
         }
-        if let Some(f) = frame {
-            widgets::selection_ring(c, t, f);
-        }
     }
 
     fn draw_grid(&self, c: &mut Canvas, t: &Theme, now: u64) {
@@ -590,7 +587,6 @@ impl Home {
             let item = self.item(t, index as usize, true);
             widgets::app_row_content(c, t, r, &item, index as usize == self.selected);
         }
-        widgets::selection_ring(c, t, frame);
         c.set_clip(old);
         let track = self.geo.list;
         widgets::scrollbar(c, t, track, self.top, self.geo.list_rows, self.shown.len());

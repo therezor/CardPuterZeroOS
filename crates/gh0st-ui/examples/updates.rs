@@ -878,7 +878,6 @@ fn n_switcher(t: &Theme) -> Canvas {
         };
         if i == 1 {
             widgets::selection(&mut c, t, r);
-            widgets::selection_ring(&mut c, t, r);
         }
         widgets::card_content(&mut c, t, r, &cd, i == 1);
     }

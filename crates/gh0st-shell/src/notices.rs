@@ -180,9 +180,6 @@ fn draw_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, now_secs: u64, select
     };
     t.f.small
         .draw_elided(c, x, r.y + 29, body, r.right() - 8 - x, t.c.muted);
-    if selected {
-        widgets::selection_ring(c, t, r);
-    }
 }
 
 #[cfg(test)]

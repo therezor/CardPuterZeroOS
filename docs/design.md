@@ -194,22 +194,21 @@ and 7.
 or Pick chip. Enter opens or does the main thing; Esc goes back. Where that
 needs saying, a dialog or message names them in key pills.
 
-**What a chip is.** A pill over its key, 48 px wide and 16 tall, two rows
-above the screen's edge: a little short of the key, so neighbours read
-apart. It is a lit pane, with a bright row along its top. The word is in
-Chip style, Terminus 12 bold, so seven letters fit. A chip with a word
-shows the word alone; a chip with no word, the menu's ≡, shows its icon.
+**What a chip is.** A word over its key, with an 18 px bar under it at the
+screen's edge (`Metrics::chip_bar_w`). No fill behind it: the picture or
+the page shows through. The word is in Chip style, Terminus 12 bold, so
+seven letters fit in the key's 48 px. A chip with a word shows the word
+alone; a chip with no word, the menu's ≡, shows its icon.
 
 | State | Looks | For |
 |---|---|---|
-| normal | a lit pane, plain word | most actions |
-| on | an accent wash, accent word | a toggle that is on: Flash |
-| danger | the word in `critical` | Forget, Stop, Close |
-| danger, held | fills `critical` left to right | Erase, close all apps: hold it 0.7 s |
-| armed | a red wash, red word | pressed once, press again |
-| main | filled `accent`, `accent_fg` word | an action that is the page's main one but not on Enter |
-| disabled | faint word | can't be used now; the key does nothing |
-| pressed | sinks a row, loses its light | while its key is down |
+| normal | plain word, a muted bar | most actions |
+| main, on | accent word, an accent bar | the page's main action, or a toggle that is on |
+| danger | red word, a red bar | Forget, Stop, Close |
+| danger, held | the bar runs the chip's width and fills red | Erase, close all apps: hold it 0.7 s |
+| armed | red word, a thicker red bar | pressed once, press again |
+| disabled | faint word, a `border` bar | can't be used now; the key does nothing |
+| pressed | the bar thickens, the word drops a row | while its key is down |
 | busy | the word and "…", muted | working: no second press |
 
 Rows change the chips. On a choice row, 5 and 7 read Prev and Next and z and
@@ -264,9 +263,9 @@ Letters are lowercase; an uppercase letter means Shift and that letter.
 
 ## Lists and rows
 
-The selected row is a lit `surface`: lighter at its top, with a bright
-row along its edge. A settings row's icon sits on a lit square of its own
-tint, dark or light ink as reads best, and an icon keeps its tint on every
+The selected row is `surface` standing on a 1 px foot. A settings row's
+icon sits on a raised square of its own tint, dark or light ink as reads
+best, and an icon keeps its tint on every
 page (`Palette::icon_tint`). What a row shows on its right says what it is:
 
 | Right side | Means |
@@ -298,10 +297,12 @@ segment moves along it, and only while it is on screen.
 
 ## Surfaces
 
-Depth comes from light, not lines. A surface that stands up (a chip, a
-selected row, a badge, a card) is lit from above: `theme::lit` at its top,
-its colour or `theme::shade` at its foot, and a `theme::rim` row along its
-top edge. A card or toast also has a soft shadow around it. Corners are
+Depth comes from a ledge, not lines or shadows. A thing that stands up is
+flat colour on a darker foot (`theme::foot`): 2 px under an app badge, a
+selected tile or card, a dialog and a toast (`Metrics::lift`); 1 px under
+a settings row's icon, a selected row, a key pill and a tag
+(`Metrics::chip_lift`). What is selected stands up off the page; nothing
+draws a ring around it. Corners are
 round and smoothed: 4 px on rows and chips, 5 on app badges, 6 on tiles
 and panes, 7 on cards, 2 on key pills. Every effect is a flat fill, a fill
 that steps from one colour to another, or a picture baked once: nothing

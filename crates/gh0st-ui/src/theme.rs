@@ -115,6 +115,10 @@ pub struct Metrics {
     pub radius_small: i32,
     /// An app badge, and a dialog or toast card.
     pub badge_r: i32,
+    /// How far a badge stands up off the page: the depth of its foot. A
+    /// chip's foot and a row icon's are `chip_lift`.
+    pub lift: i32,
+    pub chip_lift: i32,
     pub card_r: i32,
     /// The tinted square behind a settings row's icon.
     pub row_icon: i32,
@@ -154,6 +158,8 @@ pub struct Metrics {
     pub chip_r: i32,
     pub chip_pad: i32,
     pub chip_foot: i32,
+    /// The short bar under a chip's word.
+    pub chip_bar_w: i32,
     /// How far a pill stops short of its key's edges, so neighbouring
     /// chips read apart.
     pub chip_inset: i32,
@@ -547,6 +553,8 @@ pub const CARDPUTER: Metrics = Metrics {
     radius_large: 6,
     radius_small: 2,
     badge_r: 5,
+    lift: 2,
+    chip_lift: 1,
     card_r: 7,
     row_icon: 20,
     cols: 4,
@@ -571,6 +579,7 @@ pub const CARDPUTER: Metrics = Metrics {
     chip_r: 4,
     chip_pad: 7,
     chip_foot: 2,
+    chip_bar_w: 18,
     chip_inset: 4,
     pill_h: 15,
     toast_h: 20,
@@ -635,9 +644,12 @@ pub fn shade(c: Color) -> Color {
     mix(c, GLOSS_SHADE, 50)
 }
 
-/// The bright row along a lit fill's top edge.
-pub fn rim(c: Color) -> Color {
-    mix(c, GLOSS_LIGHT, 70)
+/// How far the foot under a raised thing is darkened.
+pub const FOOT: u8 = 80;
+
+/// The edge under a raised thing that makes it stand up: a chip, a badge.
+pub fn foot(c: Color) -> Color {
+    mix(c, GLOSS_SHADE, FOOT)
 }
 
 /// Ink on a badge or icon square of `tint`: dark or light, whichever reads
