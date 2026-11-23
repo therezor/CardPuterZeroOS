@@ -91,7 +91,7 @@ ROOT_READS = (
 )
 TMPFILES = ("usr/lib/tmpfiles.d/", "etc/tmpfiles.d/")
 # The last column dates the facts: rows from an older rule are checked again.
-FACTS = "2"
+FACTS = "3"
 CHECKED_COLS = [
     "sha256", "package", "version", "arch", "depends", "provides",
     "replaces", "conflicts", "breaks", "scripts", "paths", "service", "desktop",
@@ -317,7 +317,7 @@ def facts(deb, sha256):
     data = members(deb, "fsys", lambda n: rel(n).startswith(TMPFILES))
     pkg = f.get("Package", "")
     # Its own config is the app's business.
-    own = (f"etc/{pkg}/", f"etc/default/{pkg}")
+    own = (f"etc/{pkg}/", f"etc/default/{pkg}", f"etc/{pkg}.conf")
     paths = service = False
     desktop = ""
     for name, is_dir, mode, body in data:
