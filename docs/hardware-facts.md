@@ -147,6 +147,22 @@ baseline our Store is measured against (docs/store.md).
   whole core: 5.1 s of CPU in every 5 s, about 600 context switches a
   second. Dark, the shell pauses it and the CPU stops.
 
+## Our Store, read 2026-11-23
+
+`gh0st-store` built for the device, run as the user with `--sim` (frames to
+PNG, no panel) against CI's catalog of 163 apps, keys from a script: scroll,
+open an app, step the filters, search. Read from `/proc` over SSH. Not yet
+through the shell on the panel: that needs the engine deployed as root.
+
+- **Memory: 2.3 MB PSS**, 3.0 MB at its peak, one thread. The binary ran
+  from tmpfs, so its 1.3 MB of pages count as shared memory; 1.0 MB is
+  anonymous.
+- **At rest: nothing.** 0 CPU ticks in 10 s, 0 wakeups in 5 s.
+- **What a refresh downloads**, from the dry run of CI's mirror: the
+  catalog, 74 KB (23 KB compressed); the descriptions, 257 KB (108 KB), and
+  the icon pack, 532 KB, only when their hash changes. Opening the Store
+  downloads nothing.
+
 ## The stock system, read 2026-11-20
 
 Read without changing anything, on the stock M5 image with gh0st installed.
