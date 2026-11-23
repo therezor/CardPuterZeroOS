@@ -193,17 +193,22 @@ impl Store {
     fn load_engine(&mut self) -> bool {
         let before = self.state.clone();
         self.state = State::load();
-        self.progress = if update::engine_running() {
+        let running = update::engine_running();
+        self.progress = if running {
             std::fs::read_to_string(store::progress_path())
                 .ok()
                 .and_then(|t| Progress::parse(&t))
         } else {
             None
         };
-        if self.progress.is_some() || (self.state != before && !update::engine_running()) {
+        // Every run writes the state once, as it ends: that, not the
+        // progress file going, says it is over.
+        let changed = self.state != before;
+        if self.progress.is_some() || changed {
             self.starting = None;
         }
-        let busy = self.engine_busy();
+        let between = self.was_busy && running && !changed;
+        let busy = self.engine_busy() || between;
         let ended = self.was_busy && !busy;
         self.was_busy = busy;
         ended
