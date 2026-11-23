@@ -326,7 +326,10 @@ and a frost. A frame copies them and never blends a picture.
 - **The frost** is the picture blurred and mostly `surface`. Panes show
   it: chips, the selected tile, a switcher card, the lock's note.
 
-The bake dithers to RGB565, so a soft gradient doesn't band.
+The bake dithers to RGB565, so a soft gradient doesn't band. It takes
+about 100 ms on the device, so the shell keeps the result in
+`~/.cache/gh0st/wallpaper.bin`, named by the picture and the palette; a
+start reads it back in under 3 ms.
 
 Settings > Appearance > Wallpaper steps through them. Your picture lists
 the PNGs in ~/Pictures; Enter on one makes it the wallpaper.

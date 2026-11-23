@@ -344,6 +344,14 @@ fn home_dir() -> PathBuf {
         .unwrap_or_else(|| "/".into())
 }
 
+/// Where the baked wallpaper is kept between starts.
+fn wall_cache() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+    Some(base.join("gh0st").join("wallpaper.bin"))
+}
+
 impl Shell {
     fn start(t0: u64, sim: Option<PathBuf>) -> Result<Shell, String> {
         child::become_subreaper();
@@ -684,13 +692,26 @@ impl Shell {
         }
         let m = self.t.m;
         let (w, h) = (m.width as usize, m.height as usize);
-        let pic = if setting == wallpaper::OWN {
-            wallpaper::load(&file, w, h)
-        } else {
-            wallpaper::builtin(&setting, &self.t.c, w, h)
-        };
-        self.wall =
-            pic.map(|p| wallpaper::bake(&p, &self.t.c, m.bar_h as usize, m.hint_h as usize));
+        // A bake costs about 150 ms on the device; a cached one is a read.
+        let key = format!("{setting} {} {age:?}", self.t.c.name);
+        let cache = wall_cache();
+        let cached = cache
+            .as_deref()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|b| wallpaper::from_cache(&b, &key, w * h));
+        self.wall = cached.or_else(|| {
+            let pic = if setting == wallpaper::OWN {
+                wallpaper::load(&file, w, h)
+            } else {
+                wallpaper::builtin(&setting, &self.t.c, w, h)
+            }?;
+            let b = wallpaper::bake(&pic, &self.t.c, m.bar_h as usize, m.hint_h as usize);
+            if let Some(p) = &cache {
+                let _ = p.parent().map(std::fs::create_dir_all);
+                let _ = config::write_atomic(p, &wallpaper::cache_bytes(&b, &key));
+            }
+            Some(b)
+        });
         self.wall_from = Some(from);
         self.full_flush = true;
     }

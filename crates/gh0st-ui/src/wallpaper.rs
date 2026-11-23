@@ -73,20 +73,32 @@ pub fn builtin(name: &str, p: &Palette, w: usize, h: usize) -> Option<Picture> {
 fn aurora(p: &Palette, w: usize, h: usize) -> Vec<[f32; 3]> {
     let deep = lerp3(f3(p.bg), [0.0; 3], 0.35);
     let cols = [f3(p.accent), f3(p.tints[1]), f3(p.tints[4])];
-    let mut v = Vec::with_capacity(w * h);
-    for y in 0..h {
-        for x in 0..w {
-            let (fx, fy) = (x as f32 / w as f32, y as f32 / h as f32);
-            let mut c = lerp3(deep, f3(p.bg), fy);
-            for (i, col) in cols.iter().enumerate() {
+    // Each ribbon's centre and width change only across: work them out
+    // once a column.
+    let bands: Vec<[(f32, f32); 3]> = (0..w)
+        .map(|x| {
+            let fx = x as f32 / w as f32;
+            std::array::from_fn(|i| {
                 let k = i as f32;
                 let centre = 0.30
                     + 0.16 * k
                     + 0.10 * (fx * 5.0 + k * 1.7).sin()
                     + 0.05 * (fx * 11.0 - k).sin();
-                let width = 0.10 + 0.05 * ((fx * 3.0 + k * 2.3).sin() + 1.0);
-                let a = (1.0 - smooth((fy - centre).abs() / width)) * (0.55 - 0.12 * k);
-                c = lerp3(c, *col, (a * (0.55 + 0.45 * (1.0 - fx))).clamp(0.0, 1.0));
+                (centre, 0.10 + 0.05 * ((fx * 3.0 + k * 2.3).sin() + 1.0))
+            })
+        })
+        .collect();
+    let mut v = Vec::with_capacity(w * h);
+    for y in 0..h {
+        let fy = y as f32 / h as f32;
+        let ground = lerp3(deep, f3(p.bg), fy);
+        for (x, band) in bands.iter().enumerate() {
+            let fade = 0.55 + 0.45 * (1.0 - x as f32 / w as f32);
+            let mut c = ground;
+            for (i, col) in cols.iter().enumerate() {
+                let (centre, width) = band[i];
+                let a = (1.0 - smooth((fy - centre).abs() / width)) * (0.55 - 0.12 * i as f32);
+                c = lerp3(c, *col, (a * fade).clamp(0.0, 1.0));
             }
             v.push(c);
         }
@@ -426,6 +438,46 @@ pub fn bake(pic: &Picture, p: &Palette, bar: usize, foot: usize) -> Baked {
     }
 }
 
+/// Bumped when the bake changes, so an old cache is never shown.
+const CACHE_VERSION: u32 = 1;
+
+/// The baked buffers as bytes, behind a line naming what they were baked
+/// from, to keep in the user's cache: a start then skips the bake.
+pub fn cache_bytes(b: &Baked, key: &str) -> Vec<u8> {
+    let mut out = format!("gh0st-wallpaper {CACHE_VERSION} {key}\n").into_bytes();
+    for buf in [&b.home.back, &b.lock.back, &*b.home.frost] {
+        out.extend(buf.iter().flat_map(|c| c.to_le_bytes()));
+    }
+    out
+}
+
+/// The buffers back from a cache written for `key` and `n` pixels, or
+/// none when it was written for anything else.
+pub fn from_cache(bytes: &[u8], key: &str, n: usize) -> Option<Baked> {
+    let head = format!("gh0st-wallpaper {CACHE_VERSION} {key}\n");
+    let body = bytes.strip_prefix(head.as_bytes())?;
+    if body.len() != 3 * 2 * n {
+        return None;
+    }
+    let buf = |i: usize| -> Vec<Color> {
+        body[i * 2 * n..(i + 1) * 2 * n]
+            .chunks_exact(2)
+            .map(|p| Color::from_le_bytes([p[0], p[1]]))
+            .collect()
+    };
+    let frost = Rc::new(buf(2));
+    Some(Baked {
+        home: Rc::new(Backdrop {
+            back: buf(0),
+            frost: frost.clone(),
+        }),
+        lock: Rc::new(Backdrop {
+            back: buf(1),
+            frost,
+        }),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +561,20 @@ mod tests {
                 reads(&b.home.frost, p.muted, MUTED_RATIO, "muted on frost");
             }
         }
+    }
+
+    #[test]
+    fn a_cache_comes_back_only_for_its_own_key() {
+        let pic = builtin("aurora", &MINT, 32, 17).unwrap();
+        let b = bake(&pic, &MINT, 4, 4);
+        let bytes = cache_bytes(&b, "aurora Mint");
+        let back = from_cache(&bytes, "aurora Mint", 32 * 17).unwrap();
+        assert_eq!(back.home.back, b.home.back);
+        assert_eq!(back.lock.back, b.lock.back);
+        assert_eq!(*back.lock.frost, *b.home.frost);
+        assert!(from_cache(&bytes, "aurora Nord", 32 * 17).is_none());
+        assert!(from_cache(&bytes, "aurora Mint", 33 * 17).is_none());
+        assert!(from_cache(&bytes[..bytes.len() - 1], "aurora Mint", 32 * 17).is_none());
     }
 
     #[test]
