@@ -332,7 +332,7 @@ impl<'a> Ui<'a> {
 }
 
 /// Greedy word wrap. A word wider than the line is left to elide.
-fn wrap(f: Font, s: &str, w: i32) -> Vec<String> {
+pub(crate) fn wrap(f: Font, s: &str, w: i32) -> Vec<String> {
     let mut lines = Vec::new();
     for para in s.split('\n') {
         let mut line = String::new();

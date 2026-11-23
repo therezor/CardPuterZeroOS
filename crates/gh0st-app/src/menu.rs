@@ -321,6 +321,7 @@ impl Menu {
 /// A line of the Keys screen.
 enum Entry {
     Head(&'static str),
+    Text(String),
     Key {
         keys: String,
         label: String,
@@ -356,10 +357,11 @@ const EVERYWHERE: &[(&str, &str)] = &[
 ];
 
 impl Sheet {
-    /// `under`: the chips on screen, by key, then the menu. `keys`: what Esc
-    /// and Enter do here. Then the page's commands, then the keys that
-    /// work everywhere.
+    /// `about`: the page's own words, wrapped. `under`: the chips on screen,
+    /// by key, then the menu. `keys`: what Esc and Enter do here. Then the
+    /// page's commands, then the keys that work everywhere.
     pub fn new<'a>(
+        about: Vec<String>,
         under: Vec<(String, String)>,
         keys: Vec<(String, String)>,
         cmds: impl Iterator<Item = &'a Command>,
@@ -374,6 +376,10 @@ impl Sheet {
             }
         }
         let mut lines = Vec::new();
+        if about.iter().any(|l| !l.is_empty()) {
+            lines.push(Entry::Head("About"));
+            lines.extend(about.into_iter().map(Entry::Text));
+        }
         for (head, list) in [("Under the screen", under), ("Keys", keys)] {
             if list.is_empty() {
                 continue;
@@ -455,7 +461,7 @@ impl Sheet {
             .iter()
             .filter_map(|l| match l {
                 Entry::Key { keys, .. } => Some(widgets::pills_w(t, keys)),
-                Entry::Head(_) => None,
+                _ => None,
             })
             .max()
             .unwrap_or(0)
@@ -464,6 +470,10 @@ impl Sheet {
             let r = Rect::new(x, top + i as i32 * lh, w, lh);
             match line {
                 Entry::Head(s) => widgets::section(c, t, r, s),
+                Entry::Text(s) => {
+                    let r = Rect::new(r.x + 9, r.y, r.w - 9, r.h);
+                    widgets::text_in(c, t.f.small, r, s, t.c.fg);
+                }
                 Entry::Key { keys, label, value } => {
                     widgets::keys_line(c, t, r, keys, keys_w, label, value)
                 }
@@ -570,7 +580,8 @@ mod tests {
         cs.add(Command::action(3, "No keys"));
         let under = vec![("5".to_string(), "Find".to_string())];
         let keys = vec![("Esc".to_string(), "Back".to_string())];
-        let s = Sheet::new(under, keys, cs.iter(), None);
+        let about = vec!["Where the data comes from.".to_string()];
+        let s = Sheet::new(about, under, keys, cs.iter(), None);
         let heads: Vec<&str> = s
             .lines
             .iter()
@@ -582,6 +593,7 @@ mod tests {
         assert_eq!(
             heads,
             [
+                "About",
                 "Under the screen",
                 "Keys",
                 "Scroll mode",

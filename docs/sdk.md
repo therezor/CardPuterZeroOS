@@ -190,8 +190,9 @@ things from that list, so they never disagree:
 - **The app menu.** 8 opens it in every app. Rows come in the order the page
   adds them, under the group headings it sets. The SDK adds Help and Close
   app last.
-- **Help.** Fn+H opens it: the chips on screen, Esc and Enter, every command
-  with keys under the mode it works in, then the keys that work everywhere.
+- **Help.** Fn+H opens it: the page's `about` text if it has one, the chips
+  on screen, Esc and Enter, every command with keys under the mode it works
+  in, then the keys that work everywhere.
   The menu's Help row opens it too, and so does `cx.show_keys()`.
 - **The keys.** A command's keys run it while its mode is on. They also pick
   its row while the menu is open.

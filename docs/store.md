@@ -63,6 +63,7 @@ page says it:
 | `network`, `camera`, `microphone`, `hardware`, `display`, `imu` | M5's permissions | Uses network, camera |
 
 Installing an app with any of the first three asks first, and names them.
+An update doesn't ask.
 CI drops an app whose dependencies our sources don't have (14 of 179 on
 2026-11-23: Pi camera tools, `raspi-utils-core`, M5's launcher).
 
@@ -144,8 +145,9 @@ author.
 | s, u, r | find, update all, refresh | | |
 | Esc | leave the search | back to the list | back to the page |
 
-The menu (8) has Find, Update all, Refresh and Download from (Auto, GitHub,
-China; `gh0st.store.mirror`). Auto picks China's mirror in a Chinese time
+On an app's page the top bar names the app. The menu (8) has Find, Update
+all, Refresh and Download from (Auto, GitHub, China; `gh0st.store.mirror`).
+Help opens with an About section that says Gh0st doesn't review the apps. Auto picks China's mirror in a Chinese time
 zone, as M5's Store does, with no network call.
 
 An install runs in a system unit, so it carries on when the user leaves the

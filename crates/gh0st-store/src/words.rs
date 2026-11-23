@@ -3,6 +3,12 @@
 use gh0st_core::store::{Flags, Outcome};
 use gh0st_core::update::size_text;
 
+/// Help's About section.
+pub const ABOUT: &str = "The apps and their list come from M5Stack. Gh0st \
+signs a copy of the list so it arrives unchanged, but doesn't review the \
+apps. An app's setup can run as root: the Store asks before installing one \
+that does. No account, no device ID.";
+
 /// The risks an app's package brings, short, then what it uses.
 pub fn flags(f: Flags) -> (Vec<&'static str>, Vec<&'static str>) {
     let warn = [

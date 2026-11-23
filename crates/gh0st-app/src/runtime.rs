@@ -793,7 +793,11 @@ impl Runtime {
             ("Enter".into(), "Open, or the main thing".into()),
         ];
         let listed: Vec<&crate::command::Command> = cmds.iter().collect();
-        Sheet::new(under, keys, listed.into_iter(), menu)
+        let t = &self.s.theme;
+        let about = self.stack.get(i).map(|p| p.about()).unwrap_or("");
+        let w = t.m.width - 2 * t.m.margin - t.m.scrollbar_w - 18;
+        let about = crate::ui::wrap(t.f.small, about, w);
+        Sheet::new(about, under, keys, listed.into_iter(), menu)
     }
 
     fn take(&mut self, code: u16) {

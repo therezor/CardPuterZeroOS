@@ -364,6 +364,12 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             progress: None,
             keys: "",
         },
+        Scene {
+            name: "15-help",
+            fixture: c,
+            progress: None,
+            keys: "help",
+        },
     ];
     for s in scenes {
         let dir = base.join(s.name);

@@ -774,8 +774,13 @@ impl Page for Store {
             View::List if self.catalog.is_some() && !self.search.active() => {
                 Some(self.filter.name())
             }
-            _ => None,
+            View::List => None,
+            View::Detail(p) | View::Shots(p, _) => self.app(p).map(|a| a.title.as_str()),
         }
+    }
+
+    fn about(&self) -> &str {
+        words::ABOUT
     }
 
     fn start(&mut self, cx: &mut Cx) {

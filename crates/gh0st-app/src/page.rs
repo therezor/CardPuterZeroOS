@@ -35,6 +35,12 @@ pub trait Page {
         None
     }
 
+    /// A few sentences Help shows first, under "About": what the app does
+    /// that the user should know, such as where its data comes from.
+    fn about(&self) -> &str {
+        ""
+    }
+
     /// One word of the app's own in the top bar, in a tone: `("REC",
     /// Tone::Critical)` while recording.
     fn status(&self) -> Option<(&str, Tone)> {
