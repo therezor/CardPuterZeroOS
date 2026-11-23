@@ -530,7 +530,7 @@ mod tests {
                     size: 744_972,
                     group: Group::Gh0st,
                     restart: Restart::Shell,
-                    summary: "Gh0stdeck, the CardputerZero shell".into(),
+                    summary: "Gh0st OS, the CardputerZero shell".into(),
                 },
                 Package {
                     name: "gh0st-kernel".into(),

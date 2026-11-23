@@ -492,7 +492,7 @@ fn u_detail(t: &Theme) -> Canvas {
         &mut c,
         t,
         Rect::new(15, b.y + 4, b.w - 30, 36),
-        "Gh0stdeck, the CardputerZero shell and Settings.",
+        "The Gh0st OS shell and Settings.",
         t.c.fg,
     );
     let rows = [

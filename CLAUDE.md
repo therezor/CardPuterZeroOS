@@ -1,9 +1,9 @@
 # CardPuterZeroOS
 
-A lean OS for the M5Stack CardputerZero. This workspace is **Gh0stdeck**, its Rust
-shell: the launcher, plus Settings and the terminal as apps. They replace the
-stock C++/LVGL APPLaunch and keep its app contract. The distro side is in
-`docs/distro-plan.md`.
+**Gh0st OS**, a lean OS for the M5Stack CardputerZero. This workspace is its
+Rust shell: the launcher, plus Settings and the terminal as apps. They
+replace the stock C++/LVGL APPLaunch and keep its app contract. The distro
+side is in `docs/distro-plan.md`.
 
 ## Writing style
 

@@ -1,4 +1,4 @@
-// Gh0stdeck runs as a systemd user service, not in an active seat session,
+// The Gh0st OS shell runs as a systemd user service, not in an active seat session,
 // so the stock rules that ask for subject.active never match it. Same
 // reasoning as stock's 60-applaunch-updater.rules.
 polkit.addRule(function(action, subject) {

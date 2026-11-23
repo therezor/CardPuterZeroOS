@@ -2332,7 +2332,7 @@ fn wipe(s: &mut String) {
 fn about() -> Vec<(String, String)> {
     let mut out = vec![(
         "Version".to_string(),
-        format!("Gh0stdeck {}", system::version()),
+        format!("Gh0st OS {}", system::version()),
     )];
     if let Some(b) = system::build() {
         out.push(("Build".into(), b.into()));

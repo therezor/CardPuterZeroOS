@@ -118,7 +118,7 @@ and the terminal run in the simulator and are not yet tested on the device.
 
 ## For developers
 
-The launcher is Gh0stdeck, written in Rust. It is one static binary of about
+The Gh0st OS launcher is written in Rust. It is one static binary of about
 1 MB, with its fonts and icons built in, and it runs on one thread. It reads
 the battery, network and clock when the kernel reports a change, so nothing
 polls. How the panel driver times frames is in

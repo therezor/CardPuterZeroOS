@@ -33,7 +33,7 @@ fn ready() -> State {
                 "0.5.0+202611221733.35a14dd",
                 4_100_000,
                 Group::Gh0st,
-                "Gh0stdeck, the CardputerZero shell and Settings",
+                "The Gh0st OS shell and Settings",
             ),
             pkg(
                 "gh0st-kernel",

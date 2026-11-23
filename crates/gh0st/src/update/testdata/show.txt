@@ -180,7 +180,7 @@ Section: x11
 Priority: optional
 Depends: gh0st-panel-modules, xdg-user-dirs, network-manager, wireplumber,
  bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd
-Description: Gh0stdeck, the CardputerZero shell and Settings
+Description: the Gh0st OS shell and Settings
  The home screen, switcher and OS bars (gh0st shell), Settings
  (gh0st-settings) and its root helper. Static binaries; the Depends are the
  commands they run: nmcli, wpctl, bluetoothctl, rfkill, pkexec, vcgencmd,
@@ -198,7 +198,7 @@ Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: x11
 Priority: optional
 Depends: gh0st
-Description: the Gh0stdeck terminal
+Description: the Gh0st OS terminal
  A terminal app for the CardputerZero: tabs, history, bitmap fonts.
 Description-md5: 
 Installed-Size: 1736

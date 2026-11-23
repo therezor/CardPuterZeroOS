@@ -3,8 +3,8 @@
   "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <policyconfig>
   <action id="org.gh0st.helper">
-    <description>Change system settings from Gh0stdeck</description>
-    <message>Gh0stdeck wants to change a system setting</message>
+    <description>Change system settings from Gh0st OS</description>
+    <message>Gh0st OS wants to change a system setting</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

@@ -5,5 +5,5 @@ Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: x11
 Priority: optional
 Depends: gh0st
-Description: the Gh0stdeck terminal
+Description: the Gh0st OS terminal
  A terminal app for the CardputerZero: tabs, history, bitmap fonts.
