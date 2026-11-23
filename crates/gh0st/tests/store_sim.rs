@@ -12,6 +12,7 @@ use std::process::Command;
 /// the site lacks it, 7 when `$FAKE/offline` exists.
 const CURL: &str = r#"#!/bin/sh
 echo "curl $*" >> "$FAKE/log"
+[ -e "$GH0ST_STORE_RUN/progress" ] && cp "$GH0ST_STORE_RUN/progress" "$FAKE/progress-seen"
 [ -e "$FAKE/offline" ] && exit 7
 out=; url=; next=
 for a in "$@"; do
@@ -283,6 +284,25 @@ fn a_deb_that_doesnt_match_never_reaches_apt() {
     assert!(!sim.log().contains("apt-get"), "{}", sim.log());
     let left: Vec<_> = std::fs::read_dir(sim.dir.join("cache")).unwrap().collect();
     assert!(left.is_empty(), "a bad deb is deleted");
+}
+
+#[test]
+fn an_installs_own_refresh_shows_as_that_install() {
+    let sim = Sim::new("stale");
+    sim.publish(now() - 60, "acidzero\tA synth.\n");
+    sim.job("refresh\nmirror auto\n");
+    // A day later the install refreshes the list first.
+    let st = std::fs::read_to_string(sim.dir.join("state/state")).unwrap();
+    let st = st.replace(
+        &format!("refreshed={}", State::parse(&st).refreshed),
+        "refreshed=1",
+    );
+    std::fs::write(sim.dir.join("state/state"), st).unwrap();
+    sim.job("install acidzero\nmirror github\n");
+    let seen = std::fs::read_to_string(sim.dir.join("progress-seen")).unwrap();
+    let p = gh0st_core::update::Progress::parse(&seen).unwrap();
+    assert!(p.install, "{seen}");
+    assert_eq!(p.item, "acidzero", "{seen}");
 }
 
 #[test]

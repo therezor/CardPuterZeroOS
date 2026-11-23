@@ -686,8 +686,11 @@ def build(out, prev, apt, keyring, only, registry, cn_registry, work):
         try:
             status, data, etag = fetch(url, MAX_ICON if kind == "icon" else MAX_SHOT, etag)
         except Exception as e:
+            # Keep what the last run had: a dropped icon changes the pack.
             warn(f"{url}: {e}")
-            return url, None, None
+            if not s:
+                return url, None, None
+            return url, s, old_icons.get(pkg) if kind == "icon" else None
         if status == 304:
             return url, s, old_icons.get(pkg) if kind == "icon" else None
         if kind == "icon":

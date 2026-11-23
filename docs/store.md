@@ -40,9 +40,11 @@ Store app: reads those files, watches them with inotify, asks gh0st-helper
   older than the one on the device, or past its `expires` date, is refused.
 - **Debs come from M5's GitHub release**, or their mirror in China. The
   catalog pins each by SHA-256 and size, so the mirror doesn't matter.
-- **The device downloads little.** The catalog and the icon pack (48 px)
-  and descriptions, which come only when their hash changes. Screenshots come one at a time, when the user opens
-  them, checked by SHA-256 and kept in a 4 MB cache.
+- **The device downloads little.** A refresh fetches the catalog, 76 KB
+  (23 KB compressed). The descriptions (266 KB) and the 48 px icon pack
+  (551 KB) come only when their hash changes. Screenshots come one at a
+  time, when the user opens them, checked by SHA-256 and kept in a 4 MB
+  cache.
 - **No network at open.** The Store shows the list it has. It refreshes
   when the user asks, and with the daily update check when that is on.
   Every engine run then posts one notice, "3 app updates" with the first
@@ -69,8 +71,10 @@ dpkg never lets a package overwrite another's files, so a file elsewhere
 is only data. Installing an app with any of the first three asks first, and
 names them.
 An update doesn't ask.
-CI drops an app whose dependencies our sources don't have (14 of 179 on
-2026-11-23: Pi camera tools, `raspi-utils-core`, M5's launcher).
+CI leaves out an app whose dependencies our sources don't have, or whose
+name clashes with Debian's. The dry run of 2026-11-23 listed 168 of 179: ten
+need Pi camera tools or M5's launcher, and `loki` is a Debian package's
+name. About 80 of the 168 ask before install.
 
 ## The mirror in CI
 

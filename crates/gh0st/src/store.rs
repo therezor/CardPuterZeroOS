@@ -227,7 +227,13 @@ fn refresh(st: &mut State, rep: &mut Reporter) -> Result<(), Failure> {
         return Err((Outcome::Clock, String::new()));
     }
     let site = store::site().ok_or((Outcome::Failed, "No Gh0st OS source".into()))?;
-    rep.phase(Phase::Lists, "");
+    // Inside an install it stays that app's run, so the app shows it busy.
+    let item = if rep.keep_item {
+        rep.p.item.clone()
+    } else {
+        String::new()
+    };
+    rep.phase(Phase::Lists, &item);
     let dir = store::state_dir();
     let tmp = dir.join(".new");
     let _ = std::fs::remove_dir_all(&tmp);
@@ -330,8 +336,11 @@ fn catalog_for_install(st: &mut State) -> Result<Catalog, Failure> {
     let now = update::now();
     let c = Catalog::load();
     if c.is_none() || now.saturating_sub(st.refreshed) > CATALOG_FRESH_SECS {
-        let mut rep = Reporter::at(store::progress_path(), false);
+        let mut rep = Reporter::at(store::progress_path(), true);
+        rep.keep_item = true;
+        rep.p.item = st.packages.first().cloned().unwrap_or_default();
         let r = refresh(st, &mut rep);
+        drop(rep);
         let c = Catalog::load();
         if let Err(e) = r {
             if c.as_ref().is_none_or(|c| c.expires <= now) {

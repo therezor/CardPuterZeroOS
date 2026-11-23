@@ -137,10 +137,8 @@ fn install_with_the_password_and_confirm_a_risky_one() {
     let (title, _) = d.dialog().expect("the risky app asks first");
     assert_eq!(title, "Install rootsetup?");
     d.keys("enter").wait(50);
-    // AcidZero's run hasn't shown as ended (no inotify off Linux), so
-    // rootsetup waits in the queue until the start timer reads the state.
-    let calls = std::fs::read_to_string(&log).unwrap();
-    assert!(!calls.contains("rootsetup"), "{calls}");
+    // On Linux inotify sees AcidZero's run end; elsewhere the start timer
+    // reads the state. Either way rootsetup goes next.
     d.wait(16_000);
     d.jobs(5000);
     let calls = std::fs::read_to_string(&log).unwrap();
