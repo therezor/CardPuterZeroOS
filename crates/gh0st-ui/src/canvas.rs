@@ -229,6 +229,24 @@ impl Canvas {
         }
     }
 
+    /// Copies a `w` x `h` RGB565 picture with rows `stride` pixels apart, its
+    /// top left at (x, y), with no blending: a camera frame or a video.
+    /// Short `src` copies only the rows it holds.
+    pub fn blit565(&mut self, x: i32, y: i32, w: i32, h: i32, stride: usize, src: &[Color]) {
+        let r = Rect::new(x, y, w, h).intersect(&self.clip);
+        if r.w <= 0 || stride < w as usize {
+            return;
+        }
+        for py in r.y..r.bottom() {
+            let s = (py - y) as usize * stride + (r.x - x) as usize;
+            let Some(row) = src.get(s..s + r.w as usize) else {
+                return;
+            };
+            let d = (py * self.w + r.x) as usize;
+            self.px[d..d + r.w as usize].copy_from_slice(row);
+        }
+    }
+
     pub fn image(&mut self, x: i32, y: i32, img: &Image) {
         let r = Rect::new(x, y, img.w, img.h).intersect(&self.clip);
         for py in r.y..r.bottom() {
@@ -259,6 +277,21 @@ mod tests {
         assert_eq!(lit, 9);
         assert_eq!(c.get(1, 1), 0);
         assert_eq!(c.get(2, 2), 0xffff);
+    }
+
+    #[test]
+    fn blit_clips_and_keeps_the_stride() {
+        let mut c = Canvas::new(8, 4);
+        c.set_clip(Rect::new(1, 0, 6, 4));
+        // 3x2 picture in rows of 4; the fourth column is padding.
+        let src = [1, 2, 3, 9, 4, 5, 6, 9];
+        c.blit565(0, 1, 3, 2, 4, &src);
+        assert_eq!(c.row(1), &[0, 2, 3, 0, 0, 0, 0, 0]);
+        assert_eq!(c.row(2), &[0, 5, 6, 0, 0, 0, 0, 0]);
+        // A short source stops where it ends.
+        c.blit565(4, 0, 3, 2, 3, &[7, 7, 7]);
+        assert_eq!(c.row(0)[4..7], [7, 7, 7]);
+        assert_eq!(c.row(1)[4..7], [0, 0, 0]);
     }
 
     #[test]

@@ -16,6 +16,7 @@ mod run;
 mod runtime;
 mod steps;
 pub mod system;
+mod tiles;
 /// Notices in the shell's notifications: the file format and folders, for
 /// posting with more than [`Cx::post`] gives (a count, a tone, another app
 /// to open).
@@ -37,6 +38,7 @@ pub use list::{Action, List, Row, cycle};
 pub use page::{Cx, Job, JobEvent, Page, Settings, Timer, Watch};
 pub use run::{Options, run, run_with};
 pub use steps::Steps;
+pub use tiles::Tiles;
 pub use ui::Ui;
 
 /// Pixels, for pages that draw their own: the canvas, colours, rects, the

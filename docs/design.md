@@ -34,8 +34,15 @@ cargo run -p gh0st-ui --example design
 | Content | 132 px | the page |
 | Action bar | 20 px | chips above keys 4 to 8, or key hints while typing |
 
-A page may drop either bar. The camera, games and the terminal while typing
-take the whole 320x170.
+A page may drop either bar. Games and the terminal while typing take the
+whole 320x170. A full-screen page that keeps the menu on 8 can leave the
+bottom right corner to its ≡ chip (`Bars::full`): a rail `rail_w` (47 px)
+wide. The camera drops the top bar and lays the action bar over its
+picture (`Bars::over`), so the picture keeps all 170 rows and the icon
+chips over 4 to 8 still name what each key does. Its 4:3 picture leaves a
+47 px rail each side for zoom and light; nothing in the rails or on the
+picture goes below the bar's top. With no top bar, it draws its own REC
+mark over the picture.
 
 The template spends 30 px on each bar and leaves 110 for content. We keep the
 bars thin and match it where it counts: the same keys do the same things.
@@ -164,7 +171,7 @@ screen's bottom edge, right above its key, and pressing that key runs it.
 
 | Key | Holds |
 |---|---|
-| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here; the switcher puts All here, held. |
+| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here; the switcher puts All here, held; the camera puts Photos here, as a phone camera keeps its gallery bottom left. |
 | 5, 6, 7 | the page's own actions |
 | 8 | the menu, an icon-only ≡ chip. The switcher has no menu and puts Close here. |
 

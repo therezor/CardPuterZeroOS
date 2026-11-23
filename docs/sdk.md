@@ -86,6 +86,17 @@ use belong to the page:
 | `Bars::top_only()` | 320x152, below the top bar, for a page that takes every key |
 | `Bars::actions()` | 320x150, above the action bar |
 | `Bars::none()` | all 320x170 |
+| `Bars::full()` | all 320x170, with the menu chip over the right rail's foot |
+| `Bars::actions().over()` | all 320x170, with the action bar over its foot |
+
+`Bars::full()` is for a page that wants the whole screen and its menu on 8,
+such as a viewfinder. The SDK draws the ≡ chip in the bottom right corner,
+`theme().m.rail_w` wide, so the page keeps that corner for it: a side rail,
+as the camera has.
+
+`.over()` lays the action bar on a translucent strip over the page, which
+keeps all 170 rows: a viewfinder that wants its chips and its whole
+picture. Leave the last `hint_h` rows free of marks, so the chips read.
 
 The top bar shows where you are and the device. The action bar has the page's
 chips over keys 5 to 7 and the menu on 8, or key hints while the page types.
@@ -159,7 +170,7 @@ calls `stop` on every page, top first, and exits.
 | `Key::Up`, `Down`, `Left`, `Right` | Fn+F, X, Z, C. Bare F, X, Z and C too, unless the page is typing |
 | `Key::Enter`, `Tab`, `Backspace`, `Delete` | The key of that name |
 | `Key::Back` | Esc, and 4 while not typing. It goes to `Page::back`, not `Page::key` |
-| `Key::Soft(5)` to `Key::Soft(7)` | Number keys 5 to 7, under a chip the page shows |
+| `Key::Soft(4)` to `Key::Soft(7)` | Number keys 4 to 7, under a chip the page shows |
 | `Key::Char(c)` | Any key that types, with Shift, Caps and the Sym layer applied |
 | `Key::Ctrl(c)`, `Key::Alt(c)` | Ctrl or Alt with a letter or digit |
 | `Key::Other(code)` | Anything else, by Linux input code (`gh0st_app::codes`) |
@@ -300,10 +311,33 @@ A choice with two keys steps back on the first and forward on the second.
 8 and Fn+H never reach a page. `design.md` has the rules for the menu and
 Help.
 
+## A grid of tiles
+
+`Tiles` keeps a grid's selection and scroll and lays its tiles out; the page
+draws each one. Bind the arrows as commands and step it; draw the selected
+tile's ring with `widgets::tile_focus`, and the gap between tiles is
+`theme().m.tile_gap`. The camera's Photos is one.
+
+```rust
+use gh0st_app::Tiles;
+use gh0st_app::gfx::Rect;
+
+let mut grid = Tiles::new(5, 3); // five across, three rows on screen
+grid.set_len(40);
+grid.step(0, 3); // down three rows: it scrolls
+let (first, shown) = grid.window(); // for a scrollbar
+for (i, r) in grid.layout(Rect::new(0, 21, 320, 129), (53, 40), 3) {
+    let _ = (i, r); // draw tile i in r
+}
+assert_eq!((grid.at(), first, shown), (15, 5, 15));
+```
+
 ## Chips
 
 The screen sits right above the number keys. A chip over 5, 6 or 7 runs when
-its key is pressed, and arrives as `Key::Soft(n)`:
+its key is pressed, and arrives as `Key::Soft(n)`. Key 4 is Back, as in the
+template, unless the page puts a chip there too; Esc is still Back. A chip
+with no word shows its icon, and Help names it by the command it runs.
 
 ```rust
 use gh0st_app::prelude::*;
@@ -557,6 +591,10 @@ app follows the palette the user picks in Settings, custom schemes included:
 `design.md` lists every role. `cx.toast_tone(Tone::Ok, "Saved")` gives a
 toast a tone.
 
+`canvas.blit565(x, y, w, h, stride, &px)` copies RGB565 pixels as they are,
+clipped, a row at a time: a camera frame or a video. It is the fast path;
+`canvas.image` blends and is for icons and pictures with alpha.
+
 ## Work in the background
 
 `cx.spawn` runs a program without a shell. Its output reaches `job` a line at
@@ -667,6 +705,11 @@ tells the SDK over the shell link, and the SDK stops drawing and reading keys
 until the app is back. Timers, jobs and watched fds go on. `cx.in_front()`
 says which. `cx.notify(text)` reaches the user either way: a toast in the
 app, or one the shell draws over whatever is in front.
+
+Every page hears `Page::front(false)` when the app leaves the front, and
+`front(true)` when it is back. An app not allowed to run behind is stopped
+right after, so `front(false)` is where it lets go of a device, such as a
+camera, and finishes a file it was writing.
 
 ### Notifications
 

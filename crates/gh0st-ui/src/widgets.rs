@@ -693,11 +693,34 @@ const TICK_H: i32 = BAR_H + 1;
 pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
     crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
     c.fill(hint_rect(t), t.c.bg);
+    action_chips(c, t, chips);
+}
+
+/// The action bar over a picture: the page's background, mostly opaque,
+/// so the chips read in every palette and the picture shows through.
+pub fn action_bar_over(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
+    crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
+    c.fill_alpha(hint_rect(t), t.c.bg, 190);
+    action_chips(c, t, chips);
+}
+
+fn action_chips(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
     let top = t.m.height - t.m.chip_h;
     let w = bar_widths(t, chips);
     for (i, ch) in chips.iter().enumerate().filter(|(_, ch)| !ch.is_empty()) {
         chip(c, t, t.m.softkey_x[i], top, ch, w[i]);
     }
+}
+
+/// The one chip of a full-screen page: over the right rail's foot, on the
+/// page's own background there.
+pub fn corner_chip(c: &mut Canvas, t: &Theme, ch: &Chip) {
+    let w = t.m.rail_w;
+    c.fill(
+        Rect::new(t.m.width - w, t.m.height - t.m.hint_h, w, t.m.hint_h),
+        t.c.bg,
+    );
+    chip(c, t, t.m.width - w / 2, t.m.height - t.m.chip_h, ch, w);
 }
 
 /// Search replaces the hint bar: the query, a caret, and how to leave.
@@ -1385,6 +1408,16 @@ pub fn scrollbar(c: &mut Canvas, t: &Theme, r: Rect, first: usize, visible: usiz
     let h = ((track.h as usize * visible) / total).max(8) as i32;
     let y = track.y + ((track.h - h) as usize * first / (total - visible)) as i32;
     c.fill(Rect::new(track.x, y, 2, h), t.c.muted);
+}
+
+/// The selected tile of a grid: a ring in `accent` just outside it, two
+/// pixels thick, so the picture inside stays whole.
+pub fn tile_focus(c: &mut Canvas, t: &Theme, r: Rect) {
+    let o = Rect::new(r.x - 2, r.y - 2, r.w + 4, r.h + 4);
+    c.fill(Rect::new(o.x, o.y, o.w, 2), t.c.accent);
+    c.fill(Rect::new(o.x, o.bottom() - 2, o.w, 2), t.c.accent);
+    c.fill(Rect::new(o.x, o.y, 2, o.h), t.c.accent);
+    c.fill(Rect::new(o.right() - 2, o.y, 2, o.h), t.c.accent);
 }
 
 /// Text input. `masked` shows dots, `cursor` draws the caret at the end.
