@@ -278,6 +278,7 @@ the same.
 | `v`, `p` | Copy, paste |
 | `o`, `w` | New, close (tab, document) |
 | `b` | Top bar |
+| `u` | Refresh: scan, reload, check |
 
 ## Leaving
 

@@ -233,7 +233,7 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
         notices: 0,
     };
     widgets::status_bar(&mut c, t, &status);
-    model::draw(&mut c, t, &page, cur);
+    model::draw(&mut c, t, &page, cur, None);
     let body = widgets::body(t);
     let none = Chip::default();
     match dialog.as_ref().map(model::sdk_dialog) {
@@ -251,7 +251,7 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
             }
         }
         None => {
-            let found = model::chips(&id, &page, cur, false);
+            let found = model::chips(&id, &page, cur, false, false);
             let mut chips = [none; 5];
             let menu = Chip {
                 icon: "menu",

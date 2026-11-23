@@ -48,7 +48,7 @@
 //! impl Updates {
 //!     fn finished(&mut self, cx: &mut Cx, f: Finished) {
 //!         match f.result {
-//!             Ok(_) => cx.toast("Checking"),
+//!             Ok(_) => cx.toast("Checking\u{2026}"),
 //!             Err(why) => cx.toast(&why),
 //!         }
 //!     }

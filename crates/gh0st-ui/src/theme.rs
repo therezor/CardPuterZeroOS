@@ -141,6 +141,12 @@ pub struct Metrics {
     /// its blocks: title, text, field, keys.
     pub card_pad: i32,
     pub card_gap: i32,
+    /// A card's ink from its sides, and a dialog card's space from the
+    /// screen's sides.
+    pub card_inset: i32,
+    pub dialog_margin: i32,
+    /// What a scrolled list gives up on its right for the scrollbar.
+    pub scrollbar_w: i32,
     /// A form's text field, its label above, a line under it that says
     /// what is wrong, and the space between two fields.
     pub field_h: i32,
@@ -534,6 +540,9 @@ pub const CARDPUTER: Metrics = Metrics {
     toast_h: 20,
     card_pad: 10,
     card_gap: 6,
+    card_inset: 12,
+    dialog_margin: 22,
+    scrollbar_w: 4,
     field_h: 22,
     field_label_h: 17,
     field_note_h: 18,
@@ -541,6 +550,10 @@ pub const CARDPUTER: Metrics = Metrics {
     lock_field_w: 172,
     lock_gap: 7,
 };
+
+/// The panel while the screen is off. The backlight never goes fully out,
+/// so this is what shows, on every palette.
+pub const PANEL_OFF: Color = crate::color::rgb(0, 0, 0);
 
 /// A QR code is dark on light on every palette: that is what cameras read.
 pub const QR_DARK: Color = crate::color::rgb(0, 0, 0);

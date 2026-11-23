@@ -261,7 +261,7 @@ fn settings_page(c: &mut Canvas, t: &Theme, id: PageId, selected: usize) {
     let page = pages::build(&id, &sample_state());
     let mut cur = Cursor { selected, top: 0 };
     cur.fit(page.len(), model::rows(t).1);
-    model::draw(c, t, &page, cur);
+    model::draw(c, t, &page, cur, None);
 }
 
 fn country(t: &Theme) -> Canvas {

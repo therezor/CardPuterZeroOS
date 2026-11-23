@@ -103,9 +103,12 @@ Seven styles, all from faces the device already has baked:
 | Body | Inter 17 at 450 | rows, text |
 | Label | Inter 15 at 650 | chips, key pills, the top bar, section heads |
 | Caption | Inter 15 at 450 | values, notes, hints |
-| Mono | JetBrains Mono, a 7 px cell | readouts, figures |
+| Mono | JetBrains Mono 12, a 7 px cell | readouts, figures |
 
-Nothing is smaller than 15 px. Caption and Body are fitted to the pixel
+Nothing is smaller than 15 px, with two exceptions. Mono is 12 px, so a MAC
+address or a size fits beside its label in a readout. The terminal's grid
+starts at Terminus 12 and its text size steps up from there
+(`docs/terminal.md`). Caption and Body are fitted to the pixel
 grid, sharpened hard, and given an S-curve on coverage, so stems keep a hard
 core with a thin fringe. They are a step heavier than Inter's named weights,
 which read faint on the dark panel.

@@ -178,6 +178,11 @@ impl Driver {
         self.rt.toast_text()
     }
 
+    /// The open dialog's title, and what is wrong under its field.
+    pub fn dialog(&self) -> Option<(&str, Option<&str>)> {
+        self.rt.dialog_text()
+    }
+
     /// The screen as the panel would show it now.
     pub fn frame(&mut self) -> &Canvas {
         self.rt.render();

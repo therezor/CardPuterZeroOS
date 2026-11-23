@@ -429,6 +429,14 @@ impl Runtime {
             .map(|b| b.text.as_str())
     }
 
+    /// The open dialog's title and the error under its field.
+    pub(crate) fn dialog_text(&self) -> Option<(&str, Option<&str>)> {
+        match &self.overlay {
+            Overlay::Dialog { d, .. } => Some((d.title.as_str(), d.error.as_deref())),
+            _ => None,
+        }
+    }
+
     pub(crate) fn toast_text(&self) -> Option<&str> {
         self.toast.as_ref().map(|t| t.text.as_str())
     }
@@ -1255,7 +1263,12 @@ impl Runtime {
                 widgets::action_bar(&mut self.canvas, &t, &chips);
             }
             Overlay::None if !bars.bottom => {}
-            Overlay::None if page.typing() => {
+            // A mode with no chips, such as moving a row, explains its keys.
+            Overlay::None
+                if page.typing()
+                    || (!bars.hints.is_empty()
+                        && self.chips_of(top, &bars).iter().all(Option::is_none)) =>
+            {
                 let mut h: Vec<Hint> = bars
                     .hints
                     .iter()

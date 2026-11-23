@@ -1440,9 +1440,15 @@ pub fn form_field(c: &mut Canvas, t: &Theme, r: Rect, f: &Field) -> i32 {
     let Some(why) = f.error else {
         return fr.bottom() - r.y;
     };
+    field_error(c, t, fr, why) - r.y
+}
+
+/// What is wrong with the field at `fr`: a red edge, and `why` on a line
+/// under it. Returns that line's foot.
+pub fn field_error(c: &mut Canvas, t: &Theme, fr: Rect, why: &str) -> i32 {
     c.stroke_round_rect(fr, t.m.radius, t.c.critical);
     let s = IconSize::Tiny as i32;
-    let nr = Rect::new(r.x + 3, fr.bottom() + 2, r.w - 6, t.m.field_note_h);
+    let nr = Rect::new(fr.x + 3, fr.bottom() + 2, fr.w - 6, t.m.field_note_h);
     icon::draw(
         c,
         "triangle-alert",
@@ -1453,7 +1459,7 @@ pub fn form_field(c: &mut Canvas, t: &Theme, r: Rect, f: &Field) -> i32 {
     );
     let tr = Rect::new(nr.x + s + 4, nr.y, nr.w - s - 4, nr.h);
     text_in(c, t.f.small, tr, why, t.c.critical);
-    nr.bottom() - r.y
+    nr.bottom()
 }
 
 /// Dims `r` behind a card. Give it the page's area, not the bars: the
@@ -1470,13 +1476,15 @@ pub fn card(c: &mut Canvas, t: &Theme, r: Rect, title: &str, edge: Color) -> Rec
     let head = card_head(t, r);
     text_in(c, t.f.body_bold, head, title, t.c.fg);
     let y = head.bottom() + t.m.card_gap;
-    Rect::new(r.x + 12, y, r.w - 24, r.bottom() - 1 - t.m.card_pad - y)
+    let i = t.m.card_inset;
+    Rect::new(r.x + i, y, r.w - 2 * i, r.bottom() - 1 - t.m.card_pad - y)
 }
 
 /// The title's line, placed so its capitals start `card_pad` below the edge.
 fn card_head(t: &Theme, r: Rect) -> Rect {
     let lead = (18 - t.f.body_bold.cap()) / 2;
-    Rect::new(r.x + 12, r.y + 1 + t.m.card_pad - lead, r.w - 24, 18)
+    let i = t.m.card_inset;
+    Rect::new(r.x + i, r.y + 1 + t.m.card_pad - lead, r.w - 2 * i, 18)
 }
 
 /// How tall a card is for a body `body_h` high: the same space from the

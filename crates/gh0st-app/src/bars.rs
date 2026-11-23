@@ -183,7 +183,8 @@ impl Bars {
 
     /// Key hints shown while the page is typing, when digits type and no chip
     /// can run: `("Esc", "cancel"), ("Enter", "save")`. Enter's pill is
-    /// filled. Without these the bar names Esc and Enter plainly.
+    /// filled. Without these the bar names Esc and Enter plainly. A page
+    /// with hints and no chips shows them too: a mode, such as moving a row.
     pub fn hints<'a>(mut self, hints: impl IntoIterator<Item = (&'a str, &'a str)>) -> Bars {
         self.hints = hints
             .into_iter()

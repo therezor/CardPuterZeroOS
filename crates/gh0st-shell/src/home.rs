@@ -170,7 +170,7 @@ impl Geo {
             tile_w,
             tile_h,
             gap: t.m.gap,
-            list: Rect::new(list.x, list.y, list.w - 4, list.h),
+            list: Rect::new(list.x, list.y, list.w - t.m.scrollbar_w, list.h),
             list_rows,
             row_h: t.m.app_row_h,
         }

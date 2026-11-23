@@ -40,10 +40,8 @@ enum Ask {
     PasswordCurrent,
     PasswordNew(String),
     PasswordRepeat(String, String),
-    Forget(String),
     /// A new value for a field of connection `.0`.
     ConnField(String, ConnField),
-    ConnForget(String),
     /// The password for a helper call that asked for one.
     Auth(HelperCall),
     /// Switch to the edge channel, after reading what it means.
@@ -191,6 +189,15 @@ pub struct Settings {
     /// Done or Skip was pressed while a change was still being made: go on
     /// once it is, as closing the step would stop it halfway.
     finish_when_idle: bool,
+    /// A row waiting for its second press (design.md, Asking first). Any
+    /// other key lets it go.
+    armed: Option<Act>,
+    /// What was armed before the key being handled.
+    was_armed: Option<Act>,
+    /// The dialog being answered, to open again if the answer won't do.
+    answering: Option<Dialog>,
+    /// Why, under the field of the dialog about to show.
+    dialog_error: Option<String>,
 }
 
 impl Settings {
@@ -201,6 +208,10 @@ impl Settings {
             view: pages::build(&PageId::Root, &state),
             state,
             dialog: None,
+            armed: None,
+            was_armed: None,
+            answering: None,
+            dialog_error: None,
             asked: false,
             jobs: HashMap::new(),
             backlight: Backlight::find(Path::new("/sys/class/backlight")),
@@ -931,15 +942,10 @@ impl Settings {
             }
             Command::ConnForget => {
                 if let Some(c) = self.open_conn() {
-                    self.ask(
-                        Dialog::Confirm {
-                            title: format!("Forget \u{201c}{}\u{201d}?", c.name),
-                            line: "Its password and settings go.".into(),
-                            yes: "forget",
-                            no: "cancel",
-                        },
-                        Ask::ConnForget(c.name),
-                    );
+                    if self.pressed_again(&Act::Run(Command::ConnForget)) {
+                        let argv = ["nmcli", "connection", "delete", "id", &c.name];
+                        self.run(cx, NetJob::ConnDelete(c.name.clone()), &argv);
+                    }
                 }
             }
             Command::SetZone(zone) => {
@@ -1034,13 +1040,34 @@ impl Settings {
         self.dialog = Some((d, a));
     }
 
+    /// The answer won't do: the same dialog again, with what was typed
+    /// (never a password) and `why` under the field (design.md, Text input).
+    fn reject(&mut self, cx: &mut Cx, why: &str, ask: Ask, typed: &str) {
+        let Some(mut d) = self.answering.take() else {
+            return fail(cx, why);
+        };
+        if let Dialog::Text { text, secret, .. } = &mut d {
+            *text = if *secret {
+                String::new()
+            } else {
+                typed.to_string()
+            };
+        }
+        self.dialog_error = Some(why.to_string());
+        self.ask(d, ask);
+    }
+
     /// Hands a dialog the page wants to the SDK, once.
     fn flush(&mut self, cx: &mut Cx) {
         let Some((d, _)) = self.dialog.as_ref().filter(|_| !self.asked) else {
             return;
         };
         self.asked = true;
-        cx.ask(ASK, model::sdk_dialog(d));
+        let mut sd = model::sdk_dialog(d);
+        if let Some(why) = self.dialog_error.take() {
+            sd = sd.error(&why);
+        }
+        cx.ask(ASK, sd);
     }
 
     fn answered(&mut self, mut text: String, ask: Ask, cx: &mut Cx) {
@@ -1087,10 +1114,23 @@ impl Settings {
                 Ask::PasswordRepeat(cur, std::mem::take(&mut text)),
             ),
             Ask::PasswordRepeat(mut cur, mut new) => {
-                if new != text {
-                    cx.toast("The passwords differ");
+                let why = if new != text {
+                    Some("The passwords differ")
                 } else if new.is_empty() {
-                    cx.toast("The password is empty");
+                    Some("The password is empty")
+                } else {
+                    None
+                };
+                if let Some(why) = why {
+                    // Both again, from the first: either could be the typo.
+                    self.answering = Some(Dialog::Text {
+                        title: "New password".into(),
+                        placeholder: "Password",
+                        text: String::new(),
+                        masked: true,
+                        secret: true,
+                    });
+                    self.reject(cx, why, Ask::PasswordNew(std::mem::take(&mut cur)), "");
                 } else {
                     // passwd as the user: it checks the current password
                     // itself, so no root helper can be asked to set one.
@@ -1109,7 +1149,12 @@ impl Settings {
             Ask::DeviceName => {
                 let name = text.trim().to_string();
                 if !sysconf::valid_hostname(&name) {
-                    cx.toast("Letters, digits and hyphens only");
+                    self.reject(
+                        cx,
+                        "Letters, digits and hyphens only",
+                        Ask::DeviceName,
+                        &name,
+                    );
                 } else if name != self.state.hostname {
                     let done = format!("Device name: {name}");
                     self.helper(cx, &["hostname", &name], &done);
@@ -1119,14 +1164,15 @@ impl Settings {
             Ask::HotspotName => {
                 let name = text.trim();
                 if let Some(why) = hotspot::name_problem(name) {
-                    cx.toast(why);
+                    let name = name.to_string();
+                    self.reject(cx, why, Ask::HotspotName, &name);
                 } else if self.state.hotspot.name.as_deref() != Some(name) {
                     let done = format!("Name: {name}");
                     self.helper(cx, &["hotspot", "name", name], &done);
                 }
             }
             Ask::HotspotPassword => match hotspot::password_problem(&text) {
-                Some(why) => cx.toast(why),
+                Some(why) => self.reject(cx, why, Ask::HotspotPassword, ""),
                 // On stdin, as a password verb's would be: never in argv.
                 None => {
                     let call = HelperCall::new(&["hotspot", "password"], "Password saved");
@@ -1138,13 +1184,8 @@ impl Settings {
                     .and_then(|(y, mon, d, h, min)| rt::local_epoch(y, mon, d, h, min));
                 match epoch {
                     Some(t) => self.helper(cx, &["set-time", &t.to_string()], "Clock set"),
-                    None => cx.toast("Type it as 2026-11-21 14:32"),
+                    None => self.reject(cx, "Type it as 2026-11-21 14:32", Ask::DateTime, &text),
                 }
-            }
-            Ask::Forget(ssid) => self.forget(cx, &ssid),
-            Ask::ConnForget(name) => {
-                let argv = ["nmcli", "connection", "delete", "id", &name];
-                self.run(cx, NetJob::ConnDelete(name.clone()), &argv);
             }
             Ask::ConnField(name, field) => self.set_conn_field(cx, &name, field, &text),
             Ask::HiddenPassword(ssid) => {
@@ -1167,8 +1208,7 @@ impl Settings {
             .ok()
             .filter(|&n| n <= max && text.bytes().all(|b| b.is_ascii_digit()));
         let Some(mb) = mb else {
-            cx.toast(&format!("0 to {max} MB"));
-            return;
+            return self.reject(cx, &format!("0 to {max} MB"), Ask::Swap, text);
         };
         if Some(mb) == self.state.swap_shown() {
             return;
@@ -1218,10 +1258,14 @@ impl Settings {
                         true,
                     );
                 } else {
-                    cx.toast("Not an IPv4 address");
+                    let ask = Ask::ConnField(name.to_string(), field);
+                    self.reject(cx, "Not an IPv4 address", ask, &v);
                 }
             }
-            _ => cx.toast("Not an IPv4 address"),
+            _ => {
+                let ask = Ask::ConnField(name.to_string(), field);
+                self.reject(cx, "Not an IPv4 address", ask, &v);
+            }
         }
     }
 
@@ -1277,11 +1321,11 @@ impl Settings {
                 }
                 known
             }
-            PageId::Hotspot if k == Key::Char('r') => {
+            PageId::Hotspot if k == Key::Char('u') => {
                 self.query_hotspot(cx);
                 true
             }
-            PageId::Wifi if k == Key::Char('r') => {
+            PageId::Wifi if k == Key::Char('u') => {
                 if !self.state.wifi_on {
                     cx.toast("Wi-Fi is off");
                 } else {
@@ -1294,32 +1338,16 @@ impl Settings {
                 true
             }
             PageId::Wifi if k == Key::Backspace => {
-                let ssid = match self.selected_act() {
-                    Some((Act::Run(Command::Join(s)) | Act::Open(PageId::Conn(s)), _)) => Some(s),
-                    _ => None,
+                let Some((act, _)) = self.selected_act() else {
+                    return true;
                 };
-                if let Some(ssid) = ssid {
-                    let known = self.state.profiles.contains(&ssid);
-                    let active = self
-                        .state
-                        .networks
-                        .iter()
-                        .any(|n| n.active && n.ssid == ssid);
-                    if known && active {
-                        self.ask(
-                            Dialog::Confirm {
-                                title: format!("Forget \u{201c}{ssid}\u{201d}?"),
-                                line: "You are on it now; it drops.".into(),
-                                yes: "forget",
-                                no: "cancel",
-                            },
-                            Ask::Forget(ssid),
-                        );
-                    } else if known {
-                        self.forget(cx, &ssid);
-                    } else {
-                        cx.toast(&format!("{ssid} is not saved"));
-                    }
+                let (Act::Run(Command::Join(ssid)) | Act::Open(PageId::Conn(ssid))) = &act else {
+                    return true;
+                };
+                if !self.state.profiles.contains(ssid) {
+                    cx.toast(&format!("{ssid} is not saved"));
+                } else if self.pressed_again(&act) {
+                    self.forget(cx, ssid);
                 }
                 true
             }
@@ -1342,14 +1370,17 @@ impl Settings {
                 }
                 true
             }
-            PageId::Bluetooth if k == Key::Char('s') => {
+            PageId::Bluetooth if k == Key::Char('u') => {
                 self.run_command(Command::BtScan, cx);
                 true
             }
             PageId::Bluetooth if k == Key::Backspace => {
-                if let Some((Act::Run(Command::Device(mac)), _)) = self.selected_act() {
-                    if self.bt_device(&mac).is_some_and(|d| d.paired) {
-                        let argv = ["bluetoothctl", "remove", &mac];
+                if let Some((act @ Act::Run(Command::Device(_)), _)) = self.selected_act() {
+                    let Act::Run(Command::Device(mac)) = &act else {
+                        return true;
+                    };
+                    if self.bt_device(mac).is_some_and(|d| d.paired) && self.pressed_again(&act) {
+                        let argv = ["bluetoothctl", "remove", mac];
                         self.run(cx, NetJob::BtRemove(mac.clone()), &argv);
                     }
                 }
@@ -1545,7 +1576,7 @@ impl Settings {
         let job = NetJob::BtDevice(done);
         if d.connected {
             self.run(cx, job, &["bluetoothctl", "disconnect", &mac]);
-            cx.toast(&format!("Disconnecting {name}"));
+            cx.toast(&format!("Disconnecting {name}\u{2026}"));
         } else if d.paired {
             self.run(
                 cx,
@@ -1689,21 +1720,25 @@ impl Settings {
                         let argv = ["nmcli", "connection", "delete", "id", ssid];
                         self.run(cx, NetJob::Ignore, &argv);
                     }
-                    cx.toast(&net::failure(&out, *gave_password));
+                    fail(cx, &net::failure(&out, *gave_password));
                 }
                 requery = true;
             }
             NetJob::Forget(ssid) => {
-                cx.toast(&if ok {
-                    format!("Forgot {ssid}")
-                } else {
-                    net::failure(&out, false)
-                });
+                said(
+                    cx,
+                    ok,
+                    &if ok {
+                        format!("Forgot {ssid}")
+                    } else {
+                        net::failure(&out, false)
+                    },
+                );
                 requery = true;
             }
             NetJob::SetRadio(on) => {
                 if !ok {
-                    cx.toast(&net::failure(&out, false));
+                    fail(cx, &net::failure(&out, false));
                 }
                 // A radio switched on has scanned nothing yet: look now.
                 rescan = ok && *on;
@@ -1711,14 +1746,14 @@ impl Settings {
             }
             NetJob::BtPower | NetJob::BtRemove(_) => {
                 if !ok {
-                    cx.toast(&bt::failure(&out));
+                    fail(cx, &bt::failure(&out));
                 }
                 self.query_bt(cx);
             }
             NetJob::BtScan => self.query_bt(cx),
             NetJob::WifiUnblock => {
                 if !ok {
-                    cx.toast(&helper::failure(&out));
+                    fail(cx, &helper::failure(&out));
                 }
                 self.state.wifi_on = true;
                 self.run(
@@ -1731,7 +1766,7 @@ impl Settings {
                 if ok {
                     self.run(cx, NetJob::BtPower, &["bluetoothctl", "power", "on"]);
                 } else {
-                    cx.toast(&helper::failure(&out));
+                    fail(cx, &helper::failure(&out));
                     self.query_bt(cx);
                 }
             }
@@ -1742,7 +1777,7 @@ impl Settings {
                     // SAFETY: the app is single-threaded.
                     (true, Some(z)) => unsafe { std::env::set_var("TZ", z) },
                     (true, None) => {}
-                    (false, _) => cx.toast(&helper::failure(&out)),
+                    (false, _) => fail(cx, &helper::failure(&out)),
                 }
                 if ok && zone.is_some() && self.finish_pending {
                     self.finish(cx);
@@ -1774,11 +1809,11 @@ impl Settings {
                     Outcome::Ask(title) => self.ask_password(cx, call.clone(), title),
                     Outcome::Locked(secs) => {
                         self.finish_pending = false;
-                        cx.toast(&format!("Too many tries. Wait {secs} s"));
+                        cx.toast_tone(Tone::Warning, &format!("Too many tries. Wait {secs} s"));
                     }
                     Outcome::Failed(why) => {
                         self.finish_pending = false;
-                        cx.toast(&why);
+                        fail(cx, &why);
                     }
                 }
                 if call.args.first().map(String::as_str) == Some("hotspot") {
@@ -1792,7 +1827,7 @@ impl Settings {
             }
             NetJob::ConnModify { name, reconnect } => {
                 if !ok {
-                    cx.toast(&net::failure(&out, false));
+                    fail(cx, &net::failure(&out, false));
                 } else if *reconnect {
                     // Not applied at once: on the network you work over, a
                     // new address or MAC would cut you off mid-change.
@@ -1801,30 +1836,42 @@ impl Settings {
                 self.query_conn(cx, name);
             }
             NetJob::ConnUp(name) => {
-                cx.toast(&if ok {
-                    format!("{name} is up")
-                } else {
-                    net::failure(&out, false)
-                });
+                said(
+                    cx,
+                    ok,
+                    &if ok {
+                        format!("{name} is up")
+                    } else {
+                        net::failure(&out, false)
+                    },
+                );
                 self.query_conn(cx, name);
                 requery = true;
             }
             NetJob::ConnDelete(name) => {
-                cx.toast(&if ok {
-                    format!("Forgot {name}")
-                } else {
-                    net::failure(&out, false)
-                });
+                said(
+                    cx,
+                    ok,
+                    &if ok {
+                        format!("Forgot {name}")
+                    } else {
+                        net::failure(&out, false)
+                    },
+                );
                 self.stack.retain(|(p, _)| !matches!(p, PageId::Conn(_)));
                 requery = true;
             }
-            NetJob::Password => cx.toast(&if ok {
-                "Password changed".to_string()
-            } else {
-                password_failure(&out)
-            }),
+            NetJob::Password => said(
+                cx,
+                ok,
+                &if ok {
+                    "Password changed".to_string()
+                } else {
+                    password_failure(&out)
+                },
+            ),
             NetJob::BtDevice(done) => {
-                cx.toast(&if ok { done.clone() } else { bt::failure(&out) });
+                said(cx, ok, &if ok { done.clone() } else { bt::failure(&out) });
                 self.query_bt(cx);
             }
             _ => {}
@@ -1845,7 +1892,7 @@ impl Settings {
                 }
             }
             NetJob::List if ok => st.networks = net::parse_list(&out, &st.profiles),
-            NetJob::List => cx.toast(&net::failure(&out, false)),
+            NetJob::List => fail(cx, &net::failure(&out, false)),
             NetJob::Devices if ok => st.ifaces = net::parse_devices(&out),
             NetJob::HotspotQuery => {
                 // No profile yet: the helper makes one when it first turns on.
@@ -1971,6 +2018,9 @@ impl Page for Settings {
     }
 
     fn bars(&self) -> Bars {
+        if self.state.moving.is_some() {
+            return Bars::top().hints([("Up Down", "move"), ("Enter", "done")]);
+        }
         self.chips()
             .into_iter()
             .fold(Bars::top(), |b, (n, chip, _)| b.chip(n, chip))
@@ -2015,11 +2065,13 @@ impl Page for Settings {
             return;
         }
         self.asked = false;
-        let Some((_, ask)) = self.dialog.take() else {
+        let Some((d, ask)) = self.dialog.take() else {
             return;
         };
         if let Answer::Yes(text) = answer {
+            self.answering = Some(d);
             self.answered(text, ask, cx);
+            self.answering = None;
         }
         self.flush(cx);
     }
@@ -2034,7 +2086,9 @@ impl Page for Settings {
             },
             k => k,
         };
+        self.was_armed = self.armed.take();
         self.page_or_list_key(key, cx);
+        self.was_armed = None;
         self.flush(cx);
     }
 
@@ -2079,11 +2133,27 @@ impl Page for Settings {
 
     fn draw(&self, ui: &mut Ui) {
         let t = *ui.theme();
-        model::draw(ui.canvas(), &t, &self.view, self.top().1);
+        model::draw(
+            ui.canvas(),
+            &t,
+            &self.view,
+            self.top().1,
+            self.armed.as_ref(),
+        );
     }
 }
 
 impl Settings {
+    /// True on the second press for `act`. The first arms the row, which
+    /// then says "Press again".
+    fn pressed_again(&mut self, act: &Act) -> bool {
+        if self.was_armed.as_ref() == Some(act) {
+            return true;
+        }
+        self.armed = Some(act.clone());
+        false
+    }
+
     fn page_or_list_key(&mut self, key: Key, cx: &mut Cx) {
         if self.page_key(key, cx) {
             return;
@@ -2106,18 +2176,26 @@ impl Settings {
         }
     }
 
-    /// The page's chips, then a setup step's Skip on 7 and Done on 6.
+    /// The page's chips, then a setup step's Done on 6, and its Skip: on 7
+    /// beside the page's chip on 5, else alone on 6.
     fn chips(&self) -> Vec<(u8, Chip, ChipDo)> {
         let (id, cur) = self.top();
-        let mut v: Vec<(u8, Chip, ChipDo)> =
-            model::chips(id, &self.view, *cur, self.state.moving.is_some())
-                .into_iter()
-                .map(|(n, chip, k)| (n, chip, ChipDo::Key(k)))
-                .collect();
+        let mut v: Vec<(u8, Chip, ChipDo)> = model::chips(
+            id,
+            &self.view,
+            *cur,
+            self.state.moving.is_some(),
+            self.armed.is_some(),
+        )
+        .into_iter()
+        .map(|(n, chip, k)| (n, chip, ChipDo::Key(k)))
+        .collect();
         if let Some(e) = self.embed.as_ref().filter(|_| self.stack.len() == 1) {
             if e.skip {
                 v.retain(|c| c.0 != 7);
-                v.push((7, Chip::new("skip-forward", "Skip"), ChipDo::Finish));
+                let slot = if v.iter().any(|c| c.0 == 5) { 7 } else { 6 };
+                v.retain(|c| c.0 != slot);
+                v.push((slot, Chip::new("skip-forward", "Skip"), ChipDo::Finish));
             }
             if e.done {
                 v.retain(|c| c.0 != 6);
@@ -2156,11 +2234,20 @@ fn nm_files() -> Vec<String> {
     out
 }
 
+/// Something went wrong: a critical toast, so it reads apart from news.
+fn fail(cx: &mut Cx, why: &str) {
+    cx.toast_tone(Tone::Critical, why);
+}
+
+/// A job's result: the news when it worked, critical when it failed.
+fn said(cx: &mut Cx, ok: bool, text: &str) {
+    cx.toast_tone(if ok { Tone::Info } else { Tone::Critical }, text);
+}
+
 /// A page key as the SDK spells it, and the key it stands for.
 fn page_key_of(key: &str) -> Option<(&'static str, Key)> {
     Some(match key {
-        "R" => ("r", Key::Char('r')),
-        "S" => ("s", Key::Char('s')),
+        "U" => ("u", Key::Char('u')),
         "M" => ("m", Key::Char('m')),
         "Del" => ("Bksp", Key::Backspace),
         _ => return None,
@@ -2309,6 +2396,30 @@ fn size(b: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Forget, as `key` runs it: each key takes what was armed before it.
+    fn press(s: &mut Settings, act: &Act) -> bool {
+        s.was_armed = s.armed.take();
+        let done = s.pressed_again(act);
+        s.was_armed = None;
+        done
+    }
+
+    #[test]
+    fn forget_asks_for_a_second_press_on_the_same_row() {
+        let mut s = Settings::new();
+        let home = Act::Run(Command::Join("home".into()));
+        let cafe = Act::Run(Command::Join("cafe".into()));
+        assert!(!press(&mut s, &home), "the first press arms");
+        assert_eq!(s.armed, Some(home.clone()));
+        assert!(!press(&mut s, &cafe), "another row arms anew");
+        assert!(press(&mut s, &cafe));
+        assert_eq!(s.armed, None, "done, nothing stays armed");
+        press(&mut s, &home);
+        s.was_armed = s.armed.take();
+        s.was_armed = None;
+        assert!(!press(&mut s, &home), "any key between lets it go");
+    }
 
     #[test]
     fn choices_wrap_both_ways() {

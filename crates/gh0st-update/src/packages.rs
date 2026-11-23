@@ -95,7 +95,7 @@ impl Page for Details {
     fn draw(&self, ui: &mut Ui) {
         let p = &self.0;
         if !p.summary.is_empty() {
-            ui.text(&p.summary);
+            ui.text_max(&p.summary, 2);
             ui.space(6);
         }
         ui.readout("Version", &words::versions(p));

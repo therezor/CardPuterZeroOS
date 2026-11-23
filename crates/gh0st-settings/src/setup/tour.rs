@@ -383,7 +383,8 @@ impl Page for Lesson {
                 Tone::Ok,
                 "Training complete",
                 "You were never here.\nUnlocked: Phantom, a palette for ghosts.",
-                &[("Enter", "wear it"), ("6", "later")],
+                // Later is the chip on 6; a pill would say it twice.
+                &[("Enter", "wear it")],
             );
         }
         let t = *ui.theme();

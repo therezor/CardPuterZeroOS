@@ -2,6 +2,7 @@
 //! `Cx::ask` opens one; `Page::answer` hears how it ended.
 
 use gh0st_core::keys::{Key as RawKey, State, code};
+use gh0st_ui::font::Font;
 use gh0st_ui::widgets::{self, Hint};
 use gh0st_ui::{Canvas, Rect, Theme};
 
@@ -30,6 +31,9 @@ pub struct Dialog {
     pub(crate) no: String,
     pub(crate) danger: bool,
     pub(crate) hold: bool,
+    /// What was wrong with the last answer, under the field until a key
+    /// changes it.
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +65,7 @@ impl Dialog {
             no: "cancel".into(),
             danger: false,
             hold: false,
+            error: None,
         }
     }
 
@@ -132,6 +137,13 @@ impl Dialog {
         self
     }
 
+    /// Why the answer can't be taken, shown under the field: open the same
+    /// dialog again with what was typed and this.
+    pub fn error(mut self, why: &str) -> Dialog {
+        self.error = Some(why.into());
+        self
+    }
+
     /// Takes something away: a red edge.
     pub fn danger(mut self) -> Dialog {
         self.danger = true;
@@ -189,11 +201,13 @@ impl Dialog {
             code::TAB if f.secret && k.state == State::Press => f.masked = !f.masked,
             code::BACKSPACE => {
                 f.text.pop();
+                self.error = None;
             }
             _ => {
                 if let Some(c) = k.ch.filter(|c| !c.is_control() && !k.ctrl && !k.alt) {
                     if f.text.chars().count() < MAX {
                         f.text.push(c);
+                        self.error = None;
                     }
                 }
             }
@@ -218,42 +232,50 @@ impl Dialog {
         } else {
             t.c.accent
         };
-        let w = t.m.width - 44;
+        let w = t.m.width - 2 * t.m.dialog_margin;
+        // With a field the text is a note under it, in the small face.
+        let (font, ink) = if self.field.is_some() {
+            (t.f.small, t.c.muted)
+        } else {
+            (t.f.body, t.c.soft())
+        };
         let lines = if self.line.is_empty() {
             Vec::new()
         } else {
-            wrap(t, &self.line, w - 24)
+            wrap(font, &self.line, w - 2 * t.m.card_inset, MAX_LINES)
         };
-        let lines_h = lines.len().min(3) as i32 * 18;
-        // The blocks, top to bottom: a field, text, and, unless a field has
-        // the hint bar, the keys.
-        let field_h = if self.field.is_some() { 22 } else { 0 };
+        let lines_h = lines.len() as i32 * t.m.line_h;
+        // The blocks, top to bottom: a field and what is wrong with it, text,
+        // and, unless a field has the hint bar, the keys.
+        let error_h = if self.error.is_some() {
+            2 + t.m.field_note_h
+        } else {
+            0
+        };
+        let field_h = if self.field.is_some() {
+            t.m.field_h + error_h
+        } else {
+            0
+        };
         let keys_h = if self.field.is_some() { 0 } else { t.m.pill_h };
         let blocks = [field_h, lines_h, keys_h];
         let gaps = blocks.iter().filter(|&&b| b > 0).count().saturating_sub(1) as i32;
         let body_h = blocks.iter().sum::<i32>() + gaps * t.m.card_gap;
         let h = widgets::card_h(t, body_h);
-        let r = Rect::new(22, area.y + (area.h - h).max(0) / 2, w, h);
+        let r = Rect::new(t.m.dialog_margin, area.y + (area.h - h).max(0) / 2, w, h);
         let body = widgets::card(c, t, r, &self.title, edge);
         let mut y = body.y;
         if let Some(f) = &self.field {
-            let fr = Rect::new(body.x, y, body.w, 22);
+            let fr = Rect::new(body.x, y, body.w, t.m.field_h);
             widgets::text_field(c, t, fr, &f.text, f.masked, true, &f.placeholder);
-            y = fr.bottom() + t.m.card_gap;
+            y = match &self.error {
+                Some(why) => widgets::field_error(c, t, fr, why),
+                None => fr.bottom(),
+            } + t.m.card_gap;
         }
-        let ink = if self.field.is_some() {
-            t.c.muted
-        } else {
-            t.c.soft()
-        };
-        let font = if self.field.is_some() {
-            t.f.small
-        } else {
-            t.f.body
-        };
-        for line in lines.iter().take(3) {
-            widgets::text_in(c, font, Rect::new(body.x, y, body.w, 18), line, ink);
-            y += 18;
+        for line in &lines {
+            widgets::text_in(c, font, Rect::new(body.x, y, body.w, t.m.line_h), line, ink);
+            y += t.m.line_h;
         }
         if self.field.is_none() {
             let y = body.bottom() - t.m.pill_h;
@@ -278,7 +300,13 @@ impl Dialog {
     }
 }
 
-fn wrap(t: &Theme, s: &str, w: i32) -> Vec<String> {
+/// The most lines a dialog's text takes. Past them the last ends in an
+/// ellipsis.
+const MAX_LINES: usize = 3;
+
+/// Wraps `s` in `font` to `w`, at most `max` lines: the rest joins the last,
+/// which then elides.
+fn wrap(font: Font, s: &str, w: i32, max: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in s.split(' ') {
@@ -287,7 +315,7 @@ fn wrap(t: &Theme, s: &str, w: i32) -> Vec<String> {
         } else {
             format!("{line} {word}")
         };
-        if t.f.body.measure(&next) > w && !line.is_empty() {
+        if font.measure(&next) > w && !line.is_empty() && lines.len() + 1 < max {
             lines.push(std::mem::take(&mut line));
             line = word.to_string();
         } else {
@@ -298,4 +326,44 @@ fn wrap(t: &Theme, s: &str, w: i32) -> Vec<String> {
         lines.push(line);
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn typed(ch: char) -> RawKey {
+        RawKey {
+            code: 0,
+            state: State::Press,
+            ch: Some(ch),
+            text: Some(ch),
+            shift: false,
+            ctrl: false,
+            alt: false,
+            fn_: false,
+        }
+    }
+
+    #[test]
+    fn an_error_shows_until_the_text_changes() {
+        let mut d = Dialog::text("Device name", "zero")
+            .value("my box")
+            .error("No spaces");
+        assert_eq!(d.error.as_deref(), Some("No spaces"));
+        d.key(&typed('x'));
+        assert_eq!(d.error, None);
+    }
+
+    #[test]
+    fn text_past_three_lines_joins_the_last() {
+        let t = Theme::default();
+        let long = "word ".repeat(80);
+        let lines = wrap(t.f.small, &long, 200, MAX_LINES);
+        assert_eq!(lines.len(), MAX_LINES);
+        assert!(
+            t.f.small.measure(&lines[2]) > 200,
+            "the last elides when drawn"
+        );
+    }
 }

@@ -77,6 +77,21 @@ impl<'a> Ui<'a> {
         self.wrapped(t.f.body, 21, s, t.c.fg);
     }
 
+    /// Body text wrapped to at most `max` lines, so what follows stays on
+    /// screen. The last line ends in an ellipsis when there is more.
+    pub fn text_max(&mut self, s: &str, max: usize) {
+        let t = self.t;
+        let (_, w) = self.inner();
+        let mut lines = wrap(t.f.body, s, w);
+        if max > 0 && lines.len() > max {
+            let rest = lines.split_off(max - 1).join(" ");
+            lines.push(rest);
+        }
+        for l in lines {
+            self.line(t.f.body, 21, &l, t.c.fg);
+        }
+    }
+
     /// Secondary text, smaller and softer, wrapped.
     pub fn note(&mut self, s: &str) {
         let t = self.t;
@@ -191,7 +206,7 @@ impl<'a> Ui<'a> {
         let visible = (rest.h / row_h).max(1) as usize;
         let first = list.layout(rows.len(), visible);
         let x = rest.x + t.m.margin;
-        let w = rest.w - 2 * t.m.margin - 4;
+        let w = rest.w - 2 * t.m.margin - t.m.scrollbar_w;
         let top = if alone {
             rest.y + (rest.h - visible as i32 * row_h) / 2
         } else {
@@ -246,7 +261,7 @@ impl<'a> Ui<'a> {
     /// A text field, with a caret when `focused`.
     pub fn field(&mut self, field: &TextField, placeholder: &str, focused: bool) {
         let (x, w) = self.inner();
-        let r = Rect::new(x - 3, self.y, w + 6, 24);
+        let r = Rect::new(x - 3, self.y, w + 6, self.t.m.field_h);
         widgets::text_field(
             self.c,
             self.t,
@@ -256,7 +271,7 @@ impl<'a> Ui<'a> {
             focused,
             placeholder,
         );
-        self.y += 28;
+        self.y += self.t.m.field_h + self.t.m.field_gap;
     }
 
     /// Every field of a form, label above and error below, the focused one

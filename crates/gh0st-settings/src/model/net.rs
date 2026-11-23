@@ -283,7 +283,7 @@ pub fn failure(output: &str, gave_password: bool) -> String {
     let line = output
         .lines()
         .find_map(|l| l.trim().strip_prefix("Error: "))
-        .unwrap_or("Could not connect");
+        .unwrap_or("Couldn't connect");
     let line = line
         .strip_prefix("Connection activation failed: ")
         .unwrap_or(line);

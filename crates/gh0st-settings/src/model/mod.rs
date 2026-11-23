@@ -10,7 +10,7 @@ use gh0st_app::gfx::Canvas;
 use gh0st_app::gfx::geom::Rect;
 use gh0st_app::gfx::theme::Theme;
 use gh0st_app::gfx::widgets::{self, Row, Trailing};
-use gh0st_app::{Chip, Key};
+use gh0st_app::{Chip, Key, Tone};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PageId {
@@ -301,11 +301,12 @@ pub fn lines(t: &Theme) -> (Rect, usize) {
 
 /// The page body and any dialog. The SDK has cleared the body and draws
 /// the bars.
-pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor) {
+/// `armed`: the row waiting for a second press says so.
+pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor, armed: Option<&Act>) {
     match &page.body {
         Body::List(items) => {
             let (area, n) = rows(t);
-            let w = area.w - 4;
+            let w = area.w - t.m.scrollbar_w;
             for (slot, i) in (cur.top..items.len()).take(n).enumerate() {
                 let it = &items[i];
                 let r = Rect::new(area.x, area.y + slot as i32 * t.m.row_h, w, t.m.row_h);
@@ -314,17 +315,28 @@ pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor) {
                     widgets::disabled_row(c, t, r, icon, &it.label, why);
                     continue;
                 }
-                widgets::list_row(c, t, r, &row(t, it), i == cur.selected);
+                let mut row = row(t, it);
+                if armed == Some(&it.act) {
+                    row.trailing = Trailing::Alert("Press again");
+                }
+                widgets::list_row(c, t, r, &row, i == cur.selected);
             }
             let track = Rect::new(area.x, area.y, w, area.h);
             widgets::scrollbar(c, t, track, cur.top, n, items.len());
             if items.is_empty() {
-                widgets::text_centre(c, t.f.body, widgets::content(t), "Nothing here", t.c.muted);
+                let m = widgets::Message {
+                    icon: "list",
+                    tone: None,
+                    text: "Nothing here",
+                    note: "",
+                    keys: &[],
+                };
+                widgets::message(c, t, widgets::content(t), &m);
             }
         }
         Body::Info(lines_) => {
             let (area, n) = lines(t);
-            let w = area.w - 4;
+            let w = area.w - t.m.scrollbar_w;
             for (slot, line) in lines_.iter().skip(cur.top).take(n).enumerate() {
                 let r = Rect::new(area.x, area.y + slot as i32 * t.m.line_h, w, t.m.line_h);
                 match line {
@@ -340,7 +352,14 @@ pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor) {
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();
             if !widgets::qr_card(c, t, widgets::body(t), text, &lines) {
-                widgets::text_centre(c, t.f.body, widgets::content(t), "Too long", t.c.muted);
+                let m = widgets::Message {
+                    icon: "qr-code",
+                    tone: Some(Tone::Warning),
+                    text: "Too long for a QR code",
+                    note: "",
+                    keys: &[],
+                };
+                widgets::message(c, t, widgets::content(t), &m);
             }
         }
     }
@@ -371,7 +390,13 @@ fn row<'a>(t: &Theme, it: &'a Item) -> Row<'a> {
 /// The chips over keys 5 to 7, and the key each stands for: the page's own,
 /// then the selected row's. Enter and Esc get none. One chip sits in the
 /// middle on 6; two go apart on 5 and 7, a pair's back one on the left.
-pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Chip, Key)> {
+pub fn chips(
+    id: &PageId,
+    page: &Page,
+    cur: Cursor,
+    moving: bool,
+    armed: bool,
+) -> Vec<(u8, Chip, Key)> {
     let mut v = Vec::new();
     // While the hotspot runs, the Wi-Fi page has nothing to scan or forget.
     let hotspot = page
@@ -380,13 +405,12 @@ pub fn chips(id: &PageId, page: &Page, cur: Cursor, moving: bool) -> Vec<(u8, Ch
     match id {
         PageId::Wifi if hotspot => {}
         PageId::Wifi | PageId::Bluetooth => {
-            let scan = if *id == PageId::Wifi { 'r' } else { 's' };
-            v.push((5, Chip::new("refresh-cw", "Scan"), Key::Char(scan)));
-            let forget = Chip::new("trash-2", "Forget").danger();
+            v.push((5, Chip::new("refresh-cw", "Scan"), Key::Char('u')));
+            let forget = Chip::new("trash-2", "Forget").danger().armed(armed);
             v.push((7, forget, Key::Backspace));
         }
         PageId::Hotspot => {
-            v.push((6, Chip::new("refresh-cw", "Reload"), Key::Char('r')));
+            v.push((6, Chip::new("refresh-cw", "Reload"), Key::Char('u')));
         }
         PageId::Apps if !moving => {
             v.push((6, Chip::new("arrow-up-down", "Move"), Key::Char('m')));

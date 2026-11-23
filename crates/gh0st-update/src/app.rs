@@ -232,7 +232,7 @@ impl Updates {
                 }
                 self.start_timer = Some(cx.after(START_MS));
             }
-            (STOP, Ok(_)) => cx.toast("Stopping"),
+            (STOP, Ok(_)) => cx.toast("Stopping\u{2026}"),
             (CLEAN, Ok(_)) => {
                 self.cache = cache_bytes();
                 cx.toast_tone(Tone::Ok, "Downloads cleared");
@@ -280,11 +280,18 @@ impl Updates {
         let kw = widgets::key_row_w(&t, &keys);
         widgets::key_row(c, &t, head.right() - kw, head.y + 1, &keys);
         let mut y = head.bottom() + 3;
-        for g in [Group::Gh0st, Group::Security, Group::System] {
-            let mine: Vec<&update::Package> = st.packages.iter().filter(|p| p.group == g).collect();
-            if mine.is_empty() {
-                continue;
-            }
+        let groups: Vec<(Group, Vec<&update::Package>)> =
+            [Group::Gh0st, Group::Security, Group::System]
+                .into_iter()
+                .map(|g| (g, st.packages.iter().filter(|p| p.group == g).collect()))
+                .filter(|(_, mine): &(Group, Vec<_>)| !mine.is_empty())
+                .collect();
+        // Every group shows: with no room for their notes, one line each.
+        let held_h = if st.held > 0 { t.m.line_h } else { 0 };
+        let room = a.bottom() - y - held_h;
+        let full = groups.len() as i32 * t.m.app_row_h <= room;
+        let row_h = if full { t.m.app_row_h } else { t.m.row_h };
+        for (g, mine) in groups {
             let count = mine.len().to_string();
             let tone = if g == Group::Security {
                 Tone::Ok
@@ -302,13 +309,22 @@ impl Updates {
                 label: words::group_name(g),
                 trailing: Trailing::Tag(&count, tone),
             };
-            let r = Rect::new(a.x + t.m.margin, y, a.w - 2 * t.m.margin, t.m.app_row_h);
-            widgets::note_row(c, &t, r, &row, &words::group_note(&mine), false);
-            y += t.m.app_row_h;
+            let r = Rect::new(a.x + t.m.margin, y, a.w - 2 * t.m.margin, row_h);
+            if full {
+                widgets::note_row(c, &t, r, &row, &words::group_note(&mine), false);
+            } else {
+                widgets::list_row(c, &t, r, &row, false);
+            }
+            y += row_h;
         }
-        if st.held > 0 && y + 14 <= a.bottom() {
+        if st.held > 0 && y + held_h <= a.bottom() {
             let note = format!("{} more wait for the rest of their set", st.held);
-            let r = Rect::new(a.x + 15, a.bottom() - 16, a.w - 30, 14);
+            let r = Rect::new(
+                a.x + t.m.margin,
+                a.bottom() - held_h,
+                a.w - 2 * t.m.margin,
+                held_h,
+            );
             widgets::text_in(c, t.f.small, r, &note, t.c.muted);
         }
     }
@@ -423,6 +439,31 @@ impl Updates {
     }
 }
 
+/// What a chip does. The chips and the keys come from one list, so a key
+/// runs only what its chip shows.
+#[derive(Clone, Copy)]
+enum ChipDo {
+    Stop,
+    Check,
+    List,
+}
+
+impl Updates {
+    /// One chip on 6, a pair on 5 and 7. Where Enter checks, no chip does.
+    fn chips(&self) -> Vec<(u8, Chip, ChipDo)> {
+        let check = || (5, Chip::new("refresh-cw", "Check"), ChipDo::Check);
+        let list = || (7, Chip::new("list", "List"), ChipDo::List);
+        match self.view() {
+            View::Busy(_) if self.stoppable() => {
+                vec![(6, Chip::new("square", "Stop").danger(), ChipDo::Stop)]
+            }
+            View::Ready | View::KernelBattery(_) => vec![check(), list()],
+            View::Problem(_) if !self.state.packages.is_empty() => vec![check(), list()],
+            _ => vec![],
+        }
+    }
+}
+
 impl Page for Updates {
     fn title(&self) -> &str {
         "Updates"
@@ -521,28 +562,21 @@ impl Page for Updates {
     }
 
     fn bars(&self) -> Bars {
-        let bars = Bars::top();
-        match self.view() {
-            View::Busy(_) if self.stoppable() => bars.chip(5, Chip::new("square", "Stop").danger()),
-            View::Ready | View::KernelBattery(_) => bars
-                .chip(5, Chip::new("refresh-cw", "Check"))
-                .chip(6, Chip::new("list", "List")),
-            View::Problem(_) if !self.state.packages.is_empty() => bars
-                .chip(5, Chip::new("refresh-cw", "Check"))
-                .chip(6, Chip::new("list", "List")),
-            _ => bars,
-        }
+        self.chips()
+            .into_iter()
+            .fold(Bars::top(), |b, (n, chip, _)| b.chip(n, chip))
     }
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
-        match key {
-            Key::Enter => self.enter(cx),
-            Key::Soft(5) if self.stoppable() => self.helper.run(cx, STOP, &["update-stop"]),
-            // Only where the chip shows: elsewhere Enter checks.
-            Key::Soft(5) if !self.busy() && !self.state.packages.is_empty() => self.check(cx),
-            Key::Soft(6) if !self.state.packages.is_empty() => {
-                cx.push(Packages::new(&self.state.packages));
-            }
+        let chip = match key {
+            Key::Soft(n) => self.chips().into_iter().find(|c| c.0 == n).map(|c| c.2),
+            _ => None,
+        };
+        match (key, chip) {
+            (Key::Enter, _) => self.enter(cx),
+            (_, Some(ChipDo::Stop)) => self.helper.run(cx, STOP, &["update-stop"]),
+            (_, Some(ChipDo::Check)) => self.check(cx),
+            (_, Some(ChipDo::List)) => cx.push(Packages::new(&self.state.packages)),
             _ => {}
         }
         self.sync_segment(cx);
@@ -555,7 +589,11 @@ impl Page for Updates {
         c.group("Updates");
         c.add(Command::action(CMD_INSTALL, "Install all").enabled(ready));
         c.add(Command::action(CMD_CHECK, "Check now").enabled(!busy));
-        c.add(Command::action(CMD_LIST, "Packages").opens().enabled(has));
+        c.add(
+            Command::action(CMD_LIST, "List packages")
+                .opens()
+                .enabled(has),
+        );
         let clean = if self.cache > 0 {
             format!("Clear downloads, {}", update::size_text(self.cache))
         } else {

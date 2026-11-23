@@ -71,6 +71,20 @@ fn skip_on_seven_goes_on_from_the_network() {
     assert_eq!(taken(&log), ["Setup 2 of 2"]);
 }
 
+/// Alone, Skip takes the middle key, as any single chip does.
+#[test]
+fn a_lone_skip_sits_on_six() {
+    let log = Log::default();
+    let steps = Steps::new("Setup")
+        .step(step(PageId::Country(None), true, false))
+        .step(mark(&log));
+    let mut d = Driver::new(steps);
+    d.keys("7");
+    assert!(taken(&log).is_empty(), "7 has no chip here");
+    d.keys("6");
+    assert_eq!(taken(&log), ["Setup 2 of 2"]);
+}
+
 #[test]
 fn esc_on_a_step_s_page_goes_back_a_step() {
     let log = Log::default();
@@ -82,4 +96,22 @@ fn esc_on_a_step_s_page_goes_back_a_step() {
     assert_eq!(taken(&log), ["Setup 1 of 2"]);
     d.keys("esc");
     assert_eq!(taken(&log), ["Setup 1 of 2"], "the first step again");
+}
+
+/// A wrong answer opens the dialog again with why under the field, and the
+/// next key clears it (design.md, Text input).
+#[test]
+fn a_wrong_device_name_says_why_in_the_dialog() {
+    let steps = Steps::new("Setup").step(step(PageId::Look, false, true));
+    let mut d = Driver::new(steps);
+    d.keys("enter");
+    assert_eq!(d.dialog().map(|x| x.1), Some(None));
+    d.keys("type bad_name\nenter");
+    assert_eq!(
+        d.dialog(),
+        Some(("Device name", Some("Letters, digits and hyphens only")))
+    );
+    assert_eq!(d.toast(), None, "no toast says it twice");
+    d.keys("backspace");
+    assert_eq!(d.dialog().map(|x| x.1), Some(None));
 }

@@ -1261,7 +1261,7 @@ impl Shell {
         // The backlight never goes fully out (see Backlight::off), so the
         // panel shows black, not the last frame.
         self.canvas
-            .fill(self.canvas.bounds(), gh0st_ui::color::rgb(0, 0, 0));
+            .fill(self.canvas.bounds(), gh0st_ui::theme::PANEL_OFF);
         self.display.flush_all(&self.canvas);
         self.full_flush = true;
         self.lock.rest();
@@ -2310,7 +2310,7 @@ impl Shell {
                 self.display.resume();
                 self.full_flush = true;
                 self.sync_grab();
-                self.toast(format!("Could not open {}: {e}", app.entry.name));
+                self.toast(format!("Couldn't open {}: {e}", app.entry.name));
                 return;
             }
         };

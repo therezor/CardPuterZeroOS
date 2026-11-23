@@ -265,7 +265,7 @@ impl Menu {
         c.set_clip(panel);
         c.fill(panel, t.c.bg);
         let x = panel.x + t.m.margin;
-        let w = panel.w - 2 * t.m.margin - 4;
+        let w = panel.w - 2 * t.m.margin - t.m.scrollbar_w;
         let top = panel.y + 2;
         let h = panel.h - 4;
         let first = self.scroll(t, h);
@@ -444,7 +444,7 @@ impl Sheet {
         c.set_clip(panel);
         c.fill(panel, t.c.bg);
         let x = panel.x + t.m.margin;
-        let w = panel.w - 2 * t.m.margin - 4;
+        let w = panel.w - 2 * t.m.margin - t.m.scrollbar_w;
         let top = panel.y + 3;
         let lh = t.m.keys_line_h;
         let visible = ((panel.h - 6) / lh).max(1) as usize;

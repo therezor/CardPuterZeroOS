@@ -69,8 +69,8 @@ fn enter_confirm_password_then_the_install_unit_starts() {
         "/usr/libexec/gh0st-helper update-install []\n\
          /usr/libexec/gh0st-helper update-install [secret]\n"
     );
-    // 5 is Stop now: the page waits for the engine.
-    d.keys("5");
+    // Stop is the one chip, on 6: the page waits for the engine.
+    d.keys("6");
     d.jobs(5000);
     let calls = std::fs::read_to_string(&log).unwrap();
     assert!(

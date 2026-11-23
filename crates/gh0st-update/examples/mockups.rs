@@ -193,13 +193,13 @@ fn main() {
             name: "10-packages",
             state: ready(),
             progress: None,
-            keys: "6",
+            keys: "7",
         },
         Scene {
             name: "11-detail",
             state: ready(),
             progress: None,
-            keys: "6\nwait\nenter",
+            keys: "7\nwait\nenter",
         },
         Scene {
             name: "12-menu",
