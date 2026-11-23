@@ -204,8 +204,8 @@ every screen into `mockups/store`.
 **List.** Several apps on screen: icon, name, summary, and a tag for
 Installed, Update, a percent or Queued. Left and Right step through All,
 Updates, Installed and the categories. With updates waiting the Store opens
-on Updates. Typing searches every app by name, share code, summary and
-author.
+on Updates. Find (6 or s, as on the home screen) searches every app by
+name, share code, summary and author.
 
 | Key | List | App page | Screenshot |
 |---|---|---|---|
