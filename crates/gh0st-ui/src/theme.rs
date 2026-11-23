@@ -166,6 +166,7 @@ pub struct Metrics {
 
 #[derive(Clone, Copy)]
 pub struct Fonts {
+    /// Caption and Label: Terminus, a bitmap face, crisp at this size.
     pub small: Font,
     pub small_bold: Font,
     pub body: Font,
@@ -174,6 +175,9 @@ pub struct Fonts {
     pub big: Font,
     pub mono: Font,
     pub mono_bold: Font,
+    /// A chip's word: a smaller bitmap face, so a word of seven letters
+    /// fits over its key.
+    pub chip: Font,
 }
 
 #[derive(Clone, Copy)]
@@ -636,14 +640,15 @@ pub const TERM_TERMINUS: &[TermFace] = &[
 ];
 
 pub const FONTS: Fonts = Fonts {
-    small: &font::SANS_15,
-    small_bold: &font::SANS_15_BOLD,
+    small: &font::TERMINUS_16,
+    small_bold: &font::TERMINUS_16_BOLD,
     body: &font::SANS_17,
     body_bold: &font::SANS_17_BOLD,
     title: &font::SANS_19_BOLD,
     big: &font::SANS_26_BOLD,
     mono: &font::MONO_12,
     mono_bold: &font::MONO_12_BOLD,
+    chip: &font::TERMINUS_12_BOLD,
 };
 
 impl Theme {

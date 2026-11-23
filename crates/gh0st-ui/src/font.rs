@@ -142,6 +142,29 @@ impl BakedFont {
         self.tofu_advance()
     }
 
+    /// Breaks `s` at spaces into lines no wider than `w`. A word wider than
+    /// `w` keeps a line of its own.
+    pub fn wrap(&self, s: &str, w: i32) -> Vec<String> {
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for word in s.split(' ') {
+            let next = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if self.measure(&next) > w && !line.is_empty() {
+                lines.push(std::mem::replace(&mut line, word.to_string()));
+            } else {
+                line = next;
+            }
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        lines
+    }
+
     /// Draws `s` cut to `max` px wide, ending in an ellipsis when cut.
     pub fn draw_elided(
         &self,

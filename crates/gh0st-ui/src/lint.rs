@@ -9,12 +9,17 @@ use crate::font::Font;
 use crate::geom::Rect;
 use std::cell::RefCell;
 
-/// The faces allowed under 15 px (design.md, Type): Mono's figures. The
+/// The faces allowed under 15 px (design.md, Type): Mono's figures and the
+/// chips' words. The
 /// terminal draws its grid without these widgets.
 fn small_ok(f: Font) -> bool {
-    [&crate::font::MONO_12, &crate::font::MONO_12_BOLD]
-        .iter()
-        .any(|m| std::ptr::eq(*m, f))
+    [
+        &crate::font::MONO_12,
+        &crate::font::MONO_12_BOLD,
+        &crate::font::TERMINUS_12_BOLD,
+    ]
+    .iter()
+    .any(|m| std::ptr::eq(*m, f))
 }
 
 /// The 15 px faces are baked to 15 px from ascent to descent, which is a

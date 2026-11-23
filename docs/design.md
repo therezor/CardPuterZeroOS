@@ -100,7 +100,8 @@ refused, and the device stays on Mint.
 
 ## Type
 
-Seven styles, all from faces the device already has baked:
+Eight styles. Names and titles are Inter; the small text is Terminus, a
+bitmap face, so it stays sharp where an outline face would blur:
 
 | Style | Face | For |
 |---|---|---|
@@ -108,17 +109,20 @@ Seven styles, all from faces the device already has baked:
 | Title | Inter 19 semibold | a page's heading |
 | Body strong | Inter 17 at 650 | the selected row, a dialog's title |
 | Body | Inter 17 at 450 | rows, text |
-| Label | Inter 15 at 650 | chips, key pills, the top bar, section heads |
-| Caption | Inter 15 at 450 | values, notes, hints |
+| Label | Terminus 16 bold | key pills, the top bar, section heads |
+| Caption | Terminus 16 | values, notes, hints |
+| Chip | Terminus 12 bold | a chip's word |
 | Mono | JetBrains Mono 12, a 7 px cell | readouts, figures |
 
-Nothing is smaller than 15 px, with two exceptions. Mono is 12 px, so a MAC
-address or a size fits beside its label in a readout. The terminal's grid
-starts at Terminus 12 and its text size steps up from there
-(`docs/terminal.md`). Caption and Body are fitted to the pixel
-grid, sharpened hard, and given an S-curve on coverage, so stems keep a hard
-core with a thin fringe. They are a step heavier than Inter's named weights,
-which read faint on the dark panel.
+Nothing is smaller than 15 px, with two exceptions. A chip's word is
+Terminus 12 bold, so a word of seven letters fits over its key. Mono is
+12 px, so a MAC address or a size fits beside its label in a readout. The
+terminal's grid starts at Terminus 12 and its text size steps up from there
+(`docs/terminal.md`). Body is fitted to the pixel grid, sharpened hard, and
+given an S-curve on coverage, so stems keep a hard core with a thin fringe.
+
+Terminus is a cell 8 px wide, wider than Inter at 15 px. A note in a
+message wraps; a value that does not fit its row ends in an ellipsis.
 
 ## Icons
 
@@ -132,6 +136,11 @@ new one, add its SVG there: an unknown name draws nothing.
 | 16 | small badges |
 | 26 | home tiles |
 | 36 | messages |
+
+At 16 px and under, an icon sits beside Terminus, so it is drawn as one: a
+1 px stroke moved onto the pixel grid, with hard edges. 14 px is the 12 px
+icon with a pixel of room each side, since Lucide's grid does not divide
+into 14. 26 and 36 keep smooth edges.
 
 ## Top bar
 

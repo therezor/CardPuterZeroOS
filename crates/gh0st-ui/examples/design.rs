@@ -325,14 +325,14 @@ fn top_a(t: &Theme) -> Canvas {
         t,
         &[
             (
-                "First page: app icon and name; Wi-Fi, battery, clock",
+                "First page: icon, name, device state",
                 top("settings", "Settings"),
             ),
             (
-                "Deeper: the page in bold, its parent muted",
+                "Deeper: page bold, parent muted",
                 sub("wifi", "Wi-Fi", "Settings"),
             ),
-            ("Tabs for sessions, the front one underlined", tabs),
+            ("Sessions as tabs, front underlined", tabs),
             ("Bluetooth on", bt),
             ("On a cable, charging", cable),
         ],
@@ -367,7 +367,7 @@ fn top_b(t: &Theme) -> Canvas {
         t,
         &[
             ("App item: one word in a tone", rec),
-            ("Overflow: context, then Bluetooth, then title", over),
+            ("Overflow: parent, Bluetooth, title", over),
             ("Battery at 4%, no network", low),
             ("Battery at 15%", warn),
         ],

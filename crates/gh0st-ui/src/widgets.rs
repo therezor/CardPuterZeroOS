@@ -556,14 +556,14 @@ impl Chip<'_> {
 /// Icon, gap, word.
 fn chip_ink_w(t: &Theme, ch: &Chip) -> i32 {
     let busy = if ch.look == Look::Busy {
-        t.f.small_bold.measure("\u{2026}")
+        t.f.chip.measure("\u{2026}")
     } else {
         0
     };
     let word = if ch.word.is_empty() {
         0
     } else {
-        t.f.small_bold.measure(ch.word) + busy
+        t.f.chip.measure(ch.word) + busy
     };
     // A word stands alone; only a chip with none shows its icon.
     if ch.word.is_empty() && !ch.icon.is_empty() {
@@ -612,7 +612,7 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
         lx += s + 3;
     }
     let tr = Rect::new(lx, inner.y, inner.right() - lx, inner.h);
-    text_in(c, t.f.small_bold, tr, word, ink);
+    text_in(c, t.f.chip, tr, word, ink);
 }
 
 /// One chip: an underlined tab centred on `cx`, its top at `top`, `w` wide.
@@ -1648,10 +1648,16 @@ pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
     let (icon_name, text, note, keys) = (m.icon, m.text, m.note, m.keys);
     let ink = m.tone.map_or(t.c.muted, |k| t.c.tone(k));
     let s = IconSize::Large as i32;
-    // A note breaks onto a new line at each `\n`.
-    let lines: Vec<&str> = note.split('\n').filter(|l| !l.is_empty()).collect();
+    // A note breaks at each `\n`, and wraps where a line is too long.
+    let w = area.w - 24;
+    let lines: Vec<String> = note
+        .split('\n')
+        .filter(|l| !l.is_empty())
+        .flat_map(|l| t.f.small.wrap(l, w))
+        .collect();
+    let lh = t.f.small.line;
     let block =
-        s + 8 + 18 + 15 * lines.len() as i32 + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
+        s + 8 + 18 + lh * lines.len() as i32 + if keys.is_empty() { 0 } else { 8 + t.m.pill_h };
     let top = area.y + (area.h - block).max(0) / 2;
     icon::draw(
         c,
@@ -1664,10 +1670,10 @@ pub fn message(c: &mut Canvas, t: &Theme, area: Rect, m: &Message) {
     let tr = Rect::new(area.x + 12, top + s + 8, area.w - 24, 18);
     text_centre(c, t.f.body_bold, tr, text, t.c.fg);
     let mut y = tr.bottom();
-    for line in lines {
-        let lr = Rect::new(tr.x, y + 1, tr.w, 15);
+    for line in &lines {
+        let lr = Rect::new(tr.x, y + 1, tr.w, lh);
         text_centre(c, t.f.small, lr, line, t.c.muted);
-        y += 15;
+        y += lh;
     }
     if !keys.is_empty() {
         let w = key_row_w(t, keys);

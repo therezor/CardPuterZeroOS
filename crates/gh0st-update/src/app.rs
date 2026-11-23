@@ -359,7 +359,7 @@ impl Updates {
             Phase::Clean => "Clearing the download cache".to_string(),
         };
         let note = if self.stoppable() {
-            "You can leave this screen. It carries on."
+            "You can leave. It carries on."
         } else {
             "Keep it on until it is done."
         };

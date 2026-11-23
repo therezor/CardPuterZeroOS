@@ -318,7 +318,7 @@ fn u_checking(t: &Theme) -> Canvas {
         "Checking for updates",
         "Debian security · 3 of 5",
         None,
-        "You can leave this screen. It carries on.",
+        "You can leave. It carries on.",
         Some(0),
         [NONE, l("square", "Stop", Look::Danger), NONE, NONE, menu()],
     )
@@ -330,7 +330,7 @@ fn u_download(t: &Theme) -> Canvas {
         "Downloading 12 updates",
         "12.1 of 34 MB",
         Some(35),
-        "You can leave this screen. It carries on.",
+        "You can leave. It carries on.",
         Some(1),
         [NONE, l("square", "Stop", Look::Danger), NONE, NONE, menu()],
     )

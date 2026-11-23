@@ -64,7 +64,10 @@ const TERM: &[(u32, u32)] = &[
     (0x2010, 0x2027),
     (0x2030, 0x203a),
     (0x20ac, 0x20ac),
+    (0x2116, 0x2116),
     (0x2190, 0x2195),
+    (0x21b5, 0x21b5),
+    (0x2212, 0x2212),
     (0x25a0, 0x25ff),
 ];
 
@@ -189,7 +192,15 @@ const fn face(
 
 /// Icon sizes in pixels, with the stroke width each one is drawn at. Lucide is
 /// drawn on a 24 grid with a 2 unit stroke; at 14 px that is a blurry 1.2 px.
-const ICON_SIZES: &[(u32, f32)] = &[(12, 1.4), (14, 1.5), (16, 1.6), (26, 2.0), (36, 2.6)];
+const ICON_SIZES: &[(u32, f32)] = &[(12, 1.0), (14, 1.0), (16, 1.0), (26, 2.0), (36, 2.6)];
+
+/// Icons this size and under sit beside Terminus, so they are drawn as it
+/// is: a 1 px stroke moved onto the pixel grid, then hard edges.
+const PIXEL_ICON_MAX: u32 = 16;
+
+/// Coverage at or over this is ink in a pixel icon. Under a half, so
+/// curves keep their steps joined.
+const PIXEL_ICON_INK: u8 = 100;
 
 fn main() {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../assets");
@@ -548,7 +559,15 @@ fn bake_icons(dir: &Path, out: &Path) {
     for name in &names {
         let svg = std::fs::read_to_string(dir.join(format!("{name}.svg"))).unwrap();
         for &(size, stroke_px) in ICON_SIZES {
-            let units = stroke_px * 24.0 / size as f32;
+            // Lucide's 24 grid halves cleanly to 12 but not to 14: there a
+            // stroke straddles two pixels. So 14 draws the 12 px icon with
+            // a pixel of room each side.
+            let (s, inset) = if size == 14 {
+                (0.5, 1.0)
+            } else {
+                (size as f32 / 24.0, 0.0)
+            };
+            let units = stroke_px / s;
             let svg = svg.replace(
                 "stroke-width=\"2\"",
                 &format!("stroke-width=\"{units:.3}\""),
@@ -556,15 +575,37 @@ fn bake_icons(dir: &Path, out: &Path) {
             let svg = svg.replace("currentColor", "#000");
             let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default())
                 .expect("valid svg");
-            let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
-            let s = size as f32 / 24.0;
-            resvg::render(
-                &tree,
-                resvg::tiny_skia::Transform::from_scale(s, s),
-                &mut pixmap.as_mut(),
-            );
+            let render = |dx: f32, dy: f32| {
+                let (dx, dy) = (dx + inset, dy + inset);
+                let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
+                resvg::render(
+                    &tree,
+                    resvg::tiny_skia::Transform::from_row(s, 0.0, 0.0, s, dx, dy),
+                    &mut pixmap.as_mut(),
+                );
+                pixmap
+                    .pixels()
+                    .iter()
+                    .map(|p| p.alpha())
+                    .collect::<Vec<u8>>()
+            };
+            let alpha = if size <= PIXEL_ICON_MAX {
+                // The shift, of four half-pixel ones, that leaves the least
+                // grey: that is where the strokes land on whole pixels.
+                let grey = |a: &[u8]| a.iter().filter(|&&v| v > 24 && v < 232).count();
+                let best = [(0.0, 0.0), (0.5, 0.0), (0.0, 0.5), (0.5, 0.5)]
+                    .into_iter()
+                    .map(|(dx, dy)| render(dx, dy))
+                    .min_by_key(|a| grey(a))
+                    .unwrap();
+                best.iter()
+                    .map(|&v| if v >= PIXEL_ICON_INK { 255 } else { 0 })
+                    .collect()
+            } else {
+                render(0.0, 0.0)
+            };
             let off = blob.len();
-            blob.extend(pixmap.pixels().iter().map(|p| p.alpha()));
+            blob.extend(alpha);
             writeln!(
                 arms,
                 "        (\"{name}\", {size}) => Some(({off}, {size})),"
