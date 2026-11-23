@@ -61,7 +61,7 @@ impl Sim {
     fn new(name: &str) -> Sim {
         let dir = std::env::temp_dir().join(format!("gh0st-store-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        for d in ["bin", "site", "state", "run", "cache", "urun"] {
+        for d in ["bin", "site", "state", "run", "cache", "urun", "notify"] {
             std::fs::create_dir_all(dir.join(d)).unwrap();
         }
         for (n, body) in [("curl", CURL), ("sqv", SQV), ("apt-get", APT_GET)] {
@@ -69,6 +69,7 @@ impl Sim {
             std::fs::write(&p, body).unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+        std::fs::write(dir.join("status"), "").unwrap();
         Sim { dir }
     }
 
@@ -122,6 +123,8 @@ impl Sim {
             .env("GH0ST_STORE_CACHE", self.dir.join("cache"))
             .env("GH0ST_UPDATE_RUN", self.dir.join("urun"))
             .env("GH0ST_POWER_SUPPLY", self.dir.join("power"))
+            .env("GH0ST_NOTIFY_SYSTEM", self.dir.join("notify"))
+            .env("GH0ST_DPKG_STATUS", self.dir.join("status"))
             .output()
             .unwrap();
         assert!(
@@ -181,6 +184,28 @@ fn a_refresh_lands_the_catalog_and_what_it_names() {
     assert_eq!(again.outcome, Outcome::Ok);
     assert!(again.ended >= st.ended);
     assert!(!sim.log().contains("about-"), "{}", sim.log());
+}
+
+#[test]
+fn an_update_posts_one_notice_and_it_goes_when_none_are_left() {
+    let sim = Sim::new("notice");
+    std::fs::write(
+        sim.dir.join("status"),
+        "Package: acidzero\nStatus: install ok installed\nVersion: 0.1.0\n\n",
+    )
+    .unwrap();
+    sim.publish(now() - 60, "acidzero\tA synth.\n");
+    sim.job("refresh\nmirror auto\n");
+    let notice = std::fs::read_to_string(sim.dir.join("notify/gh0st-store.apps")).unwrap();
+    assert!(notice.contains("1 app update"), "{notice}");
+    assert!(notice.contains("AcidZero"), "{notice}");
+    std::fs::write(
+        sim.dir.join("status"),
+        "Package: acidzero\nStatus: install ok installed\nVersion: 0.2.0\n\n",
+    )
+    .unwrap();
+    sim.job("refresh\nmirror auto\n");
+    assert!(!sim.dir.join("notify/gh0st-store.apps").exists());
 }
 
 #[test]

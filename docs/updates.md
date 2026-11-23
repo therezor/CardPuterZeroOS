@@ -72,6 +72,8 @@ Only systemd runs them, as root.
    (Debian-Security) or System. It also gets a restart: the device for the
    kernel set, `libc6` and `systemd`, Gh0st for `gh0st` and `gh0st-term`.
 8. Writes the state and posts, replaces or removes the notice.
+9. The daily run then refreshes the Store's app list under the same lock,
+   and the Store posts its own notice, "3 app updates" (`docs/store.md`).
 
 **Install.**
 

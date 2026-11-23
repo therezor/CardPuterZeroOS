@@ -211,6 +211,10 @@ fn check(auto: bool) -> i32 {
     set_pending(st.outcome == Outcome::Offline);
     save(&st);
     post_notice(&st);
+    // The daily check refreshes the Store's list too, under this lock.
+    if auto && st.outcome != Outcome::Offline {
+        crate::store::daily();
+    }
     0
 }
 

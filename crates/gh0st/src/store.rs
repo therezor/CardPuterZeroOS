@@ -5,6 +5,7 @@
 //! is in docs/store.md.
 
 use crate::update::{self, Reporter, STOP, apt};
+use gh0st_core::notify::{self, Notice};
 use gh0st_core::store::{self, App, Catalog, Job, Mirror, Outcome, Pinned, Request, State};
 use gh0st_core::update::{Outcome as UpOutcome, Phase};
 use std::path::{Path, PathBuf};
@@ -23,6 +24,12 @@ const SIG_MAX: &str = "100000";
 const ART_MAX: &str = "16000000";
 /// How often the download percent is sampled.
 const SAMPLE_MS: u64 = 250;
+
+/// The Store's desktop stem, what the notice opens; and the notice's
+/// poster and tag.
+const APP: &str = "store";
+const POSTER: &str = "gh0st-store";
+const TAG: &str = "apps";
 
 type Failure = (Outcome, String);
 
@@ -114,7 +121,71 @@ fn finish(st: &mut State, r: Result<(), Failure>) -> i32 {
     if let Err(e) = gh0st_core::update::write_atomic(&store::state_path(), &st.text()) {
         eprintln!("gh0st store: state: {e}");
     }
+    post_notice();
     0
+}
+
+/// The daily check's turn, from the update engine, which holds the lock
+/// already: refresh the list, then the notice.
+pub(crate) fn daily() {
+    let mut st = State::load();
+    st.op = "refresh".into();
+    st.packages.clear();
+    st.failed.clear();
+    st.detail.clear();
+    let mut rep = Reporter::at(store::progress_path(), false);
+    let r = refresh(&mut st, &mut rep);
+    drop(rep);
+    finish(&mut st, r);
+}
+
+/// "3 app updates", or none. The same news keeps its time, so a dismissed
+/// notice stays dismissed until something changes.
+fn post_notice() {
+    let dir = notify::system_dir();
+    let Some(c) = Catalog::load() else {
+        let _ = notify::remove(&dir, POSTER, TAG);
+        return;
+    };
+    let installed = store::installed_apps(&c);
+    let ups = store::updates(&c, &installed);
+    if ups.is_empty() {
+        let _ = notify::remove(&dir, POSTER, TAG);
+        return;
+    }
+    let mut n = Notice {
+        app: POSTER.into(),
+        tag: TAG.into(),
+        open: APP.into(),
+        title: if ups.len() == 1 {
+            "1 app update".into()
+        } else {
+            format!("{} app updates", ups.len())
+        },
+        body: names(&ups.iter().map(|a| a.title.as_str()).collect::<Vec<_>>()),
+        count: ups.len() as u32,
+        time: update::now(),
+        ..Notice::default()
+    };
+    let old = notify::read_dir(&dir, true)
+        .into_iter()
+        .find(|o| o.app == POSTER && o.tag == TAG);
+    if let Some(o) = old.filter(|o| o.title == n.title && o.body == n.body) {
+        n.time = o.time;
+    }
+    if let Err(e) = notify::post(&dir, &n) {
+        eprintln!("gh0st store: notice: {e}");
+    }
+}
+
+/// "AcidZero, Weather and 2 more".
+fn names(titles: &[&str]) -> String {
+    match titles {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, rest @ ..] => format!("{a}, {b} and {} more", rest.len()),
+    }
 }
 
 /// The update engine's words for a failure, in the Store's.
@@ -668,6 +739,13 @@ mod tests {
         assert_eq!(curl_result(Some(0)), Ok(()));
         assert_eq!(curl_result(Some(6)).unwrap_err().0, Outcome::Offline);
         assert_eq!(curl_result(Some(22)).unwrap_err().0, Outcome::Failed);
+    }
+
+    #[test]
+    fn a_notice_names_two_apps_then_counts() {
+        assert_eq!(names(&["A"]), "A");
+        assert_eq!(names(&["A", "B"]), "A and B");
+        assert_eq!(names(&["A", "B", "C", "D"]), "A, B and 2 more");
     }
 
     #[test]

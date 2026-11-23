@@ -44,6 +44,9 @@ Store app: reads those files, watches them with inotify, asks gh0st-helper
   them, checked by SHA-256 and kept in a 4 MB cache.
 - **No network at open.** The Store shows the list it has. It refreshes
   when the user asks, and with the daily update check when that is on.
+  Every engine run then posts one notice, "3 app updates" with the first
+  two names, that opens the Store, or removes it when none are left. The
+  same news keeps its time, so a dismissed notice stays dismissed.
 - **apt installs.** `apt-get install ./app.deb` resolves dependencies from
   our sources. A deb is deleted once installed.
 
