@@ -2,7 +2,7 @@
 Type=Application
 Name=Store
 Comment=Find and install apps
-Exec=/usr/share/APPLaunch/bin/M5CardputerZero-AppStore
-TryExec=/usr/share/APPLaunch/bin/M5CardputerZero-AppStore
-Icon=share/images/store_100.png
+Exec=/usr/bin/gh0st-store
+Icon=gh0st:shopping-bag
 Terminal=false
+X-Gh0st-Bars=both

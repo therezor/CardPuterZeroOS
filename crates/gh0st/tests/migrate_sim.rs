@@ -18,8 +18,8 @@ for a in "$@"; do
     case $a in
         -s) sim=1 ;;
         -*|*=*) ;;
-        install|upgrade|clean|update) [ -z "$verb" ] && verb=$a ;;
-        *) [ "$verb" = install ] && names="$names $a" ;;
+        install|upgrade|clean|update|remove) [ -z "$verb" ] && verb=$a ;;
+        *) case $verb in install|remove) names="$names $a" ;; esac ;;
     esac
 done
 has() { grep -qx "$1" "$FAKE/installed" 2>/dev/null; }
@@ -32,6 +32,18 @@ if [ "$verb" = upgrade ]; then
         fi
     done
     [ -n "$sim" ] || : > "$FAKE/upgradable"
+    exit 0
+fi
+if [ "$verb" = remove ]; then
+    for n in $names; do
+        if [ -n "$sim" ]; then
+            echo "Remv $n [1]"
+            [ -e "$FAKE/remove_more" ] && echo "Remv lib$n [1]"
+        else
+            grep -vx "$n" "$FAKE/installed" > "$FAKE/installed.new"
+            mv "$FAKE/installed.new" "$FAKE/installed"
+        fi
+    done
     exit 0
 fi
 [ "$verb" = install ] || exit 0
@@ -215,6 +227,37 @@ fn a_migration_installs_what_is_missing_once() {
     let st = sim.install();
     assert_eq!(st.installed_count, 1, "{}", st.why);
     assert_eq!(sim.installs().len(), 1, "{}", sim.log());
+}
+
+#[test]
+fn a_removal_takes_the_package_off_once() {
+    let sim = Sim::new("remove", &["curl", "gh0st-m5-appstore"], "curl");
+    std::fs::write(
+        sim.dir.join("migrations/0002-store"),
+        "# ours replaces it\nremove gh0st-m5-appstore\n",
+    )
+    .unwrap();
+    let st = sim.install();
+    assert_eq!(st.outcome, Outcome::Ok, "{}", st.why);
+    let installed = std::fs::read_to_string(sim.dir.join("installed")).unwrap();
+    assert!(!installed.contains("gh0st-m5-appstore"), "{installed}");
+    assert_eq!(sim.done(), "0001-tools\n0002-store\n");
+}
+
+#[test]
+fn a_removal_that_would_take_more_waits() {
+    let sim = Sim::new("remove-more", &["curl", "gh0st-m5-appstore"], "curl");
+    std::fs::write(
+        sim.dir.join("migrations/0002-store"),
+        "remove gh0st-m5-appstore\n",
+    )
+    .unwrap();
+    sim.fail("remove_more");
+    let st = sim.install();
+    assert_eq!(st.outcome, Outcome::Ok, "{}", st.why);
+    let installed = std::fs::read_to_string(sim.dir.join("installed")).unwrap();
+    assert!(installed.contains("gh0st-m5-appstore"), "{installed}");
+    assert_eq!(sim.done(), "0001-tools\n");
 }
 
 #[test]

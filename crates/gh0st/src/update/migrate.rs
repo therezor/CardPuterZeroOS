@@ -5,12 +5,14 @@
 //! ```text
 //! # comment
 //! install curl wget python3
+//! remove gh0st-m5-appstore
 //! ```
 //!
 //! `install` adds packages a device flashed before them lacks. They are
 //! installed by hand, as apt sees it, so the user may remove them later and
-//! the migration won't bring them back. A migration is done once all its
-//! steps hold; its name then goes in [`done_path`]. A fresh install of
+//! the migration won't bring them back. `remove` takes off a package the
+//! image no longer ships: `apt-get upgrade` never removes anything. A
+//! migration is done once all its steps hold; its name then goes in [`done_path`]. A fresh install of
 //! gh0st-base marks every migration it ships done, since a new image has
 //! them already (docs/updates.md).
 
@@ -36,6 +38,7 @@ pub fn done_path() -> PathBuf {
 pub struct Migration {
     pub id: String,
     pub install: Vec<String>,
+    pub remove: Vec<String>,
 }
 
 pub fn parse(id: &str, text: &str) -> Migration {
@@ -45,8 +48,10 @@ pub fn parse(id: &str, text: &str) -> Migration {
     };
     for line in text.lines() {
         let mut words = line.split_whitespace();
-        if words.next() == Some("install") {
-            m.install.extend(words.map(String::from));
+        match words.next() {
+            Some("install") => m.install.extend(words.map(String::from)),
+            Some("remove") => m.remove.extend(words.map(String::from)),
+            _ => {}
         }
     }
     m
@@ -84,11 +89,25 @@ pub fn missing(pending: &[Migration], installed: &HashSet<String>) -> Vec<String
     out
 }
 
+/// The packages `pending` wants gone that are still installed.
+pub fn unwanted(pending: &[Migration], installed: &HashSet<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in pending.iter().flat_map(|m| &m.remove) {
+        if installed.contains(p) && !out.contains(p) {
+            out.push(p.clone());
+        }
+    }
+    out
+}
+
 /// The migrations of `pending` whose steps all hold.
 pub fn complete<'a>(pending: &'a [Migration], installed: &HashSet<String>) -> Vec<&'a str> {
     pending
         .iter()
-        .filter(|m| m.install.iter().all(|p| installed.contains(p)))
+        .filter(|m| {
+            m.install.iter().all(|p| installed.contains(p))
+                && !m.remove.iter().any(|p| installed.contains(p))
+        })
         .map(|m| m.id.as_str())
         .collect()
 }
@@ -154,5 +173,18 @@ mod tests {
         assert_eq!(p.len(), 1);
         assert_eq!(missing(&p, &have), ["jq"]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_removal_is_done_once_the_package_is_gone() {
+        let m = parse("0002-store", "remove gh0st-m5-appstore\ninstall curl\n");
+        assert_eq!(m.remove, ["gh0st-m5-appstore"]);
+        let p = vec![m];
+        let have = set(&["curl", "gh0st-m5-appstore"]);
+        assert_eq!(unwanted(&p, &have), ["gh0st-m5-appstore"]);
+        assert!(complete(&p, &have).is_empty());
+        let have = set(&["curl"]);
+        assert!(unwanted(&p, &have).is_empty());
+        assert_eq!(complete(&p, &have), ["0002-store"]);
     }
 }

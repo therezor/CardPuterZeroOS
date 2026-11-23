@@ -98,15 +98,18 @@ SIGTERM stops a download. Once dpkg starts, the engine finishes first.
 **Migrations.** A change an update makes once on each device, then never
 again. gh0st-base ships them in `/usr/share/gh0st/migrations`, a file each,
 run in name order. A line `install curl wget` adds packages that a device
-flashed before them lacks.
+flashed before them lacks. A line `remove gh0st-m5-appstore` takes off one
+the image no longer ships, since `apt-get upgrade` never removes anything.
 
 - The check lists what pending migrations would add, as updates, so the user
   sees and installs it like any other.
 - The install runs them after the upgrade, which may have just brought them,
   checking power and space again. The packages go in as installed by hand: the
   user may remove one later, and nothing brings it back.
-- A migration whose packages are all there is done. Its name goes in
-  `/var/lib/gh0st/update/migrations`.
+- A removal runs first, and only when apt's simulation removes nothing
+  else; otherwise it waits and the log says why.
+- A migration whose packages are all there, and whose removed ones are
+  gone, is done. Its name goes in `/var/lib/gh0st/update/migrations`.
 - A failed install leaves it pending for the next one. A package the archive
   lacks makes it wait, and never fails a check.
 - A fresh install of gh0st-base, which is a new image, marks every migration

@@ -322,7 +322,7 @@ fn settle() -> Vec<String> {
     }
     let names: Vec<&str> = pending
         .iter()
-        .flat_map(|m| m.install.iter().map(String::as_str))
+        .flat_map(|m| m.install.iter().chain(&m.remove).map(String::as_str))
         .collect();
     let have = installed(&names);
     if let Err(e) = migrate::mark_done(&migrate::done_path(), &migrate::complete(&pending, &have)) {
@@ -487,6 +487,7 @@ fn migrate(
     rep: &mut Reporter,
     wanted: &mut HashSet<String>,
 ) -> Result<(), (Outcome, String)> {
+    remove_unwanted(rep);
     let extra = settle();
     if simulate_install(&extra).is_none() {
         return Ok(());
@@ -515,6 +516,54 @@ fn migrate(
         eprintln!("gh0st update: migrations still want {}", left.join(" "));
     }
     Ok(())
+}
+
+/// Removes what pending migrations want gone, when apt would take nothing
+/// else with it. Otherwise the migration stays pending and says why.
+fn remove_unwanted(rep: &mut Reporter) {
+    let pending = migrate::pending(&migrate::dir(), &migrate::done_path());
+    let names: Vec<&str> = pending
+        .iter()
+        .flat_map(|m| m.remove.iter().map(String::as_str))
+        .collect();
+    let gone = migrate::unwanted(&pending, &installed(&names));
+    if gone.is_empty() {
+        return;
+    }
+    let mut sim = vec!["apt-get", "-s", "-q", "remove"];
+    sim.extend(gone.iter().map(String::as_str));
+    let Ok(out) = run(&sim) else {
+        eprintln!("gh0st update: migrations: can't remove {}", gone.join(" "));
+        return;
+    };
+    let more: Vec<&str> = out
+        .lines()
+        .filter_map(|l| l.strip_prefix("Remv ")?.split_whitespace().next())
+        .filter(|n| !gone.iter().any(|g| g == n))
+        .collect();
+    if !more.is_empty() {
+        eprintln!(
+            "gh0st update: migrations: removing {} would take {}",
+            gone.join(" "),
+            more.join(" ")
+        );
+        return;
+    }
+    rep.phase(Phase::Install, "");
+    let mut args = vec![
+        "-y",
+        "-q",
+        "-o",
+        "APT::Status-Fd=3",
+        "-o",
+        "DPkg::Lock::Timeout=120",
+        "remove",
+    ];
+    args.extend(gone.iter().map(String::as_str));
+    let (code, out) = apt("apt-get", &args, rep, |_| false);
+    if code != Some(0) {
+        eprintln!("gh0st update: migrations: {}", apt::failure(&out).1);
+    }
 }
 
 /// `apt-get` with `verb`: the upgrade, or a migration's install. Stop works

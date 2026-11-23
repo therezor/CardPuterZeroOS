@@ -54,8 +54,9 @@ These gaps were in no doc before this one:
 6. **Per-device identity.** machine-id, the SSH host keys and the random seed
    must be made at first boot, not baked into the image.
 7. **Updates and packaging.** Built 2026-11-22 (`updates.md`): the engine,
-   the Updates app, notifications and the Pages repo. Still open: the key
-   and Pages setup, the device test, and nothing checks the Store catalogs.
+   the Updates app, notifications and the Pages repo. The Store's catalog is
+   signed with the same key (`store.md`). Still open: the key and Pages
+   setup, and the device test.
 8. **Root helper.** `gh0st-helper` exists, run by pkexec. Our polkit rule
    lets anyone in `sudo` or `netdev` run it, and control NetworkManager,
    without a password. The verbs that matter (SSH, logs, GPU memory, Wi-Fi
@@ -90,7 +91,7 @@ habit. It doesn't stop hostile ones.
 | Camera per app | A BPF device program on the app's cgroup | Medium | L3 |
 | Mic per app | PipeWire client permissions | Hard | L3 |
 | Enforce network and helper rules | Root-owned app cgroups, Yama, and a UID per app or Landlock | High | L3 |
-| Store `postinst` runs as root | The Store installs only from our signed catalog | Hard | M6 |
+| Store `postinst` runs as root | Built: the Store installs only from our signed catalog, flags apps with maintainer scripts or files root acts on, and asks before those. Open: vetting what a script does | Hard | M6 |
 
 ## Settings: what comes next
 
@@ -335,7 +336,7 @@ and runs through pkexec today. It runs only when called and exits after.
   boot. All mount with `noatime,commit=60`.
 - GitHub Actions builds `.img.xz` and `.bmap`, and a signed apt repo for our
   packages (built 2026-11-22: `apt.yml`, `os/repo`).
-- Decide how the Store handles catalogs and `postinst`.
+- The Store: run it on the device, measure it against M5's (`hardware-facts.md`).
 - `scripts/gate.sh` checks RAM, boot time, idle current, open ports and the
   packet capture, and fails on a regression. The targets come from M0 and M1.
 - Done when a fresh flash passes every gate.

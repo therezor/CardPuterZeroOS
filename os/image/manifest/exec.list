@@ -26,3 +26,8 @@ ss
 pactl
 ffmpeg
 ffprobe
+# The Store's engine: downloads, the app list's signature, deb checks.
+curl
+sqv
+sha256sum
+dpkg-deb

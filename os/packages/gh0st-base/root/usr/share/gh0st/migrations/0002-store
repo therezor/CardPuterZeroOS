@@ -1,0 +1,3 @@
+# Gh0st's own Store replaces M5's AppStore (docs/store.md). Its cache of
+# every deb it downloaded goes when ours first starts.
+remove gh0st-m5-appstore

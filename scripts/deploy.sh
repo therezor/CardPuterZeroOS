@@ -52,10 +52,11 @@ if [ "${1:-}" = rollback ]; then
     exit 0
 fi
 
-cargo build --release --target "$target" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update --manifest-path "$root/Cargo.toml"
+cargo build --release --target "$target" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
+    -p gh0st-store --manifest-path "$root/Cargo.toml"
 out="$root/target/$target/release"
 
-scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" "$out/gh0st-update" \
+scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" "$out/gh0st-update" "$out/gh0st-store" \
     "$root/packaging/applications/store.desktop" \
     "$root/packaging/applications/settings.desktop" \
     "$root/packaging/applications/terminal.desktop" \
@@ -66,11 +67,13 @@ scp -q "$root/packaging/polkit/50-gh0st.rules" "$root/packaging/polkit/org.gh0st
 # The update engine's units, folders and network trigger (docs/updates.md).
 # Installed, not enabled: the daily check is Settings' to turn on.
 scp -q -r "$root/packaging/systemd/update" "$host:/tmp/gh0st-update-units"
+scp -q -r "$root/packaging/systemd/store" "$host:/tmp/gh0st-store-units"
 remote 'set -e
     sudo install -m 755 /tmp/gh0st /usr/bin/gh0st
     sudo install -m 755 /tmp/gh0st-settings /usr/bin/gh0st-settings
     sudo install -m 755 /tmp/gh0st-term /usr/bin/gh0st-term
     sudo install -m 755 /tmp/gh0st-update /usr/bin/gh0st-update
+    sudo install -m 755 /tmp/gh0st-store /usr/bin/gh0st-store
     sudo ln -sf gh0st /usr/bin/gh0st-shell
     # pkexec runs the helper by this path; a hard link, so it is the same
     # root-owned binary and not a symlink pkexec would refuse.
@@ -84,8 +87,11 @@ remote 'set -e
         gh0st-update-daily.service gh0st-update-daily.timer gh0st-update-install.service
     sudo install -D -m 644 gh0st-update.tmpfiles /usr/lib/tmpfiles.d/gh0st-update.conf
     sudo install -D -m 755 90-gh0st-update /usr/lib/NetworkManager/dispatcher.d/90-gh0st-update
+    cd /tmp/gh0st-store-units
+    sudo install -m 644 -t /usr/lib/systemd/system gh0st-store.service
+    sudo install -D -m 644 gh0st-store.tmpfiles /usr/lib/tmpfiles.d/gh0st-store.conf
     cd /
-    sudo systemd-tmpfiles --create gh0st-update.conf
+    sudo systemd-tmpfiles --create gh0st-update.conf gh0st-store.conf
     sudo install -m 644 /tmp/gh0st.conf /etc/systemd/user/APPLaunch.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/fb_load-gh0st.conf /etc/systemd/system/fb_load.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/50-gh0st.rules /etc/polkit-1/rules.d/50-gh0st.rules
@@ -93,7 +99,8 @@ remote 'set -e
     # Its name before the rename: two policies on one exec path confuse pkexec.
     sudo rm -f /usr/share/polkit-1/actions/org.cpzero.gh0st.policy
     sudo systemctl daemon-reload
-    rm -rf /tmp/gh0st /tmp/gh0st-settings /tmp/gh0st-term /tmp/gh0st-update /tmp/store.desktop \
+    rm -rf /tmp/gh0st /tmp/gh0st-settings /tmp/gh0st-term /tmp/gh0st-update /tmp/gh0st-store \
+        /tmp/gh0st-store-units /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
         /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy'
 restart_launcher

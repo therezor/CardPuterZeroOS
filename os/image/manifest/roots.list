@@ -6,13 +6,13 @@ dbus                    system bus: NetworkManager, BlueZ, logind
 dbus-user-session       session bus for UID 1000: PipeWire, gh0st
 libpam-systemd          logind, and linger for UID 1000
 kmod                    module loading
-sudo                    the AppStore installs through sudo
+sudo                    the device user's own admin commands, in the terminal
 procps                  ps, free, sysctl
 iproute2                ip and ss
 fdisk                   sfdisk, for the first-boot grow
 e2fsprogs               fsck.ext4, without which systemd never checks / or /home
 ca-certificates         TLS for apt and apps
-curl                    downloads for the AppStore and the apps it installs
+curl                    the Store's engine downloads with it, and so do apps
 wget                    downloads for app install scripts that call wget
 python3                 scripts, and apps written in Python
 htop                    processes and memory at a glance
@@ -58,7 +58,6 @@ wireplumber             PipeWire session manager; wpctl for volume
 pulseaudio-utils        pactl, which Music and Recorder run
 gh0st                   the shell and Settings
 gh0st-term              the terminal
-gh0st-m5-appstore       M5's AppStore until ours exists
 camera                  stock Camera app
 m5cardputerzero-files   stock Files app
 m5cardputerzero-music   stock Music app

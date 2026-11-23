@@ -207,9 +207,10 @@ Findings in the launcher package:
   OpenRouter, DeepSeek), which are used only once a user configures them. Action: don't ship ZClaw,
   or patch the probe out.
 - **AppStore** fetches `cardputerzero.github.io/generated/registry.json` and
-  `cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/packages/cn/registry.json`. It isn't known yet
-  whether this happens on open or on refresh. Action: our launcher fetches catalogs only when the
-  user asks, from a mirror we choose.
+  `cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/packages/cn/registry.json`, on every open,
+  and all 179 icons with it (measured 2026-11-23, `hardware-facts.md`). Done: our Store
+  (`store.md`) reads a signed copy on our Pages, only when the user refreshes or with the daily
+  check, and sends no account or device ID.
 - M5's imager fork ships with `TELEMETRY_URL ""` (RPi Imager's download stats removed).
 
 The bigger leaks are in the base OS and its defaults:
@@ -221,7 +222,7 @@ The bigger leaks are in the base OS and its defaults:
 | `avahi-daemon` | Broadcasts hostname/services via mDNS on every network | Don't install (optional package) |
 | `apt-daily*`, `apt-listchanges`, `applaunch-apt-update` / `applaunch-updater` / `applaunch-apps-updater` | Contact Debian/RPi/GitHub servers | Our daily check instead (`updates.md`): one timer, off in Settings, installs only when the user confirms |
 | Stock launcher update check (`api.github.com/repos/CardputerZero/…`) | Version check against GitHub (already user-initiated) | Rust launcher: keep it manual only |
-| ZClaw startup probe, AppStore catalogs | See findings above | Drop/patch ZClaw; catalogs fetched only on user request |
+| ZClaw startup probe, AppStore catalogs | See findings above | Drop/patch ZClaw. Catalogs: done, our Store fetches ours on request or daily |
 | Persistent journal (50 MB on SD) | Keeps logs across boots | `Storage=none` by default (see below) |
 | NetworkManager DHCP | Sends hostname `cardputerzero` (identifies the device type) | `dhcp-send-hostname=false`, neutral hostname, `wifi.cloned-mac-address=stable-ssid` (or `random`), scan MAC randomization on |
 | NetworkManager connectivity check | Pings a check URL if configured | `[connectivity] enabled=false` |

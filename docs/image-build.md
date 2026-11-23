@@ -64,8 +64,8 @@ both install from it.
 ## How a build runs
 
 1. **fetch.** Every deb in `lock.json` is downloaded and checked by SHA-256:
-   the Raspberry Pi kernel, firmware and libcamera, the stock apps, and the
-   applaunch deb the AppStore is repacked from. The M5 driver repo is fetched
+   the Raspberry Pi kernel, firmware and libcamera, and the stock apps. The
+   M5 driver repo is fetched
    at its pinned commit. `cargo fetch` runs here, so later steps are offline.
 2. **debs.** The pinned debs become a local repo. Our packages build:
    - `cargo build` for gh0st, gh0st-settings and gh0st-term.
@@ -99,13 +99,11 @@ source. Old libcamera and kernel builds are fetched from the pool by URL:
 the live index has moved on (libcamera-ipa 0.8, kernel 6.18.60), so a build
 from it would not resolve.
 
-**Base apps.** gh0st, Settings, the terminal, and the stock Camera, Files,
-Music and Recorder at the versions the dev device runs. M5's AppStore is
-repacked alone (`gh0st-m5-appstore`): the binary, its images, three fonts
-and two sounds. Not the launcher and not `applaunch-updater`, which would
-reinstall the stock launcher. It installs apps through `sudo`. It fetches
-catalogs from GitHub and an Aliyun mirror and asks ipinfo.io for the
-country; that stays until our own Store replaces it.
+**Base apps.** gh0st, Settings, Updates, the Store, the terminal, and the
+stock Camera, Files, Music and Recorder at the versions the dev device
+runs. The Store is ours (`docs/store.md`). M5's AppStore, repacked until
+then as `gh0st-m5-appstore`, is gone: migration `0002-store` removes it
+from devices that had it.
 
 **Command-line tools.** What a Linux user reaches for in the terminal:
 curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,
@@ -133,7 +131,6 @@ packages and 367 MB of the 842 MB installed. Kept by decision (2026-11-21).
 | `gh0st-no-initramfs` | Provides `linux-initramfs-tool`: the kernel has ext4 and the SD driver built in |
 | `gh0st-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
 | `gh0st`, `gh0st-term` | Our binaries, `.desktop` files, polkit files, the `gh0st.service` user unit, `gh0st-setup.service` |
-| `gh0st-m5-appstore` | See above |
 | `gh0st-wifi` | The built-in Wi-Fi chip's boot retry (a udev rule binds it again when its firmware load fails), and firmware for USB adapters with monitor mode, from Raspberry Pi's `firmware-atheros`, `firmware-mediatek` and `firmware-realtek` |
 
 **Services.** System: NetworkManager and its on-demand dispatcher,
@@ -237,7 +234,7 @@ start is a device test.
 | S4 apps without applaunch | To do, on the device. |
 | S5 RPi glue | Bluetooth attaches in the kernel (`hci_uart_bcm` from the device tree): no `pi-bluetooth`, no `hciuart`. The udev rules we need from `raspberrypi-sys-mods` are in `gh0st-base`. |
 | S6 ffmpeg cost | 148 packages, 367 MB. Kept. |
-| S7 AppStore | To do, on the device. |
+| S7 AppStore | Replaced by our Store (`docs/store.md`). |
 
 ## Numbers
 
@@ -258,7 +255,7 @@ start is a device test.
 ## Before the first public release
 
 - A licence and source-offer page: the image redistributes Raspberry Pi
-  debs, M5 app debs and the AppStore binary.
+  debs and M5 app debs.
 - Randomize the disk ID at first boot.
 - Tags publish pre-releases until first-boot setup has passed its device
   test on a fresh card (`docs/setup.md`, Tests).

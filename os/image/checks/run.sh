@@ -142,7 +142,7 @@ for c in $(words "$M/exec.list"); do
 done
 if [ -z "$missing" ]; then ok "every command in exec.list resolves"; else bad "missing commands:$missing"; fi
 
-# Stock app and AppStore libraries.
+# Stock app libraries.
 nf=$(chroot "$tree" sh -c 'for f in /usr/share/APPLaunch/bin/*; do ldd "$f" | sed "s|^|$f: |"; done' | grep 'not found')
 if [ -z "$nf" ]; then ok "stock app libraries resolve"; else bad "unresolved libraries: $nf"; fi
 

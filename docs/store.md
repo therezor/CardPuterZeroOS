@@ -1,8 +1,9 @@
 # The Store
 
 The Store installs CardputerZero apps: the ones M5Stack lists in its own
-AppStore, from the same packages. It replaces M5's AppStore binary
-(`gh0st-m5-appstore`), which the image carries until this ships.
+AppStore, from the same packages. It replaces M5's AppStore, which the image
+carried repacked as `gh0st-m5-appstore`. Migration `0002-store` removes that
+from devices that had it.
 
 ## What was wrong with M5's
 

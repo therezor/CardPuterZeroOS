@@ -116,7 +116,8 @@ step_debs() {
     install_kernel_headers
     log "cargo build"
     cargo build -q --release --frozen --target aarch64-unknown-linux-musl \
-        --manifest-path "$SRC/Cargo.toml" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update
+        --manifest-path "$SRC/Cargo.toml" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
+        -p gh0st-store
     log "debs"
     rm -rf "$WORK/repo-ours"
     mkdir -p "$WORK/repo-ours"

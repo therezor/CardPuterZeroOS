@@ -49,7 +49,10 @@ battery in `/sys/class/power_supply`. Details and sources in
   gh0st-helper to install them. `examples/mockups.rs` renders its screens
   into `mockups/store`.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
-  program. `gh0st update` is the update engine, run as root by systemd.
+  program. `gh0st update` is the update engine and `gh0st store` the
+  Store's, both run as root by systemd.
+- `os/store/mirror.py`: CI's mirror of M5's registry, the Store's signed
+  catalog on our Pages (`os/build.sh store`).
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
   kept as published), Lucide icons (ISC), our mark, and the terminal's Nerd
   Font icons (a subset, `assets/fonts/nerd/README.md`).

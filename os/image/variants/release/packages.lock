@@ -43,7 +43,6 @@ gcc-14-base	14.2.0-19
 gh0st	(ours)
 gh0st-base	(ours)
 gh0st-kernel	(ours)
-gh0st-m5-appstore	(ours)
 gh0st-no-initramfs	(ours)
 gh0st-panel-modules	(ours)
 gh0st-term	(ours)

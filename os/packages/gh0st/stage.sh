@@ -8,6 +8,7 @@ pk=$SRC/packaging
 install -D -m 755 "$out/gh0st" "$dest/usr/bin/gh0st"
 install -m 755 "$out/gh0st-settings" "$dest/usr/bin/gh0st-settings"
 install -m 755 "$out/gh0st-update" "$dest/usr/bin/gh0st-update"
+install -m 755 "$out/gh0st-store" "$dest/usr/bin/gh0st-store"
 ln -s gh0st "$dest/usr/bin/gh0st-shell"
 # pkexec runs the helper by this path. A hard link: the same root-owned file,
 # not a symlink, which pkexec refuses.
@@ -27,3 +28,7 @@ install -D -m 644 -t "$dest/usr/lib/systemd/system" \
     "$up/gh0st-update-daily.timer" "$up/gh0st-update-install.service"
 install -D -m 644 "$up/gh0st-update.tmpfiles" "$dest/usr/lib/tmpfiles.d/gh0st-update.conf"
 install -D -m 755 "$up/90-gh0st-update" "$dest/usr/lib/NetworkManager/dispatcher.d/90-gh0st-update"
+# The Store's engine: its unit and folders (docs/store.md).
+st=$pk/systemd/store
+install -m 644 -t "$dest/usr/lib/systemd/system" "$st/gh0st-store.service"
+install -D -m 644 "$st/gh0st-store.tmpfiles" "$dest/usr/lib/tmpfiles.d/gh0st-store.conf"
