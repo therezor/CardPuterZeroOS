@@ -28,7 +28,14 @@ traceroute              where the network stops
 netcat-openbsd          nc
 psmisc                  killall, pstree, fuser
 usbutils                lsusb
-i2c-tools               i2cdetect, for the board's own buses
+i2c-tools               i2cdetect, for the board's buses and Grove modules
+gpiod                   gpioinfo, gpioget, gpioset: the GPIO pins
+spi-tools               spi-config, spi-pipe
+picocom                 a serial terminal, for Grove UART modules
+python3-libgpiod        GPIO from Python
+python3-smbus2          I2C from Python
+python3-spidev          SPI from Python
+python3-serial          serial ports from Python
 jq                      JSON from the shell, as config.json is
 tree                    a directory at a glance
 bash-completion         Tab completes commands and their options

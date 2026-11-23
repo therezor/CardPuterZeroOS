@@ -109,11 +109,13 @@ country; that stays until our own Store replaces it.
 
 **Command-line tools.** What a Linux user reaches for in the terminal:
 curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,
-ping, traceroute, nc, killall, lsusb, i2cdetect, jq, tree and Tab
-completion. None runs a service. A device flashed before them gets them
-once, from the migration `0001-cli-tools` (docs/updates.md). `man-db`
-stays denied: its daily index job and groff cost more than the pages are
-worth here.
+ping, traceroute, nc, killall, lsusb, jq, tree and Tab completion. For the
+pins and the Grove port: i2c-tools, gpiod, spi-tools and picocom, and
+their Python modules (`gpiod`, `smbus2`, `spidev`, `serial`). The user is in
+the `gpio`, `i2c`, `spi` and `dialout` groups, so none needs sudo. None
+runs a service. A device flashed before them gets them once, from the
+migration `0001-cli-tools` (docs/updates.md). `man-db` stays denied: its
+daily index job and groff cost more than the pages are worth here.
 
 **ffmpeg.** Files runs `ffmpeg` and `ffprobe` for video previews. Debian's
 ffmpeg is a desktop build: its device library pulls OpenGL, so Mesa and
