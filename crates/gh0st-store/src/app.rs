@@ -125,6 +125,8 @@ pub struct Store {
     mirror: Mirror,
     phase: u8,
     segment: Option<Timer>,
+    /// The screen stays on while a run shows its progress.
+    awake: bool,
     watch: Option<(gh0st_core::status::Watch, Watch)>,
     zone: String,
 }
@@ -164,6 +166,7 @@ impl Store {
             mirror: Mirror::Auto,
             phase: 0,
             segment: None,
+            awake: false,
             watch: None,
             zone: String::new(),
         }
@@ -548,6 +551,12 @@ impl Store {
 
     /// The moving segment runs only while a bar without a percent shows.
     fn sync_segment(&mut self, cx: &mut Cx) {
+        // An install is a minute the user watches without typing.
+        let busy = self.engine_busy();
+        if busy != self.awake {
+            self.awake = busy;
+            cx.keep_awake(busy);
+        }
         let bar = matches!(&self.view, View::Detail(p) if self.busy_with(p))
             && self.progress.as_ref().is_none_or(|p| p.percent.is_none());
         let want = bar && cx.in_front();
@@ -561,7 +570,6 @@ impl Store {
         }
     }
 
-    /// Clears M5's Store cache once: it kept every deb it downloaded.
     /// M5's Store kept every deb it downloaded. `du` then `rm` as child
     /// processes, so the first frame doesn't wait on the SD card.
     fn clear_old_store(&mut self, cx: &mut Cx) {

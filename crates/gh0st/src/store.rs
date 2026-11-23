@@ -501,6 +501,9 @@ fn install_deb(
     lists_fresh: &mut bool,
 ) -> Result<(), Failure> {
     let local = path_str(deb);
+    // apt reads its lists for some seconds before it says anything: a
+    // moving bar, not a percent stuck at 0.
+    rep.phase(Phase::Lists, &a.package);
     let sim = simulate(&local).or_else(|e| {
         // A dependency apt can't find may only be missing from old lists.
         if *lists_fresh {
@@ -516,13 +519,16 @@ fn install_deb(
     if let Some(other) = removes(&sim).into_iter().next() {
         return Err((Outcome::Failed, format!("It would remove {other}")));
     }
-    space_for(&sim, a)?;
+    let deps = space_for(&sim, a)?;
     if update::dpkg_interrupted() {
         let _ = update::run(&["dpkg", "--configure", "-a"]);
     }
+    // What apt downloads now is the dependencies: their size, not the app's.
     rep.p.phase = Phase::Install;
     rep.p.percent = Some(0);
     rep.p.item = a.package.clone();
+    rep.p.total = deps;
+    rep.p.done = 0;
     rep.write(true);
     let (code, out) = update::apt(
         "apt-get",
@@ -614,8 +620,8 @@ fn removes(sim: &str) -> Vec<String> {
 }
 
 /// Room for the app and what apt brings with it: the download, then each
-/// package unpacked.
-fn space_for(sim: &str, a: &App) -> Result<(), Failure> {
+/// package unpacked. Returns what the dependencies download.
+fn space_for(sim: &str, a: &App) -> Result<u64, Failure> {
     let (insts, _) = apt::simulate(sim);
     let names: Vec<String> = insts
         .iter()
@@ -623,11 +629,13 @@ fn space_for(sim: &str, a: &App) -> Result<(), Failure> {
         .map(|i| format!("{}={}", i.name, i.to))
         .collect();
     let mut need = SPARE_BYTES + a.size * 3;
+    let mut download = 0;
     if !names.is_empty() {
         let mut argv = vec!["apt-cache", "show", "--no-all-versions"];
         argv.extend(names.iter().map(String::as_str));
         for r in apt::records(&update::run(&argv).unwrap_or_default()) {
             need += r.size + r.installed_kb * 1024;
+            download += r.size;
         }
     }
     let free = update::free_bytes("/var/cache/apt/archives").min(update::free_bytes("/"));
@@ -641,7 +649,7 @@ fn space_for(sim: &str, a: &App) -> Result<(), Failure> {
             ),
         ));
     }
-    Ok(())
+    Ok(download)
 }
 
 fn free_for(bytes: u64, dir: &Path) -> Result<(), Failure> {
