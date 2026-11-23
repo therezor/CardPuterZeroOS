@@ -1229,22 +1229,27 @@ pub fn keys_line(
     );
 }
 
+/// A settings row's icon on a lit square of `fill`, at the row's left, or
+/// just its room when `name` is empty. Returns where the label starts.
+fn icon_tile(c: &mut Canvas, t: &Theme, r: Rect, name: &str, fill: Color, ink: Color) -> i32 {
+    let s = t.m.row_icon;
+    let sq = Rect::new(r.x + 4, r.y + (r.h - s) / 2, s, s);
+    if !name.is_empty() {
+        lit_square(c, sq, t.m.radius, fill);
+        let i = IconSize::Tiny as i32;
+        let (ix, iy) = sq.centre(i, i);
+        icon::draw(c, name, IconSize::Tiny, ix, iy, ink);
+    }
+    sq.right() + 9
+}
+
 /// A row's icon, label and what is on its right. With `tile`, the icon
 /// sits on a lit square of its tint, as a settings row's does.
 fn row_body(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool, dim: bool, tile: bool) {
     let mut x = r.x + 9;
     if let Some(name) = row.icon {
         if tile {
-            let s = t.m.row_icon;
-            let x0 = r.x + 4;
-            let sq = Rect::new(x0, r.y + (r.h - s) / 2, s, s);
-            if !name.is_empty() {
-                lit_square(c, sq, t.m.radius, row.tint);
-                let i = IconSize::Tiny as i32;
-                let (ix, iy) = sq.centre(i, i);
-                icon::draw(c, name, IconSize::Tiny, ix, iy, theme::on_tint(row.tint));
-            }
-            x = sq.right() + 9;
+            x = icon_tile(c, t, r, name, row.tint, theme::on_tint(row.tint));
         } else {
             let s = IconSize::Small as i32;
             icon::draw(c, name, IconSize::Small, x, r.y + (r.h - s) / 2, row.tint);
@@ -1453,7 +1458,12 @@ pub fn text_field(
     cursor: bool,
     placeholder: &str,
 ) {
-    c.pane(r, t.m.radius, t.c.surface);
+    // Over a picture, a pane; on a card or a page, a well of `bg`.
+    if c.has_backdrop() {
+        c.pane(r, t.m.radius, t.c.surface);
+    } else {
+        c.round_rect(r, t.m.radius, t.c.bg);
+    }
     let edge = if cursor { t.c.accent } else { t.c.border };
     c.stroke_round_rect(r, t.m.radius, edge);
     let inner = Rect::new(r.x + 8, r.y, r.w - 16, r.h);
@@ -1807,16 +1817,7 @@ pub fn busy(c: &mut Canvas, t: &Theme, area: Rect, text: &str, phase: u8) {
 /// its right.
 pub fn disabled_row(c: &mut Canvas, t: &Theme, r: Rect, icon_name: &str, label: &str, why: &str) {
     let ink = t.c.disabled();
-    let s = IconSize::Small as i32;
-    icon::draw(
-        c,
-        icon_name,
-        IconSize::Small,
-        r.x + 9,
-        r.y + (r.h - s) / 2,
-        ink,
-    );
-    let x = r.x + 9 + s + 9;
+    let x = icon_tile(c, t, r, icon_name, t.c.border, ink);
     let wx = text_right(c, t.f.small, r.right() - 8, r, why, ink);
     text_in(c, t.f.body, Rect::new(x, r.y, wx - 8 - x, r.h), label, ink);
 }
@@ -1827,14 +1828,11 @@ pub fn note_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, note: &str, selec
         row_selection(c, t, r);
     }
     let body = Row { label: "", ..*row };
-    row_body(c, t, r, &body, selected, false, false);
-    let x = r.x
-        + 9
-        + if row.icon.is_some() {
-            IconSize::Small as i32 + 9
-        } else {
-            0
-        };
+    row_body(c, t, r, &body, selected, false, true);
+    let x = match row.icon {
+        Some(_) => r.x + 4 + t.m.row_icon + 9,
+        None => r.x + 9,
+    };
     let right = r.right() - 8 - trailing_w(t, &row.trailing);
     let f = if selected { t.f.body_bold } else { t.f.body };
     let col = if selected { t.c.fg } else { soft(t) };
@@ -1871,6 +1869,8 @@ pub struct Lock<'a> {
     pub ready: bool,
     /// One line under the field: "Wrong password", "Try again in 5 s".
     pub note: Option<(Tone, &'a str)>,
+    /// The note says how many notifications wait: a bell goes before it.
+    pub bell: bool,
 }
 
 /// The lock screen: the time, large, the date, and how to get back in: Tab
@@ -1924,7 +1924,7 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
         // pane of its own, with a bell for notifications.
         let at_rest = l.field.is_none();
         let icon_name = match tone {
-            Tone::Info if at_rest => Some("bell"),
+            Tone::Info if l.bell => Some("bell"),
             Tone::Info => None,
             _ => Some(tone.icon()),
         };
@@ -1945,7 +1945,7 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
             );
         }
         if let Some(name) = icon_name {
-            let ink = if at_rest { t.c.accent } else { col };
+            let ink = if l.bell { t.c.accent } else { col };
             icon::draw(c, name, IconSize::Tiny, x, nr.y + (nr.h - s) / 2 + 1, ink);
             x += s + 4;
         }
@@ -1979,14 +1979,10 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
                     label: "unlock",
                 },
             ];
+            // In the bottom bar's place: the lock has no chips.
             let w = key_row_w(t, &hints);
-            key_row(
-                c,
-                t,
-                (t.m.width - w) / 2,
-                b.bottom() - t.m.pill_h - 6,
-                &hints,
-            );
+            let y = t.m.height - t.m.hint_h + (t.m.hint_h - t.m.pill_h) / 2;
+            key_row(c, t, (t.m.width - w) / 2, y, &hints);
         }
     }
 }

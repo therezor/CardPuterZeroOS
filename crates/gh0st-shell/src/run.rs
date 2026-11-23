@@ -1849,9 +1849,11 @@ impl Shell {
             1 => "1 notification".into(),
             n => format!("{n} notifications"),
         };
+        let no_password = !self.lock.field_open()
+            && pw_on
+            && !self.probing
+            && self.account.is_some_and(|a| a != Account::Password);
         let note = if !self.lock.field_open() {
-            let no_password =
-                pw_on && !self.probing && self.account.is_some_and(|a| a != Account::Password);
             if no_password {
                 Some((Tone::Info, "No password set"))
             } else {
@@ -1872,6 +1874,7 @@ impl Shell {
             field: self.lock.field_open().then(|| self.lock.typed()),
             ready: !self.lock.checking && wait == 0,
             note,
+            bell: !self.lock.field_open() && !no_password && !waiting.is_empty(),
         };
         widgets::lock_screen(&mut self.canvas, &t, &bar, &l);
     }

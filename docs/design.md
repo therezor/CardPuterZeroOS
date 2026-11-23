@@ -222,7 +222,7 @@ c do the same; on a level row they read Less and More.
 ![Typing](design/14-typing.png)
 
 A text field takes the digits, so no chip can run. The bar turns into key
-hints instead: a `surface` strip with key pills and what they do. The main
+hints instead: key pills and what they do, on the page's ground. The main
 key's pill is filled, as a main chip is. "Fn h help" sits on the right while
 it fits.
 

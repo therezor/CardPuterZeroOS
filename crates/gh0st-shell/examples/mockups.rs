@@ -282,6 +282,7 @@ fn lock(t: &Theme, field: Option<usize>, ready: bool, note: Option<(Tone, &str)>
         field,
         ready,
         note,
+        bell: note.is_some_and(|(_, n)| n.ends_with("notifications")),
     };
     let mut c = grounded(t, true);
     widgets::lock_screen(&mut c, t, &s, &l);
@@ -422,6 +423,10 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                     lock(&t, None, true, Some((Tone::Info, "No password set"))),
                 ),
                 ("lock-field", lock(&t, Some(0), true, None)),
+                (
+                    "lock-notices",
+                    lock(&t, None, true, Some((Tone::Info, "2 notifications"))),
+                ),
                 ("home-menu-lock", home_menu(&t, stock)),
             ]);
         }

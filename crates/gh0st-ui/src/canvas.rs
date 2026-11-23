@@ -6,6 +6,27 @@ use crate::geom::Rect;
 use crate::image::Image;
 use std::rc::Rc;
 
+/// What a rounded fill paints with.
+enum Ink<'a> {
+    /// The pixels under it in a buffer the canvas's size.
+    Copy(&'a [Color]),
+    /// One colour a row, stepping from `top` to `bottom` down `r`.
+    Rows { r: Rect, top: Color, bottom: Color },
+}
+
+impl Ink<'_> {
+    /// The colour at buffer index `i`, on row `y`.
+    fn at(&self, i: usize, y: i32) -> Color {
+        match self {
+            Ink::Copy(src) => src[i],
+            Ink::Rows { r, top, bottom } => {
+                let span = (r.h - 1).max(1);
+                mix(*top, *bottom, ((y - r.y).clamp(0, span) * 255 / span) as u8)
+            }
+        }
+    }
+}
+
 /// What a screen stands on: a picture and a frosted copy of it, each the
 /// canvas's size, baked once. Panes show the frost; [`Canvas::clear`] puts
 /// the picture back.
@@ -72,38 +93,51 @@ impl Canvas {
         let Some(b) = self.backdrop.clone() else {
             return self.round_rect(r, radius, surface);
         };
-        let w = self.w;
-        self.round_by(r, radius, |x, y| b.frost[(y * w + x) as usize]);
+        self.round_by(r, radius, Ink::Copy(&b.frost));
     }
 
     /// A rounded rect that runs from `top` on its first row to `bottom` on
     /// its last: a lit surface.
     pub fn gradient(&mut self, r: Rect, radius: i32, top: Color, bottom: Color) {
-        let span = (r.h - 1).max(1);
-        self.round_by(r, radius, |_, y| {
-            mix(top, bottom, ((y - r.y).clamp(0, span) * 255 / span) as u8)
-        });
+        self.round_by(r, radius, Ink::Rows { r, top, bottom });
     }
 
-    /// Fills a rounded rect with `ink(x, y)`, corners anti-aliased.
-    fn round_by(&mut self, r: Rect, radius: i32, ink: impl Fn(i32, i32) -> Color) {
+    /// Fills a rounded rect, corners anti-aliased. Whole spans are filled
+    /// or copied a row at a time; only corner pixels are worked out one by
+    /// one.
+    fn round_by(&mut self, r: Rect, radius: i32, ink: Ink) {
         let radius = radius.min(r.w / 2).min(r.h / 2).max(0);
         let rf = radius as f32;
         let cl = r.intersect(&self.clip);
         for y in cl.y..cl.bottom() {
+            let row = (y * self.w) as usize;
             let band = y < r.y + radius || y >= r.bottom() - radius;
+            // The span every pixel of covers.
+            let (x0, x1) = if band {
+                (r.x + radius, r.right() - radius)
+            } else {
+                (r.x, r.right())
+            };
+            let (s0, s1) = (x0.max(cl.x), x1.min(cl.right()));
+            if s0 < s1 {
+                let span = &mut self.px[row + s0 as usize..row + s1 as usize];
+                match &ink {
+                    Ink::Copy(src) => {
+                        span.copy_from_slice(&src[row + s0 as usize..row + s1 as usize])
+                    }
+                    Ink::Rows { .. } => span.fill(ink.at(row, y)),
+                }
+            }
+            if !band {
+                continue;
+            }
             let cy = if y < r.y + radius {
                 (r.y + radius) as f32
             } else {
                 (r.bottom() - radius) as f32
             };
-            for x in cl.x..cl.right() {
-                let i = (y * self.w + x) as usize;
-                let corner = band && (x < r.x + radius || x >= r.right() - radius);
-                if !corner {
-                    self.px[i] = ink(x, y);
-                    continue;
-                }
+            let corners = (r.x..r.x + radius).chain(r.right() - radius..r.right());
+            for x in corners.filter(|&x| x >= cl.x && x < cl.right()) {
                 let cx = if x < r.x + radius {
                     (r.x + radius) as f32
                 } else {
@@ -112,7 +146,8 @@ impl Canvas {
                 let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
                 let a = (rf - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
                 if a > 0.0 {
-                    self.px[i] = blend(self.px[i], ink(x, y), (a * 255.0) as u8);
+                    let i = row + x as usize;
+                    self.px[i] = blend(self.px[i], ink.at(i, y), (a * 255.0) as u8);
                 }
             }
         }

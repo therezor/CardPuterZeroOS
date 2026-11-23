@@ -244,24 +244,33 @@ pub fn load(path: &Path, w: usize, h: usize) -> Option<Picture> {
     import(std::fs::File::open(path).ok()?, w, h).ok()
 }
 
-/// How much of the picture to keep, mixed toward `to`, so `fg` reads at
-/// `ratio` on the pixel that is hardest to read on, and never more than
+/// What a dither can take from a contrast: each channel moves a step.
+const DITHER_SLACK: f32 = 0.3;
+
+/// How much of the picture to keep, mixed toward `to`, so each ink reads at
+/// its ratio on the pixel that is hardest to read on, and never more than
 /// `max`. Found from that one pixel, so it costs nothing to bake.
-fn fit_keep(p: &Picture, to: [f32; 3], fg: Color, ratio: f32, max: f32) -> f32 {
+fn fit_keep(px: &[[f32; 3]], to: [f32; 3], inks: &[(Color, f32)], max: f32) -> f32 {
     let col = |c: [f32; 3]| rgb(c[0] as u8, c[1] as u8, c[2] as u8);
+    let Some(&(first, _)) = inks.first() else {
+        return max;
+    };
     // Light text is hardest to read on the brightest pixel, dark text on the
     // darkest. A weighted sum finds it without the gamma per pixel.
-    let light = crate::color::luminance(fg) > 0.5;
+    let light = crate::color::luminance(first) > 0.5;
     let y = |c: &[f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-    let pick = p.px.iter().max_by(|a, b| {
-        let (ya, yb) = (y(a), y(b));
-        let o = ya.partial_cmp(&yb).unwrap_or(std::cmp::Ordering::Equal);
+    let pick = px.iter().max_by(|a, b| {
+        let o = y(a).partial_cmp(&y(b)).unwrap_or(std::cmp::Ordering::Equal);
         if light { o } else { o.reverse() }
     });
     let Some(&worst) = pick else {
         return max;
     };
-    let ok = |k: f32| contrast(fg, col(lerp3(to, worst, k))) >= ratio;
+    let ok = |k: f32| {
+        let c = col(lerp3(to, worst, k));
+        inks.iter()
+            .all(|&(ink, ratio)| contrast(ink, c) >= ratio + DITHER_SLACK)
+    };
     if ok(max) {
         return max;
     }
@@ -369,8 +378,12 @@ fn to565(px: &[[f32; 3]], w: usize) -> Vec<Color> {
 }
 
 /// How dark home is: `fg` must read at this on every pixel, and no more
-/// than this much of the picture shows.
+/// than this much of the picture shows. `muted` must read at 3:1 on home,
+/// the lock and the frost.
 const HOME_RATIO: f32 = 6.0;
+const MUTED_RATIO: f32 = 3.0;
+/// Text on a pane.
+const FROST_RATIO: f32 = 4.5;
 const HOME_MAX: f32 = 0.65;
 /// The lock shows more of the picture and dims behind its clock instead.
 const LOCK_RATIO: f32 = 4.5;
@@ -386,14 +399,19 @@ pub fn bake(pic: &Picture, p: &Palette, bar: usize, foot: usize) -> Baked {
     let (w, h) = (pic.w, pic.h);
     let to = f3(p.bg);
     let dim = |keep: f32| -> Vec<[f32; 3]> { pic.px.iter().map(|c| lerp3(to, *c, keep)).collect() };
-    let mut home = dim(fit_keep(pic, to, p.fg, HOME_RATIO, HOME_MAX));
+    let muted = (p.muted, MUTED_RATIO);
+    let home_keep = fit_keep(&pic.px, to, &[(p.fg, HOME_RATIO), muted], HOME_MAX);
+    let mut home = dim(home_keep);
     scrims(&mut home, w, h, to, bar, foot, 0.0);
-    let mut lock = dim(fit_keep(pic, to, p.fg, LOCK_RATIO, LOCK_MAX));
+    let lock_keep = fit_keep(&pic.px, to, &[(p.fg, LOCK_RATIO), muted], LOCK_MAX);
+    let mut lock = dim(lock_keep);
     scrims(&mut lock, w, h, to, bar, foot, LOCK_HALO);
     let s = f3(p.surface);
-    let frost: Vec<[f32; 3]> = blur(&pic.px, w, h, FROST_R)
+    let blurred = blur(&pic.px, w, h, FROST_R);
+    let frost_keep = fit_keep(&blurred, s, &[(p.fg, FROST_RATIO), muted], FROST_KEEP);
+    let frost: Vec<[f32; 3]> = blurred
         .into_iter()
-        .map(|c| lerp3(s, c, FROST_KEEP))
+        .map(|c| lerp3(s, c, frost_keep))
         .collect();
     let frost = Rc::new(to565(&frost, w));
     Baked {
@@ -411,7 +429,7 @@ pub fn bake(pic: &Picture, p: &Palette, bar: usize, foot: usize) -> Baked {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::{MINT, PAPER};
+    use crate::theme::MINT;
 
     fn png_of(w: usize, h: usize, f: impl Fn(usize, usize) -> [u8; 3]) -> Vec<u8> {
         let px = (0..w * h)
@@ -460,7 +478,11 @@ mod tests {
 
     #[test]
     fn text_reads_on_home_over_a_white_picture() {
-        for p in [MINT, PAPER] {
+        for p in crate::theme::PALETTES
+            .iter()
+            .chain(crate::theme::EARNED)
+            .copied()
+        {
             let white = Picture {
                 w: 32,
                 h: 40,
@@ -472,12 +494,19 @@ mod tests {
             };
             for pic in [white, black] {
                 let b = bake(&pic, &p, 4, 4);
-                for c in &b.home.back {
-                    assert!(contrast(p.fg, *c) >= HOME_RATIO - 0.6, "{} home", p.name);
-                }
-                for c in &b.lock.back {
-                    assert!(contrast(p.fg, *c) >= LOCK_RATIO - 0.6, "{} lock", p.name);
-                }
+                // Dithering moves a channel a step, so a little slack.
+                let reads = |buf: &[Color], ink: Color, ratio: f32, what: &str| {
+                    for c in buf {
+                        let got = contrast(ink, *c);
+                        assert!(got >= ratio, "{} {what}: {got}", p.name);
+                    }
+                };
+                reads(&b.home.back, p.fg, HOME_RATIO, "fg on home");
+                reads(&b.home.back, p.muted, MUTED_RATIO, "muted on home");
+                reads(&b.lock.back, p.fg, LOCK_RATIO, "fg on the lock");
+                reads(&b.lock.back, p.muted, MUTED_RATIO, "muted on the lock");
+                reads(&b.home.frost, p.fg, FROST_RATIO, "fg on frost");
+                reads(&b.home.frost, p.muted, MUTED_RATIO, "muted on frost");
             }
         }
     }

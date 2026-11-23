@@ -43,8 +43,9 @@ const TEXT: &[(u32, u32)] = &[
     (0x25cf, 0x25cf),
 ];
 
-/// The lock's clock: "14:32", or "2:32" on a 12-hour clock.
-const CLOCK: &[(u32, u32)] = &[(0x20, 0x20), (0x30, 0x3a)];
+/// The lock's clock: "14:32", "2:32" on a 12-hour clock, or "--:--" before
+/// the first read.
+const CLOCK: &[(u32, u32)] = &[(0x20, 0x20), (0x2d, 0x2d), (0x30, 0x3a)];
 
 const MONO: &[(u32, u32)] = &[
     (0x20, 0x7e),

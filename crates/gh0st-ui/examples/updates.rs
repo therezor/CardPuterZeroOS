@@ -1026,6 +1026,7 @@ fn n_lock(t: &Theme) -> Canvas {
         field: None,
         ready: false,
         note: Some((Tone::Info, "2 notifications")),
+        bell: true,
     };
     widgets::lock_screen(&mut c, t, &s, &l);
     c
