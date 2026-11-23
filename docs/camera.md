@@ -7,9 +7,9 @@ starts, `gh0st-camd`, owns libcamera and the encoders.
 Status: the app, its protocol and a fake helper are built and tested on a
 host. The helper (`camd/`) takes the preview, photos and video, and has
 run on a device: 8 MP photos with EXIF, zoom, thumbnails, 1080p30 and 720p30
-video, the probe. Sound comes next. The image still ships M5's Camera;
-`scripts/deploy.sh camera` installs this one beside it. The milestones are
-at the end.
+video, the probe. Sound comes next. The image ships it in place of M5's
+Camera, and migration `0003-camera` swaps them on devices flashed before.
+The milestones are at the end.
 
 ## The camera and its ceiling
 

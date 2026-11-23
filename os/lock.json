@@ -132,12 +132,6 @@
   ],
   "apps": [
     {
-      "name": "camera",
-      "version": "1.0.2-m5stack1",
-      "url": "https://github.com/CardputerZero/Camera/releases/download/v1.0.2/Camera_1.0.2_m5stack1_arm64.deb",
-      "sha256": "acaddb8297132f1437d29a0cb9c369a8616c26014e4704400129592d057bc5c1"
-    },
-    {
       "name": "m5cardputerzero-files",
       "version": "1.0.2",
       "url": "https://github.com/CardputerZero/Files/releases/download/v1.0.2/m5cardputerzero-files_1.0.2_m5stack1_arm64.deb",

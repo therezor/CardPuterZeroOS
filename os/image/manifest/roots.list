@@ -58,7 +58,7 @@ wireplumber             PipeWire session manager; wpctl for volume
 pulseaudio-utils        pactl, which Music and Recorder run
 gh0st                   the shell and Settings
 gh0st-term              the terminal
-camera                  stock Camera app
+gh0st-camera            the Camera app and its libcamera helper
 m5cardputerzero-files   stock Files app
 m5cardputerzero-music   stock Music app
 m5cardputerzero-recorder stock Recorder app

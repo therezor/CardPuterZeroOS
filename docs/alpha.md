@@ -101,4 +101,3 @@ Open an issue on GitHub and include:
   MT7612U, Realtek RTL8812AU and RTL8811AU, and more; `gh0st-wifi`).
 - The hotspot takes the Wi-Fi: the device leaves its network while it runs.
 - The training is part of setup for now. It becomes its own app later.
-- The stock Camera app is still on the image next to ours, so home shows two.

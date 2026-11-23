@@ -1,0 +1,3 @@
+# Our own Camera app and its helper replace M5's Camera (docs/camera.md).
+install gh0st-camera
+remove camera

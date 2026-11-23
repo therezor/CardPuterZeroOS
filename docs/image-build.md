@@ -73,8 +73,8 @@ both install from it.
    - The camera helper (C++), against `libcamera-dev` unpacked into a
      sysroot. That deb's `use` is `camera-build`, so it is fetched but never
      installed. `os/build.sh camd` builds the helper alone into
-     `os/out/camd`. The `gh0st-camera` deb is built but not in
-     `roots.list` until it replaces M5's Camera (`docs/camera.md`).
+     `os/out/camd`. The `gh0st-camera` deb replaces M5's Camera
+     (`docs/camera.md`).
    - The M5 drivers and our panel driver, against the pinned kernel headers.
      M5's `make install` writes to absolute paths, so only `make all` runs
      and an explicit file list goes into the package. Every module's
@@ -105,11 +105,12 @@ source. Old libcamera and kernel builds are fetched from the pool by URL:
 the live index has moved on (libcamera-ipa 0.8, kernel 6.18.60), so a build
 from it would not resolve.
 
-**Base apps.** gh0st, Settings, Updates, the Store, the terminal, and the
-stock Camera, Files, Music and Recorder at the versions the dev device
-runs. The Store is ours (`docs/store.md`). M5's AppStore, repacked until
-then as `gh0st-m5-appstore`, is gone: migration `0002-store` removes it
-from devices that had it.
+**Base apps.** gh0st, Settings, Updates, the Store, the terminal and
+Camera, which are ours, and the stock Files, Music and Recorder at the
+versions the dev device runs. M5's AppStore, repacked until then as
+`gh0st-m5-appstore`, is gone: migration `0002-store` removes it from
+devices that had it. M5's Camera is gone too: migration `0003-camera`
+installs ours and removes it.
 
 **Command-line tools.** What a Linux user reaches for in the terminal:
 curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,
