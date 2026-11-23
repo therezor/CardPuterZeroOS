@@ -22,6 +22,22 @@ cargo test --workspace
 | Idle budget | `Driver::idle_wakes`, `crates/gh0st-settings/tests/pages.rs` | an idle page wakes for the clock and nothing else |
 | Device | `scripts/measure.sh` | PSS, wakeups and CPU at idle, before a release |
 
+## On a device
+
+The suite runs on the device too, where the Linux-only paths are real. Build
+it with a target dir the device can mirror, since the sims find the app
+binaries by the path they were built at:
+
+```sh
+CARGO_TARGET_DIR=/tmp/gh0st-xtarget cargo build --workspace --bins --target aarch64-unknown-linux-musl
+CARGO_TARGET_DIR=/tmp/gh0st-xtarget cargo test --workspace --no-run --target aarch64-unknown-linux-musl
+```
+
+Copy the test binaries anywhere, and the app binaries to that same debug
+path (`/tmp` there is a 32 MB tmpfs, so link it to a folder in home). Run
+each with `TMPDIR` and `HOME` in scratch folders under home. No root is
+needed, and the tests stub every system tool they touch.
+
 ## The rules
 
 - **A fix comes with the test that failed before it.** Prove a bug from an

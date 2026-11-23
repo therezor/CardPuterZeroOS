@@ -66,7 +66,7 @@ impl Sim {
     fn new(name: &str, installed: &[&str], wants: &str) -> Sim {
         let dir = std::env::temp_dir().join(format!("gh0st-migrate-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        for d in ["bin", "state", "run", "notify", "migrations"] {
+        for d in ["bin", "state", "run", "notify", "migrations", "power"] {
             std::fs::create_dir_all(dir.join(d)).unwrap();
         }
         for (n, body) in [
@@ -128,6 +128,9 @@ impl Sim {
             .env("GH0ST_UPDATE_RUN", self.dir.join("run"))
             .env("GH0ST_NOTIFY_SYSTEM", self.dir.join("notify"))
             .env("GH0ST_MIGRATIONS", self.dir.join("migrations"))
+            // No battery, as on a bench supply: the host's own charge
+            // never decides.
+            .env("GH0ST_POWER_SUPPLY", self.dir.join("power"))
             .output()
             .unwrap();
         assert!(

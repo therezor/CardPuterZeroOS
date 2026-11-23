@@ -5,6 +5,9 @@ use gh0st_app::prelude::*;
 use gh0st_app::testing::Driver;
 use gh0st_settings::app::{Embed, Settings};
 use gh0st_settings::model::PageId;
+
+mod common;
+use common::stub_tools;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -50,6 +53,7 @@ fn taken(log: &Log) -> Vec<String> {
 
 #[test]
 fn done_on_six_goes_on_from_privacy() {
+    stub_tools();
     let log = Log::default();
     let steps = Steps::new("Setup")
         .step(step(PageId::Privacy, false, true))
@@ -62,18 +66,21 @@ fn done_on_six_goes_on_from_privacy() {
 
 #[test]
 fn skip_on_seven_goes_on_from_the_network() {
+    stub_tools();
     let log = Log::default();
     let steps = Steps::new("Setup")
         .step(step(PageId::Wifi, true, false))
         .step(mark(&log));
     let mut d = Driver::new(steps);
-    d.keys("7");
+    // The step may be turning the radio on: Skip waits for that.
+    d.keys("7").jobs(2000);
     assert_eq!(taken(&log), ["Setup 2 of 2"]);
 }
 
 /// Alone, Skip takes the middle key, as any single chip does.
 #[test]
 fn a_lone_skip_sits_on_six() {
+    stub_tools();
     let log = Log::default();
     let steps = Steps::new("Setup")
         .step(step(PageId::Country(None), true, false))
@@ -87,6 +94,7 @@ fn a_lone_skip_sits_on_six() {
 
 #[test]
 fn esc_on_a_step_s_page_goes_back_a_step() {
+    stub_tools();
     let log = Log::default();
     let steps = Steps::new("Setup")
         .step(mark(&log))
@@ -102,6 +110,7 @@ fn esc_on_a_step_s_page_goes_back_a_step() {
 /// next key clears it (design.md, Text input).
 #[test]
 fn a_wrong_device_name_says_why_in_the_dialog() {
+    stub_tools();
     let steps = Steps::new("Setup").step(step(PageId::Look, false, true));
     let mut d = Driver::new(steps);
     d.keys("enter");

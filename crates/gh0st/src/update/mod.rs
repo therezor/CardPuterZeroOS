@@ -725,10 +725,12 @@ fn dpkg_interrupted() -> bool {
 /// anything else 30% or the charger. No battery found (a bench supply):
 /// fine.
 fn power_ok(kernel: bool) -> Result<(), (Outcome, String)> {
-    let Some(r) = battery::find(Path::new("/sys/class/power_supply"))
-        .as_deref()
-        .and_then(battery::sample)
-    else {
+    // `$GH0ST_POWER_SUPPLY`: a fake tree, so a test never reads the host's.
+    let root = std::env::var_os("GH0ST_POWER_SUPPLY").map_or_else(
+        || "/sys/class/power_supply".into(),
+        std::path::PathBuf::from,
+    );
+    let Some(r) = battery::find(&root).as_deref().and_then(battery::sample) else {
         return Ok(());
     };
     if kernel && r.percent <= KERNEL_BATTERY {
