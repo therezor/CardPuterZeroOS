@@ -14,6 +14,7 @@ pub mod lint;
 pub mod qr;
 pub mod snapshot;
 pub mod theme;
+pub mod wallpaper;
 pub mod widgets;
 
 pub use canvas::Canvas;

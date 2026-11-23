@@ -43,6 +43,9 @@ const TEXT: &[(u32, u32)] = &[
     (0x25cf, 0x25cf),
 ];
 
+/// The lock's clock: "14:32", or "2:32" on a 12-hour clock.
+const CLOCK: &[(u32, u32)] = &[(0x20, 0x20), (0x30, 0x3a)];
+
 const MONO: &[(u32, u32)] = &[
     (0x20, 0x7e),
     (0xa0, 0x17f),
@@ -152,6 +155,7 @@ const FACES: &[Face] = &[
     face("SANS_17_BOLD", "Inter.ttf", 17.0, 650.0, TEXT, true),
     face("SANS_19_BOLD", "Inter.ttf", 19.0, 600.0, TEXT, true),
     face("SANS_26_BOLD", "Inter.ttf", 26.0, 600.0, TEXT, true),
+    face("SANS_50_BOLD", "Inter.ttf", 50.0, 600.0, CLOCK, true),
     // A 7 px cell exactly: JetBrains Mono's advance is 0.6 em, and at 12 px
     // a 7.2 px cell would space letters unevenly.
     face(

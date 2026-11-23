@@ -50,7 +50,13 @@ pub mod key {
     pub const STORE_MIRROR: &str = "gh0st.store.mirror";
     /// The Store's home: `grid` or `list`.
     pub const STORE_LAYOUT: &str = "gh0st.store.layout";
+    /// The picture behind home and the lock: a built-in's name, `picture`
+    /// for the user's own crop, or `off`.
+    pub const WALLPAPER: &str = "gh0st.wallpaper";
 }
+
+/// The picture home and the lock show when none is set.
+pub const DEFAULT_WALLPAPER: &str = "aurora";
 
 pub const DEFAULT_DARK_SECS: i64 = 30;
 pub const DEFAULT_LOCK_AFTER_SECS: i64 = 300;
@@ -135,6 +141,10 @@ impl Config {
 
     pub fn palette_name(&self) -> Option<&str> {
         self.get_str(key::PALETTE)
+    }
+
+    pub fn wallpaper(&self) -> &str {
+        self.get_str(key::WALLPAPER).unwrap_or(DEFAULT_WALLPAPER)
     }
 
     pub fn animations(&self) -> bool {

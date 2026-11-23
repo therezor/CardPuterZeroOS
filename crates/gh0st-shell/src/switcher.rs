@@ -338,7 +338,7 @@ impl Switcher {
     }
 
     pub fn draw(&self, c: &mut Canvas, t: &Theme, status: &Status, now: u64) {
-        c.fill(widgets::body(t), t.c.bg);
+        c.clear(widgets::body(t), t.c.bg);
         widgets::status_bar(c, t, status);
         let to = self.frame(self.selected, self.top);
         let (frame, offset) = match self.anim {

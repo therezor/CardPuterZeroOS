@@ -201,6 +201,8 @@ pub struct Fonts {
     /// A chip's word: a smaller bitmap face, so a word of seven letters
     /// fits over its key.
     pub chip: Font,
+    /// The lock screen's time: digits and a colon only.
+    pub clock: Font,
 }
 
 #[derive(Clone, Copy)]
@@ -738,6 +740,7 @@ pub const FONTS: Fonts = Fonts {
     mono: &font::MONO_12,
     mono_bold: &font::MONO_12_BOLD,
     chip: &font::TERMINUS_12_BOLD,
+    clock: &font::SANS_50_BOLD,
 };
 
 impl Theme {

@@ -32,6 +32,7 @@ use gh0st_ui::display::{Display, Frames};
 use gh0st_ui::drm;
 use gh0st_ui::fb::{self, Framebuffer};
 use gh0st_ui::theme::{self, Theme, Tone};
+use gh0st_ui::wallpaper;
 use gh0st_ui::widgets::{self, Battery, Status, Visual};
 use gh0st_ui::{Canvas, Rect, snapshot};
 use std::collections::HashMap;
@@ -209,6 +210,10 @@ impl Input {
 struct Shell {
     t: Theme,
     canvas: Canvas,
+    /// Home's and the lock's picture, baked; none when it is off.
+    wall: Option<wallpaper::Baked>,
+    /// What `wall` was baked from: the setting, the palette, the file's age.
+    wall_from: Option<(String, &'static str, Option<std::time::SystemTime>)>,
     display: Box<dyn Display>,
     input: Input,
     kb: Keyboard,
@@ -471,8 +476,11 @@ impl Shell {
             paced: false,
             first_frame: true,
             config,
+            wall: None,
+            wall_from: None,
         };
         s.set_animations();
+        s.rebake();
         s.boot_restore();
         if on_device {
             s.start_job(
@@ -653,7 +661,38 @@ impl Shell {
         self.lock_after_ms = self.config.lock_after_ms();
         self.dark_wifi_ms = self.config.dark_wifi_ms();
         self.set_animations();
+        self.rebake();
         self.dirty = true;
+    }
+
+    /// Bakes the wallpaper again when its setting, the palette or its file
+    /// changed. `GH0ST_WALLPAPER` overrides the setting, for sims.
+    fn rebake(&mut self) {
+        let setting = std::env::var("GH0ST_WALLPAPER")
+            .unwrap_or_else(|_| self.config.wallpaper().to_string());
+        let dir = config::default_path()
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let file = wallpaper::picture_path(&dir);
+        let age = (setting == wallpaper::OWN)
+            .then(|| std::fs::metadata(&file).and_then(|m| m.modified()).ok())
+            .flatten();
+        let from = (setting.clone(), self.t.c.name, age);
+        if self.wall_from.as_ref() == Some(&from) {
+            return;
+        }
+        let m = self.t.m;
+        let (w, h) = (m.width as usize, m.height as usize);
+        let pic = if setting == wallpaper::OWN {
+            wallpaper::load(&file, w, h)
+        } else {
+            wallpaper::builtin(&setting, &self.t.c, w, h)
+        };
+        self.wall =
+            pic.map(|p| wallpaper::bake(&p, &self.t.c, m.bar_h as usize, m.hint_h as usize));
+        self.wall_from = Some(from);
+        self.full_flush = true;
     }
 
     fn rescan(&mut self) {
@@ -2710,6 +2749,12 @@ impl Shell {
             Screen::Switcher => Some(self.switcher.selected()),
             _ => Some(0),
         };
+        let ground = self.wall.as_ref().and_then(|w| match self.screen {
+            Screen::Locked => Some(w.lock.clone()),
+            Screen::Home | Screen::Switcher | Screen::Notices => Some(w.home.clone()),
+            _ => None,
+        });
+        self.canvas.set_backdrop(ground);
         let mut status = status_of(&clock, self.battery, self.net, &dock, front);
         status.bluetooth = self.bluetooth;
         status.notices = self.notices.len().min(u8::MAX as usize) as u8;

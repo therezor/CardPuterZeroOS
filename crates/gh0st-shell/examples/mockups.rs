@@ -17,6 +17,7 @@ use gh0st_ui::geom::Rect;
 use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::snapshot::write_png;
 use gh0st_ui::theme::{self, Theme, Tone};
+use gh0st_ui::wallpaper;
 use gh0st_ui::widgets::{self, Battery, Net, Status, Visual};
 use std::path::{Path, PathBuf};
 
@@ -101,10 +102,26 @@ fn status<'a>(dock: &'a [Visual<'a>], front: Option<usize>, title: &'a str) -> S
     }
 }
 
-fn new_canvas(t: &Theme) -> Canvas {
+/// Which picture the scenes stand on: `GH0ST_WALLPAPER` as the shell
+/// reads it, aurora when unset.
+fn picture() -> String {
+    std::env::var("GH0ST_WALLPAPER").unwrap_or_else(|_| "aurora".into())
+}
+
+/// A canvas on home's picture, or the lock's.
+fn grounded(t: &Theme, lock: bool) -> Canvas {
     let mut c = Canvas::new(t.m.width, t.m.height);
     c.fill(c.bounds(), t.c.bg);
+    let (w, h) = (t.m.width as usize, t.m.height as usize);
+    if let Some(p) = wallpaper::builtin(&picture(), &t.c, w, h) {
+        let b = wallpaper::bake(&p, &t.c, t.m.bar_h as usize, t.m.hint_h as usize);
+        c.set_backdrop(Some(if lock { b.lock } else { b.home }));
+    }
     c
+}
+
+fn new_canvas(t: &Theme) -> Canvas {
+    grounded(t, false)
 }
 
 /// Two apps left open: Music and the terminal.
@@ -266,7 +283,7 @@ fn lock(t: &Theme, field: Option<usize>, ready: bool, note: Option<(Tone, &str)>
         ready,
         note,
     };
-    let mut c = new_canvas(t);
+    let mut c = grounded(t, true);
     widgets::lock_screen(&mut c, t, &s, &l);
     c
 }

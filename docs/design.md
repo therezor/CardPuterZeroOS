@@ -307,6 +307,33 @@ and panes, 7 on cards, 2 on key pills. Every effect is a flat fill, a fill
 that steps from one colour to another, or a picture baked once: nothing
 blurs or polls per frame.
 
+## Wallpaper
+
+Home, the switcher, the notifications and the lock screen stand on a
+picture; apps and Settings stand on `bg`. `gh0st.wallpaper` names it:
+`aurora` (the default) or `contour`, drawn from the palette's colours, so
+they change with it; `picture`, the user's own; or `off`.
+
+The picture is baked once, when the shell starts or the picture or the
+palette changes, into three buffers the screen's size: home's, the lock's
+and a frost. A frame copies them and never blends a picture.
+
+- **Home** keeps at most 65% of the picture, mixed toward `bg`, and less
+  where needed, so `fg` reads at 6:1 on its brightest pixel.
+- **The lock** keeps up to 85%, so `fg` reads at 4.5:1, and darkens a halo
+  behind the clock.
+- Both darken toward `bg` under the bars.
+- **The frost** is the picture blurred and mostly `surface`. Panes show
+  it: chips, the selected tile, a switcher card, the lock's note.
+
+The bake dithers to RGB565, so a soft gradient doesn't band.
+
+A picture of the user's own is cropped to the screen's shape, from its
+middle, when it is picked. The source is read a row at a time and only the
+320x170 crop is kept, beside config.json as `wallpaper.png`, so a large
+photo never sits in memory. The shell refuses a kept file of any other
+size.
+
 ## Dialogs
 
 ![A dialog that takes text](design/16-dialog-typing.png)
@@ -391,8 +418,9 @@ the password once it is locked. The lock screen rests until Tab, then Enter,
 are pressed in turn. Nothing else does anything there.
 
 The top bar shows the battery and the network, but no open apps (what runs
-stays private) and no clock. The time sits large in the middle instead, with
-the date under it in Caption.
+stays private) and no clock. The time sits large in the middle instead, in
+Inter at 50 px, with the date under it in Caption. How many notifications
+wait sits on a pane under the date, with a bell.
 
 - **At rest.** "Tab then Enter unlock" in key pills. Tab, then Enter within
   2 s, unlocks, or opens the password field when one is asked. Any other key

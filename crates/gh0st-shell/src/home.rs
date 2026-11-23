@@ -33,7 +33,7 @@ pub struct MenuRow<'a> {
 /// Home's menu over the grid: its rows with their keys, and the menu chip lit.
 pub fn draw_menu(c: &mut Canvas, t: &Theme, rows: &[MenuRow], sel: usize) {
     let body = widgets::body(t);
-    c.fill(body, t.c.bg);
+    c.clear(body, t.c.bg);
     let (x, w) = (t.m.margin, t.m.width - 2 * t.m.margin);
     let keys_w = rows
         .iter()
@@ -464,7 +464,7 @@ impl Home {
     }
 
     pub fn draw(&self, c: &mut Canvas, t: &Theme, status: &Status, now: u64) {
-        c.fill(widgets::body(t), t.c.bg);
+        c.clear(widgets::body(t), t.c.bg);
         widgets::status_bar(c, t, status);
         if self.shown.is_empty() {
             let msg = format!("No app matches \u{201c}{}\u{201d}", self.query);

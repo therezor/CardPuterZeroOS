@@ -1453,7 +1453,7 @@ pub fn text_field(
     cursor: bool,
     placeholder: &str,
 ) {
-    c.round_rect(r, t.m.radius, t.c.bg);
+    c.pane(r, t.m.radius, t.c.surface);
     let edge = if cursor { t.c.accent } else { t.c.border };
     c.stroke_round_rect(r, t.m.radius, edge);
     let inner = Rect::new(r.x + 8, r.y, r.w - 16, r.h);
@@ -1878,29 +1878,20 @@ pub struct Lock<'a> {
 /// top bar keeps the battery and the network; the caller passes no dock and
 /// no clock, since the open apps stay private and the time is here.
 pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
-    c.fill(c.bounds(), t.c.bg);
+    c.clear(c.bounds(), t.c.bg);
     status_bar(c, t, s);
     let b = body(t);
-    let icon_s = IconSize::Small as i32;
     let g = t.m.lock_gap;
-    let stack =
-        icon_s + g + t.f.big.cap() + g + t.f.small.cap() + 2 * g + t.m.field_h + t.m.field_note_h;
-    let mut y = b.y + (b.h - stack) / 2;
-    icon::draw(
-        c,
-        "lock",
-        IconSize::Small,
-        (t.m.width - icon_s) / 2,
-        y,
-        t.c.muted,
-    );
-    y += icon_s + g + t.f.big.cap();
-    let w = t.f.big.measure(l.clock);
-    t.f.big.draw(c, (t.m.width - w) / 2, y, l.clock, t.c.fg);
-    y += g + t.f.small.cap();
+    let clock = t.f.clock;
+    // With the field open the time moves up to make room.
+    let top = b.y + if l.field.is_some() { 4 } else { 12 };
+    let y = top + clock.cap();
+    let w = clock.measure(l.clock);
+    clock.draw(c, (t.m.width - w) / 2, y, l.clock, t.c.fg);
+    let y = y + g + 2 + t.f.small.cap();
     let w = t.f.small.measure(l.date);
-    t.f.small.draw(c, (t.m.width - w) / 2, y, l.date, t.c.muted);
-    y += 2 * g;
+    t.f.small.draw(c, (t.m.width - w) / 2, y, l.date, soft(t));
+    let y = y + 2 * g;
     let fw = t.m.lock_field_w;
     let field = Rect::new((t.m.width - fw) / 2, y, fw, t.m.field_h);
     let note_y = match l.field {
@@ -1924,27 +1915,41 @@ pub fn lock_screen(c: &mut Canvas, t: &Theme, s: &Status, l: &Lock) {
     };
     if let Some((tone, text)) = l.note {
         let col = match tone {
-            Tone::Info => t.c.muted,
+            Tone::Info => soft(t),
             _ => t.c.tone(tone),
         };
         let s = IconSize::Tiny as i32;
         let tw = t.f.small.measure(text);
-        let show_icon = tone != Tone::Info;
-        let total = tw + if show_icon { s + 4 } else { 0 };
+        // A note at rest, such as how many notifications wait, sits on a
+        // pane of its own, with a bell for notifications.
+        let at_rest = l.field.is_none();
+        let icon_name = match tone {
+            Tone::Info if at_rest => Some("bell"),
+            Tone::Info => None,
+            _ => Some(tone.icon()),
+        };
+        let total = tw + if icon_name.is_some() { s + 4 } else { 0 };
         let mut x = (t.m.width - total) / 2;
         let nr = Rect::new(x, note_y, total, t.m.field_note_h);
-        if show_icon {
-            icon::draw(
-                c,
-                tone.icon(),
-                IconSize::Tiny,
-                x,
-                nr.y + (nr.h - s) / 2,
-                col,
+        if at_rest {
+            let pr = Rect::new(nr.x - 9, nr.y, nr.w + 18, nr.h + 2);
+            c.pane(pr, t.m.radius_large, t.c.surface);
+            c.fill(
+                Rect::new(
+                    pr.x + t.m.radius_large,
+                    pr.y,
+                    pr.w - 2 * t.m.radius_large,
+                    1,
+                ),
+                theme::rim(t.c.surface),
             );
+        }
+        if let Some(name) = icon_name {
+            let ink = if at_rest { t.c.accent } else { col };
+            icon::draw(c, name, IconSize::Tiny, x, nr.y + (nr.h - s) / 2 + 1, ink);
             x += s + 4;
         }
-        text_in(c, t.f.small, Rect::new(x, nr.y, tw, nr.h), text, col);
+        text_in(c, t.f.small, Rect::new(x, nr.y + 1, tw, nr.h), text, col);
     }
     match l.field {
         Some(_) if l.ready => hint_bar(

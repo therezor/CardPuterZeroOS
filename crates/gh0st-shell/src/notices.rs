@@ -101,7 +101,7 @@ impl Panel {
     }
 
     pub fn draw(&mut self, c: &mut Canvas, t: &Theme, status: &Status, now_secs: u64) {
-        c.fill(widgets::body(t), t.c.bg);
+        c.clear(widgets::body(t), t.c.bg);
         widgets::status_bar(c, t, status);
         let none = Chip::default();
         if self.rows.is_empty() {

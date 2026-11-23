@@ -11,7 +11,8 @@ use std::rc::Rc;
 /// the picture back.
 pub struct Backdrop {
     pub back: Vec<Color>,
-    pub frost: Vec<Color>,
+    /// Shared: home and the lock show the same frost.
+    pub frost: Rc<Vec<Color>>,
 }
 
 /// A `w` x `h` 4-bit coverage mask starting at nibble `off` of `bits`.
