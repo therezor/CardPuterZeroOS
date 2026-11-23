@@ -11,6 +11,8 @@ pub const STATE_DIR: &str = "/var/lib/gh0st/store";
 pub const RUN_DIR: &str = "/run/gh0st-store";
 pub const CACHE_DIR: &str = "/var/cache/gh0st/store";
 pub const DPKG_STATUS: &str = "/var/lib/dpkg/status";
+/// The apt repo's key, which signs the catalog too.
+pub const KEYRING: &str = "/usr/share/keyrings/gh0st-archive-keyring.pgp";
 /// The first line of a catalog this build reads.
 pub const MAGIC: &str = "gh0st-store 1";
 
@@ -32,6 +34,11 @@ pub fn cache_dir() -> PathBuf {
 /// dpkg's status file, or `$GH0ST_DPKG_STATUS`.
 pub fn dpkg_status() -> PathBuf {
     dir("GH0ST_DPKG_STATUS", DPKG_STATUS)
+}
+
+/// The key the catalog must be signed with, or `$GH0ST_STORE_KEYRING`.
+pub fn keyring() -> PathBuf {
+    dir("GH0ST_STORE_KEYRING", KEYRING)
 }
 
 fn dir(var: &str, default: &str) -> PathBuf {
@@ -204,6 +211,16 @@ impl Catalog {
 
     pub fn load() -> Option<Catalog> {
         Catalog::parse(&std::fs::read_to_string(catalog_path()).ok()?).ok()
+    }
+
+    /// Whether this catalog, already verified, may replace `old` at `now`.
+    /// An expired one is refused, and so is one older than `old`: a replayed
+    /// catalog can't bring back a version with a known hole.
+    pub fn fresh(&self, old: Option<&Catalog>, now: u64) -> Result<(), Outcome> {
+        if self.expires <= now || old.is_some_and(|o| self.date < o.date) {
+            return Err(Outcome::Stale);
+        }
+        Ok(())
     }
 
     pub fn find(&self, package: &str) -> Option<&App> {
@@ -728,6 +745,54 @@ pub fn file_sha256(path: &Path) -> Option<String> {
     is_sha256(&h).then_some(h)
 }
 
+impl Pinned {
+    /// Whether the file at `path` is the one pinned: size first, as that
+    /// needs no read.
+    pub fn matches(&self, path: &Path) -> bool {
+        std::fs::metadata(path).is_ok_and(|m| m.len() == self.size)
+            && file_sha256(path).as_deref() == Some(self.sha256.as_str())
+    }
+}
+
+/// Whether `sig` is a detached signature over `data` by [`keyring`], checked
+/// by `sqv`, apt's own verifier. The image has no gpgv.
+pub fn signed(data: &Path, sig: &Path) -> bool {
+    signed_by(&keyring(), data, sig)
+}
+
+fn signed_by(keyring: &Path, data: &Path, sig: &Path) -> bool {
+    // The positional form: sqv 1.2, as on CI's Ubuntu, lacks --signature-file.
+    std::process::Command::new("sqv")
+        .arg("--keyring")
+        .arg(keyring)
+        .arg("--")
+        .arg(sig)
+        .arg(data)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Checks a downloaded catalog and its signature: signed by our key,
+/// readable, unexpired and no older than `old`.
+pub fn verify(
+    data: &Path,
+    sig: &Path,
+    old: Option<&Catalog>,
+    now: u64,
+) -> Result<Catalog, Outcome> {
+    if !signed(data, sig) {
+        return Err(Outcome::BadSignature);
+    }
+    // Signed but unreadable: a format this build doesn't know.
+    let text = std::fs::read_to_string(data).map_err(|_| Outcome::Failed)?;
+    let c = Catalog::parse(&text).map_err(|_| Outcome::Failed)?;
+    c.fresh(old, now)?;
+    Ok(c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -867,6 +932,100 @@ mod tests {
         assert_eq!(Mirror::Auto.url(a, "Europe/London"), a.url);
         assert_eq!(Mirror::GitHub.url(a, "Asia/Shanghai"), a.url);
         assert_eq!(Mirror::China.url(&c.apps[1], ""), "", "no China URL");
+    }
+
+    #[test]
+    fn an_old_or_expired_catalog_is_refused() {
+        let c = sample();
+        let now = c.date + 60;
+        assert_eq!(c.fresh(None, now), Ok(()));
+        assert_eq!(c.fresh(Some(&c), now), Ok(()), "the same catalog again");
+        let newer = Catalog {
+            date: c.date + 1,
+            ..c.clone()
+        };
+        assert_eq!(c.fresh(Some(&newer), now), Err(Outcome::Stale));
+        assert_eq!(c.fresh(None, c.expires), Err(Outcome::Stale));
+    }
+
+    #[test]
+    fn a_pinned_file_matches_by_size_and_hash() {
+        let p = std::env::temp_dir().join(format!("gh0st-pinned-{}", std::process::id()));
+        std::fs::write(&p, "abc").unwrap();
+        let sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let pin = |sha256: &str, size| Pinned {
+            sha256: sha256.into(),
+            size,
+        };
+        assert!(pin(sha, 3).matches(&p));
+        assert!(!pin(sha, 4).matches(&p));
+        assert!(!pin(&"0".repeat(64), 3).matches(&p));
+        std::fs::remove_file(&p).unwrap();
+    }
+
+    /// A real signature, made with a throwaway gpg key and checked by sqv.
+    /// Skipped where either tool is missing; CI installs both.
+    #[test]
+    fn sqv_accepts_our_signature_and_nothing_else() {
+        let have = |t: &str| {
+            std::process::Command::new(t)
+                .arg("--version")
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        if !have("sqv") || !have("gpg") {
+            eprintln!("skipped: needs sqv and gpg");
+            return;
+        }
+        let d = std::env::temp_dir().join(format!("g0sq{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let gpg = |home: &str, args: &[&str]| {
+            let h = d.join(home);
+            std::fs::create_dir_all(&h).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&h, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let ok = std::process::Command::new("gpg")
+                .env("GNUPGHOME", &h)
+                .args(["--batch", "--quiet", "--pinentry-mode", "loopback"])
+                .args(["--passphrase", ""])
+                .args(args)
+                .current_dir(&d)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "gpg {args:?}");
+        };
+        for k in ["ours", "theirs"] {
+            let uid = format!("{k} <{k}@example.invalid>");
+            gpg(k, &["--quick-gen-key", &uid, "ed25519", "sign", "never"]);
+            gpg(k, &["--output", &format!("{k}.pgp"), "--export", k]);
+        }
+        std::fs::write(d.join("catalog"), sample().text()).unwrap();
+        gpg(
+            "ours",
+            &["--output", "ours.sig", "--detach-sign", "catalog"],
+        );
+        gpg(
+            "theirs",
+            &["--output", "theirs.sig", "--detach-sign", "catalog"],
+        );
+        let (cat, ours) = (d.join("catalog"), d.join("ours.pgp"));
+        assert!(signed_by(&ours, &cat, &d.join("ours.sig")));
+        assert!(!signed_by(&ours, &cat, &d.join("theirs.sig")));
+        assert!(!signed_by(&ours, &cat, &d.join("missing.sig")));
+        std::fs::write(&cat, sample().text().replace("0.2.0", "0.2.1")).unwrap();
+        assert!(!signed_by(&ours, &cat, &d.join("ours.sig")));
+        for k in ["ours", "theirs"] {
+            let _ = std::process::Command::new("gpgconf")
+                .env("GNUPGHOME", d.join(k))
+                .args(["--kill", "gpg-agent"])
+                .status();
+        }
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
