@@ -34,7 +34,7 @@ pub use gh0st_core::keys::{Key as RawKey, State as KeyState};
 /// What a toast or a top-bar word says about itself.
 pub use gh0st_ui::theme::Tone;
 pub use key::{Key, codes};
-pub use list::{Action, List, Row, cycle};
+pub use list::{Action, List, Row, Scroll, cycle};
 pub use page::{Cx, Job, JobEvent, Page, Settings, Timer, Watch};
 pub use run::{Options, run, run_with};
 pub use search::Search;
@@ -49,6 +49,6 @@ pub use gh0st_ui as gfx;
 pub mod prelude {
     pub use crate::{
         Action, Answer, Bars, Chip, Command, Commands, Cx, Dialog, Edit, Form, Job, JobEvent, Key,
-        List, Page, Row, Search, Step, Steps, TextField, Timer, Tone, Ui, Watch,
+        List, Page, Row, Scroll, Search, Step, Steps, TextField, Timer, Tone, Ui, Watch,
     };
 }

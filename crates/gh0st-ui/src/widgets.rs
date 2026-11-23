@@ -826,6 +826,8 @@ pub struct AppItem<'a> {
     /// A number on the badge's corner, from the app's notice: "12" updates.
     /// 0 draws none.
     pub count: u32,
+    /// A word on the right of a list row: "Update", "45%". Tiles ignore it.
+    pub tag: Option<(&'a str, Tone)>,
 }
 
 /// One grid cell: badge on top, name below, both centred, a pin mark in the
@@ -949,6 +951,9 @@ pub fn app_row_content(c: &mut Canvas, t: &Theme, r: Rect, item: &AppItem, selec
     count_badge(c, t, br, item.count);
     let x = br.right() + 10;
     let mut right = r.right() - 10;
+    if let Some((word, tone)) = item.tag {
+        right = tag(c, t, right, r, word, tone) - 8;
+    }
     if item.pinned {
         let s = IconSize::Small as i32;
         pin_mark(c, t, right, r.y + (r.h - s) / 2, selected);

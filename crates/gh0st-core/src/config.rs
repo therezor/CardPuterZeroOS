@@ -46,6 +46,8 @@ pub mod key {
     pub const DARK_WIFI_OFF: &str = "gh0st.dark.wifi_off";
     /// The terminal home opens. Set by hand; none is the built-in one.
     pub const TERMINAL: &str = "gh0st.terminal";
+    /// Where the Store downloads apps from: auto, github or china.
+    pub const STORE_MIRROR: &str = "gh0st.store.mirror";
 }
 
 pub const DEFAULT_DARK_SECS: i64 = 30;

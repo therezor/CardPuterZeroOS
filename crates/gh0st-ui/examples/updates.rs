@@ -719,6 +719,7 @@ fn n_home(t: &Theme) -> Canvas {
             visual: v,
             pinned: i < 2,
             count: if label == "Updates" { 12 } else { 0 },
+            tag: None,
         };
         widgets::tile(&mut c, t, r, &item, i == 2);
     }

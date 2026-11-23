@@ -15,18 +15,24 @@ impl Image {
     /// Decodes a PNG and scales it to fit `size` x `size`, keeping its aspect.
     pub fn load_png(path: &Path, size: u32) -> Result<Image, String> {
         let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut dec = png::Decoder::new(std::io::BufReader::new(file));
-        dec.set_transformations(png::Transformations::normalize_to_color8());
-        let mut reader = dec
-            .read_info()
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let info = reader
-            .next_frame(&mut buf)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        let rgba = to_rgba(&buf[..info.buffer_size()], info.color_type);
-        Ok(scale_rgba(&rgba, info.width, info.height, size))
+        decode(std::io::BufReader::new(file), size).map_err(|e| format!("{}: {e}", path.display()))
     }
+
+    /// As [`load_png`](Image::load_png), from PNG bytes in memory: one icon
+    /// of the Store's pack.
+    pub fn from_png(bytes: &[u8], size: u32) -> Result<Image, String> {
+        decode(std::io::Cursor::new(bytes), size)
+    }
+}
+
+fn decode<R: std::io::BufRead + std::io::Seek>(r: R, size: u32) -> Result<Image, String> {
+    let mut dec = png::Decoder::new(r);
+    dec.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = dec.read_info().map_err(|e| e.to_string())?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    let rgba = to_rgba(&buf[..info.buffer_size()], info.color_type);
+    Ok(scale_rgba(&rgba, info.width, info.height, size))
 }
 
 fn to_rgba(buf: &[u8], ct: png::ColorType) -> Vec<[u8; 4]> {

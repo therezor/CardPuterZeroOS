@@ -44,6 +44,10 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/gh0st-update`: Updates, an SDK app with its own binary. It shows
   what the update engine found and asks gh0st-helper to check or install.
   `examples/mockups.rs` renders its pages into `mockups/update-app`.
+- `crates/gh0st-store`: the Store, an SDK app with its own binary. It lists
+  CardputerZero apps from our signed mirror of M5's catalog and asks
+  gh0st-helper to install them. `examples/mockups.rs` renders its screens
+  into `mockups/store`.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
   program. `gh0st update` is the update engine, run as root by systemd.
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
@@ -59,6 +63,8 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `docs/roadmap.md`: what is missing and the milestones, OS and app tracks.
 - `docs/testing.md`: the test layers, the design lint, and what a change
   must add.
+- `docs/store.md`: the Store, its signed catalog, what the signature does
+  not cover, the engine and the screens.
 - `docs/setup.md`: first-boot setup, the steps and how it hands over to the
   shell.
 - `docs/hotspot.md`: the Wi-Fi access point, why it takes wlan0, its security

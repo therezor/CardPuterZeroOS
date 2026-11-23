@@ -159,6 +159,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-store"
+version = "0.1.0"
+dependencies = [
+ "gh0st-app",
+ "gh0st-core",
+ "libc",
+]
+
+[[package]]
 name = "gh0st-term"
 version = "0.1.0"
 dependencies = [

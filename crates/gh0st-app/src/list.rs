@@ -81,6 +81,50 @@ impl List {
     }
 }
 
+/// Where a long text is scrolled to. Keep one in the page and pass it to
+/// [`Ui::scroll_text`](crate::Ui::scroll_text); it learns the line count
+/// there.
+#[derive(Debug, Default)]
+pub struct Scroll {
+    first: Cell<usize>,
+    /// Lines in all, and how many fit.
+    len: Cell<usize>,
+    visible: Cell<usize>,
+}
+
+impl Scroll {
+    pub fn new() -> Scroll {
+        Scroll::default()
+    }
+
+    /// Back to the top, for new text.
+    pub fn reset(&mut self) {
+        self.first.set(0);
+    }
+
+    /// Up and Down move a line. Returns false for other keys, and at either
+    /// end.
+    pub fn key(&mut self, key: Key) -> bool {
+        let max = self.len.get().saturating_sub(self.visible.get());
+        let first = self.first.get();
+        let to = match key {
+            Key::Up => first.saturating_sub(1),
+            Key::Down => (first + 1).min(max),
+            _ => return false,
+        };
+        self.first.set(to);
+        to != first
+    }
+
+    pub(crate) fn layout(&self, len: usize, visible: usize) -> usize {
+        self.len.set(len);
+        self.visible.set(visible);
+        let first = self.first.get().min(len.saturating_sub(visible));
+        self.first.set(first);
+        first
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Trail<'a> {
     None,
@@ -225,6 +269,17 @@ mod tests {
         assert_eq!(l.key(Key::Enter), Some(Action::Open(2)));
         assert_eq!(l.key(Key::Down), None);
         assert_eq!(l.key(Key::Right), Some(Action::Change(0, 1)));
+    }
+
+    #[test]
+    fn a_scroll_stops_at_the_last_screen() {
+        let mut s = Scroll::new();
+        s.layout(5, 3);
+        assert!(s.key(Key::Down));
+        assert!(s.key(Key::Down));
+        assert!(!s.key(Key::Down), "lines 2 to 4 show");
+        assert!(s.key(Key::Up));
+        assert!(!s.key(Key::Enter));
     }
 
     #[test]

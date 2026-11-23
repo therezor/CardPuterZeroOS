@@ -4,7 +4,7 @@
 
 use crate::field::TextField;
 use crate::form::Form;
-use crate::list::{List, Row, Trail};
+use crate::list::{List, Row, Scroll, Trail};
 use gh0st_ui::font::Font;
 use gh0st_ui::icon::{self, IconSize};
 use gh0st_ui::theme::Tone;
@@ -245,6 +245,51 @@ impl<'a> Ui<'a> {
         let track = Rect::new(x, top, w, visible as i32 * row_h);
         widgets::scrollbar(self.c, t, track, first, visible, rows.len());
         self.y = top + visible.min(rows.len()) as i32 * row_h + t.m.margin_v;
+    }
+
+    /// Small text wrapped to the width, from `scroll`'s line to the bottom,
+    /// with a scrollbar when there is more. Up and Down scroll it through
+    /// [`Scroll::key`].
+    pub fn scroll_text(&mut self, scroll: &Scroll, s: &str) {
+        let t = self.t;
+        let (x, w) = self.inner();
+        let w = w - t.m.scrollbar_w;
+        let h = t.m.line_h;
+        let r = self.rest();
+        let lines = wrap(t.f.small, s, w);
+        let visible = (r.h / h).max(1) as usize;
+        let first = scroll.layout(lines.len(), visible);
+        for (i, l) in lines.iter().skip(first).take(visible).enumerate() {
+            let lr = Rect::new(x, r.y + i as i32 * h, w, h);
+            widgets::text_in(self.c, t.f.small, lr, l, t.c.fg);
+        }
+        let track = Rect::new(x, r.y, w, visible as i32 * h);
+        widgets::scrollbar(self.c, t, track, first, visible, lines.len());
+        self.y = r.bottom();
+    }
+
+    /// Apps as home's list draws them: a picture, a name, a line under it
+    /// and a tag on the right, with `list`'s selection. Fills the rest.
+    pub fn apps(&mut self, list: &List, items: &[widgets::AppItem]) {
+        let t = self.t;
+        let rest = if self.y == self.area.y + t.m.margin_v {
+            self.area
+        } else {
+            self.rest()
+        };
+        let row_h = t.m.app_row_h;
+        let visible = (rest.h / row_h).max(1) as usize;
+        let first = list.layout(items.len(), visible);
+        let x = rest.x + t.m.margin;
+        let w = rest.w - 2 * t.m.margin - t.m.scrollbar_w;
+        let top = rest.y + (rest.h - visible as i32 * row_h) / 2;
+        for (i, item) in items.iter().enumerate().skip(first).take(visible) {
+            let r = Rect::new(x, top + (i - first) as i32 * row_h, w, row_h);
+            widgets::app_row(self.c, t, r, item, i == list.selected());
+        }
+        let track = Rect::new(x, top, w, visible as i32 * row_h);
+        widgets::scrollbar(self.c, t, track, first, visible, items.len());
+        self.y = rest.bottom();
     }
 
     /// A QR code for a phone camera on the left, as large as the rest

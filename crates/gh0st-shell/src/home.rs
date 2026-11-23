@@ -505,6 +505,7 @@ impl Home {
             ),
             pinned: e.pinned,
             count: e.count,
+            tag: None,
         }
     }
 
