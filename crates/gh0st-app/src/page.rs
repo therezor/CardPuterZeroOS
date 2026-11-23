@@ -149,8 +149,10 @@ pub trait Page {
         let _ = (id, step, cx);
     }
 
-    /// The app came to the front (true) or went behind another (false),
-    /// while allowed to run in the background. Every open page hears it.
+    /// The app came to the front (true) or went behind another (false).
+    /// Every open page hears it. An app not allowed to run in the
+    /// background is stopped right after, so let go of a device or finish a
+    /// file here.
     fn front(&mut self, front: bool, cx: &mut Cx) {
         let _ = (front, cx);
     }
