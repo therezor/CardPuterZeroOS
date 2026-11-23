@@ -9,7 +9,8 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
 # Image tools, the kernel module toolchain (the rpt headers want gcc-14,
 # pahole and python3), cc for cargo build scripts, what fetch and the deb
-# builder use, and QEMU for the first-boot smoke test.
+# builder use, QEMU for the first-boot smoke test, and Pillow and sqv for
+# the Store's catalog (os/store).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         mmdebstrap apt-utils dpkg-dev ca-certificates curl git jq gnupg \
         xz-utils zstd file \
@@ -17,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         make gcc gcc-14 gcc-14-for-host linux-base libc6-dev bc bison flex kmod device-tree-compiler cpp \
         binutils pahole python3 libelf1t64 libssl3t64 \
         qemu-system-arm \
+        python3-pil sqv \
     && rm -rf /var/lib/apt/lists/*
 
 # Rust for gh0st, static musl, linked by rust-lld as on the Mac.

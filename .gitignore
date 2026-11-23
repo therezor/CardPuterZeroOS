@@ -2,3 +2,4 @@
 /mockups
 .DS_Store
 /os/out
+__pycache__/

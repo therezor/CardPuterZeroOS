@@ -26,8 +26,8 @@ launcher-v0.6.111 pins) and measured on the device (`hardware-facts.md`):
 ## How ours works
 
 ```text
-M5's registry.json ──CI, every 6 h──> catalog + catalog.sig, about, icons
-                                         (our Pages, next to the apt repo)
+M5's registry.json ──CI, daily──> catalog + catalog.sig, about, icons
+                                     (our Pages, next to the apt repo)
 device: gh0st store refresh ──> checks the signature with sqv ──> /var/lib/gh0st/store
         gh0st store install ──> deb from M5's release ──> SHA-256 ──> apt-get install ./x.deb
 Store app: reads those files, watches them with inotify, asks gh0st-helper
@@ -58,7 +58,7 @@ page says it:
 | Flag | Seen how | Shown as |
 |---|---|---|
 | `scripts` | the deb has `preinst`, `postinst`, `prerm` or `postrm` | Setup runs as root |
-| `paths` | files outside `/usr/bin`, `/usr/lib/<pkg>`, `/usr/share/<pkg>`, `/usr/share/APPLaunch` | System files |
+| `paths` | files outside `/usr/bin`, `/usr/lib/<pkg>`, `/usr/share/<pkg>`, `/usr/share/doc/<pkg>`, `/usr/share/APPLaunch`, or a setuid file | System files |
 | `service` | M5's `background_service`, or a systemd unit in the deb | Service |
 | `network`, `camera`, `microphone`, `hardware`, `display`, `imu` | M5's permissions | Uses network, camera |
 
@@ -66,6 +66,48 @@ Installing an app with any of the first three asks first, and names them.
 An update doesn't ask.
 CI drops an app whose dependencies our sources don't have (14 of 179 on
 2026-11-23: Pi camera tools, `raspi-utils-core`, M5's launcher).
+
+## The mirror in CI
+
+`os/store/mirror.py` runs in the build container (`os/build.sh store`),
+after the apt publish in `.github/workflows/apt.yml`. Pages deploys one
+artifact, so every run of that workflow carries both. It treats M5's
+registry as untrusted:
+
+- **Sources.** The registry from `raw.githubusercontent.com`, over HTTPS
+  (M5's own URL redirects to plain HTTP). Their China copy gives `cn-url`,
+  taken only when its SHA-256 matches. Every URL must be HTTPS on a known
+  host: M5's GitHub release for debs, their OSS bucket in China,
+  `raw.githubusercontent.com/CardputerZero/` for art. Redirects to HTTP are
+  refused.
+- **Debs.** Each new deb downloads once, is checked against the registry's
+  size and SHA-256, and only then does `dpkg-deb` list it. Nothing is
+  extracted. The facts carry over in `checked.tsv`, by SHA-256. Package,
+  version and architecture come from the deb's control file.
+- **Left out**, with the reason in `dropped.tsv`: a package named like one
+  of Debian's or ours, one whose `Provides`, `Replaces`, `Conflicts` or
+  `Breaks` names one, and one with a `Depends` group nothing in trixie or
+  our repo offers. Version constraints are not checked.
+- **Text.** Control characters go, fields are capped, markdown becomes
+  plain paragraphs. A field in Chinese or Japanese is taken from M5's `en`
+  locale when there is one.
+- **Art.** Icons are decoded under a pixel cap and saved again at 48 px.
+  Screenshots are pinned only if they are 320x170 PNGs under 2 MB. Both are
+  fetched again only when their ETag changes (`sources.tsv`).
+- **Unchanged means unchanged.** When the apps are the same and the
+  catalog has more than 20 days left, the old catalog and signature are
+  served again, byte for byte. `about` and `icons` are served as
+  `about-<sha256>` and `icons-<sha256>`, and the previous pair stays a day,
+  so a cached catalog never names a missing file.
+- **It never fails the publish.** On any error, or when the list shrinks
+  below half, the previous store site carries over as it was.
+- **Signed** with the apt key, as `publish.sh` signs, then checked with
+  `sqv` against `os/repo/gh0st-archive-keyring.pgp` before it is kept.
+
+`os/store/test_mirror.py` turns a fixture registry into `testdata/`, and
+`gh0st_core::store`'s tests parse the same files. A dry run with a
+throwaway key: `STORE_KEYRING=/out/key.pgp REPO_KEY=... STORE_ONLY=acidzero
+os/build.sh store`.
 
 ## Files
 

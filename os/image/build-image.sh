@@ -7,6 +7,7 @@
 #   build-image.sh check VARIANT  tier 1 checks on the last image
 #   build-image.sh smoke          first boot of the release image in QEMU
 #   build-image.sh relock VARIANT write the last build's lock and units to /out
+#   build-image.sh store          the Store's catalog into /out/pages/store
 set -euo pipefail
 
 SRC=/src
@@ -260,6 +261,12 @@ case ${1:-} in
         rm -rf /out/debs && mkdir -p /out/debs && cp "$WORK"/repo-ours/*.deb /out/debs/
         "$OS/repo/publish.sh" "${2:?suite: stable or edge}" /out/pages/apt "$WORK/repo-ours" "$WORK/repo-vendor" ;;
     resign) "$OS/repo/publish.sh" edge /out/pages/apt ;;
+    store)
+        # After publish or resign: it reads our apt indexes beside it.
+        STORE_PREV=${STORE_PREV:-${REPO_PREV:+${REPO_PREV%/apt}/store}} \
+            python3 "$OS/store/mirror.py" /out/pages/store --apt /out/pages/apt \
+            --keyring "${STORE_KEYRING:-$OS/repo/gh0st-archive-keyring.pgp}" \
+            ${STORE_ONLY:+--only "$STORE_ONLY"} ;;
     shell) exec bash ;;
-    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|shell" ;;
+    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|store|shell" ;;
 esac

@@ -1,6 +1,8 @@
-# Publishes our apt repo to GitHub Pages (docs/updates.md, Our apt repo).
-# A push to main publishes edge, a v* tag publishes stable, and a weekly run
-# signs both again so Valid-Until never lapses. One pool for both suites:
+# Publishes our apt repo to GitHub Pages (docs/updates.md, Our apt repo),
+# and the Store's catalog beside it (docs/store.md): Pages deploys one
+# artifact, so every run carries both. A push to main publishes edge, a v*
+# tag publishes stable, and a daily run signs both suites again, so
+# Valid-Until never lapses, and picks up M5's new apps. One pool for both suites:
 # a file in it is never replaced, so a tag republishes what edge built.
 name: apt
 
@@ -10,7 +12,7 @@ on:
     tags: ['v*']
     paths: [crates/**, assets/**, packaging/**, os/**, Cargo.toml, Cargo.lock, .github/workflows/apt.yml]
   schedule:
-    - cron: '17 4 * * 1'
+    - cron: '17 4 * * *'
   workflow_dispatch:
     inputs:
       what:
@@ -86,6 +88,12 @@ jobs:
             resign) os/build.sh resign ;;
             *) os/build.sh publish "${{ steps.what.outputs.what }}" ;;
           esac
+      # Never fails: on any error it carries the live store site over.
+      - name: Store catalog
+        env:
+          REPO_PREV: ${{ env.SITE }}
+          REPO_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: os/build.sh store
       - uses: actions/cache/save@v4
         with:
           path: os/out/pages/apt/pool

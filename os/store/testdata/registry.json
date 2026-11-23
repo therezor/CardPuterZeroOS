@@ -1,0 +1,181 @@
+{
+ "schema_version": 2,
+ "apps": [
+  {
+   "uuid": "x",
+   "share_code": "ABCD",
+   "title": "AcidZero",
+   "summary": "Acid bass synth\twith a sequencer",
+   "description": "**AcidZero** is a synth.\r\n\r\n## Keys\n- P: settings\n- see [the docs](https://x.example)",
+   "categories": [
+    "Games"
+   ],
+   "author": {
+    "display_name": "someone"
+   },
+   "version": "0.2.0",
+   "license": "MIT",
+   "download": {
+    "type": "deb",
+    "package": "acidzero",
+    "url": "https://github.com/CardputerZero/packages/releases/download/apt-pool/acidzero_0.2.0_arm64.deb",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size": 1000
+   },
+   "permissions": {
+    "additional_hardware": true
+   },
+   "icon": "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/acidzero/acidzero_icon.png",
+   "screenshots": [
+    "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/acidzero/screenshots/screenshot-0.png",
+    "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/acidzero/screenshots/screenshot-1.png"
+   ]
+  },
+  {
+   "uuid": "x",
+   "share_code": "ABCD",
+   "title": "Root Setup",
+   "summary": "A small app",
+   "description": "Runs a service.\\nNot a paragraph.",
+   "categories": [
+    "Games"
+   ],
+   "author": {
+    "display_name": "someone"
+   },
+   "version": "1.0",
+   "license": "MIT",
+   "download": {
+    "type": "deb",
+    "package": "rootsetup",
+    "url": "https://github.com/CardputerZero/packages/releases/download/apt-pool/rootsetup_1.0_arm64.deb",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "size": 1000
+   },
+   "permissions": {
+    "network": true,
+    "background_service": true
+   },
+   "icon": "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/rootsetup/rootsetup_icon.png",
+   "screenshots": [
+    "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/rootsetup/screenshots/screenshot-0.png"
+   ]
+  },
+  {
+   "uuid": "x",
+   "share_code": "ABCD",
+   "title": "Needs Foo",
+   "summary": "A small app",
+   "description": "Does one thing.",
+   "categories": [
+    "Games"
+   ],
+   "author": {
+    "display_name": "someone"
+   },
+   "version": "1.0",
+   "license": "MIT",
+   "download": {
+    "type": "deb",
+    "package": "needsfoo",
+    "url": "https://github.com/CardputerZero/packages/releases/download/apt-pool/needsfoo_1.0_arm64.deb",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "size": 1000
+   },
+   "permissions": {
+    "network": false
+   },
+   "icon": "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/needsfoo/needsfoo_icon.png",
+   "screenshots": [
+    "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/needsfoo/screenshots/screenshot-0.png"
+   ]
+  },
+  {
+   "uuid": "x",
+   "share_code": "ABCD",
+   "title": "Bash Again",
+   "summary": "A small app",
+   "description": "Does one thing.",
+   "categories": [
+    "Games"
+   ],
+   "author": {
+    "display_name": "someone"
+   },
+   "version": "9.9",
+   "license": "MIT",
+   "download": {
+    "type": "deb",
+    "package": "bash",
+    "url": "https://github.com/CardputerZero/packages/releases/download/apt-pool/bash_9.9_arm64.deb",
+    "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "size": 1000
+   },
+   "permissions": {
+    "network": false
+   },
+   "icon": "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/bash/bash_icon.png",
+   "screenshots": [
+    "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/bash/screenshots/screenshot-0.png"
+   ]
+  },
+  {
+   "uuid": "x",
+   "share_code": "ABCD",
+   "title": "Evil",
+   "summary": "A small app",
+   "description": "Does one thing.",
+   "categories": [
+    "Games"
+   ],
+   "author": {
+    "display_name": "someone"
+   },
+   "version": "1.0",
+   "license": "MIT",
+   "download": {
+    "type": "deb",
+    "package": "evil",
+    "url": "http://example.com/evil.deb",
+    "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "size": 1000
+   },
+   "permissions": {
+    "network": false
+   },
+   "icon": "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/evil/evil_icon.png",
+   "screenshots": [
+    "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/evil/screenshots/screenshot-0.png"
+   ]
+  },
+  {
+   "uuid": "x",
+   "share_code": "ABCD",
+   "title": "Takeover",
+   "summary": "A small app",
+   "description": "Does one thing.",
+   "categories": [
+    "Games"
+   ],
+   "author": {
+    "display_name": "someone"
+   },
+   "version": "1.0",
+   "license": "MIT",
+   "download": {
+    "type": "deb",
+    "package": "takeover",
+    "url": "https://github.com/CardputerZero/packages/releases/download/apt-pool/takeover_1.0_arm64.deb",
+    "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "size": 1000
+   },
+   "permissions": {
+    "network": false
+   },
+   "icon": "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/takeover/takeover_icon.png",
+   "screenshots": [
+    "https://raw.githubusercontent.com/CardputerZero/packages/main/pool/main/takeover/screenshots/screenshot-0.png"
+   ]
+  }
+ ]
+}

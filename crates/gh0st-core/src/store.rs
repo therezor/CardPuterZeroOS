@@ -761,7 +761,7 @@ pub fn signed(data: &Path, sig: &Path) -> bool {
 }
 
 fn signed_by(keyring: &Path, data: &Path, sig: &Path) -> bool {
-    // The positional form: sqv 1.2, as on CI's Ubuntu, lacks --signature-file.
+    // The positional form: sqv 1.1 on CI's Ubuntu has no --signature-file.
     std::process::Command::new("sqv")
         .arg("--keyring")
         .arg(keyring)
@@ -932,6 +932,29 @@ mod tests {
         assert_eq!(Mirror::Auto.url(a, "Europe/London"), a.url);
         assert_eq!(Mirror::GitHub.url(a, "Asia/Shanghai"), a.url);
         assert_eq!(Mirror::China.url(&c.apps[1], ""), "", "no China URL");
+    }
+
+    /// What os/store/mirror.py makes of its fixture registry.
+    #[test]
+    fn the_ci_mirror_writes_what_this_reads() {
+        let c = Catalog::parse(include_str!("../../../os/store/testdata/catalog")).unwrap();
+        let about = include_str!("../../../os/store/testdata/about");
+        assert_eq!(c.about.size, about.len() as u64);
+        let names: Vec<&str> = c.apps.iter().map(|a| a.package.as_str()).collect();
+        assert_eq!(names, ["acidzero", "rootsetup"]);
+        let acid = c.find("acidzero").unwrap();
+        assert_eq!(acid.summary, "Acid bass synth with a sequencer");
+        assert!(acid.cn_url.starts_with("https://") && acid.desktop == "acidzero");
+        assert!(!acid.flags.risky() && acid.flags.has(Flags::HARDWARE));
+        let root = c.find("rootsetup").unwrap();
+        assert!(root.flags.has(Flags::SCRIPTS) && root.flags.has(Flags::SERVICE));
+        assert!(root.cn_url.is_empty() && root.desktop.is_empty());
+        let a = About::find(about, "acidzero").unwrap();
+        assert_eq!(
+            a.description,
+            "AcidZero is a synth.\nKeys\n\u{2022} P: settings\n\u{2022} see the docs"
+        );
+        assert_eq!(a.shots.len(), 2);
     }
 
     #[test]

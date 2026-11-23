@@ -8,6 +8,7 @@
 #   os/build.sh relock release    accept the packages and units of the last build
 #   os/build.sh publish edge      add the built debs to the apt site in os/out/pages/apt
 #   os/build.sh resign            sign the apt site again, nothing added
+#   os/build.sh store             the Store's catalog from M5's registry, after publish or resign
 #   os/build.sh shell             a shell in the container
 # Work happens on the Docker volume gh0st-work, never on the bind-mounted
 # repo: macOS filesystems lose ownership and sparseness.
@@ -65,7 +66,8 @@ export SOURCE_DATE_EPOCH GH0ST_GIT_REV GH0ST_STAMP GH0ST_BASE_STAMP GH0ST_PANEL_
 
 envs=
 for v in SOURCE_DATE_EPOCH GH0ST_GIT_REV GH0ST_STAMP GH0ST_BASE_STAMP GH0ST_PANEL_STAMP GH0ST_WIFI_STAMP \
-    GH0ST_LOG TRACE REPO_PREV REPO_KEY REPO_KEEP REPO_DAYS REPO_MAX_MB; do
+    GH0ST_LOG TRACE REPO_PREV REPO_KEY REPO_KEEP REPO_DAYS REPO_MAX_MB \
+    STORE_PREV STORE_KEYRING STORE_ONLY; do
     envs="$envs -e $v"
 done
 

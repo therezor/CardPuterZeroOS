@@ -6,9 +6,9 @@ name: ci
 on:
   push:
     branches: [main]
-    paths: [crates/**, assets/**, docs/**, Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .github/workflows/ci.yml]
+    paths: [crates/**, assets/**, docs/**, os/store/**, Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .github/workflows/ci.yml]
   pull_request:
-    paths: [crates/**, assets/**, docs/**, Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .github/workflows/ci.yml]
+    paths: [crates/**, assets/**, docs/**, os/store/**, Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/**, .github/workflows/ci.yml]
   workflow_dispatch:
 
 permissions:
@@ -44,5 +44,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends sqv
       - name: Test
         run: cargo test --workspace
+      - name: Store mirror
+        run: python3 -m unittest discover -s os/store
       - name: Device build
         run: cargo build --release --target aarch64-unknown-linux-musl

@@ -239,7 +239,7 @@ and the stock app debs.
   from before a publish still finds its files.
 - **By hash.** `Acquire-By-Hash: yes`, so the Pages cache can't serve a
   Release and a Packages that don't match.
-- **Valid-Until**, 30 days. A weekly job signs again, so a frozen copy of
+- **Valid-Until**, 30 days. A daily job signs again, so a frozen copy of
   the repo can't hold devices back.
 - **The key.** An Ed25519 primary kept offline, and a signing subkey in the
   `APT_SIGNING_KEY` Actions secret. The image ships the public key in
@@ -254,8 +254,9 @@ and the stock app debs.
   and M5 commit are in its version already). A docs-only push publishes
   nothing new.
 - **CI.** `.github/workflows/apt.yml` builds the debs, restores the pool from
-  the Actions cache (falling back to the live site), publishes, and deploys
-  Pages. A tag also attaches its debs to the release. Setup of the key and
+  the Actions cache (falling back to the live site), publishes, builds the
+  Store's catalog (`docs/store.md`), and deploys Pages. A tag also attaches
+  its debs to the release. Setup of the key and
   Pages: `os/repo/README.md`.
 - **The image.** `gh0st-base` ships `os/repo/gh0st.sources`, the pin
   and the key once `os/repo/gh0st-archive-keyring.pgp` exists; before

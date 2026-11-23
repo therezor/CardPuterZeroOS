@@ -1,0 +1,4 @@
+bash	named like a Debian or Gh0st OS package
+evil	deb URL not on M5's GitHub release
+needsfoo	needs foo (>= 2)
+takeover	takes over coreutils
