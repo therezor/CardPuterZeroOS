@@ -6,12 +6,15 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// Answers the nth call with the nth code in `$CODES`, then 0.
+/// Answers the nth call with the nth code in `$CODES`, then 0, after the
+/// nth wait in `$SLEEPS` seconds.
 const CHKPWD: &str = r#"#!/bin/sh
 /bin/cat >/dev/null
 n=$(/bin/cat "$SIM_DIR/n" 2>/dev/null || echo 0)
 echo $((n + 1)) > "$SIM_DIR/n"
 echo "chkpwd $*" >> "$SIM_DIR/log"
+s=$(echo "$SLEEPS" | /usr/bin/cut -d' ' -f$((n + 1)))
+[ -n "$s" ] && /bin/sleep "$s"
 code=$(echo "$CODES" | /usr/bin/cut -d' ' -f$((n + 1)))
 exit ${code:-0}
 "#;
@@ -51,6 +54,10 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 fn run(name: &str, keys: &str, codes: &str, passwd_fails: bool) -> Run {
+    run_slow(name, keys, codes, "", passwd_fails)
+}
+
+fn run_slow(name: &str, keys: &str, codes: &str, sleeps: &str, passwd_fails: bool) -> Run {
     let dir = std::env::temp_dir().join(format!("gh0st-lock-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let home = dir.join("home");
@@ -78,6 +85,7 @@ fn run(name: &str, keys: &str, codes: &str, passwd_fails: bool) -> Run {
         .env("GH0ST_LOG", "debug")
         .env("SIM_DIR", &dir)
         .env("CODES", codes)
+        .env("SLEEPS", sleeps)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -131,4 +139,15 @@ fn a_failed_account_probe_is_asked_again() {
     let r = run("probe", "wait 600\n", "", true);
     let probes = r.log.lines().filter(|l| l.starts_with("passwd")).count();
     assert_eq!(probes, 2, "{}", r.log);
+}
+
+/// Esc leaves a slow check; a second one starts. The first answers right
+/// while the second still runs: that answer is old and opens nothing.
+#[test]
+fn a_late_answer_from_a_left_check_opens_nothing() {
+    let keys = "wait 300\ntab\nenter\nwait 100\ntype hunter22\nenter\nwait 100\nesc\n\
+                tab\nenter\nwait 100\ntype wrong\nenter\nwait 4000\n";
+    let r = run_slow("late", keys, "0 7", "2 3", false);
+    assert_eq!(r.checks(), 2, "{}", r.log);
+    assert_eq!(r.unlocks(), 0, "{}", r.stderr);
 }

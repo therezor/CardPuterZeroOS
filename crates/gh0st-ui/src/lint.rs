@@ -1,5 +1,6 @@
 //! The design rules, checked while a test draws: text whose ink doesn't fit
-//! its box, faces under 15 px, and chips off their keys (`docs/design.md`).
+//! its box, a page's text under the bars, faces under 15 px, and chips off
+//! their keys (`docs/design.md`).
 //! Text past the screen's edge is not checked: cards and scrolled tiles
 //! leave it on purpose, and the canvas clips them. Off until a test calls [`start`];
 //! release builds keep none of it.
@@ -25,6 +26,13 @@ const SPILL: i32 = 2;
 
 thread_local! {
     static FOUND: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    static AREA: std::cell::Cell<Option<Rect>> = const { std::cell::Cell::new(None) };
+}
+
+/// The page's own area while it draws, so its text must stay off the bars.
+/// None while the bars and overlays draw.
+pub fn area(r: Option<Rect>) {
+    AREA.with(|a| a.set(r));
 }
 
 /// Starts checking on this thread.
@@ -82,6 +90,22 @@ pub(crate) fn text(f: Font, r: Rect, s: &str) {
             "{s:?}: a {:.1} em face, under the 15 px floor",
             f.em
         ));
+    }
+}
+
+/// Any text, drawn with its baseline at `base`: on a page, it stays off
+/// the bars.
+pub(crate) fn drawn(f: &crate::font::BakedFont, base: i32, s: &str) {
+    if !on() || s.trim().is_empty() {
+        return;
+    }
+    let Some(a) = AREA.with(|a| a.get()) else {
+        return;
+    };
+    let (up, down) = f.ink(s);
+    let under = (a.y - (base - up)).max(base + down - a.bottom());
+    if under > SPILL {
+        found(format!("{s:?}: {under} px under the bars"));
     }
 }
 

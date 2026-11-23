@@ -1172,7 +1172,9 @@ impl Runtime {
         let area = bars.content(&t);
         {
             let mut ui = Ui::new(&mut self.canvas, &t, area);
+            gh0st_ui::lint::area(Some(area));
             page.draw(&mut ui);
+            gh0st_ui::lint::area(None);
         }
         // Above the action bar the menu and Help draw.
         let panel_h = (t.m.height - t.m.hint_h - area.y).min(area.h);

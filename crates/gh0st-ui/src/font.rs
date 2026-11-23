@@ -104,6 +104,7 @@ impl BakedFont {
 
     /// Draws `s` with its baseline at `y`. Returns the x where the text ends.
     pub fn draw(&self, c: &mut Canvas, x: i32, y: i32, s: &str, color: Color) -> i32 {
+        crate::lint::drawn(self, y, s);
         let mut pen: u32 = 0;
         for ch in s.chars() {
             let px = x + ((pen + 32) >> 6) as i32;

@@ -1,10 +1,13 @@
 //! Every Settings page, run as setup runs one: drawn in each palette under
-//! the design lint, then left alone to count its wakes.
+//! the design lint, then left alone to count its wakes. The system tools
+//! Settings asks are silent stubs first on PATH, so the host's own never
+//! answer and every machine sees the same pages.
 
 use gh0st_app::gfx::theme;
 use gh0st_app::testing::Driver;
 use gh0st_settings::app::{Embed, Settings};
 use gh0st_settings::model::PageId;
+use std::os::unix::fs::PermissionsExt;
 
 fn pages() -> Vec<PageId> {
     vec![
@@ -30,7 +33,39 @@ fn pages() -> Vec<PageId> {
     ]
 }
 
+/// What Settings runs, each a stub that says nothing and succeeds.
+const TOOLS: &[&str] = &[
+    "nmcli",
+    "bluetoothctl",
+    "timedatectl",
+    "systemctl",
+    "wpctl",
+    "vcgencmd",
+    "pkexec",
+    "iw",
+    "rfkill",
+    "passwd",
+];
+
+fn stub_tools() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("gh0st-pages-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for t in TOOLS {
+            let p = dir.join(t);
+            std::fs::write(&p, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = format!("{}:/usr/bin:/bin", dir.display());
+        // SAFETY: before any test here starts a page, and nothing else in
+        // this process reads the environment meanwhile.
+        unsafe { std::env::set_var("PATH", path) };
+    });
+}
+
 fn open(page: &PageId) -> Driver {
+    stub_tools();
     let mut d = Driver::new(Settings::embedded(Embed {
         page: page.clone(),
         label: "Setup 1 of 1".into(),

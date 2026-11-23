@@ -235,8 +235,10 @@ struct Shell {
     /// This lock already asked `passwd -S` a second time.
     probe_retried: bool,
     /// What the running `unix_chkpwd` was given, kept for one retry and
-    /// wiped when it answers.
+    /// wiped when it answers, and its pid: an answer from an older check,
+    /// left by Esc, is not this one's.
     check_input: Option<Vec<u8>>,
+    check_pid: i32,
     /// This check already ran a second time.
     check_retried: bool,
     tries: Tries,
@@ -412,6 +414,7 @@ impl Shell {
             probing: false,
             probe_retried: false,
             check_input: None,
+            check_pid: 0,
             check_retried: false,
             tries: Tries::default(),
             tries_path: None,
@@ -555,6 +558,10 @@ impl Shell {
                 let result = password::chkpwd_result(j.code());
                 if self.debug {
                     eprintln!("gh0st shell: password {result:?}");
+                }
+                // A check Esc left: its try counted, its answer is old.
+                if j.pid != self.check_pid {
+                    return;
                 }
                 // Dark or Esc meanwhile rested the field: the answer is stale.
                 let current = self.screen == Screen::Locked && self.lock.checking;
@@ -1462,7 +1469,10 @@ impl Shell {
         let prog = std::env::var("GH0ST_CHKPWD").unwrap_or_else(|_| password::CHKPWD.into());
         let user = self.user.clone();
         if self.start_job_with(JobKind::Chkpwd, &[&prog, &user, "nonull"], Some(&input)) {
-            self.check_input = Some(input);
+            self.check_pid = self.jobs.last().map_or(0, |(_, j)| j.pid);
+            if let Some(mut old) = self.check_input.replace(input) {
+                password::wipe(&mut old);
+            }
             return;
         }
         if !self.check_retried {

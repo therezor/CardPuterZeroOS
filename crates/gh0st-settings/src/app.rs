@@ -2086,9 +2086,7 @@ impl Page for Settings {
             },
             k => k,
         };
-        self.was_armed = self.armed.take();
         self.page_or_list_key(key, cx);
-        self.was_armed = None;
         self.flush(cx);
     }
 
@@ -2154,7 +2152,15 @@ impl Settings {
         false
     }
 
+    /// Every key comes here, from `key` or as a page command, so a row
+    /// armed by one press is let go by any other.
     fn page_or_list_key(&mut self, key: Key, cx: &mut Cx) {
+        self.was_armed = self.armed.take();
+        self.page_or_list_key_armed(key, cx);
+        self.was_armed = None;
+    }
+
+    fn page_or_list_key_armed(&mut self, key: Key, cx: &mut Cx) {
         if self.page_key(key, cx) {
             return;
         }

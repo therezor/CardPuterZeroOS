@@ -140,13 +140,13 @@ watches always have a target.
 | State | Shows | Enter | Chips |
 |---|---|---|---|
 | Never checked | Not checked yet | check | |
-| Checking | a moving bar, the source | | 5 Stop |
+| Checking | a moving bar, the source | | 6 Stop |
 | Up to date | the version, when it last checked | check | |
-| Ready | the count and size, then a row each for Gh0st OS, Security and System | install | 5 Check, 6 List |
-| Downloading | a bar, MB of MB, the steps | | 5 Stop |
+| Ready | the count and size, then a row each for Gh0st OS, Security and System (one line each when their notes don't fit) | install | 5 Check, 7 List |
+| Downloading | a bar, MB of MB, the steps | | 6 Stop |
 | Installing | a bar, the package, n of m | | |
 | Done | what changed | restart | |
-| Can't | why, and the fix | try again | 5 Check |
+| Can't | why, and the fix | try again | 5 Check, 7 List while updates wait |
 
 - Install asks for the password, then shows a card with the count and the
   size. It says when the device restarts at the end.
@@ -155,9 +155,9 @@ watches always have a target.
 - Restart reboots the device when the kernel set, libc or systemd changed. When
   only Gh0st changed it restarts Gh0st, which closes open apps and locks the
   screen; the screen says so first.
-- 6 List shows the packages by group, each with its versions and size. Enter
+- 7 List shows the packages by group, each with its versions and size. Enter
   opens one.
-- The menu: Install all, Check now, Packages, Clear downloads, then Help.
+- The menu: Install all, Check now, List packages, Clear downloads, then Help.
 
 It runs no timer while idle. The moving bar ticks only while it is on screen.
 
