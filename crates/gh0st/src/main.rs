@@ -5,6 +5,7 @@ use std::path::Path;
 
 mod auth;
 mod helper;
+mod store;
 mod update;
 
 fn main() {
@@ -32,8 +33,12 @@ fn main() {
             let rest: Vec<String> = args.collect();
             std::process::exit(update::main(&rest))
         }
+        "store" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(store::main(&rest))
+        }
         _ => {
-            eprintln!("usage: gh0st <shell|helper|update|version>");
+            eprintln!("usage: gh0st <shell|helper|update|store|version>");
             std::process::exit(2);
         }
     }

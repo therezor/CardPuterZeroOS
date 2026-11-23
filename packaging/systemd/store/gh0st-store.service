@@ -1,0 +1,17 @@
+# The Store's engine (docs/store.md): refreshes the app list, or installs,
+# updates or removes apps. gh0st-helper writes /run/gh0st-store/job and
+# starts it. Its own unit, so closing the Store never cuts dpkg off. SIGTERM
+# reaches only the engine, which stops a download but lets dpkg finish.
+[Unit]
+Description=Store apps
+After=network.target NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh0st store job
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+KillMode=mixed
+TimeoutStartSec=infinity
+TimeoutStopSec=30min

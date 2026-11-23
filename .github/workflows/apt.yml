@@ -88,7 +88,8 @@ jobs:
             resign) os/build.sh resign ;;
             *) os/build.sh publish "${{ steps.what.outputs.what }}" ;;
           esac
-      # Never fails: on any error it carries the live store site over.
+      # On a build error it carries the live store site over. It fails only
+      # when it can't, since deploying without it would delete the Store.
       - name: Store catalog
         env:
           REPO_PREV: ${{ env.SITE }}

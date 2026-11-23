@@ -31,6 +31,10 @@
 //!     gh0st-helper update-auto on|off            password
 //!     gh0st-helper update-channel stable|edge    password
 //!     gh0st-helper apt-clean
+//!     gh0st-helper store-refresh
+//!     gh0st-helper store-install [--mirror auto|github|china] PKG...   password
+//!     gh0st-helper store-remove PKG              password
+//!     gh0st-helper store-upgrade [--mirror auto|github|china]          password
 //!     gh0st-helper user-create NAME              setup only, the new password
 //!     gh0st-helper setup-finish                  setup only
 //!
@@ -45,6 +49,7 @@
 use crate::auth::{self, Auth};
 use gh0st_core::hotspot::{self, Profile, Security};
 use gh0st_core::rfkill::{self, Radio};
+use gh0st_core::store::{self, Job, Mirror, Request};
 use gh0st_core::sysconf::{self, CpuMode, MacPolicy};
 use std::ffi::CString;
 use std::io::Write;
@@ -120,7 +125,16 @@ pub enum Verb {
     /// True for edge.
     UpdateChannel(bool),
     AptClean,
+    /// The Store's engine (docs/store.md): the helper checks the job
+    /// against the verified catalog, writes it, and starts the unit.
+    StoreRefresh,
+    StoreInstall(Mirror, Vec<String>),
+    StoreRemove(String),
+    StoreUpgrade(Mirror),
 }
+
+/// More apps than this in one install is not a person asking.
+const STORE_MAX_APPS: usize = 64;
 
 impl Verb {
     /// Whether the user's password is needed. No wildcard arm: a new verb
@@ -144,7 +158,10 @@ impl Verb {
             | Verb::Ip6Privacy(_)
             | Verb::UpdateInstall
             | Verb::UpdateAuto(_)
-            | Verb::UpdateChannel(_) => true,
+            | Verb::UpdateChannel(_)
+            | Verb::StoreInstall(..)
+            | Verb::StoreRemove(_)
+            | Verb::StoreUpgrade(_) => true,
             // The hotspot carries the trust NetworkManager's polkit grant
             // already gives the device user (roadmap M3).
             Verb::Rfkill(..)
@@ -159,7 +176,8 @@ impl Verb {
             | Verb::SetupFinish
             | Verb::UpdateCheck
             | Verb::UpdateStop
-            | Verb::AptClean => false,
+            | Verb::AptClean
+            | Verb::StoreRefresh => false,
         }
     }
 
@@ -216,11 +234,33 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["update-channel", "stable"] => Verb::UpdateChannel(false),
         ["update-channel", "edge"] => Verb::UpdateChannel(true),
         ["apt-clean"] => Verb::AptClean,
+        ["store-refresh"] => Verb::StoreRefresh,
+        ["store-remove", p] if store::is_package(p) => Verb::StoreRemove(p.to_string()),
+        ["store-upgrade"] => Verb::StoreUpgrade(Mirror::Auto),
+        ["store-upgrade", "--mirror", m] => Verb::StoreUpgrade(Mirror::parse(m)?),
+        ["store-install", "--mirror", m, rest @ ..] => {
+            Verb::StoreInstall(Mirror::parse(m)?, packages(rest)?)
+        }
+        ["store-install", rest @ ..] => Verb::StoreInstall(Mirror::Auto, packages(rest)?),
         _ => return None,
     })
 }
 
 /// Plain digits with no leading zero, up to `max`.
+/// One or more Debian package names, each once.
+fn packages(names: &[&str]) -> Option<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for n in names {
+        if !store::is_package(n) {
+            return None;
+        }
+        if !out.iter().any(|o| o == n) {
+            out.push(n.to_string());
+        }
+    }
+    (!out.is_empty() && out.len() <= STORE_MAX_APPS).then_some(out)
+}
+
 fn number(s: &str, max: u32) -> Option<u32> {
     let plain = s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
     s.parse().ok().filter(|&n| plain && n <= max)
@@ -873,7 +913,41 @@ fn act(v: Verb) -> Result<(), String> {
             ])
         }
         Verb::AptClean => run(&["apt-get", "clean"]),
+        Verb::StoreRefresh => store_job(Job::Refresh, Mirror::Auto),
+        Verb::StoreInstall(m, pkgs) => {
+            listed(&pkgs)?;
+            store_job(Job::Install(pkgs), m)
+        }
+        Verb::StoreRemove(p) => {
+            listed(std::slice::from_ref(&p))?;
+            store_job(Job::Remove(p), Mirror::Auto)
+        }
+        Verb::StoreUpgrade(m) => store_job(Job::Upgrade, m),
     }
+}
+
+/// Every name must be an app in the verified catalog: the Store installs
+/// only what it lists.
+fn listed(pkgs: &[String]) -> Result<(), String> {
+    let c = store::Catalog::load().ok_or("no app list yet")?;
+    match pkgs.iter().find(|p| c.find(p).is_none()) {
+        Some(p) => Err(format!("{p} isn't in the app list")),
+        None => Ok(()),
+    }
+}
+
+/// Writes the job and starts the Store's unit. One run at a time: the app
+/// queues the rest.
+fn store_job(job: Job, mirror: Mirror) -> Result<(), String> {
+    if gh0st_core::update::engine_running() {
+        return Err("an install is running".into());
+    }
+    let dir = store::run_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let text = Request { job, mirror }.text();
+    gh0st_core::update::write_atomic(&store::job_path(), &text)
+        .map_err(|e| format!("{}: {e}", store::job_path().display()))?;
+    run(&["systemctl", "start", "--no-block", "gh0st-store.service"])
 }
 
 /// Edge adds a second source: the stable one with `Suites: edge`.
@@ -926,6 +1000,8 @@ pub fn main(args: &[String]) -> i32 {
              wifi-powersave on|off | hotspot on|off | hotspot name NAME | hotspot password | \
              hotspot security wpa3|mixed | power off|reboot | update-check | update-install | \
              update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
+             store-refresh | store-install [--mirror auto|github|china] PKG... | \
+             store-remove PKG | store-upgrade [--mirror auto|github|china] | \
              user-create NAME | setup-finish"
         );
         return 2;
@@ -970,6 +1046,45 @@ mod tests {
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn store_verbs_take_package_names_only() {
+        assert_eq!(parse(&args("store-refresh")), Some(Verb::StoreRefresh));
+        assert_eq!(
+            parse(&args(
+                "store-install --mirror china acidzero zsnake acidzero"
+            )),
+            Some(Verb::StoreInstall(
+                Mirror::China,
+                vec!["acidzero".into(), "zsnake".into()]
+            ))
+        );
+        assert_eq!(
+            parse(&args("store-install acidzero")),
+            Some(Verb::StoreInstall(Mirror::Auto, vec!["acidzero".into()]))
+        );
+        assert_eq!(
+            parse(&args("store-upgrade --mirror github")),
+            Some(Verb::StoreUpgrade(Mirror::GitHub))
+        );
+        assert_eq!(
+            parse(&args("store-remove acidzero")),
+            Some(Verb::StoreRemove("acidzero".into()))
+        );
+        for bad in [
+            "store-install",
+            "store-install --mirror mars acidzero",
+            "store-install ../x",
+            "store-install -y",
+            "store-install Acid",
+            "store-remove a b",
+            "store-upgrade now",
+        ] {
+            assert_eq!(parse(&args(bad)), None, "{bad}");
+        }
+        assert!(Verb::StoreInstall(Mirror::Auto, vec![]).gated());
+        assert!(!Verb::StoreRefresh.gated());
     }
 
     #[test]

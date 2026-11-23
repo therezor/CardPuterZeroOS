@@ -36,6 +36,29 @@ pub fn dpkg_status() -> PathBuf {
     dir("GH0ST_DPKG_STATUS", DPKG_STATUS)
 }
 
+/// Our apt source, from gh0st-base. The store site sits beside the repo.
+pub const SOURCES: &str = "/etc/apt/sources.list.d/gh0st.sources";
+
+/// The store site: `$GH0ST_STORE_URL`, or the apt source's URI with
+/// `/store` in place of `/apt`. None without a Gh0st OS source.
+pub fn site() -> Option<String> {
+    if let Ok(u) = std::env::var("GH0ST_STORE_URL") {
+        return Some(u.trim_end_matches('/').to_string());
+    }
+    site_of(&std::fs::read_to_string(SOURCES).ok()?)
+}
+
+fn site_of(sources: &str) -> Option<String> {
+    let uri = sources.lines().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        k.trim().eq_ignore_ascii_case("uris").then(|| v.trim())
+    })?;
+    let base = uri.split_whitespace().next()?.trim_end_matches('/');
+    let base = base.strip_suffix("/apt")?;
+    base.starts_with("https://")
+        .then(|| format!("{base}/store"))
+}
+
 /// The key the catalog must be signed with, or `$GH0ST_STORE_KEYRING`.
 pub fn keyring() -> PathBuf {
     dir("GH0ST_STORE_KEYRING", KEYRING)
@@ -213,14 +236,18 @@ impl Catalog {
         Catalog::parse(&std::fs::read_to_string(catalog_path()).ok()?).ok()
     }
 
-    /// Whether this catalog, already verified, may replace `old` at `now`.
-    /// An expired one is refused, and so is one older than `old`: a replayed
-    /// catalog can't bring back a version with a known hole.
-    pub fn fresh(&self, old: Option<&Catalog>, now: u64) -> Result<(), Outcome> {
-        if self.expires <= now || old.is_some_and(|o| self.date < o.date) {
+    /// Whether this catalog, already verified, replaces `old` at `now`.
+    /// One no newer than `old` changes nothing: a replayed catalog can't
+    /// bring back a version with a known hole, and a CDN edge may still
+    /// serve the last one. An expired one is refused.
+    pub fn fresh(&self, old: Option<&Catalog>, now: u64) -> Result<bool, Outcome> {
+        if old.is_some_and(|o| self.date <= o.date) {
+            return Ok(false);
+        }
+        if self.expires <= now {
             return Err(Outcome::Stale);
         }
-        Ok(())
+        Ok(true)
     }
 
     pub fn find(&self, package: &str) -> Option<&App> {
@@ -450,8 +477,10 @@ pub enum Outcome {
     Offline,
     /// The catalog's signature didn't check out.
     BadSignature,
-    /// The catalog is past its expiry date, or older than the one we have.
+    /// The catalog is past its expiry date.
     Stale,
+    /// The device's clock is behind the catalog's signature.
+    Clock,
     /// A deb didn't match the catalog's SHA-256.
     Checksum,
     /// apt couldn't find a package the app needs.
@@ -465,12 +494,13 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    const WORDS: [(Outcome, &'static str); 11] = [
+    const WORDS: [(Outcome, &'static str); 12] = [
         (Outcome::None, "none"),
         (Outcome::Ok, "ok"),
         (Outcome::Offline, "offline"),
         (Outcome::BadSignature, "signature"),
         (Outcome::Stale, "stale"),
+        (Outcome::Clock, "clock"),
         (Outcome::Checksum, "checksum"),
         (Outcome::Depends, "depends"),
         (Outcome::Locked, "locked"),
@@ -499,6 +529,8 @@ impl Outcome {
 pub struct State {
     /// When the catalog was last fetched and checked, Unix seconds.
     pub refreshed: u64,
+    /// When the last run ended, so two runs that end alike still differ.
+    pub ended: u64,
     /// The last run: `refresh`, `install` or `remove`, and how it ended.
     pub op: String,
     pub outcome: Outcome,
@@ -518,6 +550,7 @@ impl State {
             };
             match k {
                 "refreshed" => s.refreshed = v.parse().unwrap_or(0),
+                "ended" => s.ended = v.parse().unwrap_or(0),
                 "op" => s.op = v.into(),
                 "outcome" => s.outcome = Outcome::parse(v),
                 "packages" => s.packages = v.split_whitespace().map(String::from).collect(),
@@ -537,8 +570,9 @@ impl State {
 
     pub fn text(&self) -> String {
         format!(
-            "refreshed={}\nop={}\noutcome={}\npackages={}\nfailed={}\ndetail={}\n",
+            "refreshed={}\nended={}\nop={}\noutcome={}\npackages={}\nfailed={}\ndetail={}\n",
             self.refreshed,
+            self.ended,
             self.op,
             self.outcome.word(),
             self.packages.join(" "),
@@ -776,22 +810,30 @@ fn signed_by(keyring: &Path, data: &Path, sig: &Path) -> bool {
 }
 
 /// Checks a downloaded catalog and its signature: signed by our key,
-/// readable, unexpired and no older than `old`.
+/// readable and unexpired. `None` when it is no newer than `old`.
 pub fn verify(
     data: &Path,
     sig: &Path,
     old: Option<&Catalog>,
     now: u64,
-) -> Result<Catalog, Outcome> {
+) -> Result<Option<Catalog>, Outcome> {
+    let text = std::fs::read_to_string(data).map_err(|_| Outcome::Failed)?;
     if !signed(data, sig) {
-        return Err(Outcome::BadSignature);
+        // sqv refuses a signature from the future. Say so, rather than
+        // blame the signature, when the clock is what's wrong.
+        return Err(match Catalog::parse(&text) {
+            Ok(c) if c.date > now + CLOCK_SLACK => Outcome::Clock,
+            _ => Outcome::BadSignature,
+        });
     }
     // Signed but unreadable: a format this build doesn't know.
-    let text = std::fs::read_to_string(data).map_err(|_| Outcome::Failed)?;
     let c = Catalog::parse(&text).map_err(|_| Outcome::Failed)?;
-    c.fresh(old, now)?;
-    Ok(c)
+    Ok(c.fresh(old, now)?.then_some(c))
 }
+
+/// How far ahead of the clock a catalog's date may be before the clock is
+/// the suspect. sqv allows half an hour.
+const CLOCK_SLACK: u64 = 1800;
 
 #[cfg(test)]
 mod tests {
@@ -958,17 +1000,29 @@ mod tests {
     }
 
     #[test]
-    fn an_old_or_expired_catalog_is_refused() {
+    fn an_old_catalog_changes_nothing_and_an_expired_one_is_refused() {
         let c = sample();
         let now = c.date + 60;
-        assert_eq!(c.fresh(None, now), Ok(()));
-        assert_eq!(c.fresh(Some(&c), now), Ok(()), "the same catalog again");
+        assert_eq!(c.fresh(None, now), Ok(true));
+        assert_eq!(c.fresh(Some(&c), now), Ok(false), "the same catalog again");
         let newer = Catalog {
             date: c.date + 1,
             ..c.clone()
         };
-        assert_eq!(c.fresh(Some(&newer), now), Err(Outcome::Stale));
+        assert_eq!(c.fresh(Some(&newer), now), Ok(false), "an older one");
+        assert_eq!(newer.fresh(Some(&c), now), Ok(true));
         assert_eq!(c.fresh(None, c.expires), Err(Outcome::Stale));
+    }
+
+    #[test]
+    fn the_store_site_sits_beside_the_apt_repo() {
+        let src = include_str!("../../../os/repo/gh0st.sources");
+        assert_eq!(
+            site_of(src).as_deref(),
+            Some("https://therezor.github.io/CardPuterZeroOS/store")
+        );
+        assert_eq!(site_of("URIs: http://x/apt\n"), None, "https only");
+        assert_eq!(site_of("URIs: https://x/debian\n"), None);
     }
 
     #[test]
@@ -1055,6 +1109,7 @@ mod tests {
     fn state_round_trips() {
         let s = State {
             refreshed: 5,
+            ended: 6,
             op: "install".into(),
             outcome: Outcome::Depends,
             packages: vec!["a1".into(), "b2".into()],

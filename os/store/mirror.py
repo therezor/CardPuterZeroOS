@@ -16,8 +16,9 @@ Environment:
 M5's registry is untrusted input. Every URL must be https on a known host,
 every text field is cleaned and capped, every deb is checked against the
 registry's SHA-256 before dpkg-deb reads it, and nothing is extracted. A
-failure anywhere carries the previous site over unchanged, so the apt
-publish beside it never fails or loses the Store.
+failure anywhere carries the previous site over unchanged. It exits 1
+only when it can't do that either, since deploying without the store
+would delete it from the site.
 """
 
 import concurrent.futures
@@ -136,17 +137,33 @@ def fetch(url, cap, etag=None):
 
 
 def fetch_prev(base, name, cap=MAX_JSON):
-    """A file of the previous site, or None when it isn't there."""
+    """A file of the previous site, or None when it isn't there. Any
+    other failure raises: a flaky fetch must not read as "empty"."""
     if not base:
         return None
     try:
         return fetch(f"{base.rstrip('/')}/{name}", cap)[1]
-    except (urllib.error.HTTPError, FileNotFoundError):
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+    except FileNotFoundError:
         return None
 
 
 def download(url, sha256, size, path):
-    """Streams a deb to path and checks it before anything reads it."""
+    """Streams a deb to path and checks it before anything reads it.
+    Three tries: one dropped connection shouldn't drop an app for a day."""
+    for attempt in range(3):
+        try:
+            return download_once(url, sha256, size, path)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 2:
+                raise
+            time.sleep(5 * (attempt + 1))
+
+
+def download_once(url, sha256, size, path):
     if not url.startswith("https://"):
         raise ValueError(f"not https: {url}")
     h = hashlib.sha256()
@@ -698,24 +715,31 @@ def build(out, prev, apt, keyring, only, registry, cn_registry, work):
 
 
 def carry(out, prev):
-    """The previous site as it was: what a failed run publishes."""
+    """The previous site as it was: what a failed run publishes. All of it
+    or nothing: a catalog without its about and icons would mislead."""
     text = fetch_prev(prev, "catalog")
     if not text:
         warn("no previous store site to carry over")
-        return
-    os.makedirs(out, exist_ok=True)
-    names = ["catalog", "catalog.sig", "checked.tsv", "sources.tsv", "dropped.tsv"]
+        return True
     t = text.decode("utf-8", "replace")
-    for key in ("about", "icons"):
-        h = header(t, key)
-        if h:
-            names.append(f"{key}-{h[0]}")
-    for name in names:
+    files = {"catalog": text}
+    need = ["catalog.sig"] + [f"{k}-{header(t, k)[0]}" for k in ("about", "icons") if header(t, k)]
+    for name in need:
+        data = fetch_prev(prev, name)
+        if data is None:
+            warn(f"the live store site has no {name}")
+            return False
+        files[name] = data
+    for name in ("checked.tsv", "sources.tsv", "dropped.tsv"):
         data = fetch_prev(prev, name)
         if data is not None:
-            with open(os.path.join(out, name), "wb") as f:
-                f.write(data)
+            files[name] = data
+    os.makedirs(out, exist_ok=True)
+    for name, data in files.items():
+        with open(os.path.join(out, name), "wb") as f:
+            f.write(data)
     log("carried the previous store site over")
+    return True
 
 
 def main(argv):
@@ -752,7 +776,15 @@ def main(argv):
         warn(f"build failed: {e}")
         if os.path.isdir(out):
             shutil.rmtree(out)
-        carry(out, prev)
+        try:
+            if not carry(out, prev):
+                return 1
+        except Exception as e2:
+            # Publishing without the store would delete it from the site.
+            print(f"store: can't carry the live site over either: {e2}", file=sys.stderr)
+            if os.path.isdir(out):
+                shutil.rmtree(out)
+            return 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return 0

@@ -39,9 +39,8 @@ Store app: reads those files, watches them with inotify, asks gh0st-helper
   older than the one on the device, or past its `expires` date, is refused.
 - **Debs come from M5's GitHub release**, or their mirror in China. The
   catalog pins each by SHA-256 and size, so the mirror doesn't matter.
-- **The device downloads little.** The catalog is around 50 KB, an
-  estimate until CI builds it. The icon pack (48 px, about 2 KB each) and
-  the descriptions come only when their hash changes. Screenshots come one at a time, when the user opens
+- **The device downloads little.** The catalog and the icon pack (48 px)
+  and descriptions, which come only when their hash changes. Screenshots come one at a time, when the user opens
   them, checked by SHA-256 and kept in a 4 MB cache.
 - **No network at open.** The Store shows the list it has. It refreshes
   when the user asks, and with the daily update check when that is on.
@@ -99,8 +98,9 @@ registry as untrusted:
   served again, byte for byte. `about` and `icons` are served as
   `about-<sha256>` and `icons-<sha256>`, and the previous pair stays a day,
   so a cached catalog never names a missing file.
-- **It never fails the publish.** On any error, or when the list shrinks
-  below half, the previous store site carries over as it was.
+- **A bad run changes nothing.** On any error, or when the list shrinks
+  below half, the live store site carries over as it was, all of it. The
+  step fails only when it can't fetch that either.
 - **Signed** with the apt key, as `publish.sh` signs, then checked with
   `sqv` against `os/repo/gh0st-archive-keyring.pgp` before it is kept.
 
@@ -118,7 +118,7 @@ All in `/var/lib/gh0st/store`, written only by the engine, as root:
 | `catalog` | the apps; checked against `catalog.sig` before it lands |
 | `about` | each app's description and screenshots |
 | `icons` | the icon pack |
-| `state` | the last run: `refreshed`, `op`, `outcome`, `packages`, `failed`, `detail` |
+| `state` | the last run: `refreshed`, `ended`, `op`, `outcome`, `packages`, `failed`, `detail` |
 
 `/run/gh0st-store` holds `progress` (the update engine's format) and `job`,
 what the helper asked for. Debs download to `/var/cache/gh0st/store`.
@@ -150,8 +150,9 @@ blank line, and the PNGs back to back.
 
 ## The engine and the helper
 
-`gh0st store` runs as root in `gh0st-store.service`, as the update engine
-does, and takes the update engine's lock. The app never runs it itself.
+`gh0st store job` runs as root in `gh0st-store.service`, as the update
+engine does. It takes the update engine's lock without waiting: when that
+is held, the run ends as `locked`. The app never runs it itself.
 
 | Helper verb | Password | Does |
 |---|---|---|
@@ -161,9 +162,33 @@ does, and takes the update engine's lock. The app never runs it itself.
 | `store-upgrade [--mirror ...]` | yes | updates every app with a newer version |
 
 The helper checks each name against Debian's grammar and the verified
-catalog, writes `job` and starts the unit. The password has the helper's
+catalog, refuses while an engine runs, writes `job` and starts the unit.
+The engine reads `job` once and deletes it. The password has the helper's
 5-minute grace, so a run of installs asks once. Debian version order
 (`gh0st_core::debver`) decides what is an update.
+
+- **Refresh.** curl fetches `catalog` and `catalog.sig` (HTTPS only,
+  compressed), `sqv` checks them, then `about-<sha256>` and `icons-<sha256>`
+  come down only when the files on disk don't match. Everything lands in a
+  temporary folder first and the catalog moves in last, so a failure leaves
+  the old set whole. A catalog no newer than the one on disk changes
+  nothing. A signature dated past the clock reads as `clock`, not as a bad
+  signature. The site is the apt source's URI with `/store` for `/apt`.
+- **Install.** A catalog a day old is refreshed first, and an expired one
+  is never used. Each app is its own apt transaction: the deb downloads to
+  `/var/cache/gh0st/store/<sha256>.part` (root only, resumed after a
+  failure), must match the catalog's SHA-256 and, by `dpkg-deb -f`, its
+  package and version. Then `apt-get -s install --no-remove ./<sha256>.deb`
+  checks dependencies and space, and the real run follows. Old lists are
+  fetched again when a dependency is missing. The deb is deleted after.
+- **Remove.** Only an app the catalog lists, and only when apt's simulation
+  removes nothing else.
+- `state` gains `ended`, so two runs that end alike still differ.
+
+Tests: `crates/gh0st/tests/store_sim.rs` runs the engine with a fake curl,
+sqv and apt-get. Real installs were checked as root in the build container:
+acidzero with its dependencies on empty lists in 23 s, zero-weather from the
+China mirror, an unlisted app and a system package refused, a removal.
 
 ## The app
 

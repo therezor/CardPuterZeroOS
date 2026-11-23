@@ -69,6 +69,7 @@ pub fn outcome(o: Outcome, op: &str, title: &str) -> String {
         Outcome::Offline => "No network: join Wi-Fi in Settings".into(),
         Outcome::BadSignature => "The app list failed its signature check".into(),
         Outcome::Stale => "The app list is out of date. Try again later".into(),
+        Outcome::Clock => "The clock is behind: set it in Settings".into(),
         Outcome::Checksum => format!("{title} didn't match the list. Nothing changed"),
         Outcome::Depends => format!("{title} needs a package Gh0st OS lacks"),
         Outcome::Locked => "Another install is running. Try again soon".into(),

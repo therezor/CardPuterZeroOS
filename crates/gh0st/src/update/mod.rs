@@ -5,7 +5,7 @@
 //! files `gh0st_core::update` reads, and posts the notice. The design is
 //! in docs/updates.md.
 
-mod apt;
+pub(crate) mod apt;
 mod migrate;
 
 use gh0st_core::battery;
@@ -37,10 +37,16 @@ const PROGRESS_MS: u64 = 250;
 /// What is kept of apt's own output, for the error.
 const OUT_MAX: usize = 32 * 1024;
 
-static STOP: AtomicBool = AtomicBool::new(false);
+pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_term(_: libc::c_int) {
     STOP.store(true, Ordering::SeqCst);
+}
+
+/// SIGTERM sets [`STOP`]; the engines check it between steps.
+pub(crate) fn on_sigterm() {
+    // SAFETY: the handler only stores to an atomic.
+    unsafe { libc::signal(libc::SIGTERM, on_term as *const () as libc::sighandler_t) };
 }
 
 pub fn main(args: &[String]) -> i32 {
@@ -50,8 +56,7 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("gh0st update: run by systemd as root (gh0st-update-*.service)");
         return 13;
     }
-    // SAFETY: the handler only stores to an atomic.
-    unsafe { libc::signal(libc::SIGTERM, on_term as *const () as libc::sighandler_t) };
+    on_sigterm();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["check"] => check(false),
@@ -66,6 +71,16 @@ pub fn main(args: &[String]) -> i32 {
 
 /// The engine's lock, held for its life. A second run waits.
 fn lock() -> std::io::Result<std::fs::File> {
+    lock_with(libc::LOCK_EX)?.ok_or_else(|| std::io::Error::other("lock busy"))
+}
+
+/// The same lock without waiting: None while another engine holds it. The
+/// Store's engine takes it so apt never runs twice.
+pub(crate) fn try_lock() -> std::io::Result<Option<std::fs::File>> {
+    lock_with(libc::LOCK_EX | libc::LOCK_NB)
+}
+
+fn lock_with(op: libc::c_int) -> std::io::Result<Option<std::fs::File>> {
     let dir = update::run_dir();
     std::fs::create_dir_all(&dir)?;
     let f = std::fs::OpenOptions::new()
@@ -73,14 +88,18 @@ fn lock() -> std::io::Result<std::fs::File> {
         .truncate(false)
         .write(true)
         .open(update::lock_path())?;
-    // SAFETY: flock on a descriptor we own; blocks until the other run ends.
-    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(std::io::Error::last_os_error());
+    // SAFETY: flock on a descriptor we own.
+    if unsafe { libc::flock(f.as_raw_fd(), op) } != 0 {
+        let e = std::io::Error::last_os_error();
+        if e.kind() == std::io::ErrorKind::WouldBlock {
+            return Ok(None);
+        }
+        return Err(e);
     }
-    Ok(f)
+    Ok(Some(f))
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     notify::now_secs()
 }
 
@@ -110,32 +129,42 @@ fn set_pending(on: bool) {
 }
 
 /// Rewrites the progress line, at most every `PROGRESS_MS`.
-struct Reporter {
-    p: Progress,
+pub(crate) struct Reporter {
+    pub p: Progress,
     at: u64,
+    path: std::path::PathBuf,
+    /// The Store's engine names the app it installs, not each package
+    /// dpkg handles on the way.
+    pub keep_item: bool,
 }
 
 impl Reporter {
     fn new(install: bool) -> Reporter {
+        Reporter::at(Progress::path(), install)
+    }
+
+    pub fn at(path: std::path::PathBuf, install: bool) -> Reporter {
         Reporter {
             p: Progress {
                 install,
                 ..Progress::default()
             },
             at: 0,
+            path,
+            keep_item: false,
         }
     }
 
-    fn write(&mut self, force: bool) {
+    pub fn write(&mut self, force: bool) {
         let t = gh0st_core::rt::now_ms();
         if !force && t < self.at + PROGRESS_MS {
             return;
         }
         self.at = t;
-        let _ = update::write_atomic(&Progress::path(), &self.p.text());
+        let _ = update::write_atomic(&self.path, &self.p.text());
     }
 
-    fn phase(&mut self, phase: Phase, item: &str) {
+    pub fn phase(&mut self, phase: Phase, item: &str) {
         self.p.phase = phase;
         self.p.percent = None;
         self.p.item = item.into();
@@ -145,7 +174,7 @@ impl Reporter {
 
 impl Drop for Reporter {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(Progress::path());
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -514,7 +543,7 @@ fn apt_get(rep: &mut Reporter, count: u32, total: u64, verb: &[&str]) -> (Option
 /// Runs an apt program with Status-Fd on fd 3. Status lines update `rep`;
 /// `stoppable` hears each one and says whether SIGTERM may still stop the
 /// run. Returns the exit code and the tail of its output.
-fn apt(
+pub(crate) fn apt(
     program: &str,
     args: &[&str],
     rep: &mut Reporter,
@@ -644,7 +673,9 @@ fn report(rep: &mut Reporter, s: &apt::Status) {
                 p.n = (p.n + 1).min(p.m.max(1));
             }
             p.percent = Some(percent.clamp(0.0, 100.0) as u8);
-            p.item = pkg.clone();
+            if !rep.keep_item {
+                p.item = pkg.clone();
+            }
         }
         _ => return,
     }
@@ -669,7 +700,7 @@ fn pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
 }
 
 /// A short program's stdout, or its error.
-fn run(argv: &[&str]) -> Result<String, String> {
+pub(crate) fn run(argv: &[&str]) -> Result<String, String> {
     let out = Command::new(argv[0])
         .args(&argv[1..])
         .env("LC_ALL", "C.UTF-8")
@@ -685,7 +716,7 @@ fn run(argv: &[&str]) -> Result<String, String> {
 }
 
 /// A default route, IPv4 or IPv6.
-fn online() -> bool {
+pub(crate) fn online() -> bool {
     let v4 = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
     let has_v4 = v4
         .lines()
@@ -700,7 +731,7 @@ fn online() -> bool {
 }
 
 /// NetworkManager calls a connected device metered: a phone's hotspot.
-fn metered() -> bool {
+pub(crate) fn metered() -> bool {
     run(&[
         "nmcli",
         "-t",
@@ -718,7 +749,7 @@ fn metered() -> bool {
 
 /// Earlier than the last thing dpkg did: apt would call every signature
 /// "not valid yet".
-fn clock_behind() -> bool {
+pub(crate) fn clock_behind() -> bool {
     let Ok(m) = std::fs::metadata("/var/lib/dpkg/status").and_then(|m| m.modified()) else {
         return false;
     };
@@ -728,14 +759,14 @@ fn clock_behind() -> bool {
     now() + 86_400 < then
 }
 
-fn dpkg_interrupted() -> bool {
+pub(crate) fn dpkg_interrupted() -> bool {
     std::fs::read_dir("/var/lib/dpkg/updates").is_ok_and(|mut d| d.next().is_some())
 }
 
 /// Battery rules: the kernel set needs more than 50%, charging or not;
 /// anything else 30% or the charger. No battery found (a bench supply):
 /// fine.
-fn power_ok(kernel: bool) -> Result<(), (Outcome, String)> {
+pub(crate) fn power_ok(kernel: bool) -> Result<(), (Outcome, String)> {
     // `$GH0ST_POWER_SUPPLY`: a fake tree, so a test never reads the host's.
     let root = std::env::var_os("GH0ST_POWER_SUPPLY").map_or_else(
         || "/sys/class/power_supply".into(),
@@ -778,7 +809,7 @@ fn space_ok(st: &State) -> Result<(), (Outcome, String)> {
     Ok(())
 }
 
-fn free_bytes(path: &str) -> u64 {
+pub(crate) fn free_bytes(path: &str) -> u64 {
     let Ok(c) = std::ffi::CString::new(path) else {
         return u64::MAX;
     };

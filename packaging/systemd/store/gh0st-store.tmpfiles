@@ -1,0 +1,6 @@
+# The Store's files (docs/store.md). The app watches the first two with
+# inotify, so they must exist from boot. Debs on their way in are root's.
+d /run/gh0st-store 0755 root root -
+d /var/lib/gh0st/store 0755 root root -
+d /var/cache/gh0st 0755 root root -
+d /var/cache/gh0st/store 0700 root root -

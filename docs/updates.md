@@ -154,6 +154,8 @@ watches always have a target.
 | `update-auto on\|off` | yes | enables or disables the timer |
 | `update-channel stable\|edge` | yes | adds or removes the edge source, then checks |
 | `apt-clean` | no | `apt-get clean` |
+| `store-refresh` | no | the Store's engine fetches the app list (`docs/store.md`) |
+| `store-install`, `store-remove`, `store-upgrade` | yes | the Store's engine installs, removes or updates apps |
 
 ## The Updates app
 
