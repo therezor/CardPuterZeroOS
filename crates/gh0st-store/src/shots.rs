@@ -1,7 +1,6 @@
 //! Screenshots: fetched one at a time when the user asks, checked against
 //! the catalog's SHA-256, and kept in a small cache in ~/.cache.
 
-use gh0st_core::store;
 use std::path::{Path, PathBuf};
 
 /// The cache holds this much; the oldest go first.
@@ -57,22 +56,14 @@ pub fn fetch(url: &str, to: &Path) -> Vec<String> {
     .collect()
 }
 
-/// Keeps the downloaded file if it is the one the catalog names.
-pub fn accept(tmp: &Path, sha256: &str) -> bool {
-    let ok = store::file_sha256(tmp).as_deref() == Some(sha256);
-    if ok {
-        ok_or_remove(std::fs::rename(tmp, path(sha256)), tmp);
-        prune(&dir(), KEEP_BYTES);
-    } else {
+/// Keeps a download whose hash matched, then trims the cache.
+pub fn keep(tmp: &Path, sha256: &str) -> bool {
+    if std::fs::rename(tmp, path(sha256)).is_err() {
         let _ = std::fs::remove_file(tmp);
+        return false;
     }
-    ok
-}
-
-fn ok_or_remove(r: std::io::Result<()>, tmp: &Path) {
-    if r.is_err() {
-        let _ = std::fs::remove_file(tmp);
-    }
+    prune(&dir(), KEEP_BYTES);
+    true
 }
 
 /// Removes the oldest files until the folder holds `keep` bytes or less.
@@ -99,19 +90,6 @@ pub fn prune(dir: &Path, keep: u64) {
     }
 }
 
-/// Bytes under `p`, not following links.
-pub fn size_of(p: &Path) -> u64 {
-    let Ok(m) = std::fs::symlink_metadata(p) else {
-        return 0;
-    };
-    if !m.is_dir() {
-        return m.len();
-    }
-    std::fs::read_dir(p)
-        .map(|rd| rd.flatten().map(|e| size_of(&e.path())).sum())
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,7 +110,6 @@ mod tests {
                 .set_modified(t)
                 .unwrap();
         }
-        assert_eq!(size_of(&d), 300);
         prune(&d, 150);
         assert!(!d.join("a").exists() && !d.join("b").exists());
         assert!(d.join("c").exists());

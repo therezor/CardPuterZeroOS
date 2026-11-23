@@ -66,6 +66,13 @@ impl BakedFont {
         self.find(ch as u32).is_some()
     }
 
+    /// Whether all of `s` draws as text, not as boxes: baked, or from the
+    /// CJK font when the device has one. Checking may load that font.
+    pub fn drawable(&self, s: &str) -> bool {
+        s.chars()
+            .all(|c| c.is_whitespace() || self.has(c) || fallback::advance(c, self.em).is_some())
+    }
+
     /// Advance of one char in 1/64 px.
     fn advance(&self, ch: char) -> u32 {
         match self.find(ch as u32) {

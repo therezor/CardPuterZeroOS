@@ -9,6 +9,9 @@ signs a copy of the list so it arrives unchanged, but doesn't review the \
 apps. An app's setup can run as root: the Store asks before installing one \
 that does. No account, no device ID.";
 
+/// For a description the device can't draw.
+pub const NO_ENGLISH: &str = "M5's description of this app isn't in English yet.";
+
 /// The risks an app's package brings, short, then what it uses.
 pub fn flags(f: Flags) -> (Vec<&'static str>, Vec<&'static str>) {
     let warn = [

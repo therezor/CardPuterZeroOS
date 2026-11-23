@@ -82,6 +82,15 @@ struct Fetch {
     job: Job,
     tmp: PathBuf,
     sha256: String,
+    /// Downloaded; `sha256sum` now runs, and this is what it said.
+    hashing: Option<String>,
+}
+
+/// Removing M5's old cache, in two child processes: `du`, then `rm`.
+struct Clean {
+    job: Job,
+    kb: u64,
+    removing: bool,
 }
 
 pub struct Store {
@@ -108,6 +117,7 @@ pub struct Store {
     scroll: Scroll,
     shot: Option<Rc<Image>>,
     fetch: Option<Fetch>,
+    clean: Option<Clean>,
     /// The screenshot couldn't be fetched or didn't match.
     shot_failed: bool,
     /// The app the install dialog asks about.
@@ -148,6 +158,7 @@ impl Store {
             scroll: Scroll::new(),
             shot: None,
             fetch: None,
+            clean: None,
             shot_failed: false,
             asking: None,
             mirror: Mirror::Auto,
@@ -161,7 +172,7 @@ impl Store {
     /// Reads the catalog, the icons and what is installed. Done at start
     /// and when the engine has finished, never per frame.
     fn load_catalog(&mut self) {
-        self.catalog = Catalog::load();
+        self.catalog = Catalog::load().map(readable);
         self.icons = Icons::load();
         self.pics.clear();
         self.installed = self
@@ -297,6 +308,7 @@ impl Store {
             return;
         }
         self.refresh_asked = true;
+        self.starting_for(Work::Refresh);
         self.helper.run(cx, REFRESH, &["store-refresh"]);
     }
 
@@ -338,7 +350,7 @@ impl Store {
             return;
         }
         let m = self.mirror.word();
-        self.starting_for(cx, Work::Apps(vec![package.to_string()]));
+        self.starting_for(Work::Apps(vec![package.to_string()]));
         self.helper
             .run(cx, INSTALL, &["store-install", "--mirror", m, package]);
     }
@@ -348,7 +360,7 @@ impl Store {
             cx.toast("Wait for the install to finish");
             return;
         }
-        self.starting_for(cx, Work::Apps(vec![package.to_string()]));
+        self.starting_for(Work::Apps(vec![package.to_string()]));
         self.helper.run(cx, REMOVE, &["store-remove", package]);
     }
 
@@ -358,34 +370,32 @@ impl Store {
             return;
         }
         let m = self.mirror.word();
-        self.starting_for(cx, Work::Apps(all));
+        self.starting_for(Work::Apps(all));
         self.helper
             .run(cx, UPGRADE, &["store-upgrade", "--mirror", m]);
     }
 
     /// Shows the work as started until the helper says otherwise.
-    fn starting_for(&mut self, cx: &mut Cx, w: Work) {
+    fn starting_for(&mut self, w: Work) {
         self.starting = Some(w);
         self.was_busy = true;
-        if let Some(t) = self.start_timer.take() {
-            cx.cancel(t);
-        }
-        self.start_timer = Some(cx.after(START_MS));
     }
 
     fn finished(&mut self, cx: &mut Cx, f: Finished) {
         if let Err(why) = f.result {
-            if f.tag != REFRESH {
-                self.starting = None;
-                self.was_busy = false;
-            }
+            self.starting = None;
+            self.was_busy = false;
             if why != "Cancelled" {
                 cx.toast_tone(Tone::Critical, &why);
             }
             self.next(cx);
-        } else if f.tag == REFRESH {
-            self.starting = Some(Work::Refresh);
-            self.was_busy = true;
+        } else if self.progress.is_none() && self.starting.is_some() {
+            // The unit started. The clock runs from here, not from before
+            // the password.
+            if let Some(t) = self.start_timer.take() {
+                cx.cancel(t);
+            }
+            self.start_timer = Some(cx.after(START_MS));
         }
         self.sync_segment(cx);
     }
@@ -472,6 +482,10 @@ impl Store {
         if self.fetch.is_some() {
             return;
         }
+        if !url.starts_with("https://") {
+            self.shot_failed = true;
+            return;
+        }
         let _ = std::fs::create_dir_all(shots::dir());
         let tmp = shots::dir().join(format!("{sha}.part"));
         let argv = shots::fetch(&url, &tmp);
@@ -481,14 +495,37 @@ impl Store {
             job,
             tmp,
             sha256: sha,
+            hashing: None,
         });
     }
 
-    fn fetched(&mut self, cx: &mut Cx, code: Option<i32>) {
+    /// The download, then its hash, each a child process.
+    fn fetch_event(&mut self, cx: &mut Cx, event: JobEvent) {
+        let Some(f) = self.fetch.as_mut() else {
+            return;
+        };
+        match (event, &mut f.hashing) {
+            (JobEvent::Line(l), Some(h)) if h.is_empty() => {
+                *h = l.split_whitespace().next().unwrap_or("").to_string();
+            }
+            (JobEvent::Done(Some(0)), None) => {
+                let tmp = f.tmp.to_string_lossy().into_owned();
+                f.job = cx.spawn(&["sha256sum", "--", &tmp]);
+                f.hashing = Some(String::new());
+            }
+            (JobEvent::Done(_), hashing) => {
+                let ok = hashing.as_deref() == Some(f.sha256.as_str());
+                self.fetched(cx, ok);
+            }
+            _ => {}
+        }
+    }
+
+    fn fetched(&mut self, cx: &mut Cx, ok: bool) {
         let Some(f) = self.fetch.take() else {
             return;
         };
-        let ok = code == Some(0) && shots::accept(&f.tmp, &f.sha256);
+        let ok = ok && shots::keep(&f.tmp, &f.sha256);
         if !ok {
             let _ = std::fs::remove_file(&f.tmp);
         }
@@ -525,17 +562,49 @@ impl Store {
     }
 
     /// Clears M5's Store cache once: it kept every deb it downloaded.
-    fn clear_old_store(&self, cx: &mut Cx) {
+    /// M5's Store kept every deb it downloaded. `du` then `rm` as child
+    /// processes, so the first frame doesn't wait on the SD card.
+    fn clear_old_store(&mut self, cx: &mut Cx) {
         let old = shots::old_store_cache();
         if !old.is_dir() {
             return;
         }
-        let bytes = shots::size_of(&old);
-        if std::fs::remove_dir_all(&old).is_ok() && bytes >= 1_000_000 {
-            cx.toast(&format!(
-                "Freed {} left by the old Store",
-                update::size_text(bytes)
-            ));
+        let p = old.to_string_lossy().into_owned();
+        self.clean = Some(Clean {
+            job: cx.spawn(&["du", "-sk", "--", &p]),
+            kb: 0,
+            removing: false,
+        });
+    }
+
+    fn clean_event(&mut self, cx: &mut Cx, event: JobEvent) {
+        let Some(c) = self.clean.as_mut() else {
+            return;
+        };
+        match event {
+            JobEvent::Line(l) if !c.removing => {
+                c.kb = l
+                    .split_whitespace()
+                    .next()
+                    .and_then(|k| k.parse().ok())
+                    .unwrap_or(0);
+            }
+            JobEvent::Done(_) if !c.removing => {
+                let p = shots::old_store_cache().to_string_lossy().into_owned();
+                c.job = cx.spawn(&["rm", "-rf", "--", &p]);
+                c.removing = true;
+            }
+            JobEvent::Done(code) => {
+                let bytes = c.kb * 1024;
+                self.clean = None;
+                if code == Some(0) && bytes >= 1_000_000 {
+                    cx.toast(&format!(
+                        "Freed {} left by the old Store",
+                        update::size_text(bytes)
+                    ));
+                }
+            }
+            JobEvent::Line(_) => {}
         }
     }
 
@@ -843,9 +912,14 @@ impl Page for Store {
         if Some(timer) == self.start_timer {
             self.start_timer = None;
             if self.progress.is_none() && self.starting.take().is_some() {
-                // Nothing ran: the engine wrote no progress and no state.
+                // No progress in time. The run may have ended unseen, as
+                // off Linux with no inotify; else nothing ran.
+                let before = self.state.clone();
+                self.load_engine();
                 self.was_busy = false;
-                if self.load_engine() || self.state.op.is_empty() {
+                if self.state != before {
+                    self.ended(cx);
+                } else {
                     self.next(cx);
                 }
             }
@@ -855,9 +929,11 @@ impl Page for Store {
 
     fn job(&mut self, job: Job, event: JobEvent, cx: &mut Cx) {
         if self.fetch.as_ref().is_some_and(|f| f.job == job) {
-            if let JobEvent::Done(code) = event {
-                self.fetched(cx, code);
-            }
+            self.fetch_event(cx, event);
+            return;
+        }
+        if self.clean.as_ref().is_some_and(|c| c.job == job) {
+            self.clean_event(cx, event);
             return;
         }
         if let Some(f) = self.helper.job(cx, job, event) {
@@ -1071,11 +1147,36 @@ impl Store {
             return;
         };
         self.search.cancel();
-        self.about = About::load(&p);
+        self.about = About::load(&p).map(|mut a| {
+            if !text_font().drawable(&a.description) {
+                a.description = words::NO_ENGLISH.into();
+            }
+            a
+        });
         self.scroll.reset();
         self.view = View::Detail(p);
         self.sync_segment(cx);
     }
+}
+
+/// The face the Store's text draws in.
+fn text_font() -> gh0st_app::gfx::font::Font {
+    gh0st_app::gfx::theme::Theme::default().f.small
+}
+
+/// Text the device can't draw would show as boxes: a title falls back to
+/// the package name, a summary to the category.
+fn readable(mut c: Catalog) -> Catalog {
+    let f = text_font();
+    for a in &mut c.apps {
+        if !f.drawable(&a.title) {
+            a.title = a.package.clone();
+        }
+        if !f.drawable(&a.summary) {
+            a.summary = a.category.clone();
+        }
+    }
+    c
 }
 
 #[cfg(target_os = "linux")]
