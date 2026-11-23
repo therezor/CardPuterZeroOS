@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Camera
+Comment=Photos and video
+Exec=/usr/bin/gh0st-camera
+Icon=gh0st:camera
+Terminal=false
+X-Gh0st-Bars=none
+TryExec=/usr/libexec/gh0st-camd

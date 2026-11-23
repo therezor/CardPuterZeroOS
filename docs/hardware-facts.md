@@ -401,6 +401,35 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 - `iw phy` on the built-in chip lists IBSS, managed, AP and the P2P modes: no
   monitor (firmware 7.95.75).
 
+## Camera (measured 2026-11-23, `gh0st-camd --probe`)
+
+- IMX219 at `/base/soc/i2c0mux/i2c@1/imx219@10`, libcamera v0.7.2+rpt20260817.
+  Pixel array 3280x2464. Modes: 640x480, 1640x1232, 1920x1080, 3280x2464.
+- `Rotation` is 180: the sensor sits upside down, and libcamera flips it.
+- The ISP gives RGB565 at the preview's own size, 226x170 (stride 480) and
+  302x170 (stride 608). Nothing is scaled or converted on the CPU.
+- `ScalerCrop` max is 3280x2464 at (0, 0) in the binned mode and
+  1920x1080 at (680, 692) in the 1080p crop.
+- CMA: with libcamera's defaults (four raw buffers) an 8 MP still fails to
+  allocate. Two fit but drop 1 to 5 frames in 5 s at 1080p30. Three
+  (`camd/vc4.yaml`) do neither. `CmaFree` reads near zero
+  at idle because the page cache borrows CMA; it moves out on demand.
+- 8 MP still: 575 ms from the preview to the frame, JPEG 501 ms at q95
+  (2.2 MB) and 391 ms at q85 (1.0 MB), preview back in about 170 ms.
+  A 2x still (1640x1232): 367 ms, JPEG 159 ms.
+- Preview start 57 to 64 ms, first frame 23 to 118 ms.
+- The sensor runs 1.2x slower than libcamera's model of it: frames came
+  40.0 ms apart while `FrameDuration` said 33.3, so 30 fps gave 25, and a
+  15 fps cap gave 12.5. The ratio measured 1.200 to 1.202 in both video
+  modes. gh0st-camd scales every time it sets or reads by it
+  (`GH0ST_CAMD_CLOCK` overrides).
+- In video mode the ISP's second output gives YUV420, not RGB565, at
+  302x170: the helper converts it.
+- Video, 5 s each, with the clock fixed: 1080p (the 1920x1080 crop) 149
+  frames, no gaps, 12.0 Mb/s; 720p (binned, scaled) 149 frames. CMA free
+  while recording 1080p: about 17 MB. Files decode clean in ffprobe: High
+  profile, level 4.1, BT.709 limited range.
+
 ## Still to check
 
 

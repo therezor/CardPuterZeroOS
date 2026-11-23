@@ -44,6 +44,11 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/gh0st-update`: Updates, an SDK app with its own binary. It shows
   what the update engine found and asks gh0st-helper to check or install.
   `examples/mockups.rs` renders its pages into `mockups/update-app`.
+- `crates/gh0st-camera`: Camera, an SDK app with its own binary. It drives
+  `gh0st-camd` (`camd/`, C++ against libcamera, built in the image
+  container) over a socket pair and a frame ring. `src/fake.rs` stands in
+  for the helper on a host. `examples/mockups.rs` renders its screens into
+  `mockups/camera`.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
   program. `gh0st update` is the update engine, run as root by systemd.
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
@@ -61,6 +66,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   must add.
 - `docs/setup.md`: first-boot setup, the steps and how it hands over to the
   shell.
+- `docs/camera.md`: the camera, its quality ceiling, the helper protocol
+  and the milestones.
 - `docs/hotspot.md`: the Wi-Fi access point, why it takes wlan0, its security
   and its tests.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
@@ -94,7 +101,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`,
   `qrcodegen` (the hotspot's QR code; no dependencies of its own), and in the
   terminal `vte` (the DEC parser, without std so its OSC buffer is bounded) and
-  `unicode-width` (wcwidth). Build only: `resvg`.
+  `unicode-width` (wcwidth). Build only: `resvg`. The camera helper is C++
+  because libcamera has no C API: it links libcamera and libjpeg-turbo, both
+  on the stock image already.
 
 ## Build and test
 
