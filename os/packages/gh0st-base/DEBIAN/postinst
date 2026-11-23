@@ -2,4 +2,10 @@
 set -e
 if [ "$1" = configure ]; then
     systemd-sysusers gh0st.conf
+    # A fresh install is a new image, which has what every migration adds.
+    # An upgrade leaves the new ones for the update engine.
+    if [ -z "$2" ]; then
+        mkdir -p /var/lib/gh0st/update
+        ls /usr/share/gh0st/migrations > /var/lib/gh0st/update/migrations
+    fi
 fi

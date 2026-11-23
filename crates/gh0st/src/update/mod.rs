@@ -6,12 +6,14 @@
 //! in docs/updates.md.
 
 mod apt;
+mod migrate;
 
 use gh0st_core::battery;
 use gh0st_core::notify::{self, Notice};
 use gh0st_core::update::{
     self, Group, KERNEL_BATTERY, MIN_BATTERY, Outcome, Package, Phase, Progress, Restart, State,
 };
+use std::collections::HashSet;
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -224,7 +226,17 @@ fn refresh(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, String)> 
 fn list_upgrades(st: &mut State) -> Result<(), (Outcome, String)> {
     let sim = run(&["apt-get", "-s", "-q", "upgrade", "--with-new-pkgs"])
         .map_err(|e| (Outcome::Error, e))?;
-    let (insts, held) = apt::simulate(&sim);
+    let (mut insts, held) = apt::simulate(&sim);
+    // What pending migrations would add, listed like any update so the user
+    // installs it.
+    let extra = settle();
+    if let Some(sim) = simulate_install(&extra) {
+        for i in apt::simulate(&sim).0 {
+            if !insts.iter().any(|x| x.name == i.name) {
+                insts.push(i);
+            }
+        }
+    }
     let wanted: Vec<String> = insts
         .iter()
         .map(|i| format!("{}={}", i.name, i.to))
@@ -266,6 +278,60 @@ fn list_upgrades(st: &mut State) -> Result<(), (Outcome, String)> {
     st.held = held;
     st.grow = grow.max(0) as u64 * 1024;
     Ok(())
+}
+
+/// Marks done the migrations that hold already, and returns the packages
+/// the rest still want.
+fn settle() -> Vec<String> {
+    let pending = migrate::pending(&migrate::dir(), &migrate::done_path());
+    if pending.is_empty() {
+        return Vec::new();
+    }
+    let names: Vec<&str> = pending
+        .iter()
+        .flat_map(|m| m.install.iter().map(String::as_str))
+        .collect();
+    let have = installed(&names);
+    if let Err(e) = migrate::mark_done(&migrate::done_path(), &migrate::complete(&pending, &have)) {
+        eprintln!("gh0st update: migrations: {e}");
+    }
+    migrate::missing(&pending, &have)
+}
+
+/// `apt-get -s install` of `pkgs`. None when there are none, or apt can't:
+/// a migration that names a package the archive lacks waits, and never
+/// fails a check.
+fn simulate_install(pkgs: &[String]) -> Option<String> {
+    if pkgs.is_empty() {
+        return None;
+    }
+    let mut argv = vec!["apt-get", "-s", "-q", "install"];
+    argv.extend(pkgs.iter().map(String::as_str));
+    run(&argv)
+        .map_err(|e| eprintln!("gh0st update: migrations: {e}"))
+        .ok()
+}
+
+/// Which of `names` dpkg has installed.
+fn installed(names: &[&str]) -> HashSet<String> {
+    let Ok(out) = Command::new("dpkg-query")
+        .args(["-W", "-f", "${Package}\t${db:Status-Status}\n"])
+        .args(names)
+        .env("LC_ALL", "C.UTF-8")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return HashSet::new();
+    };
+    // dpkg-query fails when any name is unknown, and still lists the rest.
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let (n, st) = l.split_once('\t')?;
+            (st.trim() == "installed").then(|| n.to_string())
+        })
+        .collect()
 }
 
 fn installed_kb(names: &[&str]) -> Vec<(String, u64)> {
@@ -327,12 +393,17 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
         let out = run(&["dpkg", "--configure", "-a"]).map_err(|e| (Outcome::Error, e))?;
         drop(out);
     }
-    let count = st.packages.len() as u32;
+    let extra = settle();
+    let count = st
+        .packages
+        .iter()
+        .filter(|p| !extra.contains(&p.name))
+        .count() as u32;
     let needs = st.needs();
     let total = st.download();
     let mut retried = false;
     loop {
-        let (code, out) = upgrade(rep, count, total);
+        let (code, out) = apt_get(rep, count, total, &["upgrade", "--with-new-pkgs"]);
         if code == Some(0) {
             break;
         }
@@ -351,50 +422,82 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
     }
     // SAFETY: sync has no failure mode.
     unsafe { libc::sync() };
-    rep.phase(Phase::Clean, "");
-    let _ = run(&["apt-get", "clean"]);
     st.installed = now();
     st.installed_count = count;
     st.restart = st.restart.max(needs);
+    let migrated = migrate(st, rep);
+    if let Ok(n) = migrated {
+        st.installed_count += n;
+    }
+    rep.phase(Phase::Clean, "");
+    let _ = run(&["apt-get", "clean"]);
     // The install worked; a list that fails now is only stale until the
     // next check, not an error.
     if let Err((_, why)) = list_upgrades(st) {
         eprintln!("gh0st update: listing after the install: {why}");
         st.packages.clear();
     }
-    Ok(())
+    migrated.map(drop)
 }
 
-/// The upgrade itself. Stop works until dpkg starts; past that the engine
-/// finishes, whatever asks.
-fn upgrade(rep: &mut Reporter, count: u32, total: u64) -> (Option<i32>, String) {
+/// After the upgrade, which may have brought new migrations: installs
+/// what they want, then marks them done. A failure leaves them pending for
+/// the next install. Returns how many packages it installed.
+fn migrate(st: &mut State, rep: &mut Reporter) -> Result<u32, (Outcome, String)> {
+    let extra = settle();
+    if simulate_install(&extra).is_none() {
+        return Ok(0);
+    }
+    // Sizes and the restart for what it adds, for the checks below.
+    list_upgrades(st)?;
+    power_ok(st.kernel())?;
+    space_ok(st)?;
+    let count = st.packages.len() as u32;
+    let needs = st.needs();
+    let mut args = vec!["install"];
+    args.extend(extra.iter().map(String::as_str));
+    let (code, out) = apt_get(rep, count, st.download(), &args);
+    if code != Some(0) {
+        if STOP.load(Ordering::SeqCst) {
+            return Err((Outcome::Stopped, "Stopped".into()));
+        }
+        return Err(apt::failure(&out));
+    }
+    // SAFETY: sync has no failure mode.
+    unsafe { libc::sync() };
+    st.restart = st.restart.max(needs);
+    let left = settle();
+    if !left.is_empty() {
+        eprintln!("gh0st update: migrations still want {}", left.join(" "));
+    }
+    Ok(count)
+}
+
+/// `apt-get` with `verb`: the upgrade, or a migration's install. Stop works
+/// until dpkg starts; past that the engine finishes, whatever asks.
+fn apt_get(rep: &mut Reporter, count: u32, total: u64, verb: &[&str]) -> (Option<i32>, String) {
     rep.p.phase = Phase::Download;
     rep.p.total = total;
     rep.p.m = count;
     rep.write(true);
     let mut dpkg = false;
-    apt(
-        "apt-get",
-        &[
-            "-y",
-            "-q",
-            "-o",
-            "APT::Status-Fd=3",
-            "-o",
-            "Dpkg::Options::=--force-confdef",
-            "-o",
-            "Dpkg::Options::=--force-confold",
-            "-o",
-            "DPkg::Lock::Timeout=120",
-            "upgrade",
-            "--with-new-pkgs",
-        ],
-        rep,
-        |s| {
-            dpkg |= matches!(s, apt::Status::Pm { .. });
-            !dpkg
-        },
-    )
+    let mut args = vec![
+        "-y",
+        "-q",
+        "-o",
+        "APT::Status-Fd=3",
+        "-o",
+        "Dpkg::Options::=--force-confdef",
+        "-o",
+        "Dpkg::Options::=--force-confold",
+        "-o",
+        "DPkg::Lock::Timeout=120",
+    ];
+    args.extend_from_slice(verb);
+    apt("apt-get", &args, rep, |s| {
+        dpkg |= matches!(s, apt::Status::Pm { .. });
+        !dpkg
+    })
 }
 
 /// Runs an apt program with Status-Fd on fd 3. Status lines update `rep`;

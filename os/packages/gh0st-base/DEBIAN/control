@@ -4,13 +4,9 @@ Architecture: all
 Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: admin
 Priority: optional
-Depends: gh0st-kernel, gh0st-wifi, systemd-zram-generator, udev, kmod,
- curl, wget, python3, htop, less, nano, vim-tiny, file, lsof, zip, unzip,
- iputils-ping, traceroute, netcat-openbsd, psmisc, usbutils, i2c-tools, jq,
- tree, bash-completion
+Depends: gh0st-kernel, gh0st-wifi, systemd-zram-generator, udev, kmod
 Description: Gh0st OS system configuration
  Configuration only: apt sources and pins, what dpkg leaves out, which
  services start, journald off, zram, sysctl, udev rules for the Raspberry Pi
- devices, and NetworkManager privacy defaults. It also pulls in the
- command-line tools a Linux user expects, so a device that updates gets
- them too.
+ devices, NetworkManager privacy defaults, and the one-time migrations
+ the update engine runs.

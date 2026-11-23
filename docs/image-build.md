@@ -110,10 +110,10 @@ country; that stays until our own Store replaces it.
 **Command-line tools.** What a Linux user reaches for in the terminal:
 curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,
 ping, traceroute, nc, killall, lsusb, i2cdetect, jq, tree and Tab
-completion. None runs a service. `gh0st-base` depends on them, since
-Recommends are off: a device already flashed gets them with its next
-update. `man-db` stays denied: its daily index job and groff cost more than
-the pages are worth here.
+completion. None runs a service. A device flashed before them gets them
+once, from the migration `0001-cli-tools` (docs/updates.md). `man-db`
+stays denied: its daily index job and groff cost more than the pages are
+worth here.
 
 **ffmpeg.** Files runs `ffmpeg` and `ffprobe` for video previews. Debian's
 ffmpeg is a desktop build: its device library pulls OpenGL, so Mesa and
@@ -124,7 +124,7 @@ packages and 367 MB of the 842 MB installed. Kept by decision (2026-11-21).
 
 | Package | Holds |
 |---|---|
-| `gh0st-base` | Config only: apt sources and deny pins, dpkg excludes, unit presets, journald off, zram, sysctl, rfkill default, `/tmp` cap, the first-boot grow, udev rules in place of `raspberrypi-sys-mods`, NetworkManager privacy defaults, PipeWire realtime limits without rtkit, the default volume. Depends on the command-line tools |
+| `gh0st-base` | Config only: apt sources and deny pins, dpkg excludes, unit presets, journald off, zram, sysctl, rfkill default, `/tmp` cap, the first-boot grow, udev rules in place of `raspberrypi-sys-mods`, NetworkManager privacy defaults, PipeWire realtime limits without rtkit, the default volume, the one-time migrations |
 | `gh0st-kernel` | Exact-version Depends on the kernel, drivers and firmware, so they move together |
 | `gh0st-no-initramfs` | Provides `linux-initramfs-tool`: the kernel has ext4 and the SD driver built in |
 | `gh0st-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |

@@ -88,9 +88,30 @@ Only systemd runs them, as root.
    `--force-confdef --force-confold`, no prompts, and a 120 s wait for the dpkg
    lock. When the Store holds that lock, the result is "Another install is
    running".
-7. `sync`, `apt-get clean`, then the check's listing again.
+7. Pending migrations, below.
+8. `sync`, `apt-get clean`, then the check's listing again.
 
 SIGTERM stops a download. Once dpkg starts, the engine finishes first.
+
+**Migrations.** A change an update makes once on each device, then never
+again. gh0st-base ships them in `/usr/share/gh0st/migrations`, a file each,
+run in name order. A line `install curl wget` adds packages that a device
+flashed before them lacks.
+
+- The check lists what pending migrations would add, as updates, so the user
+  sees and installs it like any other.
+- The install runs them after the upgrade, which may have just brought them,
+  checking power and space again. The packages go in as installed by hand: the
+  user may remove one later, and nothing brings it back.
+- A migration whose packages are all there is done. Its name goes in
+  `/var/lib/gh0st/update/migrations`.
+- A failed install leaves it pending for the next one. A package the archive
+  lacks makes it wait, and never fails a check.
+- A fresh install of gh0st-base, which is a new image, marks every migration
+  it ships done.
+
+A device that upgrades from an engine without migrations runs them on the
+install after the next check.
 
 **Files.** Plain `key=value` lines, with one tab-separated line per package.
 They are read by the engine, the app, Settings and the shell
@@ -100,6 +121,7 @@ They are read by the engine, the app, Settings and the shell
 |---|---|
 | `/var/lib/gh0st/update/state` | last check, result, the packages, download size, restart pending, last install |
 | `/var/lib/gh0st/update/pending` | a check is owed: it was offline or metered |
+| `/var/lib/gh0st/update/migrations` | the migrations done, one a line |
 | `/run/gh0st-update/progress` | phase, percent, bytes, package, n of m. Rewritten at most 4 times a second, in tmpfs |
 | `/run/gh0st-update/lock` | the engine's flock |
 

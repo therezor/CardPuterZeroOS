@@ -1,0 +1,5 @@
+# The command-line tools the image added as roots, for devices flashed
+# before them.
+install curl wget python3 htop less nano vim-tiny file lsof zip unzip
+install iputils-ping traceroute netcat-openbsd psmisc usbutils i2c-tools
+install jq tree bash-completion
