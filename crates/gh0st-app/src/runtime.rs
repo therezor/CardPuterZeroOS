@@ -205,6 +205,9 @@ pub(crate) struct Runtime {
     /// The app asked to keep the screen on.
     pub awake: bool,
     hold: Option<Hold>,
+    /// A key whose hold has run: its repeats and release go nowhere, so
+    /// they can't type into what the hold opened.
+    spent: Option<u16>,
     /// The chip whose key is down, and that key: drawn pressed.
     pressed: Option<(u16, u8)>,
     bar: Bar,
@@ -239,6 +242,7 @@ impl Runtime {
             busy: None,
             awake: false,
             hold: None,
+            spent: None,
             pressed: None,
             bar: Bar::new(),
             palette,
@@ -545,6 +549,15 @@ impl Runtime {
                 self.pressed = None;
                 self.dirty = true;
             }
+        }
+        if self.spent == Some(raw.code) {
+            if raw.state != State::Press {
+                if raw.state == State::Release {
+                    self.spent = None;
+                }
+                return;
+            }
+            self.spent = None;
         }
         let taken = self.taken.iter().position(|&c| c == raw.code);
         if let (State::Release, Some(i)) = (raw.state, taken) {
@@ -1161,6 +1174,7 @@ impl Runtime {
             return;
         }
         let what = h.what;
+        self.spent = Some(h.code);
         self.hold = None;
         self.pressed = None;
         self.dirty = true;
@@ -1511,6 +1525,45 @@ mod tests {
                 raw,
             });
             (d, log)
+        }
+
+        /// A hold chip that starts typing, as one that opens a password
+        /// dialog does.
+        struct Typer {
+            log: Log,
+            typing: bool,
+        }
+
+        impl Page for Typer {
+            fn title(&self) -> &str {
+                "Typer"
+            }
+            fn draw(&self, _: &mut Ui) {}
+            fn bars(&self) -> Bars {
+                Bars::top().chip(7, Chip::new("trash-2", "Delete").hold().runs(ERASE))
+            }
+            fn typing(&self) -> bool {
+                self.typing
+            }
+            fn key(&mut self, key: Key, _: &mut Cx) {
+                self.log.borrow_mut().push(format!("{key:?}"));
+            }
+            fn command(&mut self, _: u32, _: Step, _: &mut Cx) {
+                self.typing = true;
+            }
+        }
+
+        #[test]
+        fn a_held_key_doesnt_type_into_what_its_hold_opened() {
+            let log = Log::default();
+            let mut d = Driver::new(Typer {
+                log: log.clone(),
+                typing: false,
+            });
+            d.keys("down 7").wait(2500).keys("up 7").wait(100);
+            assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+            d.keys("7").wait(50);
+            assert_eq!(log.borrow().as_slice(), ["Char('7')"]);
         }
 
         #[test]
