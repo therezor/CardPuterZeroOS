@@ -393,16 +393,21 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
         let out = run(&["dpkg", "--configure", "-a"]).map_err(|e| (Outcome::Error, e))?;
         drop(out);
     }
+    // What this install puts in: the list, and what migrations add below.
+    let mut wanted: HashSet<String> = st.packages.iter().map(|p| p.name.clone()).collect();
+    // The list holds migration packages and their libraries too: only
+    // apt knows which of them the upgrade itself brings.
     let extra = settle();
-    let count = st
-        .packages
-        .iter()
-        .filter(|p| !extra.contains(&p.name))
-        .count() as u32;
+    let count = if extra.is_empty() {
+        st.packages.len() as u32
+    } else {
+        run(&["apt-get", "-s", "-q", "upgrade", "--with-new-pkgs"])
+            .map_or(st.packages.len(), |sim| apt::simulate(&sim).0.len()) as u32
+    };
     let needs = st.needs();
     let total = st.download();
     let mut retried = false;
-    loop {
+    while count > 0 || extra.is_empty() {
         let (code, out) = apt_get(rep, count, total, &["upgrade", "--with-new-pkgs"]);
         if code == Some(0) {
             break;
@@ -423,12 +428,8 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
     // SAFETY: sync has no failure mode.
     unsafe { libc::sync() };
     st.installed = now();
-    st.installed_count = count;
     st.restart = st.restart.max(needs);
-    let migrated = migrate(st, rep);
-    if let Ok(n) = migrated {
-        st.installed_count += n;
-    }
+    let migrated = migrate(st, rep, &mut wanted);
     rep.phase(Phase::Clean, "");
     let _ = run(&["apt-get", "clean"]);
     // The install worked; a list that fails now is only stale until the
@@ -437,19 +438,29 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
         eprintln!("gh0st update: listing after the install: {why}");
         st.packages.clear();
     }
-    migrated.map(drop)
+    // Whatever is still listed didn't go in.
+    st.installed_count = wanted
+        .iter()
+        .filter(|n| !st.packages.iter().any(|p| &p.name == *n))
+        .count() as u32;
+    migrated
 }
 
 /// After the upgrade, which may have brought new migrations: installs
 /// what they want, then marks them done. A failure leaves them pending for
-/// the next install. Returns how many packages it installed.
-fn migrate(st: &mut State, rep: &mut Reporter) -> Result<u32, (Outcome, String)> {
+/// the next install. Adds what it lists to `wanted`.
+fn migrate(
+    st: &mut State,
+    rep: &mut Reporter,
+    wanted: &mut HashSet<String>,
+) -> Result<(), (Outcome, String)> {
     let extra = settle();
     if simulate_install(&extra).is_none() {
-        return Ok(0);
+        return Ok(());
     }
     // Sizes and the restart for what it adds, for the checks below.
     list_upgrades(st)?;
+    wanted.extend(st.packages.iter().map(|p| p.name.clone()));
     power_ok(st.kernel())?;
     space_ok(st)?;
     let count = st.packages.len() as u32;
@@ -470,7 +481,7 @@ fn migrate(st: &mut State, rep: &mut Reporter) -> Result<u32, (Outcome, String)>
     if !left.is_empty() {
         eprintln!("gh0st update: migrations still want {}", left.join(" "));
     }
-    Ok(count)
+    Ok(())
 }
 
 /// `apt-get` with `verb`: the upgrade, or a migration's install. Stop works

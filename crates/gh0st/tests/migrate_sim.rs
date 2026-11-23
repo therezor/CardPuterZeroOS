@@ -7,9 +7,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Logs each call. `-s install` prints an Inst line a name; a real install
-/// adds the names to `installed`. `sim_fail` and `install_fail` make those
-/// fail as apt does.
+/// Logs each call. `upgradable` holds what an upgrade brings. Each package
+/// a migration names needs `lib<name>` too, as apt would pull it. `-s`
+/// prints the Inst lines; the real run adds the names to `installed`.
+/// `sim_fail` and `install_fail` make an install fail as apt does.
 const APT_GET: &str = r#"#!/bin/sh
 echo "apt-get $*" >> "$FAKE/log"
 sim=; verb=; names=
@@ -21,20 +22,37 @@ for a in "$@"; do
         *) [ "$verb" = install ] && names="$names $a" ;;
     esac
 done
+has() { grep -qx "$1" "$FAKE/installed" 2>/dev/null; }
+if [ "$verb" = upgrade ]; then
+    for n in $(cat "$FAKE/upgradable" 2>/dev/null); do
+        if [ -n "$sim" ]; then
+            echo "Inst $n [1] (2 Debian:13/stable [arm64])"
+        else
+            echo "$n" >> "$FAKE/installed"
+        fi
+    done
+    [ -n "$sim" ] || : > "$FAKE/upgradable"
+    exit 0
+fi
 [ "$verb" = install ] || exit 0
+all=
+for n in $names; do
+    has "$n" || all="$all $n"
+    has "lib$n" || all="$all lib$n"
+done
 if [ -n "$sim" ]; then
     if [ -e "$FAKE/sim_fail" ]; then
         echo "E: Unable to locate package nope" >&2
         exit 100
     fi
-    for n in $names; do echo "Inst $n (1.0 Debian:13/stable [arm64])"; done
+    for n in $all; do echo "Inst $n (1.0 Debian:13/stable [arm64])"; done
     exit 0
 fi
 if [ -e "$FAKE/install_fail" ]; then
     echo "E: Failed to fetch: Temporary failure resolving 'deb.debian.org'" >&2
     exit 100
 fi
-for n in $names; do echo "$n" >> "$FAKE/installed"; done
+for n in $all; do echo "$n" >> "$FAKE/installed"; done
 "#;
 
 /// Answers from `installed`, failing on an unknown name as dpkg-query does.
@@ -88,26 +106,32 @@ impl Sim {
         )
         .unwrap();
         let sim = Sim { dir };
-        sim.queue();
+        sim.queue(&[]);
         sim
     }
 
-    /// One update waiting, from a check a moment ago.
-    fn queue(&self) {
+    /// One update waiting, from a check a moment ago that also listed
+    /// `listed`, as a check lists what migrations add.
+    fn queue(&self, listed: &[&str]) {
+        let pkg = |name: &str| Package {
+            name: name.into(),
+            from: "1".into(),
+            to: "2".into(),
+            size: 1000,
+            group: Group::System,
+            restart: Restart::None,
+            summary: String::new(),
+        };
         let st = State {
             checked: now(),
-            packages: vec![Package {
-                name: "tzdata".into(),
-                from: "1".into(),
-                to: "2".into(),
-                size: 1000,
-                group: Group::System,
-                restart: Restart::None,
-                summary: "time zones".into(),
-            }],
+            packages: std::iter::once("tzdata")
+                .chain(listed.iter().copied())
+                .map(pkg)
+                .collect(),
             ..State::default()
         };
         std::fs::write(self.dir.join("state/state"), st.text()).unwrap();
+        std::fs::write(self.dir.join("upgradable"), "tzdata\n").unwrap();
     }
 
     fn fail(&self, what: &str) {
@@ -179,12 +203,15 @@ fn a_migration_installs_what_is_missing_once() {
     assert_eq!(st.outcome, Outcome::Ok, "{}", st.why);
     assert_eq!(sim.installs(), ["wget jq"]);
     assert_eq!(sim.done(), "0001-tools\n");
-    assert_eq!(st.installed_count, 3, "the update and the two tools");
+    assert_eq!(
+        st.installed_count, 5,
+        "the update, the two tools and their libraries"
+    );
     assert!(st.packages.is_empty(), "{:?}", st.packages);
 
     // The user removes one. The next install leaves it removed.
     std::fs::write(sim.dir.join("installed"), "curl\nwget\n").unwrap();
-    sim.queue();
+    sim.queue(&[]);
     let st = sim.install();
     assert_eq!(st.installed_count, 1, "{}", st.why);
     assert_eq!(sim.installs().len(), 1, "{}", sim.log());
@@ -200,7 +227,7 @@ fn a_failed_migration_stays_pending_and_the_update_still_counts() {
     assert_eq!(sim.done(), "");
 
     std::fs::remove_file(sim.dir.join("install_fail")).unwrap();
-    sim.queue();
+    sim.queue(&[]);
     let st = sim.install();
     assert_eq!(st.outcome, Outcome::Ok, "{}", st.why);
     assert_eq!(sim.done(), "0001-tools\n");
@@ -222,4 +249,16 @@ fn a_device_that_has_everything_marks_it_done_without_apt() {
     sim.install();
     assert!(sim.installs().is_empty(), "{}", sim.log());
     assert_eq!(sim.done(), "0001-tools\n");
+}
+
+/// The check lists a migration's packages and the libraries they pull. The
+/// count is what went in, each once.
+#[test]
+fn what_the_check_listed_counts_once() {
+    let sim = Sim::new("listed", &[], "wget");
+    sim.queue(&["wget", "libwget"]);
+    let st = sim.install();
+    assert_eq!(st.outcome, Outcome::Ok, "{}", st.why);
+    assert_eq!(st.installed_count, 3, "tzdata, wget and libwget");
+    assert_eq!(sim.installs(), ["wget"]);
 }
