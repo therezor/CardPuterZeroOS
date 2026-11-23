@@ -1,5 +1,5 @@
 Package: gh0st-m5-appstore
-Version: @V:applaunch@+gh0st1
+Version: @V:applaunch@+gh0st2
 Architecture: arm64
 Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: misc

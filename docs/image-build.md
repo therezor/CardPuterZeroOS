@@ -107,6 +107,12 @@ reinstall the stock launcher. It installs apps through `sudo`. It fetches
 catalogs from GitHub and an Aliyun mirror and asks ipinfo.io for the
 country; that stays until our own Store replaces it.
 
+**Command-line tools.** What a Linux user reaches for in the terminal:
+curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,
+ping, traceroute, nc, killall, lsusb, i2cdetect, jq, tree and Tab
+completion. None runs a service. `man-db` stays denied: its daily index
+job and groff cost more than the pages are worth here.
+
 **ffmpeg.** Files runs `ffmpeg` and `ffprobe` for video previews. Debian's
 ffmpeg is a desktop build: its device library pulls OpenGL, so Mesa and
 LLVM, and its filters pull speech synthesis and recognition. That is 148

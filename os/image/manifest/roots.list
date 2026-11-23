@@ -14,6 +14,24 @@ e2fsprogs               fsck.ext4, without which systemd never checks / or /home
 ca-certificates         TLS for apt and apps
 curl                    downloads for the AppStore and the apps it installs
 wget                    downloads for app install scripts that call wget
+python3                 scripts, and apps written in Python
+htop                    processes and memory at a glance
+less                    a pager
+nano                    a small editor
+vim-tiny                vi
+file                    what a file is
+lsof                    who holds a file or a port
+zip                     archives
+unzip                   archives, and app downloads that come zipped
+iputils-ping            ping
+traceroute              where the network stops
+netcat-openbsd          nc
+psmisc                  killall, pstree, fuser
+usbutils                lsusb
+i2c-tools               i2cdetect, for the board's own buses
+jq                      JSON from the shell, as config.json is
+tree                    a directory at a glance
+bash-completion         Tab completes commands and their options
 tzdata                  time zones, Settings > Date & time
 systemd-timesyncd       network time; the RTC keeps time offline
 systemd-zram-generator  swap in compressed RAM
