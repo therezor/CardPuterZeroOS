@@ -58,6 +58,13 @@ impl Link {
         Some(Link::new(unsafe { OwnedFd::from_raw_fd(n) }))
     }
 
+    /// A link over an end from [`pair`](Link::pair) that an app keeps for a
+    /// helper of its own, or a helper inherited.
+    pub fn from_fd(fd: OwnedFd) -> io::Result<Link> {
+        nonblock_cloexec(fd.as_raw_fd())?;
+        Ok(Link::new(fd))
+    }
+
     fn new(fd: OwnedFd) -> Link {
         Link {
             fd,

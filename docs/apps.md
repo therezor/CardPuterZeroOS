@@ -207,10 +207,13 @@ says only how many there are.
 - An app allowed to run in the background (Settings > Apps) is not stopped.
   `X-Gh0st-Background=true` in its `.desktop` file makes that the default for
   an app that answered `hello`.
-- An app on the link gets `pause` when it leaves the front. The shell waits up
-  to 100 ms for `paused`. The app then draws nothing and reads no keys, so
-  the shell keeps no copy of its frame and doesn't guard the panel. On return
-  the shell sends `resume` and the app draws all of its screen.
+- An app on the link gets `pause` when it leaves the front, whether it may run
+  behind or not. The shell waits up to 100 ms for `paused`. The app then draws
+  nothing and reads no keys. One that may run behind goes on, and the shell
+  keeps no copy of its frame and doesn't guard the panel. Any other is then
+  stopped, so it first lets go of what a stop would freeze: a camera
+  streaming, a file half written. On return the shell sends `resume` and the
+  app draws all of its screen.
 - An app off the link, or one that doesn't answer, is guarded as before.
   While the shell is in front it gets no keys (the shell holds the grab),
   and the shell repaints over anything it draws, keeping its pixels for its

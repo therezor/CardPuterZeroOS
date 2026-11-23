@@ -3,6 +3,9 @@
 # applaunch package. Usage:
 #   GH0ST_HOST=pi@cardputer.local scripts/deploy.sh            # install and restart
 #   GH0ST_HOST=pi@cardputer.local scripts/deploy.sh rollback   # back to stock
+#   GH0ST_HOST=pi@cardputer.local scripts/deploy.sh camera     # the camera app alone
+# The camera's helper is C++ against the device's libcamera, so it builds in
+# the image container (os/build.sh camd): Docker must be running.
 set -euo pipefail
 
 host=${GH0ST_HOST:?set GH0ST_HOST, for example pi@cardputer.local}
@@ -49,6 +52,22 @@ if [ "${1:-}" = rollback ]; then
         && sudo nmcli connection reload'
     restart_launcher
     echo "stock launcher restored on $host"
+    exit 0
+fi
+
+if [ "${1:-}" = camera ]; then
+    "$root/os/build.sh" camd
+    cargo build --release --target "$target" -p gh0st-camera --manifest-path "$root/Cargo.toml"
+    scp -q "$root/target/$target/release/gh0st-camera" "$root/os/out/camd/gh0st-camd" \
+        "$root/packaging/applications/camera.desktop" "$root/crates/gh0st-camera/camd/vc4.yaml" "$host:/tmp/"
+    remote 'set -e
+        sudo install -m 755 /tmp/gh0st-camera /usr/bin/gh0st-camera
+        sudo install -D -m 755 /tmp/gh0st-camd /usr/libexec/gh0st-camd
+        sudo install -D -m 644 /tmp/camera.desktop /usr/share/gh0st/applications/camera.desktop
+        sudo install -D -m 644 /tmp/vc4.yaml /usr/share/gh0st-camera/vc4.yaml
+        rm -f /tmp/gh0st-camera /tmp/gh0st-camd /tmp/camera.desktop /tmp/vc4.yaml'
+    restart_launcher
+    echo "camera installed on $host; measure with: ssh $host /usr/libexec/gh0st-camd --probe ~"
     exit 0
 fi
 

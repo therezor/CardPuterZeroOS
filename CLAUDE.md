@@ -48,6 +48,11 @@ battery in `/sys/class/power_supply`. Details and sources in
   CardputerZero apps from our signed mirror of M5's catalog and asks
   gh0st-helper to install them. `examples/mockups.rs` renders its screens
   into `mockups/store`.
+- `crates/gh0st-camera`: Camera, an SDK app with its own binary. It drives
+  `gh0st-camd` (`camd/`, C++ against libcamera, built in the image
+  container) over a socket pair and a frame ring. `src/fake.rs` stands in
+  for the helper on a host. `examples/mockups.rs` renders its screens into
+  `mockups/camera`.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
   program. `gh0st update` is the update engine and `gh0st store` the
   Store's, both run as root by systemd.
@@ -70,6 +75,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   not cover, the engine and the screens.
 - `docs/setup.md`: first-boot setup, the steps and how it hands over to the
   shell.
+- `docs/camera.md`: the camera, its quality ceiling, the helper protocol
+  and the milestones.
 - `docs/hotspot.md`: the Wi-Fi access point, why it takes wlan0, its security
   and its tests.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
@@ -103,7 +110,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`,
   `qrcodegen` (the hotspot's QR code; no dependencies of its own), and in the
   terminal `vte` (the DEC parser, without std so its OSC buffer is bounded) and
-  `unicode-width` (wcwidth). Build only: `resvg`.
+  `unicode-width` (wcwidth). Build only: `resvg`. The camera helper is C++
+  because libcamera has no C API: it links libcamera and libjpeg-turbo, both
+  on the stock image already.
 
 ## Build and test
 

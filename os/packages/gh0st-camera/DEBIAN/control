@@ -1,0 +1,10 @@
+Package: gh0st-camera
+Version: @GH0ST_VERSION@
+Architecture: arm64
+Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
+Section: graphics
+Priority: optional
+Depends: gh0st, libcamera0.7 (= @V:libcamera0.7@), libcamera-ipa (= @V:libcamera-ipa@), libjpeg62-turbo, libstdc++6
+Description: the Gh0st OS camera
+ Photos and video with the CardputerZero's camera. gh0st-camd, its helper,
+ drives libcamera; it is built against this exact libcamera.

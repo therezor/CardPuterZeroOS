@@ -639,7 +639,7 @@ impl Runtime {
         let typing = self.stack[top].typing();
         let bars = self.top_bars();
         let plain = !raw.ctrl && !raw.alt && !raw.fn_;
-        if raw.ch == Some('8') && plain && !typing && bars.menu && bars.bottom {
+        if raw.ch == Some('8') && plain && !typing && bars.menu && (bars.bottom || bars.corner) {
             if raw.state == State::Press {
                 self.take(raw.code);
                 self.open_menu(top);
@@ -654,7 +654,7 @@ impl Runtime {
         match k {
             Key::Back => self.back(top, raw.code, now),
             Key::Soft(n) => {
-                if let Some(chip) = chips[(n - 5) as usize].clone() {
+                if let Some(chip) = chips[(n - 4) as usize].clone() {
                     self.press_chip(top, n, raw.code, chip, now);
                 }
             }
@@ -746,7 +746,7 @@ impl Runtime {
         if let Held::Chip(n) = h.what {
             let top = self.stack.len().saturating_sub(1);
             let bars = self.top_bars();
-            let word = self.chips_of(top, &bars)[(n - 5) as usize]
+            let word = self.chips_of(top, &bars)[(n - 4) as usize]
                 .as_ref()
                 .map(|c| c.word.to_lowercase())
                 .unwrap_or_default();
@@ -755,12 +755,14 @@ impl Runtime {
         self.dirty = true;
     }
 
-    /// The chips over keys 5 to 7: the page's own, else its live commands'.
-    fn chips_of(&self, i: usize, bars: &Bars) -> [Option<Chip>; 3] {
+    /// The chips over keys 4 to 7: the page's own, else its live
+    /// commands' (5 to 7 only).
+    fn chips_of(&self, i: usize, bars: &Bars) -> [Option<Chip>; 4] {
         let from_cmds = self.commands_of(i).chips();
         std::array::from_fn(|k| {
             bars.chips[k].clone().or_else(|| {
-                from_cmds[k]
+                k.checked_sub(1)
+                    .and_then(|c| from_cmds[c])
                     .map(|(id, icon, word, on)| Chip::new(icon, word).runs(id).disabled(!on))
             })
         })
@@ -784,17 +786,24 @@ impl Runtime {
                 let Some(chip) = chip else {
                     continue;
                 };
-                let mut keys = (k + 5).to_string();
+                let mut keys = (k + 4).to_string();
+                // An icon-only chip is named by the command it runs.
+                let mut word = chip.word.clone();
                 if let Some(c) = chip.command.and_then(|id| cmds.iter().find(|c| c.id == id)) {
                     if !c.keys.is_empty() {
                         keys = format!("{keys} {}", c.keys_text());
                     }
+                    if word.is_empty() {
+                        word = c.label.to_string();
+                    }
                 }
-                under.push((keys, chip.word.clone()));
+                under.push((keys, word));
             }
             if bars.menu {
                 under.push(("8".into(), "Menu".into()));
             }
+        } else if bars.corner && bars.menu {
+            under.push(("8".into(), "Menu".into()));
         }
         let back = if i == 0 && self.s.closable {
             "Back; hold to exit"
@@ -1184,7 +1193,7 @@ impl Runtime {
             Held::Chip(n) => {
                 let top = self.stack.len().saturating_sub(1);
                 let bars = self.top_bars();
-                let command = self.chips_of(top, &bars)[(n - 5) as usize]
+                let command = self.chips_of(top, &bars)[(n - 4) as usize]
                     .as_ref()
                     .and_then(|c| c.command);
                 self.run_chip(top, n, command, now);
@@ -1295,6 +1304,9 @@ impl Runtime {
                 }
                 widgets::action_bar(&mut self.canvas, &t, &chips);
             }
+            Overlay::None if bars.corner && bars.menu => {
+                widgets::corner_chip(&mut self.canvas, &t, &menu(Look::Normal));
+            }
             Overlay::None if !bars.bottom => {}
             Overlay::None if page.typing() && bars.search.is_some() => {
                 let q = bars.search.as_deref().unwrap_or_default();
@@ -1336,7 +1348,7 @@ impl Runtime {
                     let Some(c) = c else {
                         continue;
                     };
-                    let n = k as u8 + 5;
+                    let n = k as u8 + 4;
                     let look = match &self.hold {
                         Some(h) if h.what == Held::Chip(n) => Look::Hold(h.pc),
                         // A red chip stays red while its key is down.
@@ -1347,7 +1359,7 @@ impl Runtime {
                         }
                         _ => c.look,
                     };
-                    chips[k + 1] = widgets::Chip {
+                    chips[k] = widgets::Chip {
                         icon: &c.icon,
                         word: &c.word,
                         look,
@@ -1360,7 +1372,11 @@ impl Runtime {
                 if self.busy.as_ref().is_some_and(|b| b.shown) {
                     chips = [none; 5];
                 }
-                widgets::action_bar(&mut self.canvas, &t, &chips);
+                if bars.over {
+                    widgets::action_bar_over(&mut self.canvas, &t, &chips);
+                } else {
+                    widgets::action_bar(&mut self.canvas, &t, &chips);
+                }
             }
         }
         if let Some(toast) = &self.toast {
@@ -1631,6 +1647,30 @@ mod tests {
             d.keys("help\n8\nesc\n5");
             assert_eq!(log.borrow().len(), 3, "help, then the menu, then back");
             assert!(!d.quit());
+        }
+
+        #[test]
+        fn a_full_page_opens_the_menu_on_eight_and_a_bare_one_does_not() {
+            struct Bare(Log, bool);
+            impl Page for Bare {
+                fn title(&self) -> &str {
+                    "Bare"
+                }
+                fn draw(&self, _: &mut Ui) {}
+                fn bars(&self) -> Bars {
+                    if self.1 { Bars::full() } else { Bars::none() }
+                }
+                fn key(&mut self, key: Key, _: &mut Cx) {
+                    self.0.borrow_mut().push(format!("{key:?}"));
+                }
+            }
+            for full in [true, false] {
+                let log = Log::default();
+                let mut d = Driver::new(Bare(log.clone(), full));
+                d.keys("8\nx");
+                assert_eq!(log.borrow().is_empty(), full, "full {full}: {log:?}");
+                assert!(d.lint().is_empty());
+            }
         }
 
         #[test]

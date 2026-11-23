@@ -119,14 +119,18 @@ impl Chip {
 pub struct Bars {
     pub(crate) top: bool,
     pub(crate) bottom: bool,
-    /// Keys 5, 6 and 7.
-    pub(crate) chips: [Option<Chip>; 3],
+    /// Keys 4 to 7. A chip on 4 takes it from Back; Esc stays Back.
+    pub(crate) chips: [Option<Chip>; 4],
     /// The menu chip on 8.
     pub(crate) menu: bool,
     /// The hint bar while typing.
     pub(crate) hints: Vec<(String, String)>,
     /// The query, while a search is active: it takes the hint bar's place.
     pub(crate) search: Option<String>,
+    /// The menu chip alone, in the bottom right corner of a full screen.
+    pub(crate) corner: bool,
+    /// The action bar lies over the page, which keeps the whole height.
+    pub(crate) over: bool,
 }
 
 impl Bars {
@@ -136,10 +140,22 @@ impl Bars {
         Bars {
             top: false,
             bottom: false,
-            chips: [None, None, None],
+            chips: [None, None, None, None],
             menu: true,
             hints: Vec::new(),
             search: None,
+            corner: false,
+            over: false,
+        }
+    }
+
+    /// The whole screen, as [`none`](Bars::none), but 8 opens the menu and
+    /// its chip stands over the right rail's foot (`rail_w` wide). For a
+    /// viewfinder or a game that keeps that corner for it.
+    pub fn full() -> Bars {
+        Bars {
+            corner: true,
+            ..Bars::none()
         }
     }
 
@@ -168,14 +184,23 @@ impl Bars {
         }
     }
 
-    /// A chip over key 5, 6 or 7.
+    /// A chip over key 5, 6 or 7. Key 4 is Back unless a page puts a chip
+    /// there, for a page whose Esc is enough: the camera's Photos.
     pub fn chip(mut self, key: u8, chip: Chip) -> Bars {
-        if let Some(slot) = (5..=7)
+        if let Some(slot) = (4..=7)
             .contains(&key)
-            .then(|| &mut self.chips[(key - 5) as usize])
+            .then(|| &mut self.chips[(key - 4) as usize])
         {
             *slot = Some(chip);
         }
+        self
+    }
+
+    /// The action bar over the page instead of below it, on a translucent
+    /// strip: the page keeps all 170 rows and must leave the foot's 20
+    /// for the chips to read. For a viewfinder.
+    pub fn over(mut self) -> Bars {
+        self.over = true;
         self
     }
 
@@ -207,7 +232,11 @@ impl Bars {
     /// Where the page draws: the screen minus the bars.
     pub fn content(&self, t: &Theme) -> Rect {
         let top = if self.top { t.m.bar_h } else { 0 };
-        let bottom = if self.bottom { t.m.hint_h } else { 0 };
+        let bottom = if self.bottom && !self.over {
+            t.m.hint_h
+        } else {
+            0
+        };
         Rect::new(0, top, t.m.width, t.m.height - top - bottom)
     }
 }
@@ -238,13 +267,26 @@ mod tests {
     }
 
     #[test]
-    fn chips_go_only_on_five_to_seven() {
+    fn a_full_page_keeps_every_row_and_the_menu() {
+        let t = Theme::default();
+        let b = Bars::full();
+        assert_eq!(b.content(&t), Rect::new(0, 0, t.m.width, t.m.height));
+        assert!(b.menu && b.corner && !b.bottom);
+    }
+
+    #[test]
+    fn chips_go_on_four_to_seven_and_eight_stays_the_menu() {
         let b = Bars::top()
-            .chip(4, Chip::new("x", "Back"))
             .chip(6, Chip::new("camera", "Shoot"))
-            .chip(8, Chip::new("x", "Menu"));
-        assert_eq!(b.chips[0], None);
-        assert_eq!(b.chips[1].as_ref().map(|c| c.word.as_str()), Some("Shoot"));
-        assert_eq!(b.chips[2], None);
+            .chip(8, Chip::new("x", "Menu"))
+            .chip(3, Chip::new("x", "Three"));
+        let words: Vec<_> = b
+            .chips
+            .iter()
+            .map(|c| c.as_ref().map(|c| c.word.as_str()))
+            .collect();
+        assert_eq!(words, [None, None, Some("Shoot"), None]);
+        let b = Bars::top().chip(4, Chip::new("images", "Photos"));
+        assert_eq!(b.chips[0].as_ref().map(|c| c.word.as_str()), Some("Photos"));
     }
 }

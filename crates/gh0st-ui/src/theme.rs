@@ -157,6 +157,11 @@ pub struct Metrics {
     /// the lock, the time, the date and the field.
     pub lock_field_w: i32,
     pub lock_gap: i32,
+    /// A full-screen page's side rails, beside a 4:3 picture as tall as the
+    /// screen. The menu chip of `Bars::full` stands in the right one.
+    pub rail_w: i32,
+    /// Between the tiles of a grid of pictures (`gh0st_app::Tiles`).
+    pub tile_gap: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -549,11 +554,19 @@ pub const CARDPUTER: Metrics = Metrics {
     field_gap: 6,
     lock_field_w: 172,
     lock_gap: 7,
+    // (320 - 170 * 4 / 3) / 2: what a 226x170 picture leaves each side.
+    rail_w: 47,
+    tile_gap: 3,
 };
 
 /// The panel while the screen is off. The backlight never goes fully out,
 /// so this is what shows, on every palette.
 pub const PANEL_OFF: Color = crate::color::rgb(0, 0, 0);
+
+/// Marks over a photo or a video: light ink on a dark plate on every
+/// palette, since the picture's colours are its own.
+pub const ON_PICTURE: Color = crate::color::rgb(255, 255, 255);
+pub const PICTURE_PLATE: Color = crate::color::rgb(0, 0, 0);
 
 /// A QR code is dark on light on every palette: that is what cameras read.
 pub const QR_DARK: Color = crate::color::rgb(0, 0, 0);

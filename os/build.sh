@@ -2,6 +2,7 @@
 # Builds Gh0st OS in the build container. Same on the Mac and on CI.
 #   os/build.sh fetch             download and verify the pinned inputs
 #   os/build.sh debs              build our packages
+#   os/build.sh camd              the camera helper alone, into os/out/camd
 #   os/build.sh image release     build the disk image into os/out/
 #   os/build.sh check release     tier 1 checks
 #   os/build.sh smoke             first boot of the image in QEMU
@@ -43,7 +44,7 @@ changed() {
     git -C "$root" log -1 --format="$fmt" -- "$@"
 }
 GH0ST_STAMP=$(changed '%ct.%h' crates assets packaging Cargo.toml Cargo.lock \
-    os/packages/gh0st os/packages/gh0st-term)
+    os/packages/gh0st os/packages/gh0st-term os/packages/gh0st-camera)
 case $GH0ST_GIT_REV in *.dirty) GH0ST_STAMP=$SOURCE_DATE_EPOCH.$GH0ST_GIT_REV ;; esac
 GH0ST_BASE_STAMP=$(changed '%ct' os/packages/gh0st-base os/repo/gh0st.sources \
     os/repo/gh0st.pref os/repo/gh0st-archive-keyring.pgp)

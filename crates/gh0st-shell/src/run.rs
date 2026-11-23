@@ -2373,9 +2373,10 @@ impl Shell {
         }
     }
 
-    /// Takes the app in front off the panel: an app that may run behind is
-    /// told to pause, any other is stopped, its last frame kept. The caller
-    /// takes the screen. Err with the app's name when it can't be stopped.
+    /// Takes the app in front off the panel. A linked app is told to pause;
+    /// one that may not run behind is then stopped, its last frame kept. The
+    /// caller takes the screen. Err with the app's name when it can't be
+    /// stopped.
     fn park_front(&mut self, now: u64) -> Result<String, Option<String>> {
         if let Some(b) = self.banner.take() {
             self.spare = Some(b.hide(self.display.as_mut()));
@@ -2394,10 +2395,7 @@ impl Shell {
         if background {
             // An app on the link stops drawing and reading keys when told;
             // one that doesn't answer is guarded as before.
-            t.quiet = t.linked
-                && t.link
-                    .as_ref()
-                    .is_some_and(|l| l.send(&["pause"]) && l.wait_for("paused", STOP_WAIT_MS));
+            t.quiet = ask_pause(t.linked, t.link.as_ref());
             if t.quiet {
                 t.pixels = None;
                 self.spare = Some(frame);
@@ -2409,6 +2407,9 @@ impl Shell {
             t.used = now;
             return Ok(t.id.clone());
         }
+        // A linked app hears the pause first, so it can let go of what a
+        // stop would freeze: a camera streaming, a recording half written.
+        t.quiet = ask_pause(t.linked, t.link.as_ref());
         let sent = child::stop(t.pgid);
         if !t.leader_done && child::wait_stopped(t.pgid, STOP_WAIT_MS) == Stopped::Exited {
             t.leader_done = true;
@@ -2417,6 +2418,11 @@ impl Shell {
         // and a "paused" app that keeps drawing would sit over the shell.
         if !sent || !child::group_stopped(t.pgid, STOP_WAIT_MS) {
             child::cont(t.pgid);
+            if std::mem::take(&mut t.quiet) {
+                if let Some(l) = &t.link {
+                    l.send(&["resume"]);
+                }
+            }
             let name = t.name.clone();
             self.spare = Some(frame);
             return Err(Some(name));
@@ -3052,9 +3058,33 @@ fn parse_volume(s: &str) -> Option<(u8, bool)> {
     ))
 }
 
+/// Tells an app on the link to pause and waits for its answer. False for an
+/// app off the link, or one that doesn't answer in time.
+fn ask_pause(linked: bool, link: Option<&gh0st_core::link::Link>) -> bool {
+    linked && link.is_some_and(|l| l.send(&["pause"]) && l.wait_for("paused", STOP_WAIT_MS))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_linked_app_is_asked_to_pause_and_answers() {
+        use gh0st_core::link::Link;
+        let (shell, theirs) = Link::pair().unwrap();
+        let app = Link::from_fd(theirs).unwrap();
+        let answer = std::thread::spawn(move || {
+            assert!(app.wait_for("pause", 1000));
+            app.send(&["paused"]);
+            app
+        });
+        assert!(ask_pause(true, Some(&shell)));
+        let app = answer.join().unwrap();
+        assert!(!ask_pause(true, Some(&shell)), "no answer, no quiet");
+        assert!(app.recv().is_some_and(|m| m == ["pause"]));
+        assert!(!ask_pause(false, Some(&shell)), "off the link");
+        assert!(app.recv().is_none(), "and not asked");
+    }
 
     #[test]
     fn a_wake_locks_past_lock_after_only() {

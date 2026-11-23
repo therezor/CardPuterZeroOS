@@ -3,6 +3,7 @@
 # read-only at /src, the work volume at /work, the output dir at /out.
 #   build-image.sh fetch          download and verify every pinned input
 #   build-image.sh debs           build our packages, index both local repos
+#   build-image.sh camd           build the camera helper into /out/camd
 #   build-image.sh image VARIANT  rootfs, partitions, disk image (release)
 #   build-image.sh check VARIANT  tier 1 checks on the last image
 #   build-image.sh smoke          first boot of the release image in QEMU
@@ -111,13 +112,27 @@ install_kernel_headers() {
     dpkg -i "${debs[@]}" >/dev/null
 }
 
+# The camera helper, linked against the pinned libcamera unpacked into a
+# sysroot of its own: installing it would drag in the IPA and its deps.
+build_camd() {
+    local sys=$WORK/camera-sysroot n
+    log "camera helper"
+    rm -rf "$sys"
+    mkdir -p "$sys"
+    for n in libcamera0.7 libcamera-dev; do
+        dpkg -x "$(deb_path "$(jq -r --arg n "$n" '.rpt[] | select(.name == $n) | .url' "$LOCK")")" "$sys"
+    done
+    make -s -C "$SRC/crates/gh0st-camera/camd" O="$WORK/camd" SYSROOT="$sys"
+}
+
 step_debs() {
     step_vendor
     install_kernel_headers
     log "cargo build"
     cargo build -q --release --frozen --target aarch64-unknown-linux-musl \
         --manifest-path "$SRC/Cargo.toml" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
-        -p gh0st-store
+        -p gh0st-store -p gh0st-camera
+    build_camd
     log "debs"
     rm -rf "$WORK/repo-ours"
     mkdir -p "$WORK/repo-ours"
@@ -252,6 +267,8 @@ step_relock() {
 case ${1:-} in
     fetch) step_fetch ;;
     debs) step_debs ;;
+    # The helper alone, for scripts/deploy.sh camera.
+    camd) build_camd && mkdir -p /out/camd && cp "$WORK/camd/gh0st-camd" /out/camd/ ;;
     image) step_image "${2:-}" ;;
     check) "$OS/image/checks/run.sh" "${2:?variant}" ;;
     smoke) "$OS/image/checks/smoke.sh" ;;
@@ -269,5 +286,5 @@ case ${1:-} in
             --keyring "${STORE_KEYRING:-$OS/repo/gh0st-archive-keyring.pgp}" \
             ${STORE_ONLY:+--only "$STORE_ONLY"} ;;
     shell) exec bash ;;
-    *) die "usage: build-image.sh fetch|debs|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|store|shell" ;;
+    *) die "usage: build-image.sh fetch|debs|camd|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|store|shell" ;;
 esac

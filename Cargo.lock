@@ -135,6 +135,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-camera"
+version = "0.1.0"
+dependencies = [
+ "gh0st-app",
+ "gh0st-core",
+ "libc",
+]
+
+[[package]]
 name = "gh0st-core"
 version = "0.1.0"
 dependencies = [

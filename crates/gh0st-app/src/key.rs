@@ -42,8 +42,9 @@ pub enum Key {
 pub use gh0st_core::keys::code as codes;
 
 /// Maps a raw key to what the page sees. `typing` keeps letters and digits as
-/// characters; `chips` says which of keys 5 to 7 have a chip.
-pub(crate) fn map(raw: &keys::Key, typing: bool, chips: [bool; 3]) -> Option<Key> {
+/// characters; `chips` says which of keys 4 to 7 have a chip. Without one,
+/// 4 is Back, as in the template.
+pub(crate) fn map(raw: &keys::Key, typing: bool, chips: [bool; 4]) -> Option<Key> {
     if raw.state == State::Release || is_modifier(raw.code) {
         return None;
     }
@@ -65,10 +66,10 @@ pub(crate) fn map(raw: &keys::Key, typing: bool, chips: [bool; 3]) -> Option<Key
         c if raw.ctrl => Key::Ctrl(keys::base_char(c)?),
         c if raw.alt => Key::Alt(keys::base_char(c)?),
         c => match raw.ch {
-            Some('4') if !typing => Key::Back,
-            Some(d @ '5'..='7') if !typing && chips[(d as u8 - b'5') as usize] => {
+            Some(d @ '4'..='7') if !typing && chips[(d as u8 - b'4') as usize] => {
                 Key::Soft(d as u8 - b'0')
             }
+            Some('4') if !typing => Key::Back,
             Some(ch) => Key::Char(ch),
             None => Key::Other(c),
         },
@@ -106,15 +107,15 @@ mod tests {
     fn letters_move_unless_typing() {
         let mut kb = Keyboard::new(Vec::new());
         let x = press(&mut kb, code::X);
-        assert_eq!(map(&x, false, [false; 3]), Some(Key::Down));
-        assert_eq!(map(&x, true, [false; 3]), Some(Key::Char('x')));
+        assert_eq!(map(&x, false, [false; 4]), Some(Key::Down));
+        assert_eq!(map(&x, true, [false; 4]), Some(Key::Char('x')));
     }
 
     #[test]
     fn digits_run_chips_only_where_one_shows_and_four_is_esc() {
         let mut kb = Keyboard::new(Vec::new());
         let six = press(&mut kb, 7);
-        let chips = [false, true, false];
+        let chips = [false, false, true, false];
         assert_eq!(map(&six, false, chips), Some(Key::Soft(6)));
         assert_eq!(map(&six, true, chips), Some(Key::Char('6')));
         let five = press(&mut kb, 6);
@@ -122,6 +123,9 @@ mod tests {
         let four = press(&mut kb, 5);
         assert_eq!(map(&four, false, chips), Some(Key::Back));
         assert_eq!(map(&four, true, chips), Some(Key::Char('4')));
+        // A page with a chip on 4 takes the key; Esc stays Back.
+        let chips = [true, false, true, false];
+        assert_eq!(map(&four, false, chips), Some(Key::Soft(4)));
     }
 
     #[test]
@@ -129,8 +133,8 @@ mod tests {
         let mut kb = Keyboard::new(Vec::new());
         press(&mut kb, code::LEFTCTRL);
         let s = press(&mut kb, 31);
-        assert_eq!(map(&s, false, [false; 3]), Some(Key::Ctrl('s')));
+        assert_eq!(map(&s, false, [false; 4]), Some(Key::Ctrl('s')));
         let esc = press(&mut kb, code::ESC);
-        assert_eq!(map(&esc, false, [false; 3]), Some(Key::Back));
+        assert_eq!(map(&esc, false, [false; 4]), Some(Key::Back));
     }
 }
