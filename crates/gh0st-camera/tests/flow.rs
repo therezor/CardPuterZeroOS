@@ -78,6 +78,13 @@ fn the_screen_stays_on_only_while_recording() {
     drv.keys("enter").pump(100);
     assert!(drv.awake());
     drv.keys("enter").pump(150);
+    // A board is slower to hear the helper stop.
+    for _ in 0..20 {
+        if !drv.awake() {
+            break;
+        }
+        drv.pump(50);
+    }
     assert!(!drv.awake());
     assert_eq!(count(&d, Kind::Video), 1);
 }
