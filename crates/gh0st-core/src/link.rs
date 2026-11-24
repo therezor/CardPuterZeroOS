@@ -10,11 +10,16 @@ pub const ENV: &str = "GH0ST_SHELL_FD";
 /// The longest message either side sends.
 pub const MAX: usize = 512;
 
+/// Messages `wait_for` keeps at most; an app says a few as it pauses.
+const KEPT_MAX: usize = 32;
+
 pub struct Link {
     fd: OwnedFd,
     /// The other end hung up. Its fd then polls readable for good, so the
     /// owner drops the link rather than spin.
     closed: std::cell::Cell<bool>,
+    /// Messages `wait_for` passed over, for `recv` to give out first.
+    kept: std::cell::RefCell<std::collections::VecDeque<Vec<String>>>,
 }
 
 fn nonblock_cloexec(fd: RawFd) -> io::Result<()> {
@@ -69,6 +74,7 @@ impl Link {
         Link {
             fd,
             closed: std::cell::Cell::new(false),
+            kept: Default::default(),
         }
     }
 
@@ -97,6 +103,9 @@ impl Link {
     /// The next message, split into fields. None when nothing waits, or
     /// when the other end is gone: [`closed`](Link::closed) tells which.
     pub fn recv(&self) -> Option<Vec<String>> {
+        if let Some(m) = self.kept.borrow_mut().pop_front() {
+            return Some(m);
+        }
         let mut buf = [0u8; MAX];
         // SAFETY: receives into a stack buffer of its own length.
         let n = unsafe {
@@ -123,22 +132,31 @@ impl Link {
         Some(s.split('\t').map(String::from).collect())
     }
 
-    /// Waits up to `ms` for the message `verb`, dropping others on the way.
+    /// Waits up to `ms` for the message `verb`. Others on the way are kept
+    /// for `recv`: an app says `awake 0` as it pauses, only once.
     pub fn wait_for(&self, verb: &str, ms: u64) -> bool {
         let end = crate::rt::now_ms() + ms;
-        loop {
-            while let Some(m) = self.recv() {
-                if m.first().is_some_and(|v| v == verb) {
-                    return true;
+        let mut passed = Vec::new();
+        let found = loop {
+            match self.recv() {
+                Some(m) if m.first().is_some_and(|v| v == verb) => break true,
+                Some(m) => {
+                    if passed.len() < KEPT_MAX {
+                        passed.push(m);
+                    }
+                    continue;
                 }
+                None => {}
             }
             let now = crate::rt::now_ms();
-            if now >= end {
-                return false;
+            if now >= end || self.closed() {
+                break false;
             }
             let mut fds = [crate::rt::pollfd(self.fd())];
             let _ = crate::rt::wait(&mut fds, Some(end));
-        }
+        };
+        self.kept.borrow_mut().extend(passed);
+        found
     }
 }
 
@@ -159,6 +177,20 @@ mod tests {
         assert!(app.send(&["paused"]));
         assert!(shell.wait_for("paused", 100));
         assert!(!shell.wait_for("paused", 10));
+    }
+
+    #[test]
+    fn what_comes_before_the_awaited_message_is_kept() {
+        let (shell, app) = Link::pair().unwrap();
+        nonblock_cloexec(app.as_raw_fd()).unwrap();
+        let app = Link::new(app);
+        assert!(app.send(&["awake", "0"]));
+        assert!(app.send(&["toast", "Saved"]));
+        assert!(app.send(&["paused"]));
+        assert!(shell.wait_for("paused", 100));
+        assert_eq!(shell.recv().unwrap(), ["awake", "0"]);
+        assert_eq!(shell.recv().unwrap(), ["toast", "Saved"]);
+        assert!(shell.recv().is_none());
     }
 
     #[cfg(target_os = "linux")]

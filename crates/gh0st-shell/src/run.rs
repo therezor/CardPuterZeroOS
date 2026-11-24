@@ -2449,6 +2449,17 @@ impl Shell {
     /// caller takes the screen. Err with the app's name when it can't be
     /// stopped.
     fn park_front(&mut self, now: u64) -> Result<String, Option<String>> {
+        let pgid = self.tasks.front().map(|t| t.pgid);
+        let parked = self.stop_front(now);
+        // What it said while pausing, such as `awake 0`, waited behind
+        // `paused` and no longer polls readable.
+        if let Some(pgid) = pgid {
+            self.read_link(pgid);
+        }
+        parked
+    }
+
+    fn stop_front(&mut self, now: u64) -> Result<String, Option<String>> {
         if let Some(b) = self.banner.take() {
             self.spare = Some(b.hide(self.display.as_mut()));
         }
