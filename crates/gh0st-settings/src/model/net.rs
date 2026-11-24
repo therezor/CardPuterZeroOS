@@ -324,6 +324,8 @@ pub fn parse_devices(out: &str) -> Vec<Iface> {
             "IP4.ADDRESS" if i.ipv4.is_empty() => i.ipv4 = value,
             "IP4.GATEWAY" if value != "--" => i.gateway = value,
             "IP4.DNS" => dns.push(value),
+            "IP6.DNS" => i.dns6.push(value),
+            "IP4.DOMAIN" | "IP6.DOMAIN" if i.domain.is_empty() => i.domain = value,
             "IP6.ADDRESS" if !value.to_lowercase().starts_with("fe80") => i.ipv6.push(value),
             _ => {}
         }
@@ -412,6 +414,9 @@ mod tests {
         let out = "GENERAL.DEVICE:lan0\nGENERAL.TYPE:ethernet\nGENERAL.HWADDR:C2:2D:AB:49:13:5E\nIP6.ADDRESS[1]:fd56:18a6:a0a3::ed3/128\nIP6.ADDRESS[2]:fe80::df63:e932:b73e:3b8c/64\n";
         let d = parse_devices(out);
         assert_eq!(d[0].mac, "c2:2d:ab:49:13:5e");
+        let dns = parse_devices("GENERAL.DEVICE:lan0\nIP6.DNS[1]:fd56:18a6:a0a3::1\nIP4.DOMAIN[1]:lan\n");
+        assert_eq!(dns[0].dns6, ["fd56:18a6:a0a3::1"]);
+        assert_eq!(dns[0].domain, "lan");
         assert_eq!(d[0].ipv6, ["fd56:18a6:a0a3::ed3/128"]);
     }
 

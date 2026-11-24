@@ -97,6 +97,8 @@ fn sample_state() -> State {
                 mac: "2c:cf:67:0a:41:9e".into(),
                 gateway: "192.168.1.1".into(),
                 dns: "1.1.1.1, 9.9.9.9".into(),
+                dns6: vec!["fd56:18a6:a0a3::1".into()],
+                domain: "lan".into(),
                 speed: None,
             },
             Iface {

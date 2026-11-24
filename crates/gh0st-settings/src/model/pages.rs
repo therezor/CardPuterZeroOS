@@ -95,6 +95,10 @@ pub struct Iface {
     pub mac: String,
     pub gateway: String,
     pub dns: String,
+    /// IPv6 name servers: a network may give no others.
+    pub dns6: Vec<String>,
+    /// The search domain the network gives: `lan`.
+    pub domain: String,
     /// The link's speed in Mb/s, for a cable.
     pub speed: Option<u32>,
 }
@@ -922,6 +926,15 @@ fn net_info(s: &State) -> Vec<Line> {
         }
         if !i.dns.is_empty() {
             out.push(line("DNS", &i.dns));
+        }
+        if !i.dns6.is_empty() {
+            if i.dns.is_empty() {
+                out.push(line("DNS", ""));
+            }
+            out.extend(i.dns6.iter().map(|d| Line::Wide(d.clone())));
+        }
+        if !i.domain.is_empty() {
+            out.push(line("Domain", &i.domain));
         }
         if !i.ipv6.is_empty() {
             out.push(line("IPv6", ""));
