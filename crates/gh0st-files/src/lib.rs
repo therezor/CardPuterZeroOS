@@ -9,6 +9,7 @@ pub mod child;
 pub mod engine;
 pub mod fake;
 pub mod model;
+pub mod open_cache;
 pub mod pick;
 pub mod proto;
 pub mod servers;

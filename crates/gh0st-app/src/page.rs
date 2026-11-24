@@ -646,9 +646,19 @@ impl Cx<'_> {
         });
     }
 
-    /// The apps that open `path`, the one Enter would use first.
+    /// The apps that open `path`, the one Enter would use first. A path
+    /// not on the device yet (a file on a server, in an archive) goes by
+    /// its name.
     pub fn handlers(&self, path: &Path) -> Vec<Handler> {
-        let Ok(mime) = gh0st_core::mime::of_path(path) else {
+        let mime = match gh0st_core::mime::of_path(path) {
+            Ok(m) => Some(m),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(gh0st_core::mime::of_name),
+            Err(_) => None,
+        };
+        let Some(mime) = mime else {
             return Vec::new();
         };
         let apps = gh0st_core::apps::openers(

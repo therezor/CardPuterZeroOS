@@ -4,6 +4,7 @@
 
 use crate::engine::{Ask, Engine, Event, Id, Request};
 use crate::model::{self, Entry, Kind, Loc, Sort, Type};
+use crate::open_cache;
 use crate::pick::{Mode, Spec};
 use crate::servers::{self, Proto, Server};
 use crate::words;
@@ -277,6 +278,9 @@ enum Pending {
     Transfer(Vec<Loc>),
     /// Making the SSH key.
     Key,
+    /// A copy of a file on a server or in an archive, to open once it is
+    /// here.
+    Fetch(PathBuf),
 }
 
 struct ServerForm {
@@ -885,6 +889,15 @@ impl Files {
                 return;
             }
         }
+        // On a server or in an archive: a copy in the cache opens instead.
+        let elsewhere = matches!(loc, Loc::Remote { .. } | Loc::Archive { .. });
+        if elsewhere && e.kind == Kind::File && e.sort() != Type::Archive {
+            let copy = open_cache::slot(&self.home, &format!("{loc:?}")).join(&e.name);
+            if !cx.handlers(&copy).is_empty() {
+                self.fetch_open(&e, &loc, cx);
+                return;
+            }
+        }
         match e.sort() {
             Type::Archive if !self.side().loc.is_archive() => {
                 let inside = Loc::Archive {
@@ -909,6 +922,53 @@ impl Files {
             t if t.readable() && e.kind != Kind::Other => self.view_text(&e, &loc, cx),
             _ => self.info(),
         }
+    }
+
+    /// Copies `e` at `loc` into the open cache, then opens it in its app.
+    /// A copy already there, the same size, opens at once.
+    fn fetch_open(&mut self, e: &Entry, loc: &Loc, cx: &mut Cx) {
+        let dir = open_cache::slot(&self.home, &format!("{loc:?}"));
+        let file = dir.join(&e.name);
+        if open_cache::fresh(&file, e.size) {
+            cx.open_file(&file);
+            return;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            self.say_failed(&err.to_string(), cx);
+            return;
+        }
+        let id = self.id();
+        let to = Loc::Local(dir);
+        let request = match loc {
+            Loc::Archive {
+                file: archive,
+                inner,
+            } => Request::Extract {
+                id,
+                archive: (**archive).clone(),
+                entries: vec![inner.clone()],
+                to,
+            },
+            _ => Request::Copy {
+                id,
+                items: vec![loc.clone()],
+                to,
+                remove: false,
+            },
+        };
+        self.transfers.push(Transfer {
+            id,
+            verb: "Getting",
+            what: format!("\u{201c}{}\u{201d}", e.name),
+            to: "this device".into(),
+            done: 0,
+            total: e.size,
+            name: e.name.clone(),
+        });
+        self.pending.insert(id, Pending::Fetch(file));
+        cx.keep_awake(true);
+        self.send(request, cx);
     }
 
     fn view_text(&mut self, e: &Entry, loc: &Loc, cx: &mut Cx) {
@@ -1175,7 +1235,7 @@ impl Files {
                 }
             }
             (
-                Pending::Transfer(_),
+                Pending::Transfer(_) | Pending::Fetch(_),
                 Event::Progress {
                     done, total, name, ..
                 },
@@ -1218,6 +1278,27 @@ impl Files {
                     self.say_failed(&text, cx);
                 }
                 self.reload(&touched, cx);
+            }
+            (Pending::Fetch(file), Event::Done { .. }) => {
+                self.pending.remove(&id);
+                self.drop_asks(id, cx);
+                self.transfers.retain(|t| t.id != id);
+                cx.keep_awake(!self.transfers.is_empty());
+                open_cache::seal(&file);
+                cx.open_file(&file);
+            }
+            (Pending::Fetch(file), Event::Error { text, .. }) => {
+                self.pending.remove(&id);
+                self.drop_asks(id, cx);
+                let shown = self.transfers.iter().any(|t| t.id == id);
+                self.transfers.retain(|t| t.id != id);
+                cx.keep_awake(!self.transfers.is_empty());
+                if let Some(dir) = file.parent() {
+                    let _ = std::fs::remove_dir_all(dir);
+                }
+                if shown || text != "Stopped" {
+                    self.say_failed(&text, cx);
+                }
             }
             (Pending::Key, Event::Done { .. }) => {
                 self.pending.remove(&id);
@@ -2117,6 +2198,7 @@ impl Page for Files {
         if self.data.is_none() {
             self.data = Some(cx.data_dir());
         }
+        open_cache::trim(&self.home, open_cache::CAP);
         if let Some(p) = self.servers_path() {
             self.servers = servers::load(&p);
         }

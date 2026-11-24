@@ -243,10 +243,20 @@ you may have open. The top bar says what it does and for whom: `Open ·
 - Esc held at Places, or Esc held 3 s anywhere, gives up: the app hears
   that no file was picked.
 
+## Opening a file elsewhere
+
+Enter on a file on a server or in an archive, when an app opens its type,
+copies it to `~/.cache/gh0st-files/open/<hash>/` with the usual progress
+card (Esc stops it), then opens it in its app. The copy is read only: the
+app can't save over it as if it were the original, and offers Save as. A
+copy already there, the same size, opens at once. Files keeps 256 MB of
+copies, removing the oldest when it starts.
+
 ## Limits
 
 - No SMB: curl can't list an SMB folder.
-- A file on a server or in an archive opens once copied to the card.
+- A change to a file opened from a server or an archive stays on the
+  card: save it as a new file and copy it back.
 - An archive with a password doesn't open.
 - A file no app opens shows its info; text without an app opens in the
   viewer.
