@@ -24,6 +24,7 @@ pub mod key {
     pub const D: u8 = 0x07;
     pub const E: u8 = 0x08;
     pub const F: u8 = 0x09;
+    pub const H: u8 = 0x0b;
     pub const L: u8 = 0x0f;
     pub const N: u8 = 0x11;
     pub const P: u8 = 0x13;
