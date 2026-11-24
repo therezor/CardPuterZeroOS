@@ -97,8 +97,20 @@ impl Config {
 
     /// Reads the file again, applies `f` and saves. Every writer goes through
     /// here, so a key another program wrote meanwhile survives.
+    ///
+    /// Our writers take a lock beside the file, so two never interleave. A
+    /// stock app may rewrite the file in place: one that won't parse is read
+    /// again a few times before it counts as broken.
     pub fn update(path: &Path, f: impl FnOnce(&mut Config)) -> std::io::Result<Config> {
+        let _lock = Lock::take(path);
         let mut c = Config::load(path);
+        for _ in 0..BROKEN_RETRIES {
+            if !c.broken {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(BROKEN_RETRY_MS));
+            c = Config::load(path);
+        }
         f(&mut c);
         c.save()?;
         Ok(c)
@@ -225,12 +237,80 @@ impl Config {
     }
 }
 
-/// Writes through a temp file named for this process, so two programs saving
-/// at once never write the same temp file, then fsync and rename.
+const BROKEN_RETRIES: usize = 3;
+/// A save waits at most this long for another writer's lock: an SD card's
+/// fsync can take a while.
+const LOCK_WAIT_MS: u64 = 5000;
+const LOCK_TRY_MS: u64 = 10;
+const BROKEN_RETRY_MS: u64 = 20;
+
+/// An flock on `config.json.lock`, held until dropped, with the holder's
+/// pid in the file. Best effort: a save goes through without it when the
+/// holder is stopped (the shell stops apps, and one stopped mid-save would
+/// hold it until it runs again), or after `LOCK_WAIT_MS`.
+struct Lock {
+    _file: Option<std::fs::File>,
+}
+
+impl Lock {
+    fn take(path: &Path) -> Lock {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{FileExt, OpenOptionsExt};
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let Ok(f) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC)
+            .open(path.with_extension("json.lock"))
+        else {
+            return Lock { _file: None };
+        };
+        let end = crate::rt::now_ms() + LOCK_WAIT_MS;
+        loop {
+            // SAFETY: flock on an fd we own.
+            if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                let pid = format!("{:<10}", std::process::id());
+                let _ = f.write_at(pid.as_bytes(), 0);
+                return Lock { _file: Some(f) };
+            }
+            if holder_stopped(&f) || crate::rt::now_ms() >= end {
+                return Lock { _file: None };
+            }
+            std::thread::sleep(std::time::Duration::from_millis(LOCK_TRY_MS));
+        }
+    }
+}
+
+/// The pid in the lock file is a stopped process.
+fn holder_stopped(f: &std::fs::File) -> bool {
+    use std::os::unix::fs::FileExt;
+    let mut buf = [0u8; 16];
+    let n = f.read_at(&mut buf, 0).unwrap_or(0);
+    let Some(pid) = std::str::from_utf8(&buf[..n])
+        .ok()
+        .and_then(|t| t.trim().parse::<i32>().ok())
+    else {
+        return false;
+    };
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|t| crate::procfs::parse_stat(&t))
+        .is_some_and(|st| matches!(st.state, 'T' | 't'))
+}
+
+/// Writes through a temp file named for this process and this write, so two
+/// saving at once never write the same temp file, then fsync and rename.
 pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
-    let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()));
     let mut f = std::fs::File::create(&tmp)?;
     let r = f.write_all(data).and_then(|_| f.sync_all());
     drop(f);
@@ -561,6 +641,59 @@ mod tests {
         Config::update(&path, |c| c.set_int("volume", 50)).unwrap();
         let again = std::fs::read_to_string(path.with_extension("json.broken")).unwrap();
         assert_eq!(kept, again);
+    }
+
+    #[test]
+    fn writers_at_once_lose_no_key() {
+        let path = scratch("race");
+        std::fs::write(&path, STOCK).unwrap();
+        let writers: Vec<_> = (0..4)
+            .map(|w| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for i in 0..25 {
+                        Config::update(&path, |c| c.set_int(&format!("gh0st.t{w}.{i}"), 1))
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let c = Config::load(&path);
+        for w in 0..4 {
+            for i in 0..25 {
+                assert_eq!(c.get_int(&format!("gh0st.t{w}.{i}")), Some(1), "t{w}.{i}");
+            }
+        }
+        assert_eq!(c.get_int("brightness"), Some(80));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stopped_writer_doesnt_hold_up_a_save() {
+        use std::os::unix::fs::FileExt;
+        let path = scratch("held");
+        std::fs::write(&path, STOCK).unwrap();
+        // As an app the shell stopped mid-save would hold it.
+        let mut app = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        // SAFETY: stopping our own child.
+        unsafe { libc::kill(app.id() as i32, libc::SIGSTOP) };
+        let lock = Lock::take(&path);
+        let f = lock._file.as_ref().expect("the lock");
+        f.write_at(format!("{:<10}", app.id()).as_bytes(), 0)
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let t = std::time::Instant::now();
+        Config::update(&path, |c| c.set_int("volume", 30)).unwrap();
+        assert!(t.elapsed().as_millis() < 500, "{:?}", t.elapsed());
+        assert_eq!(Config::load(&path).get_int("volume"), Some(30));
+        let _ = app.kill();
+        let _ = app.wait();
     }
 
     #[test]
