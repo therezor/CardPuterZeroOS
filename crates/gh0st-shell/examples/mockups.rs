@@ -501,9 +501,7 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                     ask(
                         &t,
                         Origin::Open,
-                        password(
-                            "Your apps keep their passwords here. Type your password to open it.",
-                        ),
+                        password("Your password opens it for your apps."),
                         0,
                         false,
                         false,

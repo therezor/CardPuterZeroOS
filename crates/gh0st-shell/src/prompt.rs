@@ -252,6 +252,9 @@ impl View<'_> {
     fn title(&self) -> &str {
         match (&self.ask.origin, &self.ask.kind) {
             (Origin::Stale, _) => "Update the keyring",
+            (_, Kind::Password { reason, .. }) if reason.contains(" wants to show ") => {
+                "Show a secret"
+            }
             (_, Kind::Password { .. }) => "Unlock the keyring",
             (_, Kind::Approve { .. }) => "Allow access?",
         }

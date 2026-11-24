@@ -344,7 +344,12 @@ impl Backend for Fake {
         None
     }
 
-    fn completed(&mut self) -> Vec<(String, bool)> {
-        std::mem::take(&mut self.done)
+    fn ended(&mut self, path: &str) -> Option<bool> {
+        let i = self.done.iter().position(|(p, _)| p == path)?;
+        Some(self.done.remove(i).1)
+    }
+
+    fn changed(&mut self) -> bool {
+        false
     }
 }

@@ -49,11 +49,7 @@ fn begin(
 
 /// Whether the prompt ended, and if so whether it was dismissed.
 fn ended(kr: &Shared, w: &Waiting) -> Option<bool> {
-    kr.borrow_mut()
-        .completed()
-        .into_iter()
-        .find(|(p, _)| *p == w.path)
-        .map(|(_, d)| d)
+    kr.borrow_mut().ended(&w.path)
 }
 
 fn finish(cx: &mut Cx, w: Waiting) {
@@ -69,6 +65,9 @@ pub struct Home {
     items: Vec<ItemRow>,
     access: usize,
     waiting: Option<Waiting>,
+    /// The bus, watched for as long as the page lives: another app can
+    /// lock or open the keyring.
+    watch: Option<Watch>,
 }
 
 impl Home {
@@ -80,6 +79,7 @@ impl Home {
             items: Vec::new(),
             access: 0,
             waiting: None,
+            watch: None,
         }
     }
 
@@ -117,8 +117,9 @@ impl Page for Home {
         }
     }
 
-    fn start(&mut self, _: &mut Cx) {
+    fn start(&mut self, cx: &mut Cx) {
         self.reload();
+        self.watch = self.kr.borrow().fd().map(|fd| cx.watch(fd));
     }
 
     fn resume(&mut self, _: &mut Cx) {
@@ -170,13 +171,16 @@ impl Page for Home {
     }
 
     fn ready(&mut self, _: Watch, cx: &mut Cx) {
-        let Some(w) = &self.waiting else {
-            return;
-        };
-        if ended(&self.kr, w).is_some() {
+        let ended = self
+            .waiting
+            .as_ref()
+            .is_some_and(|w| ended(&self.kr, w).is_some());
+        if ended {
             if let Some(w) = self.waiting.take() {
                 finish(cx, w);
             }
+        }
+        if self.kr.borrow_mut().changed() || ended {
             self.reload();
             cx.redraw();
         }
@@ -185,6 +189,9 @@ impl Page for Home {
     fn stop(&mut self, cx: &mut Cx) {
         if let Some(w) = self.waiting.take() {
             finish(cx, w);
+        }
+        if let Some(w) = self.watch.take() {
+            cx.unwatch(w);
         }
     }
 

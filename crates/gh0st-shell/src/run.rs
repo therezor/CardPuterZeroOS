@@ -704,8 +704,7 @@ impl Shell {
         self.prompts.push(Ask {
             origin: Origin::Open,
             kind: Kind::Password {
-                reason: "Your apps keep their passwords here. Type your password to open it."
-                    .into(),
+                reason: "Your password opens it for your apps.".into(),
                 retry: false,
             },
         });
@@ -748,16 +747,33 @@ impl Shell {
                 self.prompts.remove(&Origin::Stale);
                 self.toast("The keyring can't read its file");
             }
-            ToShell::AskPassword { id, reason, retry } => self.prompts.push(Ask {
-                origin: Origin::Daemon(id),
-                kind: Kind::Password { reason, retry },
-            }),
-            ToShell::AskApprove { id, app, what } => self.prompts.push(Ask {
-                origin: Origin::Daemon(id),
-                kind: Kind::Approve { app, what },
-            }),
+            ToShell::AskPassword { id, reason, retry } => {
+                self.prompts.push(Ask {
+                    origin: Origin::Daemon(id),
+                    kind: Kind::Password { reason, retry },
+                });
+                self.light_for_question();
+            }
+            ToShell::AskApprove { id, app, what } => {
+                self.prompts.push(Ask {
+                    origin: Origin::Daemon(id),
+                    kind: Kind::Approve { app, what },
+                });
+                self.light_for_question();
+            }
             ToShell::Cancel { id } => self.prompts.cancel(id),
         }
+    }
+
+    /// A question nobody can see waits for ever: light the screen. Past
+    /// Lock after that is the lock screen; the question shows after it.
+    fn light_for_question(&mut self) {
+        let now = rt::now_ms();
+        if self.screen == Screen::Off && !self.app_front() {
+            self.wake(now);
+        }
+        self.last_input = now;
+        self.undim();
     }
 
     /// `gh0st session` relays a ScreenSaver inhibit as the app's `awake`.

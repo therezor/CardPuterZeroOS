@@ -56,10 +56,14 @@ pub trait Backend {
     /// The secret, once a reveal let this app read it.
     fn secret(&mut self, item: &str) -> Option<Vec<u8>>;
     fn store(&mut self, label: &str, attrs: &[(&str, &str)], secret: &[u8]) -> Result<(), String>;
-    /// The fd to watch for prompt results; None when they come at once.
+    /// The fd to watch for prompt results and changes; None when they come
+    /// at once.
     fn fd(&self) -> Option<RawFd>;
-    /// Prompts that ended: their path, and whether they were dismissed.
-    fn completed(&mut self) -> Vec<(String, bool)>;
+    /// Whether prompt `path` ended, and if so whether it was dismissed.
+    fn ended(&mut self, path: &str) -> Option<bool>;
+    /// The keyring changed since the last call: locked, unlocked, an item
+    /// added or gone.
+    fn changed(&mut self) -> bool;
 }
 
 pub type Shared = Rc<RefCell<Box<dyn Backend>>>;
@@ -84,21 +88,44 @@ const TIMEOUT: u64 = 2000;
 struct Dbus {
     conn: Option<Conn>,
     session: Option<String>,
+    /// Prompts that ended and haven't been asked about.
+    done: Vec<(String, bool)>,
+    dirty: bool,
 }
 
 pub fn connect() -> Shared {
     let mut conn = Conn::session().ok();
     if let Some(c) = &mut conn {
-        let rule = "type='signal',interface='org.freedesktop.Secret.Prompt',member='Completed'";
+        // The keyring's signals: prompts ending, locks, items coming and going.
+        let rule = "type='signal',sender='org.freedesktop.secrets'";
         let _ = gh0st_dbus::bus::add_match(c, rule);
     }
     Rc::new(RefCell::new(Box::new(Dbus {
         conn,
         session: None,
+        done: Vec::new(),
+        dirty: false,
     })))
 }
 
 impl Dbus {
+    /// Reads what the bus has: prompt ends kept by path, the rest a change.
+    fn pump(&mut self) {
+        let Some(conn) = &mut self.conn else {
+            return;
+        };
+        let _ = conn.fill();
+        while let Ok(Some(m)) = conn.recv() {
+            if m.is("org.freedesktop.Secret.Prompt", "Completed") {
+                let dismissed = m.body.first().and_then(Value::as_bool).unwrap_or(true);
+                self.done
+                    .push((m.path.clone().unwrap_or_default(), dismissed));
+            } else if m.kind == gh0st_dbus::Kind::Signal {
+                self.dirty = true;
+            }
+        }
+    }
+
     fn call(
         &mut self,
         path: &str,
@@ -275,18 +302,14 @@ impl Backend for Dbus {
         self.conn.as_ref().map(Conn::fd)
     }
 
-    fn completed(&mut self) -> Vec<(String, bool)> {
-        let Some(conn) = &mut self.conn else {
-            return Vec::new();
-        };
-        let _ = conn.fill();
-        let mut out = Vec::new();
-        while let Ok(Some(m)) = conn.recv() {
-            if m.is("org.freedesktop.Secret.Prompt", "Completed") {
-                let dismissed = m.body.first().and_then(Value::as_bool).unwrap_or(true);
-                out.push((m.path.clone().unwrap_or_default(), dismissed));
-            }
-        }
-        out
+    fn ended(&mut self, path: &str) -> Option<bool> {
+        self.pump();
+        let i = self.done.iter().position(|(p, _)| p == path)?;
+        Some(self.done.remove(i).1)
+    }
+
+    fn changed(&mut self) -> bool {
+        self.pump();
+        std::mem::take(&mut self.dirty)
     }
 }
