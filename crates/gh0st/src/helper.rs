@@ -19,6 +19,7 @@
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper usb-power on|off
 //!     gh0st-helper usb-hid hold                  until stdin closes
+//!     gh0st-helper bt-classic on|off
 //!     gh0st-helper wifi-powersave on|off
 //!     gh0st-helper hotspot on|off
 //!     gh0st-helper hotspot name NAME
@@ -115,6 +116,8 @@ pub enum Verb {
     UsbPower(bool),
     /// The Keyboard app's USB gadget, held while stdin is open.
     UsbHid,
+    /// Classic Bluetooth (BR/EDR) on or off; LE stays on.
+    BtClassic(bool),
     WifiPowersave(bool),
     Hotspot(bool),
     HotspotName(String),
@@ -180,6 +183,8 @@ impl Verb {
             // A keyboard that needs a cable and the side switch, typing
             // only what the app that holds it sends.
             | Verb::UsbHid
+            // The radio the user already turned on, one half of it.
+            | Verb::BtClassic(_)
             | Verb::Power(_)
             | Verb::UserCreate(_)
             | Verb::SetupFinish
@@ -229,6 +234,7 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["rfkill", "wlan", s] => Verb::Rfkill(Radio::Wlan, on(s)?),
         ["usb-power", s] => Verb::UsbPower(on(s)?),
         ["usb-hid", "hold"] => Verb::UsbHid,
+        ["bt-classic", s] => Verb::BtClassic(on(s)?),
         ["wifi-powersave", s] => Verb::WifiPowersave(on(s)?),
         ["hotspot", "name", n] if hotspot::valid_name(n) => Verb::HotspotName(n.to_string()),
         ["hotspot", "password"] => Verb::HotspotPassword,
@@ -449,6 +455,30 @@ fn set_swappiness(n: u32) -> Result<(), String> {
 fn say(line: &str) {
     // SAFETY: a write from a buffer of its own length.
     unsafe { libc::write(1, line.as_ptr().cast(), line.len()) };
+}
+
+/// Classic Bluetooth on or off. The controller must be off to change it,
+/// so it goes off and back on, if it was on. While a phone pairs with the
+/// Keyboard app classic is off: Android, seeing a classic side, looks for a
+/// classic keyboard there and never uses the LE one.
+fn bt_classic(on: bool) -> Result<(), String> {
+    let info = Command::new("btmgmt")
+        .arg("info")
+        .output()
+        .map_err(|e| format!("btmgmt: {e}"))?;
+    let info = String::from_utf8_lossy(&info.stdout);
+    let powered = info
+        .lines()
+        .find(|l| l.trim_start().starts_with("current settings:"))
+        .is_some_and(|l| l.split_whitespace().any(|w| w == "powered"));
+    if powered {
+        run(&["btmgmt", "power", "off"])?;
+    }
+    let set = run(&["btmgmt", "bredr", if on { "on" } else { "off" }]);
+    if powered {
+        run(&["btmgmt", "power", "on"])?;
+    }
+    set
 }
 
 /// Builds the USB keyboard, binds it, and holds it until stdin closes.
@@ -937,6 +967,7 @@ fn act(v: Verb) -> Result<(), String> {
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
         Verb::UsbPower(on) => usb_power(on),
         Verb::UsbHid => usb_hid_hold(),
+        Verb::BtClassic(on) => bt_classic(on),
         Verb::WifiPowersave(on) => {
             write_nm(
                 sysconf::NM_POWERSAVE_DROPIN,
@@ -1109,7 +1140,7 @@ pub fn main(args: &[String]) -> i32 {
              regdom XX | cpu balanced|power-saver|performance | hostname NAME | swap MB | \
              swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | set-time EPOCH | ntp on|off | \
              dhcp-hostname on|off | \
-             ip6-privacy on|off | dns auto|SERVERS | rfkill bluetooth|wlan on|off | usb-power on|off | usb-hid hold | \
+             ip6-privacy on|off | dns auto|SERVERS | rfkill bluetooth|wlan on|off | usb-power on|off | usb-hid hold | bt-classic on|off | \
              wifi-powersave on|off | hotspot on|off | hotspot name NAME | hotspot password | \
              hotspot security wpa3|mixed | power off|reboot | update-check | update-install | \
              update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
@@ -1159,6 +1190,13 @@ mod tests {
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn bt_classic_takes_on_or_off() {
+        assert_eq!(parse(&args("bt-classic off")), Some(Verb::BtClassic(false)));
+        assert!(!Verb::BtClassic(true).gated());
+        assert_eq!(parse(&args("bt-classic")), None);
     }
 
     #[test]

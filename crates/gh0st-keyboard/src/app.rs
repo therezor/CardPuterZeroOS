@@ -53,6 +53,10 @@ pub struct Shared {
     want_radio: bool,
     /// Hosts whose address changed after pairing: old, new.
     moves: Vec<(String, String)>,
+    /// Classic Bluetooth is off, for pairing.
+    classic_off: bool,
+    /// Runs the root helper; off for tests and mockups.
+    pub helpers: bool,
     /// Unblocks the radio; tests and mockups pass one that can't fail.
     pub unblock: fn() -> std::io::Result<()>,
 }
@@ -92,6 +96,8 @@ impl Shared {
             radio_job: None,
             want_radio: false,
             moves: Vec::new(),
+            classic_off: false,
+            helpers: true,
             unblock: unblock_bluetooth,
         }
     }
@@ -274,6 +280,27 @@ impl Shared {
         }
     }
 
+    /// Classic Bluetooth off while a host pairs, and back on after. Android,
+    /// seeing a classic side, looks for a classic keyboard there and never
+    /// uses the LE one. The helper restarts the radio, so the link
+    /// advertises again once it is back.
+    pub fn classic(&mut self, on: bool) {
+        if self.classic_off != on {
+            return;
+        }
+        self.classic_off = !on;
+        if !self.helpers {
+            return;
+        }
+        // Not a job: it must finish even when the app is closing.
+        let _ = std::process::Command::new("pkexec")
+            .args([HELPER, "bt-classic", if on { "on" } else { "off" }])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+
     /// Tells Bluetooth hosts the battery level, which they show beside the
     /// keyboard. Sent when one connects and when the app comes back, not on
     /// a timer.
@@ -434,6 +461,7 @@ impl App {
     pub fn with(bt: Box<dyn Bluetooth>, usb: Box<dyn Cable>, dir: PathBuf) -> App {
         let mut s = Shared::new(Some(bt), usb, dir);
         s.unblock = || Ok(());
+        s.helpers = false;
         App {
             s,
             stack: vec![Box::new(Hosts::new())],

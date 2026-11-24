@@ -94,6 +94,7 @@ impl Screen for Pair {
     }
 
     fn start(&mut self, s: &mut Shared, cx: &mut Cx) {
+        s.classic(false);
         self.look(s, cx);
     }
 
@@ -101,6 +102,7 @@ impl Screen for Pair {
         if let Some(bt) = &mut s.bt {
             bt.pair(false);
         }
+        s.classic(true);
     }
 
     fn draw(&self, s: &Shared, ui: &mut Ui) {
@@ -222,6 +224,12 @@ impl Screen for Pair {
                 self.device = device.clone();
                 self.phase = Phase::Waiting;
                 self.entering = *ask == Ask::Enter;
+            }
+            // The radio came back from the classic switch: pairable again.
+            Event::Power(true) if self.phase == Phase::Waiting && !self.entering => {
+                if let Some(bt) = &mut s.bt {
+                    bt.pair(true);
+                }
             }
             Event::PairCancelled => {
                 self.phase = Phase::Cancelled;

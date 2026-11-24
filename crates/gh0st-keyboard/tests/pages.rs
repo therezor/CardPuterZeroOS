@@ -247,3 +247,19 @@ fn a_phone_that_paired_on_a_private_address_is_followed() {
         "saved under its own address"
     );
 }
+
+#[test]
+fn bksp_is_the_right_button_and_p_the_middle() {
+    let (mut d, log) = session("buttons", PC, MOUSE);
+    d.keys("backspace\np");
+    let buttons: Vec<u8> = log
+        .borrow()
+        .sent
+        .iter()
+        .filter_map(|r| match r {
+            Report::Mouse(m) => Some(m.buttons),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(buttons, [2, 0, 4, 0]);
+}

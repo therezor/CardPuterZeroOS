@@ -264,6 +264,9 @@ impl Ble {
                 out.push(Event::Ready);
                 self.sync();
             }
+            // Still registered from before a power cycle: it runs.
+            Call::Advertise if m.error_name.as_deref() == Some("org.bluez.Error.AlreadyExists") => {
+            }
             Call::Advertise if failed => {
                 self.advert = Advert::Off;
                 self.want = Advert::Off;
@@ -321,6 +324,10 @@ impl Ble {
                 if iface == ADAPTER && Some(path) == self.adapter.as_deref() {
                     if let Some(on) = prop(changed, "Powered").and_then(Value::as_bool) {
                         self.powered = on;
+                        if !on {
+                            // Its adverts went with the power.
+                            self.advert = Advert::Off;
+                        }
                         out.push(Event::Power(on));
                         self.sync();
                     }

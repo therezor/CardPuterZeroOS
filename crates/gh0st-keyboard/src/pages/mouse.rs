@@ -19,6 +19,7 @@ const GROW: f32 = 14.0;
 const MOST: f32 = 24.0;
 
 const R: u16 = 19;
+const P: u16 = 25;
 const V: u16 = 47;
 
 #[derive(Default)]
@@ -26,7 +27,6 @@ pub struct Mouse {
     /// Up, down, left, right.
     held: [bool; 4],
     buttons: u8,
-    slow: bool,
     fast: bool,
     timer: Option<Timer>,
     /// Ticks since the move began: the longer, the faster.
@@ -70,14 +70,11 @@ impl Mouse {
         let down = k.state != KeyState::Release;
         let press = k.state == KeyState::Press;
         match k.code {
-            code::LEFTSHIFT | code::RIGHTSHIFT => self.slow = down,
-            code::LEFTCTRL | code::RIGHTCTRL => self.fast = down,
-            code::SPACE | code::ENTER | code::LEFTALT | code::TAB
-                if k.state != KeyState::Repeat =>
-            {
+            code::LEFTSHIFT | code::RIGHTSHIFT => self.fast = down,
+            code::SPACE | code::ENTER | code::BACKSPACE | P if k.state != KeyState::Repeat => {
                 let bit = match k.code {
-                    code::LEFTALT => 2,
-                    code::TAB => 4,
+                    code::BACKSPACE => 2,
+                    P => 4,
                     _ => 1,
                 };
                 if down {
@@ -119,9 +116,6 @@ impl Mouse {
         let held = self.ticks as f32 * TICK_MS as f32 / 1000.0;
         self.ticks = self.ticks.saturating_add(1);
         let mut speed = (START + GROW * held).min(MOST);
-        if self.slow {
-            speed = (speed / 4.0).max(0.5);
-        }
         if self.fast {
             speed *= 2.0;
         }
@@ -195,10 +189,10 @@ impl Mouse {
         let x = cx0 + 2 * (cap + gap) + t.m.pad * 2;
         let lines: [(&str, &str, u8); 5] = [
             ("Space", "click, drag", 1),
-            ("Alt", "right click", 2),
-            ("Tab", "middle click", 4),
+            ("Bksp", "right click", 2),
+            ("p", "middle click", 4),
             ("r v", "scroll", 0),
-            ("Shift Ctrl", "slow, fast", 0),
+            ("Shift", "faster", 0),
         ];
         let mut y = a.y + t.m.margin_v;
         for (keys, what, bit) in lines {

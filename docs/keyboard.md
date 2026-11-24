@@ -22,7 +22,7 @@ computer or a phone, over Bluetooth LE or a USB cable. It is an SDK app,
 | Mode | What it does |
 |---|---|
 | Type | Every key goes to the host. A line shows what was sent |
-| Mouse | F Z X C or the arrows move, faster while held. Space clicks or drags, Alt is the right button, Tab the middle, R and V scroll. Shift is slow, Ctrl fast |
+| Mouse | F Z X C or the arrows move, faster while held, and faster still with Shift. Space or Enter clicks or drags, Bksp is the right button, P the middle, R and V scroll |
 | Media | Enter plays or pauses, z and c skip, f and x change the volume, m mutes, s is a phone camera's shutter (volume up) |
 | Slides | Space, Enter or c for the next slide, Bksp or z for the previous, b black. Start sends F5, or Keynote's Option Cmd P on a Mac. A timer counts while it runs |
 | Macros | The host system's shortcuts (copy, lock screen, app switcher, screenshot), then saved texts. Enter sends one. A text is typed at about 40 characters a second; Esc stops it |

@@ -92,9 +92,9 @@ Fn then Alt: Win, Super or Option with the next key. Twice: alone.
 On a Mac or an iPhone, Alt is Cmd.";
 
 pub const MOUSE_ABOUT: &str = "F Z X C or the arrows move the pointer: hold to go faster.
-Shift moves slowly, Ctrl fast.
+Shift moves faster.
 Space or Enter clicks; hold Space to drag.
-Alt is the right button, Tab the middle one.
+Bksp is the right button, P the middle one.
 R and V scroll.
 Fn Space picks a mode.
 An iPhone shows the pointer only with AssistiveTouch on: Settings, Accessibility, Touch.";

@@ -362,3 +362,16 @@ fn an_address_that_changes_is_told() {
         "F8:2A:E2:48:8E:99".into()
     )));
 }
+
+#[test]
+fn the_advert_comes_back_after_the_radio_restarts() {
+    let (mut ble, mut fake) = ready();
+    ble.pair(true);
+    pump(&mut ble, &mut fake);
+    ble.power(false);
+    pump(&mut ble, &mut fake);
+    ble.power(true);
+    pump(&mut ble, &mut fake);
+    assert_eq!(fake.calls("RegisterAdvertisement").len(), 2);
+    assert_eq!(ble.wanted(), Advert::Pair);
+}
