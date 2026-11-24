@@ -245,6 +245,8 @@ struct Shell {
     canvas: Canvas,
     /// Home's and the lock's picture, baked; none when it is off.
     wall: Option<wallpaper::Baked>,
+    /// A wallpaper an app asked for, shown behind its question.
+    preview: Option<(u64, wallpaper::Baked)>,
     /// What `wall` was baked from: the setting, the palette, the file's age.
     wall_from: Option<(String, &'static str, Option<std::time::SystemTime>)>,
     display: Box<dyn Display>,
@@ -581,6 +583,7 @@ impl Shell {
             prompt_pid: 0,
             config,
             wall: None,
+            preview: None,
             wall_from: None,
         };
         s.set_animations();
@@ -795,10 +798,17 @@ impl Shell {
                             self.ask_account(id, pid.parse().unwrap_or(0), app);
                         }
                     }
+                    Some("wallpaper") => {
+                        if let [_, id, pid, app, path] = m.as_slice() {
+                            let path = link::path_of(path);
+                            self.ask_wallpaper(id, pid.parse().unwrap_or(0), app, &path);
+                        }
+                    }
                     Some("cancel") => {
                         if let Some(id) = m.get(1) {
                             if let Ok(n) = id.parse() {
-                                self.prompts.remove(&Origin::Portal(n));
+                                self.prompts.cancel_portal(n);
+                                self.drop_preview(n);
                             }
                             self.portal.retain(|a| match a {
                                 PortalAsk::Pick { id: i, .. } | PortalAsk::Open { id: i, .. } => {
@@ -873,7 +883,7 @@ impl Shell {
         match id.parse() {
             Ok(n) if allowed => {
                 self.prompts.push(Ask {
-                    origin: Origin::Portal(n),
+                    origin: Origin::Portal(n, "account"),
                     kind: Kind::Approve {
                         app: app.into(),
                         what: "see your name".into(),
@@ -887,15 +897,48 @@ impl Shell {
         }
     }
 
+    /// An app wants `path`, already fitted to the screen, as the
+    /// wallpaper. The question shows over the picture itself.
+    fn ask_wallpaper(&mut self, id: &str, pid: i32, app: &str, path: &Path) {
+        let front = self.tasks.front().map(|t| t.pgid);
+        let allowed = front.is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g));
+        let m = self.t.m;
+        let pic = wallpaper::load(path, m.width as usize, m.height as usize);
+        match (id.parse::<u64>(), pic) {
+            (Ok(n), Some(pic)) if allowed => {
+                let baked = wallpaper::bake(&pic, &self.t.c, m.bar_h as usize, m.hint_h as usize);
+                self.preview = Some((n, baked));
+                self.prompts.push(Ask {
+                    origin: Origin::Portal(n, "wallpaper"),
+                    kind: Kind::Approve {
+                        app: app.into(),
+                        what: "make this your wallpaper".into(),
+                    },
+                });
+                self.light_for_question();
+            }
+            _ => {
+                self.services.say_session(&["wallpaper", id, "deny"]);
+            }
+        }
+    }
+
+    fn drop_preview(&mut self, id: u64) {
+        if self.preview.as_ref().is_some_and(|(i, _)| *i == id) {
+            self.preview = None;
+            self.full_flush = true;
+        }
+    }
+
     /// The answer to a portal's question.
-    fn answer_portal(&self, id: u64, answer: Answer) {
+    fn answer_portal(&mut self, id: u64, verb: &str, answer: Answer) {
         let word = match answer {
             Answer::Once => "once",
             Answer::Always => "always",
             Answer::Deny => "deny",
         };
-        self.services
-            .say_session(&["account", &id.to_string(), word]);
+        self.drop_preview(id);
+        self.services.say_session(&[verb, &id.to_string(), word]);
     }
 
     /// `gh0st session` relays an inhibit as the app's `awake`. `pid:N` is a
@@ -1098,7 +1141,7 @@ impl Shell {
                         answer: Answer::Deny,
                     });
                 }
-                Origin::Portal(id) => self.answer_portal(id, Answer::Deny),
+                Origin::Portal(id, verb) => self.answer_portal(id, verb, Answer::Deny),
                 _ => {}
             }
             self.prompts.done();
@@ -1140,7 +1183,7 @@ impl Shell {
                     Origin::Daemon(id) => {
                         self.services.tell(&ToDaemon::Answer { id, answer });
                     }
-                    Origin::Portal(id) => self.answer_portal(id, answer),
+                    Origin::Portal(id, verb) => self.answer_portal(id, verb, answer),
                     _ => {}
                 }
                 self.prompts.done();
@@ -1154,7 +1197,7 @@ impl Shell {
                             answer: Answer::Deny,
                         });
                     }
-                    Origin::Portal(id) => self.answer_portal(id, Answer::Deny),
+                    Origin::Portal(id, verb) => self.answer_portal(id, verb, Answer::Deny),
                     _ => {}
                 }
                 if let Some(mut old) = self.prompt_input.take() {
@@ -3765,7 +3808,14 @@ impl Shell {
             Screen::Switcher => Some(self.switcher.selected()),
             _ => Some(0),
         };
+        let previewing = match (&self.preview, self.prompts.current()) {
+            (Some((id, b)), Some(a)) if a.origin == Origin::Portal(*id, "wallpaper") => {
+                Some(b.home.clone())
+            }
+            _ => None,
+        };
         let ground = self.wall.as_ref().and_then(|w| match self.screen {
+            Screen::Prompt if previewing.is_some() => previewing,
             Screen::Locked | Screen::Prompt => Some(w.lock.clone()),
             Screen::Home | Screen::Switcher | Screen::Notices => Some(w.home.clone()),
             _ => None,
@@ -3780,11 +3830,12 @@ impl Shell {
                 Some(ask) => {
                     self.prompts.seen(now);
                     let ask = &ask;
+                    let (icon, title) = prompt::bar(&ask.origin);
                     let status = Status {
                         dock: &[],
                         front: None,
-                        icon: "key-round",
-                        title: "Keyring",
+                        icon,
+                        title,
                         ..status
                     };
                     let v = prompt::View {

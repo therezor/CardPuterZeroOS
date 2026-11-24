@@ -84,9 +84,18 @@ pub fn main(args: &[String]) -> i32 {
         return 1;
     }
     let config = gh0st_core::config::default_path();
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     let mut portal = Portal::default();
-    portal.remember = std::env::var_os("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".local/state/gh0st/portal-account"));
+    portal.remember = home
+        .as_ref()
+        .map(|h| h.join(".local/state/gh0st/portal-always"));
+    portal.config = config.clone();
+    portal.scratch = home
+        .map(|h| h.join(".cache/gh0st"))
+        .unwrap_or_else(std::env::temp_dir);
+    portal.settings_bin = std::env::var_os("GH0ST_SETTINGS")
+        .unwrap_or_else(|| "/usr/bin/gh0st-settings".into())
+        .into();
     let mut s = Session {
         bus: conn,
         link,
@@ -124,6 +133,10 @@ impl Session {
             if let Some(l) = &self.link {
                 fds.push(gh0st_core::rt::pollfd(l.fd()));
             }
+            let job_at = self.portal.job_fd().map(|fd| {
+                fds.push(gh0st_core::rt::pollfd(fd));
+                fds.len() - 1
+            });
             #[cfg(target_os = "linux")]
             let watch_at = self.config_watch.as_ref().map(|w| {
                 fds.push(gh0st_core::rt::pollfd(w.fd()));
@@ -131,6 +144,9 @@ impl Session {
             });
             if gh0st_core::rt::wait(&mut fds, None).is_err() {
                 continue;
+            }
+            if job_at.is_some_and(|i| fds[i].revents != 0) {
+                self.portal.job_done();
             }
             #[cfg(target_os = "linux")]
             if let (Some(i), Some(w)) = (watch_at, self.config_watch.as_mut()) {
@@ -293,13 +309,14 @@ impl Session {
         let Some(answer) = std::env::var_os("GH0ST_PORTAL_ANSWER") else {
             return;
         };
-        if let (Some("account"), Some(id), Some(a)) = (
+        // GH0ST_PORTAL_APPROVE answers the user's yes or no questions.
+        if let (Some(verb @ ("account" | "wallpaper")), Some(id), Some(a)) = (
             f.first().map(String::as_str),
             f.get(1),
-            std::env::var_os("GH0ST_PORTAL_ACCOUNT"),
+            std::env::var_os("GH0ST_PORTAL_APPROVE"),
         ) {
             let a = a.to_string_lossy().into_owned();
-            self.portal.shell_said(&["account".into(), id.clone(), a]);
+            self.portal.shell_said(&[verb.to_string(), id.clone(), a]);
             return;
         }
         if let (Some(verb), Some(id)) = (f.first(), f.get(1).and_then(|i| i.parse().ok())) {

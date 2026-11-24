@@ -217,7 +217,7 @@ pub struct State {
     /// the Palette page, as it reads the scheme files.
     pub palettes: Vec<(&'static str, bool)>,
     /// `gh0st.wallpaper` as set, whether an own picture is kept, and the
-    /// PNGs in ~/Pictures.
+    /// Pictures in ~/Pictures.
     pub wallpaper: String,
     pub own_picture: bool,
     pub pictures: Vec<String>,
@@ -489,7 +489,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
             Body::List(if s.pictures.is_empty() {
                 vec![Item {
                     icon: Some("images"),
-                    label: "No PNG in ~/Pictures".into(),
+                    label: "No pictures in ~/Pictures".into(),
                     value: Value::None,
                     act: Act::None,
                     danger: false,

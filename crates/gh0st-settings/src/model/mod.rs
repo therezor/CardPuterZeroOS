@@ -48,7 +48,7 @@ pub enum PageId {
     Hotspot,
     /// The hotspot's QR code, name and password, for joining it.
     HotspotQr,
-    /// PNGs in ~/Pictures, to make one the wallpaper.
+    /// Pictures in ~/Pictures, to make one the wallpaper.
     Pictures,
     /// Which app opens each kind of file.
     DefaultApps,

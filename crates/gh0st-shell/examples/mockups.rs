@@ -292,8 +292,9 @@ fn lock(t: &Theme, field: Option<usize>, ready: bool, note: Option<(Tone, &str)>
 
 /// A keyring question, as the shell asks it.
 fn ask(t: &Theme, origin: Origin, kind: Kind, typed: usize, checking: bool, wrong: bool) -> Canvas {
-    let mut s = status(&[], None, "Keyring");
-    s.icon = "key-round";
+    let (icon, title) = prompt::bar(&origin);
+    let mut s = status(&[], None, title);
+    s.icon = icon;
     let a = Ask { origin, kind };
     let v = prompt::View {
         ask: &a,
@@ -302,6 +303,14 @@ fn ask(t: &Theme, origin: Origin, kind: Kind, typed: usize, checking: bool, wron
         wrong,
     };
     let mut c = grounded(t, true);
+    // The wallpaper an app asks for shows behind its question, unfrosted.
+    if let Origin::Portal(_, "wallpaper") = a.origin {
+        let (w, h) = (t.m.width as usize, t.m.height as usize);
+        if let Some(p) = wallpaper::builtin("contour", &t.c, w, h) {
+            let b = wallpaper::bake(&p, &t.c, t.m.bar_h as usize, t.m.hint_h as usize);
+            c.set_backdrop(Some(b.home));
+        }
+    }
     prompt::draw(&mut c, t, &s, &v);
     c
 }
@@ -417,6 +426,34 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
             (
                 "prompt-approve",
                 ask(&t, Origin::Daemon(1), approve(), 0, false, false),
+            ),
+            (
+                "prompt-account",
+                ask(
+                    &t,
+                    Origin::Portal(1, "account"),
+                    Kind::Approve {
+                        app: "Chat".into(),
+                        what: "see your name".into(),
+                    },
+                    0,
+                    false,
+                    false,
+                ),
+            ),
+            (
+                "prompt-wallpaper",
+                ask(
+                    &t,
+                    Origin::Portal(2, "wallpaper"),
+                    Kind::Approve {
+                        app: "Media".into(),
+                        what: "make this your wallpaper".into(),
+                    },
+                    0,
+                    false,
+                    false,
+                ),
             ),
             (
                 "prompt-password",

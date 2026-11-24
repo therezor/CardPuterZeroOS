@@ -367,7 +367,7 @@ about 100 ms on the device, so the shell keeps the result in
 start reads it back in under 3 ms.
 
 Settings > Appearance > Wallpaper steps through them. Your picture lists
-the PNGs in ~/Pictures; Enter on one makes it the wallpaper.
+the pictures in ~/Pictures; Enter on one makes it the wallpaper.
 
 A picture of the user's own is cropped to the screen's shape, from its
 middle, when it is picked. Settings runs the crop in a child of its own

@@ -150,80 +150,21 @@ impl Fs for Local {
     }
 }
 
-/// Moves `path` to the freedesktop Trash under `home`, with the
-/// `.trashinfo` file managers read to put it back.
+/// Moves `path` to the freedesktop Trash under `home`.
 pub fn trash(home: &Path, path: &Path) -> Res<()> {
-    let base = home.join(".local/share/Trash");
-    let (files, info) = (base.join("files"), base.join("info"));
-    std::fs::create_dir_all(&files).map_err(|e| words(&e))?;
-    std::fs::create_dir_all(&info).map_err(|e| words(&e))?;
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .ok_or("Can't move this to the Trash")?;
-    let mut pick = name.clone();
-    let mut n = 2;
-    while files.join(&pick).symlink_metadata().is_ok()
-        || info.join(format!("{pick}.trashinfo")).exists()
-    {
-        pick = numbered(&name, n);
-        n += 1;
-    }
-    let info_file = info.join(format!("{pick}.trashinfo"));
-    let body = format!(
-        "[Trash Info]\nPath={}\nDeletionDate={}\n",
-        pct(&path.to_string_lossy()),
-        now_iso()
-    );
-    std::fs::write(&info_file, body).map_err(|e| words(&e))?;
-    if let Err(e) = std::fs::rename(path, files.join(&pick)) {
-        let _ = std::fs::remove_file(&info_file);
-        if e.raw_os_error() == Some(libc::EXDEV) {
-            return Err("This drive has no Trash: delete it for good instead".into());
+    match gh0st_core::trash::put(home, path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            Err("This drive has no Trash: delete it for good instead".into())
         }
-        return Err(words(&e));
-    }
-    Ok(())
-}
-
-/// "photo 2.png" for "photo.png", n = 2.
-pub fn numbered(name: &str, n: u32) -> String {
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => format!("{stem} {n}.{ext}"),
-        _ => format!("{name} {n}"),
-    }
-}
-
-fn pct(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
+            Err("Can't move this to the Trash".into())
         }
+        Err(e) => Err(words(&e)),
     }
-    out
 }
 
-fn now_iso() -> String {
-    // SAFETY: time and localtime_r into a local struct tm.
-    let tm = unsafe {
-        let t = libc::time(std::ptr::null_mut());
-        let mut tm: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&t, &mut tm);
-        tm
-    };
-    format!(
-        "{}-{:02}-{:02}T{:02}:{:02}:{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_hour,
-        tm.tm_min,
-        tm.tm_sec
-    )
-}
+pub use gh0st_core::trash::numbered;
 
 /// Makes `ssh/id_ed25519`, sealed with `passphrase`: ssh-keygen asks for it
 /// through askpass, and the pump answers.
@@ -271,27 +212,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_trash_keeps_names_and_info() {
+    fn the_trash_says_why_it_cant() {
         let dir = std::env::temp_dir().join(format!("gh0st-files-trash-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            trash(&dir, Path::new("/")).unwrap_err(),
+            "Can't move this to the Trash"
+        );
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("a")).unwrap();
-        std::fs::write(dir.join("a/x y.txt"), b"1").unwrap();
-        trash(&dir, &dir.join("a/x y.txt")).unwrap();
-        std::fs::write(dir.join("a/x y.txt"), b"2").unwrap();
-        trash(&dir, &dir.join("a/x y.txt")).unwrap();
-        let t = dir.join(".local/share/Trash");
-        assert!(t.join("files/x y.txt").exists());
-        assert!(t.join("files/x y 2.txt").exists());
-        let info = std::fs::read_to_string(t.join("info/x y 2.txt.trashinfo")).unwrap();
-        assert!(info.contains("/a/x%20y.txt"), "{info}");
-        assert!(info.contains("DeletionDate="));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn numbered_names_keep_the_extension() {
-        assert_eq!(numbered("a.tar", 2), "a 2.tar");
-        assert_eq!(numbered("notes", 3), "notes 3");
-        assert_eq!(numbered(".bashrc", 2), ".bashrc 2");
     }
 }

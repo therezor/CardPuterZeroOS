@@ -11,7 +11,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 trap '[ -n "$pid" ] && kill $pid 2>/dev/null; rm -rf "$work"' EXIT
 mkdir -p "$work/files" "$work/.config/cardputerzero" && printf 'hi\n' >"$work/files/a note.txt"
 HOME=$work XDG_STATE_HOME=$work/.local/state GH0ST_PORTAL_ANSWER="$work/files/a note.txt" \
-    GH0ST_PORTAL_ACCOUNT=once "$GH0ST" session --test >"$work/out" &
+    GH0ST_PORTAL_APPROVE=once GH0ST_SETTINGS=${GH0ST_SETTINGS:-gh0st-settings} \
+    "$GH0ST" session --test >"$work/out" &
 pid=$!
 i=0
 until dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
@@ -156,6 +157,57 @@ print(code, results.get("id"))
 PY
 out=$(timeout 10 python3 "$work/account.py") || fail "Account: $out"
 echo "$out" | grep -q "^0 [^N]" || fail "Account answer: $out"
+
+echo "portal: Trash and Wallpaper take a file by fd"
+cat >"$work/fd.py" <<'PY'
+import os, struct, sys, zlib
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+def call(iface, method, sig, args, path):
+    fds = Gio.UnixFDList.new()
+    fd = os.open(path, os.O_RDONLY)
+    fds.append(fd)
+    os.close(fd)
+    r, _ = bus.call_with_unix_fd_list_sync(
+        "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", iface, method,
+        GLib.Variant(sig, args), None, Gio.DBusCallFlags.NONE, -1, fds, None)
+    return r.unpack()
+if sys.argv[1] == "trash":
+    print(call("org.freedesktop.portal.Trash", "TrashFile", "(h)", (0,), sys.argv[2])[0])
+    sys.exit()
+# A 400x300 PNG, written here.
+w, h = 400, 300
+raw = b"".join(b"\0" + bytes([40, 120, 200]) * w for _ in range(h))
+chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+       + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+open(sys.argv[2], "wb").write(png)
+me = bus.get_unique_name()[1:].replace(".", "_")
+path = "/org/freedesktop/portal/desktop/request/%s/w1" % me
+got = {}
+loop = GLib.MainLoop()
+def response(conn, sender, obj, iface, sig, params):
+    got["r"] = params.unpack()
+    loop.quit()
+bus.signal_subscribe(None, "org.freedesktop.portal.Request", "Response", path, None,
+                     Gio.DBusSignalFlags.NONE, response)
+r = call("org.freedesktop.portal.Wallpaper", "SetWallpaperFile", "(sha{sv})",
+         ("", 0, {"handle_token": GLib.Variant("s", "w1")}), sys.argv[2])
+assert r[0] == path, r
+GLib.timeout_add(10000, loop.quit)
+loop.run()
+print(got["r"][0])
+PY
+printf 'old\n' >"$work/files/old.txt"
+out=$(timeout 10 python3 "$work/fd.py" trash "$work/files/old.txt") || fail "TrashFile: $out"
+[ "$out" = 1 ] || fail "TrashFile answer: $out"
+[ -e "$work/.local/share/Trash/files/old.txt" ] || fail "not in the Trash"
+grep -q '^Path=.*/files/old.txt$' "$work/.local/share/Trash/info/old.txt.trashinfo" || fail "trashinfo"
+out=$(timeout 15 python3 "$work/fd.py" wallpaper "$work/files/pic.png") || fail "SetWallpaperFile: $out"
+[ "$out" = 0 ] || fail "SetWallpaperFile answer: $out"
+[ -s "$work/.config/cardputerzero/wallpaper.png" ] || fail "no wallpaper kept"
+grep -q '"wallpaper": *"picture"' "$work/.config/cardputerzero/config.json" || fail "wallpaper setting"
+ls "$work/.cache/gh0st/" 2>/dev/null | grep -q wallpaper && fail "a fitted picture was left behind"
 
 echo "gh0st open and xdg-open: a file through OpenURI"
 timeout 10 "$GH0ST" open "$work/files/a note.txt" || fail "gh0st open"

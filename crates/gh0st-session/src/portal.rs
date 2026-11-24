@@ -26,6 +26,10 @@ const INHIBIT_VERSION: u32 = 3;
 pub const ACCOUNT: &str = "org.freedesktop.portal.Account";
 const ACCOUNT_VERSION: u32 = 1;
 const SESSION: &str = "org.freedesktop.portal.Session";
+pub const TRASH: &str = "org.freedesktop.portal.Trash";
+const TRASH_VERSION: u32 = 1;
+pub const WALLPAPER: &str = "org.freedesktop.portal.Wallpaper";
+const WALLPAPER_VERSION: u32 = 1;
 pub const SESSION_ROOT: &str = "/org/freedesktop/portal/desktop/session";
 /// Inhibit's flags: suspending and the screen going dark.
 const KEEP_AWAKE: u32 = 4 | 8;
@@ -104,6 +108,19 @@ enum Kind {
     Monitor {
         session: String,
     },
+    /// A wallpaper, fitted to the screen at `tmp` before the user says yes.
+    Wallpaper {
+        app: String,
+        pid: i32,
+        tmp: PathBuf,
+    },
+}
+
+/// A wallpaper being fitted: `gh0st-settings --import-wallpaper`. Its
+/// stdout closes when it exits, which wakes the loop.
+struct Job {
+    id: u64,
+    child: std::process::Child,
 }
 
 #[derive(Debug)]
@@ -121,8 +138,15 @@ pub struct Portal {
     reqs: Vec<Req>,
     next: u64,
     pub out: Vec<Out>,
-    /// Where apps the user let read their name are kept; None: nowhere.
+    /// Where the apps the user answered Always are kept; None: nowhere.
     pub remember: Option<PathBuf>,
+    /// The shared config.json: the wallpaper's setting.
+    pub config: PathBuf,
+    /// Where a wallpaper waits for the user's yes.
+    pub scratch: PathBuf,
+    /// `gh0st-settings`, which fits a picture to the screen.
+    pub settings_bin: PathBuf,
+    job: Option<Job>,
 }
 
 /// The user, as the Account portal gives them: login name and real name.
@@ -375,10 +399,20 @@ impl Portal {
         if m.interface.as_deref() == Some(INHIBIT) {
             return self.inhibit_call(m, sender, pid);
         }
+        if m.is(TRASH, "TrashFile") {
+            let ok = match m.body.first() {
+                Some(Value::Fd(i)) => m.fds.get(*i as usize).is_some_and(trash_fd),
+                _ => false,
+            };
+            return Message::reply(m).arg(Value::U32(ok as u32));
+        }
+        if m.interface.as_deref() == Some(WALLPAPER) {
+            return self.wallpaper_call(m, sender, pid, app);
+        }
         if m.is(ACCOUNT, "GetUserInformation") {
             return match self.new_request(m, sender, Kind::Account { app: app.into() }) {
                 Some((id, rp)) => {
-                    if self.remembered(app) {
+                    if self.remembered("account", app) {
                         self.account_answer(id, "once");
                     } else {
                         self.shell(&["account", &id.to_string(), &pid.to_string(), app]);
@@ -512,11 +546,174 @@ impl Portal {
         }
     }
 
-    fn remembered(&self, app: &str) -> bool {
+    /// Whether the user answered Always to `what` (account, wallpaper)
+    /// from `app`. One `what<TAB>app` a line.
+    fn remembered(&self, what: &str, app: &str) -> bool {
+        let line = format!("{what}\t{app}");
         self.remember
             .as_ref()
             .and_then(|p| std::fs::read_to_string(p).ok())
-            .is_some_and(|t| t.lines().any(|l| l == app))
+            .is_some_and(|t| t.lines().any(|l| l == line))
+    }
+
+    fn keep(&self, what: &str, app: &str) {
+        if self.remembered(what, app) || app.contains(['\n', '\t']) {
+            return;
+        }
+        if let Some(p) = &self.remember {
+            let mut t = std::fs::read_to_string(p).unwrap_or_default();
+            t.push_str(&format!("{what}\t{app}\n"));
+            if let Some(d) = p.parent() {
+                let _ = std::fs::create_dir_all(d);
+            }
+            let _ = gh0st_core::config::write_atomic(p, t.as_bytes());
+        }
+    }
+
+    fn wallpaper_call(&mut self, m: &Message, sender: &str, pid: i32, app: &str) -> Message {
+        let file = match m.member.as_deref() {
+            Some("SetWallpaperURI") => m
+                .body
+                .get(1)
+                .and_then(Value::as_str)
+                .and_then(gh0st_core::uri::to_path)
+                .and_then(|p| std::fs::File::open(p).ok()),
+            Some("SetWallpaperFile") => match m.body.get(1) {
+                Some(Value::Fd(i)) => m
+                    .fds
+                    .get(*i as usize)
+                    .and_then(|f| f.try_clone().ok())
+                    .map(std::fs::File::from),
+                _ => None,
+            },
+            _ => return Message::error(m, bus::err::UNKNOWN_METHOD, "no such method"),
+        };
+        let Some(file) = file.filter(|f| f.metadata().is_ok_and(|md| md.is_file())) else {
+            return Message::error(m, bus::err::INVALID_ARGS, "not a local file");
+        };
+        if self.job.is_some() {
+            return Message::error(m, bus::err::LIMITS, "a wallpaper is being set");
+        }
+        let tmp = self
+            .scratch
+            .join(format!("wallpaper-{}.png", self.next + 1));
+        let kind = Kind::Wallpaper {
+            app: app.into(),
+            pid,
+            tmp: tmp.clone(),
+        };
+        let Some((id, rp)) = self.new_request(m, sender, kind) else {
+            return Message::error(m, bus::err::LIMITS, "too many requests");
+        };
+        let _ = std::fs::create_dir_all(&self.scratch);
+        let child = std::process::Command::new(&self.settings_bin)
+            .arg("--import-wallpaper")
+            .arg("-")
+            .arg(&tmp)
+            .stdin(file)
+            .stdout(std::process::Stdio::piped())
+            .spawn();
+        match child {
+            Ok(child) => self.job = Some(Job { id, child }),
+            Err(e) => {
+                eprintln!("gh0st session: {}: {e}", self.settings_bin.display());
+                self.finish(id, RESPONSE_OTHER);
+            }
+        }
+        Message::reply(m).arg(Value::path(rp))
+    }
+
+    /// The fitting child's pipe, to poll: it closes when the child is done.
+    pub fn job_fd(&self) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+        self.job
+            .as_ref()
+            .and_then(|j| j.child.stdout.as_ref())
+            .map(|o| o.as_raw_fd())
+    }
+
+    /// The fitting child is done: ask the user, or answer.
+    pub fn job_done(&mut self) {
+        let Some(mut j) = self.job.take() else {
+            return;
+        };
+        let ok = j.child.wait().is_ok_and(|s| s.success());
+        let Some(r) = self.reqs.iter().find(|r| r.id == j.id) else {
+            return;
+        };
+        let Kind::Wallpaper { app, pid, tmp } = &r.kind else {
+            return;
+        };
+        if !ok {
+            return self.finish(j.id, RESPONSE_OTHER);
+        }
+        if self.remembered("wallpaper", app) {
+            return self.wallpaper_answer(j.id, "once");
+        }
+        let fields = [
+            "wallpaper".to_string(),
+            j.id.to_string(),
+            pid.to_string(),
+            app.clone(),
+            gh0st_core::link::path_field(tmp),
+        ];
+        self.out.push(Out::Shell(fields.to_vec()));
+    }
+
+    /// The user's answer about a wallpaper: once, always or deny.
+    fn wallpaper_answer(&mut self, id: u64, answer: &str) {
+        let Some(r) = self.reqs.iter().find(|r| r.id == id) else {
+            return;
+        };
+        let Kind::Wallpaper { app, tmp, .. } = &r.kind else {
+            return;
+        };
+        if answer == "deny" {
+            return self.finish(id, RESPONSE_CANCELLED);
+        }
+        if answer == "always" {
+            self.keep("wallpaper", app);
+        }
+        let dir = self.config.parent().unwrap_or(Path::new("."));
+        let dst = gh0st_ui::wallpaper::picture_path(dir);
+        let _ = std::fs::create_dir_all(dir);
+        let kept = std::fs::rename(tmp, &dst).is_ok()
+            && gh0st_core::config::Config::update(&self.config, |c| {
+                c.set_str(gh0st_core::config::key::WALLPAPER, gh0st_ui::wallpaper::OWN)
+            })
+            .is_ok();
+        self.finish(id, if kept { RESPONSE_OK } else { RESPONSE_OTHER });
+    }
+
+    /// Ends request `id` with `code`, and drops what it left behind.
+    fn finish(&mut self, id: u64, code: u32) {
+        let Some(at) = self.reqs.iter().position(|r| r.id == id) else {
+            return;
+        };
+        let r = self.reqs.remove(at);
+        self.forget(&r);
+        self.respond(&r.sender, &r.path, code, Vec::new());
+    }
+
+    /// What a request leaves behind when it ends, answered or not.
+    fn forget(&mut self, r: &Req) {
+        if let Kind::Wallpaper { tmp, .. } = &r.kind {
+            let _ = std::fs::remove_file(tmp);
+            if let Some(mut j) = self.job.take_if(|j| j.id == r.id) {
+                let _ = j.child.kill();
+                let _ = j.child.wait();
+            }
+        }
+    }
+
+    /// A request ended without an answer: Close, or its caller left.
+    fn drop_req(&mut self, r: Req) {
+        self.forget(&r);
+        match r.kind {
+            Kind::Inhibit { pid } => self.awake(pid, false),
+            Kind::Monitor { .. } => {}
+            _ => self.shell(&["cancel", &r.id.to_string()]),
+        }
     }
 
     /// The user's answer about their name: once, always or deny.
@@ -532,16 +729,8 @@ impl Portal {
             self.respond(&r.sender, &r.path, RESPONSE_CANCELLED, Vec::new());
             return;
         }
-        if answer == "always" && !self.remembered(app) {
-            if let Some(p) = &self.remember {
-                let mut t = std::fs::read_to_string(p).unwrap_or_default();
-                t.push_str(app);
-                t.push('\n');
-                if let Some(d) = p.parent() {
-                    let _ = std::fs::create_dir_all(d);
-                }
-                let _ = gh0st_core::config::write_atomic(p, t.as_bytes());
-            }
+        if answer == "always" {
+            self.keep("account", app);
         }
         let (login, name) = user();
         let info = vec![
@@ -568,11 +757,7 @@ impl Portal {
         match self.reqs.iter().position(|r| r.path == path) {
             Some(i) if self.reqs[i].sender == sender => {
                 let r = self.reqs.remove(i);
-                match r.kind {
-                    Kind::Inhibit { pid } => self.awake(pid, false),
-                    Kind::Monitor { .. } => {}
-                    _ => self.shell(&["cancel", &r.id.to_string()]),
-                }
+                self.drop_req(r);
                 Message::reply(m)
             }
             Some(_) => Message::error(m, bus::err::ACCESS_DENIED, "not yours"),
@@ -661,9 +846,12 @@ impl Portal {
         let Some(id) = fields.get(1).and_then(|v| v.parse::<u64>().ok()) else {
             return;
         };
-        if verb == "account" {
+        if verb == "account" || verb == "wallpaper" {
             let answer = fields.get(2).map(String::as_str).unwrap_or("deny");
-            return self.account_answer(id, answer);
+            return match verb {
+                "account" => self.account_answer(id, answer),
+                _ => self.wallpaper_answer(id, answer),
+            };
         }
         let Some(at) = self.reqs.iter().position(|r| r.id == id) else {
             return;
@@ -696,11 +884,7 @@ impl Portal {
             .partition(|r| r.sender == sender);
         self.reqs = rest;
         for r in theirs {
-            match r.kind {
-                Kind::Inhibit { pid } => self.awake(pid, false),
-                Kind::Monitor { .. } => {}
-                _ => self.shell(&["cancel", &r.id.to_string()]),
-            }
+            self.drop_req(r);
         }
     }
 
@@ -750,6 +934,27 @@ impl Portal {
 }
 
 /// The file an fd we were handed names.
+/// Moves the file `fd` names to the Trash, if the name still is that file.
+fn trash_fd(fd: &std::os::fd::OwnedFd) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Some(path) = fd_path(fd) else {
+        return false;
+    };
+    let Ok(held) = fd
+        .try_clone()
+        .map(std::fs::File::from)
+        .and_then(|f| f.metadata())
+    else {
+        return false;
+    };
+    let same = std::fs::symlink_metadata(&path)
+        .is_ok_and(|md| md.dev() == held.dev() && md.ino() == held.ino());
+    let Some(home) = std::env::var_os("HOME") else {
+        return false;
+    };
+    same && gh0st_core::trash::put(Path::new(&home), &path).is_ok()
+}
+
 fn fd_path(fd: &std::os::fd::OwnedFd) -> Option<PathBuf> {
     use std::os::fd::AsRawFd;
     let p = std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).ok()?;
@@ -763,6 +968,8 @@ fn properties(m: &Message) -> Message {
         OPEN_URI => OPEN_URI_VERSION,
         NOTIFICATION => NOTIFICATION_VERSION,
         INHIBIT => INHIBIT_VERSION,
+        TRASH => TRASH_VERSION,
+        WALLPAPER => WALLPAPER_VERSION,
         ACCOUNT => ACCOUNT_VERSION,
         crate::settings::IFACE => crate::settings::VERSION,
         _ => return Message::error(m, bus::err::UNKNOWN_INTERFACE, "no such interface"),
@@ -782,6 +989,8 @@ fn introspect() -> String {
     const NOTIFICATION_XML: &str = r#"<interface name="org.freedesktop.portal.Notification"><method name="AddNotification"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/></method><method name="RemoveNotification"><arg type="s" direction="in"/></method><signal name="ActionInvoked"><arg type="s"/><arg type="s"/><arg type="av"/></signal><property name="version" type="u" access="read"/></interface>"#;
     const INHIBIT_XML: &str = r#"<interface name="org.freedesktop.portal.Inhibit"><method name="Inhibit"><arg type="s" direction="in"/><arg type="u" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="CreateMonitor"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="QueryEndResponse"><arg type="o" direction="in"/></method><signal name="StateChanged"><arg type="o"/><arg type="a{sv}"/></signal><property name="version" type="u" access="read"/></interface>"#;
     const ACCOUNT_XML: &str = r#"<interface name="org.freedesktop.portal.Account"><method name="GetUserInformation"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
+    const TRASH_XML: &str = r#"<interface name="org.freedesktop.portal.Trash"><method name="TrashFile"><arg type="h" direction="in"/><arg type="u" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
+    const WALLPAPER_XML: &str = r#"<interface name="org.freedesktop.portal.Wallpaper"><method name="SetWallpaperURI"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SetWallpaperFile"><arg type="s" direction="in"/><arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     bus::introspect(
         &[
             CHOOSER_XML,
@@ -789,6 +998,8 @@ fn introspect() -> String {
             NOTIFICATION_XML,
             INHIBIT_XML,
             ACCOUNT_XML,
+            TRASH_XML,
+            WALLPAPER_XML,
             crate::settings::XML,
             bus::PROPERTIES_XML,
         ],
@@ -1017,6 +1228,77 @@ mod tests {
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
         assert!(shell_lines(&mut p).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_wallpaper_is_fitted_then_kept_only_after_a_yes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("gh0st-wall-portal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Stands in for gh0st-settings: the fitted picture is the input.
+        let fit = dir.join("fit");
+        std::fs::write(&fit, "#!/bin/sh\ncat > \"$3\"\n").unwrap();
+        std::fs::set_permissions(&fit, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(dir.join("pic.png"), b"picture").unwrap();
+        let mut p = Portal {
+            remember: Some(dir.join("always")),
+            config: dir.join("conf/config.json"),
+            scratch: dir.join("cache"),
+            settings_bin: fit,
+            ..Portal::default()
+        };
+        let set = || {
+            let mut m = call(
+                WALLPAPER,
+                "SetWallpaperFile",
+                vec![Value::str(""), Value::Fd(0), Value::props::<&str>([])],
+            );
+            m.fds = vec![std::fs::File::open(dir.join("pic.png")).unwrap().into()];
+            m
+        };
+        assert!(p.call(&set(), ME, Some(300), "Media").error_name.is_none());
+        assert!(
+            p.call(&set(), ME, Some(300), "Media").error_name.is_some(),
+            "one at a time"
+        );
+        p.job_done();
+        let asked = shell_lines(&mut p);
+        assert_eq!(asked[0][..4], ["wallpaper", "1", "300", "Media"]);
+        let tmp = gh0st_core::link::path_of(&asked[0][4]);
+        assert_eq!(std::fs::read(&tmp).unwrap(), b"picture");
+        p.shell_said(&["wallpaper".into(), "1".into(), "deny".into()]);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
+        assert!(!tmp.exists());
+
+        p.call(&set(), ME, Some(300), "Media");
+        p.job_done();
+        p.out.clear();
+        p.shell_said(&["wallpaper".into(), "2".into(), "always".into()]);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
+        assert_eq!(
+            std::fs::read(dir.join("conf/wallpaper.png")).unwrap(),
+            b"picture"
+        );
+        let conf = gh0st_core::config::Config::load(&dir.join("conf/config.json"));
+        assert_eq!(conf.wallpaper(), gh0st_ui::wallpaper::OWN);
+        // Always: the next one is kept without a question.
+        p.call(&set(), ME, Some(300), "Media");
+        p.job_done();
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
+        assert!(shell_lines(&mut p).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn trash_takes_the_file_its_fd_names() {
+        let mut m = call(TRASH, "TrashFile", vec![Value::Fd(0)]);
+        m.fds = vec![std::fs::File::open("/").unwrap().into()];
+        // No name to move: refused, answered 0.
+        assert_eq!(
+            Portal::default().call(&m, ME, Some(1), "A").body[0].as_u32(),
+            Some(0)
+        );
     }
 
     #[test]

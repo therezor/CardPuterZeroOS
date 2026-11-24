@@ -17,6 +17,8 @@ which the device has none of.
 | `Settings` | 2 | The look: light or dark, the accent, reduced motion |
 | `Inhibit` | 3 | Keeps the screen on; `CreateMonitor` reports the session |
 | `Account` | 1 | The user's name, after the user's yes |
+| `Trash` | 1 | `TrashFile` moves a file to the Trash |
+| `Wallpaper` | 1 | Sets the wallpaper, after the user's yes over the picture itself |
 
 ## Requests
 
@@ -108,15 +110,36 @@ A change to config.json sends `SettingChanged` for each key that moved.
 (the full name in passwd, else the login) and an empty `image`. The shell
 asks first: "<App> wants to see your name", Once on 5 or Always on 7. Esc
 denies (`1`). Always is kept in
-`~/.local/state/gh0st/portal-account`, one app per line.
+`~/.local/state/gh0st/portal-always`.
+
+## Trash
+
+`TrashFile(h fd)` moves the file the fd names to
+`~/.local/share/Trash`, with the `.trashinfo` Files and other file managers
+read to put it back. The name must still be the file the fd holds. It
+answers `1` done, `0` not: a folder on another drive has no Trash here.
+
+## Wallpaper
+
+- `SetWallpaperFile(s parent, h fd, a{sv})` and `SetWallpaperURI` with a
+  `file://` URI. Other schemes are refused: there is no download.
+- `gh0st-settings --import-wallpaper - TMP` fits the picture to the screen
+  in a child, reading the fd as its stdin. A PNG is read directly; any
+  other picture goes through ffmpeg first.
+- The shell then asks "Use as wallpaper?" over the fitted picture, Once on
+  5 or Always on 7, Esc to deny. A yes keeps it as Settings' own picture.
+- `show-preview` and `set-on` are taken and ignored: the question always
+  shows the picture, and home and the lock share one wallpaper.
+- Always is kept with Account's, in `~/.local/state/gh0st/portal-always`,
+  one `what<TAB>app` a line.
 
 ## Who may ask
 
 The shell decides, as it does for the keyring's questions:
 
 - Only the app in front, or a program it started, gets a chooser, opens
-  an app or is asked about the user's name. Anything running behind gets
-  `2`, or `1` for Account.
+  an app, or asks the user about their name or the wallpaper. Anything
+  running behind gets `2`, or `1` for those questions.
 - Not while the device is locked or dark: the request waits.
 - The caller is parked as Fn+K parks it, and comes back when the chooser or
   the opened app closes.

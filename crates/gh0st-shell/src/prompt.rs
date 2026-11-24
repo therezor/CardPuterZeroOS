@@ -27,8 +27,9 @@ pub enum Origin {
     Stale,
     /// The lock password is off, so nothing opened the keyring: ask once.
     Open,
-    /// A portal request of `gh0st session`, by its id.
-    Portal(u64),
+    /// A portal request of `gh0st session`, by its id and what it asks:
+    /// `account` or `wallpaper`, the verb of the answer.
+    Portal(u64, &'static str),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,6 +101,17 @@ impl Prompts {
     /// The daemon withdrew prompt `id`.
     pub fn cancel(&mut self, id: u64) {
         self.remove(&Origin::Daemon(id));
+    }
+
+    /// `gh0st session` withdrew portal request `id`.
+    pub fn cancel_portal(&mut self, id: u64) {
+        let o = self.queue.iter().find_map(|q| match q.origin {
+            Origin::Portal(i, v) if i == id => Some(Origin::Portal(i, v)),
+            _ => None,
+        });
+        if let Some(o) = o {
+            self.remove(&o);
+        }
     }
 
     pub fn remove(&mut self, origin: &Origin) {
@@ -177,7 +189,7 @@ impl Prompts {
                 if k.state != State::Press {
                     return Action::None;
                 }
-                if !matches!(a.origin, Origin::Daemon(_) | Origin::Portal(_)) {
+                if !matches!(a.origin, Origin::Daemon(_) | Origin::Portal(..)) {
                     return Action::None;
                 }
                 // On chips, not Enter: Enter is the key a typing user hits
@@ -251,6 +263,15 @@ pub struct View<'a> {
     pub wrong: bool,
 }
 
+/// The top bar's icon and title over a question from `origin`.
+pub fn bar(origin: &Origin) -> (&'static str, &'static str) {
+    match origin {
+        Origin::Portal(_, "account") => ("user", "Your name"),
+        Origin::Portal(_, "wallpaper") => ("images", "Wallpaper"),
+        _ => ("key-round", "Keyring"),
+    }
+}
+
 impl View<'_> {
     fn title(&self) -> &str {
         match (&self.ask.origin, &self.ask.kind) {
@@ -259,6 +280,7 @@ impl View<'_> {
                 "Show a secret"
             }
             (_, Kind::Password { .. }) => "Unlock the keyring",
+            (Origin::Portal(_, "wallpaper"), _) => "Use as wallpaper?",
             (_, Kind::Approve { .. }) => "Allow access?",
         }
     }
@@ -322,6 +344,11 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
             None,
         ),
         (_, Kind::Password { reason, .. }) => (wrap(t.f.small, reason, inner, 2), true, None),
+        (Origin::Portal(_, "wallpaper"), Kind::Approve { app, .. }) => (
+            wrap(t.f.body, &format!("{app} asks."), inner, 1),
+            false,
+            None,
+        ),
         (_, Kind::Approve { app, what }) => (
             wrap(t.f.body, &format!("{app} wants to {what}."), inner, 3),
             false,
@@ -350,7 +377,12 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
     let h = widgets::card_h(t, body_h);
     let bottom_bar = t.m.hint_h;
     let room = Rect::new(area.x, area.y, area.w, t.m.height - bottom_bar - area.y);
-    let r = Rect::new(t.m.dialog_margin, room.y + (room.h - h).max(0) / 2, w, h);
+    // The wallpaper asked about is behind the question: keep it in view.
+    let y = match v.ask.origin {
+        Origin::Portal(_, "wallpaper") => room.y + (room.h - h).max(0),
+        _ => room.y + (room.h - h).max(0) / 2,
+    };
+    let r = Rect::new(t.m.dialog_margin, y, w, h);
     let body = widgets::card(c, t, r, v.title(), t.c.accent);
     let mut y = body.y;
     if field {
@@ -515,7 +547,7 @@ mod tests {
             Action::Answer(Origin::Daemon(9), Answer::Always)
         );
         p.push(Ask {
-            origin: Origin::Portal(4),
+            origin: Origin::Portal(4, "account"),
             kind: Kind::Approve {
                 app: "Chat".into(),
                 what: "see your name".into(),
@@ -525,7 +557,7 @@ mod tests {
         p.seen(T);
         assert_eq!(
             p.key(&key(6, Some('5')), T + ARM_MS),
-            Action::Answer(Origin::Portal(4), Answer::Once)
+            Action::Answer(Origin::Portal(4, "account"), Answer::Once)
         );
         assert_eq!(p.key(&key(30, Some('a')), T), Action::None);
     }

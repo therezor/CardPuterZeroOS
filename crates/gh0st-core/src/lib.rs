@@ -35,6 +35,7 @@ pub mod sound;
 pub mod status;
 pub mod store;
 pub mod sysconf;
+pub mod trash;
 pub mod update;
 pub mod uri;
 pub mod usage;
