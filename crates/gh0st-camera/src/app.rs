@@ -35,6 +35,11 @@ const TIMER: u32 = 6;
 const GRID: u32 = 7;
 const QUALITY: u32 = 8;
 const RAW: u32 = 9;
+/// The helper can't write a DNG or record sound yet (docs/camera.md,
+/// Missing). Until it can, the menu doesn't offer them and video shows
+/// as silent.
+const RAW_BUILT: bool = false;
+const SOUND_BUILT: bool = false;
 const VIDEO: u32 = 10;
 const MIC: u32 = 11;
 const FLICKER: u32 = 12;
@@ -224,7 +229,7 @@ impl Camera {
             grid: false,
             quality: 0,
             raw: false,
-            mic: true,
+            mic: SOUND_BUILT,
             flicker60: false,
             light: false,
             frame: Pic::default(),
@@ -274,8 +279,8 @@ impl Camera {
         self.timer = TIMERS.iter().position(|&v| v as i64 == t).unwrap_or(0);
         self.grid = s.get_bool(key::GRID).unwrap_or(false);
         self.quality = (s.get_str(key::QUALITY) == Some("normal")) as usize;
-        self.raw = s.get_bool(key::RAW).unwrap_or(false);
-        self.mic = s.get_bool(key::MIC).unwrap_or(true);
+        self.raw = RAW_BUILT && s.get_bool(key::RAW).unwrap_or(false);
+        self.mic = SOUND_BUILT && s.get_bool(key::MIC).unwrap_or(true);
         self.flicker60 = s.get_int(key::FLICKER) == Some(60);
     }
 
@@ -722,8 +727,12 @@ impl Camera {
             key::QUALITY,
             if self.quality == 1 { "normal" } else { "fine" },
         );
-        s.set_bool(key::RAW, self.raw);
-        s.set_bool(key::MIC, self.mic);
+        if RAW_BUILT {
+            s.set_bool(key::RAW, self.raw);
+        }
+        if SOUND_BUILT {
+            s.set_bool(key::MIC, self.mic);
+        }
         s.set_int(key::FLICKER, if self.flicker60 { 60 } else { 50 });
     }
 }
@@ -1490,14 +1499,18 @@ impl Page for Camera {
             "Quality",
             QUALITIES[self.quality].1,
         ));
-        c.add(Command::toggle(RAW, "Keep RAW (DNG)", self.raw));
+        if RAW_BUILT {
+            c.add(Command::toggle(RAW, "Keep RAW (DNG)", self.raw));
+        }
         c.group("Video");
         let size = match self.size {
             VideoSize::Sharp1080 => "1080p sharp",
             VideoSize::Wide720 => "720p wide",
         };
         c.add(Command::choice(VIDEO, "Size", size).enabled(!rec));
-        c.add(Command::toggle(MIC, "Sound", self.mic).enabled(!rec));
+        if SOUND_BUILT {
+            c.add(Command::toggle(MIC, "Sound", self.mic).enabled(!rec));
+        }
         c.group("Camera");
         let hz = if self.flicker60 { "60 Hz" } else { "50 Hz" };
         c.add(Command::choice(FLICKER, "Mains", hz));
@@ -1642,5 +1655,21 @@ impl Page for Camera {
             View::Gallery => self.draw_gallery(ui),
             View::Full => self.draw_full(ui.canvas(), &t),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_menu_offers_only_what_the_helper_does() {
+        let cam = Camera::with(Source::Fake { camera: true }, std::env::temp_dir());
+        let mut c = Commands::new();
+        cam.commands(&mut c);
+        let ids: Vec<u32> = c.iter().map(Command::id).collect();
+        assert_eq!(ids.contains(&RAW), RAW_BUILT);
+        assert_eq!(ids.contains(&MIC), SOUND_BUILT);
+        assert_eq!(cam.mic, SOUND_BUILT, "video without sound shows as silent");
     }
 }

@@ -26,7 +26,7 @@ Read from M5's page and the stock app's EXIF strings, then measured with
 What that means for the best result:
 
 - **Photos.** The full 3280x2464 mode, high-quality denoise (`cdn_hq`),
-  libjpeg-turbo at quality 95. Keep RAW adds a DNG beside the JPEG. Zoom
+  libjpeg-turbo at quality 95. Zoom
   crops the sensor, so 2x is 2 MP of real detail.
 - **Video.** Two sizes, each the best the sensor gives at that size:
   - *1080p sharp*: the native 1920x1080 crop, pixel for pixel. It sees
@@ -167,8 +167,9 @@ picture keeps the whole height.
 | 8 | Menu | Menu |
 | Esc | Cancel the timer; held, exit | Back to the viewfinder |
 
-The menu adds quality, Keep RAW, the video size, sound, and the mains
-frequency (50 or 60 Hz, against flicker).
+The menu adds quality, the video size and the mains frequency (50 or
+60 Hz, against flicker). Keep RAW and Sound join it once the helper does
+them.
 
 - The screen stays on while recording (`awake`), and only then.
 - A pause (Fn+K, the screen going dark, a lock) stops a recording, saves it
@@ -178,8 +179,8 @@ frequency (50 or 60 Hz, against flicker).
 ## Files and settings
 
 - Photos and videos go to `~/Pictures/DCIM/Camera`, stock's folder:
-  `CAM_YYYYmmdd_HHMMSS.jpg`, `VID_YYYYmmdd_HHMMSS.mp4`, and a `.dng` beside
-  a photo with Keep RAW. Two in one second get `_2`.
+  `CAM_YYYYmmdd_HHMMSS.jpg` and `VID_YYYYmmdd_HHMMSS.mp4`. Two in one
+  second get `_2`.
 - Stills are written to a `.part` file and renamed. Video is fragmented MP4
   with a keyframe each second, so a cut battery keeps all but the last one.
 - Nothing goes through `/tmp`: it is a 32 MB tmpfs.
@@ -276,10 +277,11 @@ Builds:
 
 ## Missing
 
-- **Sound.** Video is silent: the helper takes `mic` and ignores it. Sound
-  means the mic to AAC-LC at 48 kHz, muxed by timestamp.
+- **Sound.** Video is silent: the helper takes `mic` and ignores it, so the
+  app hides the Sound row and marks video as muted. Sound means the mic to
+  AAC-LC at 48 kHz, muxed by timestamp.
 - **Unmeasured.** Ten minutes at 1080p30 (CPU, heat, card speed), the frame
   rate on the panel rather than `--sim`, and lens shading with the stock
   tuning.
-- **Not built.** DNG, a level from the BMI270 and EXIF orientation, shutter,
+- **Not built.** DNG (the helper ignores `raw`; the app hides Keep RAW), a level from the BMI270 and EXIF orientation, shutter,
   ISO and white balance by hand, and a tuning file for this lens.
