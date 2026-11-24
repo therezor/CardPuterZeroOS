@@ -1022,6 +1022,20 @@ impl Shell {
         }
     }
 
+    /// What waited for every key to come up.
+    fn run_pending(&mut self, now: u64) {
+        if !self.held.is_empty() {
+            return;
+        }
+        match self.pending.take() {
+            Some(Pending::Pause) => self.pause_front(now),
+            Some(Pending::Resume(id)) => self.resume(&id, now),
+            Some(Pending::Open(id, files)) => self.open_over_front(&id, &files, now),
+            Some(Pending::Leave) => self.leave_front(now),
+            None => {}
+        }
+    }
+
     /// Tells `gh0st session` which app is in front when that changes: only
     /// it may use the clipboard.
     fn tell_front(&mut self) {
@@ -1744,17 +1758,11 @@ impl Shell {
             }
             self.on_timers(now);
             self.sweep(now);
-            if self.held.is_empty() {
-                match self.pending.take() {
-                    Some(Pending::Pause) => self.pause_front(now),
-                    Some(Pending::Resume(id)) => self.resume(&id, now),
-                    Some(Pending::Open(id, files)) => self.open_over_front(&id, &files, now),
-                    Some(Pending::Leave) => self.leave_front(now),
-                    None => {}
-                }
-            }
+            self.run_pending(now);
             self.maybe_prompt(now);
             self.maybe_portal(now);
+            // A portal open sets what is pending: now, not at the next key.
+            self.run_pending(now);
             self.tell_front();
         }
     }
