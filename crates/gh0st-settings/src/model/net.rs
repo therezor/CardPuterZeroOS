@@ -172,17 +172,79 @@ pub fn parse_conn(out: &str) -> super::pages::Conn {
 }
 
 /// MAC policies, as nmcli spells them; empty is NetworkManager's default.
+/// A network's address choices, in the order Left and Right step them.
+/// `custom` is a fixed address the user types, kept as the address itself.
 pub const MACS: &[(&str, &str)] = &[
     ("", "Default"),
     ("permanent", "Device"),
     ("stable", "Stable"),
     ("random", "Random"),
+    (CUSTOM, "Custom"),
 ];
 
-pub fn mac_label(v: &str) -> &'static str {
+pub const CUSTOM: &str = "custom";
+
+/// Where `v` sits in [`MACS`]: a fixed address is Custom.
+pub fn mac_index(v: &str) -> usize {
+    if valid_mac(v).is_some() {
+        return MACS.len() - 1;
+    }
+    MACS.iter().position(|(k, _)| *k == v).unwrap_or(0)
+}
+
+pub fn mac_label(v: &str) -> String {
+    if let Some(m) = valid_mac(v) {
+        return m;
+    }
     MACS.iter()
         .find(|(k, _)| *k == v)
         .map_or("Default", |(_, l)| l)
+        .to_string()
+}
+
+/// A typed address, as `AA:BB:CC:DD:EE:FF`: six hex pairs split by `:` or
+/// `-`. Not a group address and not all zeros, which no card may use.
+pub fn valid_mac(s: &str) -> Option<String> {
+    let parts: Vec<&str> = s.trim().split([':', '-']).collect();
+    if parts.len() != 6 || parts.iter().any(|p| p.len() != 2) {
+        return None;
+    }
+    let bytes: Vec<u8> = parts
+        .iter()
+        .map(|p| u8::from_str_radix(p, 16).ok())
+        .collect::<Option<_>>()?;
+    if bytes[0] & 1 == 1 || bytes.iter().all(|&b| b == 0) {
+        return None;
+    }
+    Some(
+        bytes
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(":"),
+    )
+}
+
+/// A random address to start from: locally administered and unicast, so it
+/// can't clash with any card's own.
+pub fn random_mac() -> String {
+    let mut b = [0u8; 6];
+    let read = std::fs::File::open("/dev/urandom").and_then(|mut f| {
+        use std::io::Read;
+        f.read_exact(&mut b)
+    });
+    if read.is_err() {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        b.copy_from_slice(&t.to_le_bytes()[..6]);
+    }
+    b[0] = (b[0] | 0x02) & !0x01;
+    b.iter()
+        .map(|x| format!("{x:02X}"))
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 /// Checks a typed IPv4 address with optional prefix, or a list of them.
@@ -334,6 +396,34 @@ mod tests {
         assert_eq!(c.address, "192.168.0.50/24");
         assert_eq!(c.dns, "1.1.1.1,9.9.9.9");
         assert_eq!(mac_label(&c.mac), "Stable");
+    }
+
+    #[test]
+    fn typed_addresses() {
+        assert_eq!(
+            valid_mac("02-1a-2b-3c-4d-5e").as_deref(),
+            Some("02:1A:2B:3C:4D:5E")
+        );
+        assert_eq!(
+            valid_mac(" 02:1A:2B:3C:4D:5E ").as_deref(),
+            Some("02:1A:2B:3C:4D:5E")
+        );
+        for bad in [
+            "",
+            "02:1A:2B:3C:4D",
+            "01:00:5E:00:00:01",
+            "00:00:00:00:00:00",
+            "02:1A:2B:3C:4D:ZZ",
+            "021A2B3C4D5E",
+        ] {
+            assert_eq!(valid_mac(bad), None, "{bad}");
+        }
+        let r = random_mac();
+        let first = u8::from_str_radix(&r[..2], 16).unwrap();
+        assert!(valid_mac(&r).is_some() && first & 2 == 2 && first & 1 == 0);
+        assert_eq!(mac_label("02:1a:2b:3c:4d:5e"), "02:1A:2B:3C:4D:5E");
+        assert_eq!(mac_index("02:1a:2b:3c:4d:5e"), MACS.len() - 1);
+        assert_eq!(mac_index("random"), 3);
         assert_eq!(
             parse_conns(
                 "Home:802-11-wireless:wlan0\nlo:loopback:lo\nWired connection 1:802-3-ethernet:\n"

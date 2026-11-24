@@ -76,7 +76,7 @@ fn sample_state() -> State {
             address: String::new(),
             gateway: String::new(),
             dns: "1.1.1.1,9.9.9.9".into(),
-            mac: "stable".into(),
+            mac: "02:1A:2B:3C:4D:5E".into(),
             active: true,
             current: "192.168.1.42/24".into(),
         }),

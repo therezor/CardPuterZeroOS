@@ -900,7 +900,7 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
         Item::new(
             "shield",
             "MAC address",
-            Value::Choice(super::net::mac_label(&c.mac).into()),
+            Value::Choice(super::net::mac_label(&c.mac)),
             Act::Set(Setting::ConnMac),
         ),
         Item::new(

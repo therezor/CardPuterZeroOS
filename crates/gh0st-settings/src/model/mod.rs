@@ -149,6 +149,8 @@ pub enum ConnField {
     Address,
     Gateway,
     Dns,
+    /// A fixed MAC address.
+    Mac,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

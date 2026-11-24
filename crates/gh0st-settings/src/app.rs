@@ -778,8 +778,14 @@ impl Settings {
             }
             Setting::ConnMac => {
                 if let Some(c) = self.open_conn() {
-                    let i = net::MACS.iter().position(|(k, _)| *k == c.mac).unwrap_or(0);
+                    let i = net::mac_index(&c.mac);
                     let (next, _) = net::MACS[cycle(i, d, net::MACS.len())];
+                    // Custom: an address the user types, or the random one
+                    // offered, kept as it is and never changed.
+                    if next == net::CUSTOM {
+                        self.ask_conn_field(&c, ConnField::Mac);
+                        return;
+                    }
                     let prop = if c.wifi {
                         "802-11-wireless.cloned-mac-address"
                     } else {
@@ -1321,6 +1327,21 @@ impl Settings {
                     self.reject(cx, "Not an IPv4 address", ask, &v);
                 }
             }
+            ConnField::Mac => match net::valid_mac(&v) {
+                Some(mac) => {
+                    let prop = if c.wifi {
+                        "802-11-wireless.cloned-mac-address"
+                    } else {
+                        "802-3-ethernet.cloned-mac-address"
+                    };
+                    self.modify(cx, &c, &[(prop, &mac)], true);
+                    self.update_conn(|c| c.mac = mac.clone());
+                }
+                None => {
+                    let ask = Ask::ConnField(name.to_string(), field);
+                    self.reject(cx, "Six pairs, like 02:1A:2B:3C:4D:5E", ask, &v);
+                }
+            },
             _ => {
                 let ask = Ask::ConnField(name.to_string(), field);
                 self.reject(cx, "Not an IPv4 address", ask, &v);
@@ -1687,6 +1708,19 @@ impl Settings {
             ConnField::Address => ("Address", "192.168.1.50/24", &c.address),
             ConnField::Gateway => ("Gateway", "192.168.1.1", &c.gateway),
             ConnField::Dns => ("DNS", "1.1.1.1, 9.9.9.9", &c.dns),
+            ConnField::Mac => {
+                let now = net::valid_mac(&c.mac).unwrap_or_else(net::random_mac);
+                return self.ask(
+                    Dialog::Text {
+                        title: "MAC address".into(),
+                        placeholder: "02:1A:2B:3C:4D:5E",
+                        text: now,
+                        masked: false,
+                        secret: false,
+                    },
+                    Ask::ConnField(c.name.clone(), field),
+                );
+            }
         };
         self.ask(
             Dialog::Text {
