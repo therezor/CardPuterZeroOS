@@ -32,7 +32,7 @@
 //!     gh0st-helper update-channel stable|edge    password
 //!     gh0st-helper apt-clean
 //!     gh0st-helper store-refresh
-//!     gh0st-helper store-install [--mirror auto|github|china] PKG...   password
+//!     gh0st-helper store-install [--mirror auto|github|china] PKG[=VER]...   password
 //!     gh0st-helper store-remove PKG              password
 //!     gh0st-helper store-upgrade [--mirror auto|github|china]          password
 //!     gh0st-helper user-create NAME              setup only, the new password
@@ -247,14 +247,16 @@ pub fn parse(args: &[String]) -> Option<Verb> {
 }
 
 /// Plain digits with no leading zero, up to `max`.
-/// One or more Debian package names, each once.
+/// One or more Debian package names, each once, each maybe with the
+/// version the user saw (`name=version`).
 fn packages(names: &[&str]) -> Option<Vec<String>> {
     let mut out: Vec<String> = Vec::new();
     for n in names {
-        if !store::is_package(n) {
+        if !store::is_wanted(n) {
             return None;
         }
-        if !out.iter().any(|o| o == n) {
+        let name = store::split_seen(n).0;
+        if !out.iter().any(|o| store::split_seen(o).0 == name) {
             out.push(n.to_string());
         }
     }
@@ -930,7 +932,11 @@ fn act(v: Verb) -> Result<(), String> {
 /// only what it lists.
 fn listed(pkgs: &[String]) -> Result<(), String> {
     let c = store::Catalog::load().ok_or("no app list yet")?;
-    match pkgs.iter().find(|p| c.find(p).is_none()) {
+    match pkgs
+        .iter()
+        .map(|p| store::split_seen(p).0)
+        .find(|p| c.find(p).is_none())
+    {
         Some(p) => Err(format!("{p} isn't in the app list")),
         None => Ok(()),
     }
@@ -1065,6 +1071,13 @@ mod tests {
             Some(Verb::StoreInstall(Mirror::Auto, vec!["acidzero".into()]))
         );
         assert_eq!(
+            parse(&args("store-install acidzero=1:0.2.0~rc1+gh0st-1 acidzero")),
+            Some(Verb::StoreInstall(
+                Mirror::Auto,
+                vec!["acidzero=1:0.2.0~rc1+gh0st-1".into()]
+            ))
+        );
+        assert_eq!(
             parse(&args("store-upgrade --mirror github")),
             Some(Verb::StoreUpgrade(Mirror::GitHub))
         );
@@ -1078,6 +1091,9 @@ mod tests {
             "store-install ../x",
             "store-install -y",
             "store-install Acid",
+            "store-install acidzero=",
+            "store-install acidzero=v1",
+            "store-install acidzero=1;reboot",
             "store-remove a b",
             "store-upgrade now",
         ] {

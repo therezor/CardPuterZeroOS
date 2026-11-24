@@ -348,6 +348,32 @@ pub fn is_sha256(s: &str) -> bool {
 
 /// Debian's package name grammar: lower case, digits, `+ - .`, two or more
 /// characters, starting with a letter or digit.
+/// An install request: `package`, or `package=version` for the version the
+/// user saw, which the engine then insists on.
+pub fn split_seen(s: &str) -> (&str, Option<&str>) {
+    match s.split_once('=') {
+        Some((p, v)) => (p, Some(v)),
+        None => (s, None),
+    }
+}
+
+/// A `package` or `package=version` token.
+pub fn is_wanted(s: &str) -> bool {
+    match split_seen(s) {
+        (p, None) => is_package(p),
+        (p, Some(v)) => is_package(p) && is_version(v),
+    }
+}
+
+/// A Debian version's characters, starting with a digit.
+pub fn is_version(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s.as_bytes()[0].is_ascii_digit()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-' | b'~' | b':'))
+}
+
 pub fn is_package(s: &str) -> bool {
     s.len() >= 2
         && s.len() <= 128
@@ -669,7 +695,7 @@ impl Job {
             "upgrade" => Job::Upgrade,
             "install" => {
                 let p: Vec<String> = w.by_ref().map(String::from).collect();
-                if p.is_empty() || !p.iter().all(|p| is_package(p)) {
+                if p.is_empty() || !p.iter().all(|p| is_wanted(p)) {
                     return None;
                 }
                 Job::Install(p)

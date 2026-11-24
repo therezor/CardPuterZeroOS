@@ -79,7 +79,10 @@ fn run_job(req: Request) -> i32 {
     }
     .into();
     st.packages = match &req.job {
-        Job::Install(p) => p.clone(),
+        Job::Install(p) => p
+            .iter()
+            .map(|p| store::split_seen(p).0.to_string())
+            .collect(),
         Job::Remove(p) => vec![p.clone()],
         _ => Vec::new(),
     };
@@ -358,13 +361,20 @@ fn catalog_for_install(st: &mut State) -> Result<Catalog, Failure> {
 fn install_job(st: &mut State, pkgs: &[String], mirror: Mirror) -> Result<(), Failure> {
     let c = catalog_for_install(st)?;
     let mut apps = Vec::new();
-    for p in pkgs {
+    for want in pkgs {
+        let (p, seen) = store::split_seen(want);
+        let fail = |st: &mut State, why: String| {
+            st.failed = p.to_string();
+            Err((Outcome::Failed, why))
+        };
         match c.find(p) {
-            Some(a) => apps.push(a.clone()),
-            None => {
-                st.failed = p.clone();
-                return Err((Outcome::Failed, format!("{p} isn't in the app list")));
+            // The list moved on since the user looked: what they agreed to
+            // may not be what would install.
+            Some(a) if seen.is_some_and(|v| v != a.version) => {
+                return fail(st, format!("{} changed. Open it again", a.title));
             }
+            Some(a) => apps.push(a.clone()),
+            None => return fail(st, format!("{p} isn't in the app list")),
         }
     }
     install(st, &apps, mirror)

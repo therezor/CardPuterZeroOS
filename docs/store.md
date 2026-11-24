@@ -167,7 +167,7 @@ is held, the run ends as `locked`. The app never runs it itself.
 | Helper verb | Password | Does |
 |---|---|---|
 | `store-refresh` | no | fetches and checks the catalog |
-| `store-install [--mirror auto\|github\|china] PKG...` | yes | installs or updates |
+| `store-install [--mirror auto\|github\|china] PKG[=VER]...` | yes | installs or updates; with VER, only that version |
 | `store-remove PKG` | yes | removes, refusing if apt would remove anything else |
 | `store-upgrade [--mirror ...]` | yes | updates every app with a newer version |
 

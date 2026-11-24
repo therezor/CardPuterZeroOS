@@ -120,6 +120,7 @@ pub struct Store {
     was_busy: bool,
     /// The user asked for this refresh, so its end gets a toast.
     refresh_asked: bool,
+    /// Installs waiting for the engine, as `package=version`.
     queue: VecDeque<String>,
     helper: Helper,
     filter: Filter,
@@ -136,7 +137,8 @@ pub struct Store {
     clean: Option<Clean>,
     /// The screenshot couldn't be fetched or didn't match.
     shot_failed: bool,
-    /// The app the install dialog asks about.
+    /// The app the install dialog asks about, as `package=version`: the
+    /// version the dialog described is the one that installs.
     asking: Option<String>,
     mirror: Mirror,
     phase: u8,
@@ -390,9 +392,10 @@ impl Store {
         let Some(a) = self.app(package).cloned() else {
             return;
         };
-        if self.busy_with(package) || self.queue.contains(&a.package) {
+        if self.busy_with(package) || self.queued(&a.package) {
             return;
         }
+        let want = format!("{}={}", a.package, a.version);
         if self.installed.contains_key(package) && !self.has_update(&a) {
             let name = if a.desktop.is_empty() {
                 &a.package
@@ -404,28 +407,34 @@ impl Store {
         }
         if a.flags.risky() && !self.installed.contains_key(package) {
             let line = words::risks(a.flags);
-            self.asking = Some(a.package.clone());
+            self.asking = Some(want);
             cx.ask(
                 ASK_INSTALL,
                 Dialog::confirm(&format!("Install {}?", a.title), &line).yes("install"),
             );
             return;
         }
-        self.install(cx, &a.package);
+        self.install(cx, &want);
     }
 
-    /// Installs now, or after what the engine is doing.
-    fn install(&mut self, cx: &mut Cx, package: &str) {
+    fn queued(&self, package: &str) -> bool {
+        self.queue.iter().any(|q| store::split_seen(q).0 == package)
+    }
+
+    /// Installs `package=version` now, or after what the engine is doing.
+    /// The engine won't install another version than the one shown.
+    fn install(&mut self, cx: &mut Cx, want: &str) {
+        let package = store::split_seen(want).0;
         if self.engine_busy() || self.helper.busy(INSTALL) || self.helper.busy(REMOVE) {
-            if !self.queue.iter().any(|q| q == package) {
-                self.queue.push_back(package.to_string());
+            if !self.queued(package) {
+                self.queue.push_back(want.to_string());
             }
             return;
         }
         let m = self.mirror.word();
         self.starting_for(Work::Apps(vec![package.to_string()]));
         self.helper
-            .run(cx, INSTALL, &["store-install", "--mirror", m, package]);
+            .run(cx, INSTALL, &["store-install", "--mirror", m, want]);
     }
 
     fn remove(&mut self, cx: &mut Cx, package: &str) {
@@ -703,7 +712,7 @@ impl Store {
                 Tone::Info,
             ));
         }
-        if self.queue.contains(&a.package) {
+        if self.queued(&a.package) {
             return Some(("Queued".into(), Tone::Info));
         }
         if self.has_update(a) {
@@ -1306,7 +1315,7 @@ impl Store {
                 (None, _) => "Wait".to_string(),
             };
             Chip::new("download", &word).busy(true)
-        } else if self.queue.iter().any(|q| q == package) {
+        } else if self.queued(package) {
             Chip::new("timer", "Queued").disabled(true)
         } else if update {
             Chip::new("download", "Update").main()

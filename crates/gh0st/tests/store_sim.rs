@@ -287,6 +287,23 @@ fn a_deb_that_doesnt_match_never_reaches_apt() {
 }
 
 #[test]
+fn an_app_that_changed_since_the_user_looked_is_not_installed() {
+    let sim = Sim::new("seen");
+    sim.publish(now() - 60, "acidzero\tA synth.\n");
+    sim.job("refresh\nmirror auto\n");
+    // The user saw 0.1.0; the list now has 0.2.0.
+    let st = sim.job("install acidzero=0.1.0\nmirror github\n");
+    assert_eq!(st.outcome, Outcome::Failed, "{}", st.detail);
+    assert_eq!(st.failed, "acidzero");
+    assert_eq!(st.packages, ["acidzero"]);
+    assert!(!sim.log().contains("apt-get"), "{}", sim.log());
+    // The version shown passes the check (the sim has no deb to fetch).
+    let st = sim.job("install acidzero=0.2.0\nmirror github\n");
+    assert!(!st.detail.contains("changed"), "{}", st.detail);
+    assert!(sim.log().contains("curl"), "{}", sim.log());
+}
+
+#[test]
 fn an_installs_own_refresh_shows_as_that_install() {
     let sim = Sim::new("stale");
     sim.publish(now() - 60, "acidzero\tA synth.\n");

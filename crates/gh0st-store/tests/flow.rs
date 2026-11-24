@@ -119,8 +119,8 @@ fn install_with_the_password_and_confirm_a_risky_one() {
     let calls = std::fs::read_to_string(&log).unwrap();
     assert_eq!(
         calls,
-        "/usr/libexec/gh0st-helper store-install --mirror auto acidzero []\n\
-         /usr/libexec/gh0st-helper store-install --mirror auto acidzero [secret]\n"
+        "/usr/libexec/gh0st-helper store-install --mirror auto acidzero=1.0 []\n\
+         /usr/libexec/gh0st-helper store-install --mirror auto acidzero=1.0 [secret]\n"
     );
 
     // The engine ran: it wrote a state that ended. Back to the list, then
@@ -147,7 +147,7 @@ fn install_with_the_password_and_confirm_a_risky_one() {
     d.jobs(5000);
     let calls = std::fs::read_to_string(&log).unwrap();
     assert!(
-        calls.contains("store-install --mirror auto rootsetup"),
+        calls.contains("store-install --mirror auto rootsetup=1.0"),
         "{calls}"
     );
     assert!(d.lint().is_empty(), "{:?}", d.lint());
