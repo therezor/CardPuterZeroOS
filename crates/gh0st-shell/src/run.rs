@@ -388,6 +388,15 @@ fn wall_cache() -> Option<PathBuf> {
 impl Shell {
     fn start(t0: u64, sim: Option<PathBuf>) -> Result<Shell, String> {
         child::become_subreaper();
+        // The lock screen and the keyring's prompts read passwords here.
+        // With no Yama on the device, any program of ours could trace a
+        // dumpable shell and read them; a non-dumpable one only root can.
+        // Apps it starts are dumpable again: exec resets it.
+        #[cfg(target_os = "linux")]
+        // SAFETY: prctl with plain values.
+        unsafe {
+            libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0)
+        };
         let signals = rt::Signals::install(&[
             libc::SIGCHLD,
             libc::SIGTERM,

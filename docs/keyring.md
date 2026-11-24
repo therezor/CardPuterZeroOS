@@ -122,8 +122,9 @@ prompt's end comes on the bus fd, which the page watches.
 
 ## Hardening
 
-- The daemon is not dumpable and has no core limit. With
-  `kernel.yama.ptrace_scope=1` (gh0st-base), no app reads its memory.
+- The daemon and the shell are not dumpable, so only root can trace them or
+  read their memory. The kernel has no Yama; where one does,
+  `kernel.yama.ptrace_scope=1` (gh0st-base) narrows tracing further.
 - Secrets sit on `mlock`ed pages left out of dumps, zeroed before they go
   back. Message buffers are zeroed as they are read and written.
 - A message past 1 MiB is skipped. A call among those is answered
