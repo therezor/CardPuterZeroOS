@@ -284,10 +284,13 @@ pub fn parse_devices(out: &str) -> Vec<Iface> {
         dns.clear();
     };
     for line in out.lines() {
-        let f = fields(line);
-        let (Some(key), Some(value)) = (f.first(), f.get(1)) else {
+        // `device show` prints one field a line and leaves the colons in a
+        // value as they are (a MAC, an IPv6 address): split at the first.
+        let Some((key, value)) = line.split_once(':') else {
             continue;
         };
+        let value = value.replace("\\:", ":");
+        let value = &value;
         let key = key.split('[').next().unwrap_or(key);
         if key == "GENERAL.DEVICE" {
             finish(&mut cur, &mut dns);
@@ -402,6 +405,14 @@ mod tests {
         assert_eq!(d[1].state, "unavailable");
         assert!(d[1].connection.is_empty() && d[1].gateway.is_empty());
         assert_eq!(d[0].kind, "wifi");
+    }
+
+    #[test]
+    fn colons_in_a_value_stay_as_nmcli_prints_them() {
+        let out = "GENERAL.DEVICE:lan0\nGENERAL.TYPE:ethernet\nGENERAL.HWADDR:C2:2D:AB:49:13:5E\nIP6.ADDRESS[1]:fd56:18a6:a0a3::ed3/128\nIP6.ADDRESS[2]:fe80::df63:e932:b73e:3b8c/64\n";
+        let d = parse_devices(out);
+        assert_eq!(d[0].mac, "c2:2d:ab:49:13:5e");
+        assert_eq!(d[0].ipv6, ["fd56:18a6:a0a3::ed3/128"]);
     }
 
     #[test]
