@@ -270,6 +270,8 @@ pub(crate) enum Request {
     Notify(String),
     KeepAwake(bool),
     Open(String),
+    /// Step back to the app that opened this one, running on behind.
+    Leave,
     /// Ask the portal for a file.
     Pick {
         token: u64,
@@ -590,6 +592,14 @@ impl Cx<'_> {
         let token = self.s.id();
         self.s.requests.push(Request::Pick { token, spec });
         Pick(token)
+    }
+
+    /// Steps back without closing: the app that opened this one comes back
+    /// (or home), and this app runs on behind, as after Fn+K, if it may run
+    /// in the background. A player leaving its page while music plays
+    /// asks this. Without a shell the app closes instead.
+    pub fn leave(&mut self) {
+        self.s.requests.push(Request::Leave);
     }
 
     /// Opens `path` in app `id`, one of [`handlers`](Cx::handlers).

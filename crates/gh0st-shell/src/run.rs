@@ -131,6 +131,9 @@ enum Pending {
     /// The app in front asked for another over the link: pause it, then
     /// bring this one up, opening these files.
     Open(String, Vec<PathBuf>),
+    /// The app in front steps back: the app that opened it comes back, or
+    /// home, and it runs on behind if it may.
+    Leave,
 }
 
 /// A portal request the shell acts on, once every key is up.
@@ -1541,6 +1544,7 @@ impl Shell {
                     Some(Pending::Pause) => self.pause_front(now),
                     Some(Pending::Resume(id)) => self.resume(&id, now),
                     Some(Pending::Open(id, files)) => self.open_over_front(&id, &files, now),
+                    Some(Pending::Leave) => self.leave_front(now),
                     None => {}
                 }
             }
@@ -2196,6 +2200,7 @@ impl Shell {
         let mut open = None;
         let mut sounds = Vec::new();
         let mut open_file: Option<(Option<String>, PathBuf)> = None;
+        let mut leave = false;
         if let Some(t) = self.tasks.iter_mut().find(|t| t.pgid == pgid) {
             let front = t.state == tasks::State::Front;
             while let Some(m) = t.link.as_ref().and_then(|l| l.recv()) {
@@ -2213,6 +2218,7 @@ impl Shell {
                     Some("open-file") if front => {
                         open_file = m.get(1).map(|p| (None, link::path_of(p)));
                     }
+                    Some("leave") if front => leave = true,
                     Some("open-with") if front => {
                         if let (Some(app), Some(p)) = (m.get(1), m.get(2)) {
                             open_file = Some((Some(app.clone()), link::path_of(p)));
@@ -2249,6 +2255,9 @@ impl Shell {
         }
         if let Some((app, path)) = open_file {
             self.open_file(app.as_deref(), path);
+        }
+        if leave && self.pending.is_none() {
+            self.pending = Some(Pending::Leave);
         }
         // What an app says stays private while the device is locked.
         if self.locked() {
@@ -3202,6 +3211,34 @@ impl Shell {
         });
         self.esc = EscHold::default();
         self.toast = None;
+    }
+
+    /// The app in front asked to step back (`leave`): it is parked as Fn+K
+    /// parks it, running on behind if it may, and the app that opened it
+    /// comes back, or home.
+    fn leave_front(&mut self, now: u64) {
+        let Some(id) = self.tasks.front().map(|t| t.id.clone()) else {
+            return;
+        };
+        let opener = self
+            .return_to
+            .iter()
+            .rposition(|(opened, _)| *opened == id)
+            .map(|i| self.return_to.remove(i).1);
+        match self.park_front(now) {
+            Ok(_) => {
+                self.take_screen();
+                match opener.filter(|o| self.tasks.get(o).is_some_and(|t| t.resumable())) {
+                    Some(o) => self.resume(&o, now),
+                    None => {
+                        self.screen = Screen::Home;
+                        self.dirty = true;
+                    }
+                }
+            }
+            Err(Some(name)) => self.toast(format!("{name} can't be paused")),
+            Err(None) => {}
+        }
     }
 
     /// Fn+K over an app: pause it, keep its frame, open the switcher.

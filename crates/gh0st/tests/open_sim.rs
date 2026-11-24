@@ -277,3 +277,40 @@ fn a_running_app_gets_the_file_and_an_unknown_app_says_so() {
     );
     assert_eq!(shell.matches("started Alpha").count(), 1, "{shell}");
 }
+
+#[test]
+fn leave_brings_back_the_opener_and_keeps_the_app() {
+    let s = Sim::new("leave");
+    let notes = s.file("notes.txt", b"words\n");
+    s.app(
+        "a",
+        "Alpha",
+        "",
+        "",
+        &[
+            "wait 400".into(),
+            open_file(&notes),
+            "on resume".into(),
+            "wait 300".into(),
+            "exit".into(),
+        ],
+    );
+    s.app(
+        "b",
+        "Beta",
+        "%f",
+        "MimeType=text/plain;\nNoDisplay=true\n",
+        &[
+            "wait 400".into(),
+            send(&["leave"]),
+            "wait 2000".into(),
+            "exit".into(),
+        ],
+    );
+    let (log, shell) = s.run("wait 600\nenter\nwait 3500\n");
+    in_order(&log, &["a argv\n", "b argv", "a got resume"]);
+    // Beta is parked, not closed, when Alpha comes back.
+    in_order(&shell, &["started Beta", "paused Beta", "resumed Alpha"]);
+    let closed = shell.find("closed Beta").unwrap_or(usize::MAX);
+    assert!(shell.find("resumed Alpha") < Some(closed), "{shell}");
+}

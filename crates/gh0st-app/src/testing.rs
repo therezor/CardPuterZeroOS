@@ -191,6 +191,12 @@ impl Driver {
         self
     }
 
+    /// A page asked to step back to the app that opened this one
+    /// ([`Cx::leave`](crate::Cx::leave)).
+    pub fn left(&self) -> bool {
+        self.rt.left
+    }
+
     /// What the pages asked the file chooser, oldest first, not yet
     /// answered.
     pub fn picks(&self) -> Vec<&crate::portal::PickSpec> {

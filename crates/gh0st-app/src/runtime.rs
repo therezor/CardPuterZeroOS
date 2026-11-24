@@ -201,6 +201,8 @@ pub(crate) struct Runtime {
     /// Every file a page asked to open, and in which app: what a test
     /// reads, since no shell is there to act on it.
     pub open_log: Vec<(Option<String>, PathBuf)>,
+    /// A page asked to step back with no shell to do it: the app closed.
+    pub(crate) left: bool,
     /// The file portal, once a page asked for a file.
     portal: Option<crate::portal::Client>,
     /// Tests answer picks themselves: no bus is asked.
@@ -254,6 +256,7 @@ impl Runtime {
             shell_v: 0,
             files: Vec::new(),
             open_log: Vec::new(),
+            left: false,
             portal: None,
             portal_offline: false,
             pick_log: Vec::new(),
@@ -463,6 +466,15 @@ impl Runtime {
                         l.send(&["open", &name]);
                     }
                 }
+                Request::Leave => match &self.link {
+                    Some(l) if self.shell_v >= 2 => {
+                        l.send(&["leave"]);
+                    }
+                    _ => {
+                        self.left = true;
+                        self.quit_all();
+                    }
+                },
                 Request::Pick { token, spec } => {
                     if self.portal_offline {
                         self.pick_log.push((token, owner, spec));
