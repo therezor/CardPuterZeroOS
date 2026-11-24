@@ -61,6 +61,10 @@ mod cmd {
     pub const PAGE: u32 = 23;
     pub const COMMENT: u32 = 24;
     pub const WRAP: u32 = 25;
+    pub const NEXT_FILE: u32 = 26;
+    pub const CLOSE_FILE: u32 = 27;
+    /// FILE + n switches to open file n.
+    pub const FILE: u32 = 40;
 }
 
 /// Dialog ids.
@@ -85,6 +89,8 @@ const DISK_WAIT_MS: u64 = 15;
 const SAVE_AT_ONCE: u64 = 8 << 20;
 /// How far a bracket's pair is looked for.
 const PAIR_REACH: u64 = 64 << 10;
+/// Files open at once.
+pub const FILES: usize = 4;
 /// Lines longer than this never wrap: they scroll sideways.
 const WRAP_MAX: u64 = 64 << 10;
 /// One step of indent when the file's own can't be told.
@@ -140,6 +146,36 @@ struct Doc {
     line: Vec<u8>,
 }
 
+impl Doc {
+    fn empty() -> Doc {
+        Doc {
+            buf: Buffer::from_bytes(b""),
+            cache: Cache::new(Lang::Plain),
+            spans: Vec::new(),
+            line: Vec::new(),
+        }
+    }
+}
+
+/// An open file while another is on screen: everything that belongs to it
+/// and not to the editor.
+struct Parked {
+    path: Option<PathBuf>,
+    title: String,
+    doc: Doc,
+    error: Option<String>,
+    binary: bool,
+    read_only: bool,
+    cursor: u64,
+    anchor: Option<u64>,
+    want: Option<u32>,
+    top: u64,
+    top_seg: u32,
+    pan: u32,
+    saved: u64,
+    hit: Option<(u64, u64)>,
+}
+
 pub struct Editor {
     opts: Options,
     path: Option<PathBuf>,
@@ -184,6 +220,10 @@ pub struct Editor {
     /// The bracket at the cursor and its pair.
     pair: Option<(u64, u64)>,
     recent: Recent,
+    /// The open files, by slot: the one on screen is None here.
+    files: Vec<Option<Parked>>,
+    /// The slot on screen.
+    at: usize,
 }
 
 impl Editor {
@@ -250,7 +290,173 @@ impl Editor {
             warm: None,
             pair: None,
             recent: Recent::default(),
+            files: vec![None],
+            at: 0,
         }
+    }
+
+    /// Takes out the file on screen. Its timers, watch and reader must have
+    /// stopped: see `park`.
+    fn take_file(&mut self) -> Parked {
+        Parked {
+            path: self.path.take(),
+            title: std::mem::take(&mut self.title),
+            doc: std::mem::replace(self.doc.get_mut(), Doc::empty()),
+            error: self.error.take(),
+            binary: self.binary,
+            read_only: self.read_only,
+            cursor: self.cursor,
+            anchor: self.anchor.take(),
+            want: self.want.take(),
+            top: self.top,
+            top_seg: self.top_seg,
+            pan: self.pan,
+            saved: self.saved,
+            hit: self.hit.take(),
+        }
+    }
+
+    fn put_file(&mut self, p: Parked) {
+        self.path = p.path;
+        self.title = p.title;
+        *self.doc.get_mut() = p.doc;
+        self.error = p.error;
+        self.binary = p.binary;
+        self.read_only = p.read_only;
+        self.cursor = p.cursor;
+        self.anchor = p.anchor;
+        self.want = p.want;
+        self.top = p.top;
+        self.top_seg = p.top_seg;
+        self.pan = p.pan;
+        self.saved = p.saved;
+        self.hit = p.hit;
+        self.pair = None;
+    }
+
+    /// Stops what runs for the file on screen and takes it out.
+    fn park(&mut self, cx: &mut Cx) -> Parked {
+        self.stop_warm();
+        if let Some(t) = self.index.take() {
+            cx.cancel(t);
+        }
+        if let Some((_, t)) = self.finder.take() {
+            cx.cancel(t);
+            cx.idle();
+        }
+        if let Some((_, w)) = self.watch.take() {
+            cx.unwatch(w);
+        }
+        self.take_file()
+    }
+
+    /// Puts `p` on screen and starts what runs for it: its watch, and the
+    /// index while it has more to read.
+    fn unpark(&mut self, p: Parked, cx: &mut Cx) {
+        self.put_file(p);
+        if !self.doc.borrow().buf.lines().exact {
+            let from = self.doc.borrow().buf.indexed();
+            self.warm_from(from, cx);
+            self.index = Some(cx.after(1));
+        }
+        if let Some(p) = &self.path {
+            let w = FileWatch::new(p);
+            if let Some(fd) = w.fd() {
+                let id = cx.watch(fd);
+                self.watch = Some((w, id));
+            }
+        }
+        if let Some(e) = self.error.clone() {
+            cx.toast_tone(Tone::Critical, &e);
+        }
+    }
+
+    /// Shows open file `to`. Not while one saves.
+    fn switch(&mut self, to: usize, cx: &mut Cx) {
+        if to == self.at || to >= self.files.len() || self.saving.is_some() {
+            return;
+        }
+        let Some(next) = self.files[to].take() else {
+            return;
+        };
+        let cur = self.park(cx);
+        self.files[self.at] = Some(cur);
+        self.at = to;
+        self.unpark(next, cx);
+        self.leave_query();
+    }
+
+    /// The slot of the open file at `path`, if it is open.
+    fn slot_of(&self, path: &Path) -> Option<usize> {
+        if self.path.as_deref() == Some(path) {
+            return Some(self.at);
+        }
+        self.files
+            .iter()
+            .position(|f| f.as_ref().is_some_and(|f| f.path.as_deref() == Some(path)))
+    }
+
+    /// Nothing to lose here: a new file never typed in.
+    fn blank(&self) -> bool {
+        self.path.is_none() && self.doc.borrow().buf.is_empty() && !self.dirty()
+    }
+
+    /// Opens `path`: shows it if it is open already, else in a new slot, or
+    /// in place of a blank new file. False when four files are open.
+    fn open_file(&mut self, path: &Path, cx: &mut Cx) -> bool {
+        if self.saving.is_some() {
+            cx.toast("Saving: open it when that is done");
+            return false;
+        }
+        if let Some(i) = self.slot_of(path) {
+            self.switch(i, cx);
+            return true;
+        }
+        let fresh = Editor::open(Some(path), self.opts.clone()).take_file();
+        if self.blank() {
+            let _ = self.park(cx);
+        } else if self.files.len() < FILES {
+            let cur = self.park(cx);
+            self.files[self.at] = Some(cur);
+            self.files.push(None);
+            self.at = self.files.len() - 1;
+        } else {
+            cx.toast("Four files are open: close one first");
+            return false;
+        }
+        self.unpark(fresh, cx);
+        if path.exists() {
+            self.recent.add(path);
+        }
+        self.leave_query();
+        true
+    }
+
+    /// Closes the file on screen, changes and all, and shows the one
+    /// before it. The last one closes the app.
+    fn close_file(&mut self, cx: &mut Cx) {
+        if self.files.len() <= 1 {
+            cx.quit();
+            return;
+        }
+        let _ = self.park(cx);
+        self.files.remove(self.at);
+        self.at = self.at.saturating_sub(1).min(self.files.len() - 1);
+        if let Some(next) = self.files[self.at].take() {
+            self.unpark(next, cx);
+        }
+        self.leave_query();
+    }
+
+    /// The name of open file `i`.
+    fn file_name(&self, i: usize) -> &str {
+        if i == self.at {
+            return &self.title;
+        }
+        self.files
+            .get(i)
+            .and_then(|f| f.as_ref())
+            .map_or("", |f| f.title.as_str())
     }
 
     /// The bracket at or just before the cursor and the one it pairs with,
@@ -1056,6 +1262,9 @@ impl Editor {
             let done = self.doc.borrow().buf.indexed();
             s.push_str(&format!(" {}%", done * 100 / len));
         }
+        if self.files.len() > 1 {
+            s = format!("{}/{} {s}", self.at + 1, self.files.len());
+        }
         self.context = s;
     }
 
@@ -1294,7 +1503,28 @@ impl Editor {
                 self.leave_query();
             }
             cmd::UP_DOWN | cmd::LEFT_RIGHT | cmd::PAGE => self.view_move(id, step),
-            cmd::DISCARD => cx.quit(),
+            cmd::DISCARD => self.close_file(cx),
+            cmd::NEXT_FILE => {
+                let n = self.files.len();
+                self.switch(
+                    (self.at + if step == Step::Prev { n - 1 } else { 1 }) % n,
+                    cx,
+                );
+            }
+            cmd::CLOSE_FILE if self.dirty() => cx.ask(
+                ask::QUIT,
+                Dialog::confirm(
+                    &format!("Save {}?", self.title),
+                    "Your changes are not saved.",
+                )
+                .yes("save")
+                .no("keep editing")
+                .also("discard"),
+            ),
+            cmd::CLOSE_FILE => self.close_file(cx),
+            id if (cmd::FILE..cmd::FILE + FILES as u32).contains(&id) => {
+                self.switch((id - cmd::FILE) as usize, cx)
+            }
             cmd::EDIT if edit_ok => self.set_mode(Mode::Edit),
             cmd::COMMENT if edit_ok => self.toggle_comment(),
             _ => {}
@@ -1382,30 +1612,15 @@ impl Page for Editor {
         }
     }
 
-    /// A file another app opened here while this one runs.
+    /// Files another app opened here, or the one the app started with:
+    /// each in a slot of its own, shown if it is open already.
     fn opened(&mut self, paths: &[PathBuf], cx: &mut Cx) {
-        let Some(p) = paths.first() else {
-            return;
-        };
-        if self.path.as_deref() == Some(p.as_path()) {
-            return;
+        for p in paths {
+            if !self.open_file(p, cx) {
+                break;
+            }
         }
-        if self.dirty() || self.saving.is_some() {
-            cx.toast("Save this file first, then open the other again");
-            return;
-        }
-        // Let go of this file: its index, find, watch.
-        if let Some(t) = self.index.take() {
-            cx.cancel(t);
-        }
-        if let Some((_, t)) = self.finder.take() {
-            cx.cancel(t);
-        }
-        if let Some((_, w)) = self.watch.take() {
-            cx.unwatch(w);
-        }
-        *self = Editor::open(Some(p), self.opts.clone());
-        self.start(cx);
+        self.settle(cx);
         cx.redraw();
     }
 
@@ -1502,16 +1717,20 @@ impl Page for Editor {
             Some(Change::Gone) => cx.toast_tone(Tone::Warning, "The file was deleted or moved"),
             Some(Change::Modified) if !self.dirty() => {
                 if let Some(p) = self.path.clone() {
-                    let mut fresh = Editor::open(Some(&p), self.opts.clone());
-                    fresh.model = self.model;
-                    fresh.size = self.size;
-                    fresh.numbers = self.numbers;
-                    fresh.mode = self.mode;
-                    fresh.cursor = self.cursor;
-                    fresh.top = self.top;
-                    fresh.watch = self.watch.take();
-                    *self = fresh;
+                    // The same file read again; the watch stays.
+                    let watch = self.watch.take();
+                    self.stop_warm();
+                    if let Some(t) = self.index.take() {
+                        cx.cancel(t);
+                    }
+                    let mut fresh = Editor::open(Some(&p), self.opts.clone()).take_file();
+                    let len = fresh.doc.buf.len();
+                    fresh.cursor = self.cursor.min(len);
+                    fresh.top = fresh.doc.buf.line_start(self.top.min(len)).unwrap_or(0);
+                    self.put_file(fresh);
+                    self.watch = watch;
                     if !self.doc.borrow().buf.lines().exact {
+                        self.warm_from(0, cx);
                         self.index = Some(cx.after(0));
                     }
                     cx.toast("Reloaded: changed on disk");
@@ -1565,6 +1784,8 @@ impl Page for Editor {
             self.anchor = None;
         } else if self.model == KeyModel::Modal && self.mode == Mode::Edit {
             self.set_mode(Mode::View);
+        } else if !self.dirty() && self.files.len() > 1 {
+            self.close_file(cx);
         } else if self.dirty() {
             cx.ask(
                 ask::QUIT,
@@ -1586,7 +1807,7 @@ impl Page for Editor {
     fn answer(&mut self, id: u32, a: Answer, cx: &mut Cx) {
         match (id, a) {
             // Held 7: close, the changes gone.
-            (ask::QUIT, Answer::Also) => cx.quit(),
+            (ask::QUIT, Answer::Also) => self.close_file(cx),
             (ask::QUIT, Answer::Yes(_)) => {
                 self.save(cx);
                 if self.saving.is_some() {
@@ -1594,7 +1815,7 @@ impl Page for Editor {
                         self.save_step(cx);
                     }
                     if !self.dirty() {
-                        cx.quit();
+                        self.close_file(cx);
                     }
                 }
             }
@@ -1721,7 +1942,26 @@ impl Page for Editor {
         c.add(Command::toggle(cmd::NUMBERS, "Line numbers", self.numbers));
         c.add(Command::toggle(cmd::WRAP, "Wrap long lines", self.wrap));
         c.add(Command::choice(cmd::KEYS, "Keys", self.model.word()));
+        if self.files.len() > 1 {
+            c.group("Open files");
+            for i in 0..self.files.len() {
+                let mut row = Command::action(cmd::FILE + i as u32, self.file_name(i).to_string())
+                    .enabled(i != self.at);
+                if i < 4 {
+                    row = row.keys(["Alt+1", "Alt+2", "Alt+3", "Alt+4"][i]);
+                }
+                c.add(row);
+            }
+            c.add(here(
+                Command::choice(cmd::NEXT_FILE, "Next file", "")
+                    .keys("Ctrl+tab")
+                    .keys_only(),
+            ));
+        }
         c.group("Close");
+        c.add(here(
+            Command::action(cmd::CLOSE_FILE, "Close file").keys("Ctrl+w"),
+        ));
         c.add(
             Command::action(cmd::DISCARD, "Close without saving")
                 .confirm()

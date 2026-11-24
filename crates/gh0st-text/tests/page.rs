@@ -260,3 +260,32 @@ fn the_end_of_a_wrapped_file_comes_into_view() {
     d.wait(100);
     assert!(std::fs::read(&p).unwrap().ends_with(b"last\nZ"));
 }
+
+#[test]
+fn four_files_open_switch_and_close_one_at_a_time() {
+    let a = temp("one.txt", b"one\n");
+    let b = temp("two.txt", b"two\n");
+    let mut d = editing(&a);
+    d.open(&[b.as_path()]);
+    d.keys("type B\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&b).unwrap(), b"Btwo\n");
+    // Back to the first, type there; Alt+2 shows the second again.
+    d.keys("ctrl+tab\ntype A\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&a).unwrap(), b"Aone\n");
+    d.keys("alt+2\ntype C");
+    // Closing a file with changes asks; held 7 drops them and shows the other.
+    d.keys("ctrl+w");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Save two.txt?"));
+    d.keys("down 7").wait(900).keys("up 7");
+    assert!(!d.quit(), "one file is still open");
+    assert_eq!(std::fs::read(&b).unwrap(), b"Btwo\n");
+    d.keys("type Z\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&a).unwrap(), b"AZone\n");
+    // Opening one that is open shows it, no second copy.
+    d.open(&[a.as_path()]);
+    d.keys("ctrl+w");
+    assert!(d.quit(), "the last file closed the app");
+}
