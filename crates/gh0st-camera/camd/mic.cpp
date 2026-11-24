@@ -1,7 +1,9 @@
 #include "mic.h"
 #include "pulse.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -18,6 +20,11 @@ const int RATE = 48000;
 // to it by the server.
 const int CHANNELS = 1;
 const int BITRATE = 96000;
+// The board's microphone comes in quiet (M5's Recorder normalises on
+// playback). A slow gain brings speech up: at most +24 dB, down at once
+// before a peak clips, up 3 dB a second.
+const float GAIN_MAX = 16.0f, GAIN_START = 8.0f, PEAK_TARGET = 0.5f;
+const float GAIN_UP_DB_S = 3.0f;
 
 int64_t nowUs()
 {
@@ -54,21 +61,11 @@ bool Mic::open(const std::string &source, AudioTrack &track, std::string &why)
         why = "the AAC encoder would not open";
         return false;
     }
-    std::string dev = source.empty() ? autoSource(sources()) : source;
-    auto *in = new PaIn;
-    // The one picked may be unplugged now: then the one Auto would take.
-    bool ok = in->open(dev, RATE, CHANNELS, why) ||
-              (!source.empty() && in->open(autoSource(sources()), RATE, CHANNELS, why));
-    if (!ok) {
-        delete in;
-        avcodec_free_context(&c);
-        return false;
-    }
     track.rate = RATE;
     track.channels = CHANNELS;
     track.asc.assign(c->extradata, c->extradata + c->extradata_size);
     enc_ = c;
-    in_ = in;
+    source_ = source;
     quit_ = false;
     failed_ = false;
     thread_ = std::thread([this] { run(); });
@@ -78,7 +75,20 @@ bool Mic::open(const std::string &source, AudioTrack &track, std::string &why)
 void Mic::run()
 {
     auto *c = static_cast<AVCodecContext *>(enc_);
-    auto *in = static_cast<PaIn *>(in_);
+    PaIn in;
+    {
+        std::string why;
+        std::string dev = source_.empty() ? autoSource(sources()) : source_;
+        // The one picked may be unplugged now: then the one Auto would take.
+        bool ok = in.open(dev, RATE, CHANNELS, why) ||
+                  (!source_.empty() && in.open(autoSource(sources()), RATE, CHANNELS, why));
+        if (!ok) {
+            std::lock_guard<std::mutex> l(mu_);
+            why_ = why;
+            failed_ = true;
+            return;
+        }
+    }
     const int n = c->frame_size > 0 ? c->frame_size : 1024;
     std::vector<int16_t> pcm(size_t(n) * CHANNELS);
     AVFrame *f = av_frame_alloc();
@@ -90,6 +100,8 @@ void Mic::run()
     av_frame_get_buffer(f, 0);
     // When the first sample was heard, on the sensor's clock.
     int64_t t0 = -1, samples = 0;
+    float gain = GAIN_START;
+    const float up = std::pow(10.0f, GAIN_UP_DB_S * n / RATE / 20.0f);
     auto drain = [&] {
         while (avcodec_receive_packet(c, p) == 0) {
             // pts counts input samples, less the encoder's priming.
@@ -101,16 +113,26 @@ void Mic::run()
         }
     };
     while (!quit_) {
-        if (!in->read(pcm.data(), n)) {
+        if (!in.read(pcm.data(), n)) {
+            std::lock_guard<std::mutex> l(mu_);
+            why_ = "the microphone stopped";
             failed_ = true;
             break;
         }
         if (t0 < 0)
-            t0 = nowUs() - in->latencyUs() - int64_t(n) * 1000000 / RATE;
+            t0 = nowUs() - in.latencyUs() - int64_t(n) * 1000000 / RATE;
         av_frame_make_writable(f);
         auto *dst = reinterpret_cast<float *>(f->data[0]);
+        float peak = 1e-6f;
         for (int i = 0; i < n; i++)
-            dst[i] = pcm[size_t(i)] / 32768.0f;
+            peak = std::max(peak, std::fabs(pcm[size_t(i)] / 32768.0f));
+        // Ramped across the block, so a change makes no click.
+        float next = std::min({GAIN_MAX, PEAK_TARGET / peak, gain * up});
+        for (int i = 0; i < n; i++) {
+            float g = gain + (next - gain) * float(i) / float(n);
+            dst[i] = std::clamp(pcm[size_t(i)] / 32768.0f * g, -1.0f, 1.0f);
+        }
+        gain = next;
         f->pts = samples;
         samples += n;
         if (avcodec_send_frame(c, f) == 0)
@@ -120,6 +142,12 @@ void Mic::run()
     drain();
     av_packet_free(&p);
     av_frame_free(&f);
+}
+
+std::string Mic::why()
+{
+    std::lock_guard<std::mutex> l(mu_);
+    return why_;
 }
 
 void Mic::take(std::deque<Packet> &out)
@@ -136,10 +164,6 @@ void Mic::close()
     quit_ = true;
     if (thread_.joinable())
         thread_.join();
-    if (in_) {
-        delete static_cast<PaIn *>(in_);
-        in_ = nullptr;
-    }
     if (enc_) {
         auto *c = static_cast<AVCodecContext *>(enc_);
         avcodec_free_context(&c);

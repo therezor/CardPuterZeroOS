@@ -25,6 +25,7 @@ uint64_t Recorder::bytes() const { return 0; }
 int Recorder::dropped() const { return 0; }
 bool Recorder::failed() { return false; }
 std::string Recorder::why() { return ""; }
+bool Recorder::micLost(std::string &) { return false; }
 const std::string &Recorder::path() const { return s_->path; }
 
 } // namespace camd

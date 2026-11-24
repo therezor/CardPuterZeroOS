@@ -33,6 +33,8 @@ public:
     int dropped() const;
     bool failed();
     std::string why();
+    // The microphone failed since the last call, and why; once each.
+    bool micLost(std::string &why);
     const std::string &path() const;
 
 private:

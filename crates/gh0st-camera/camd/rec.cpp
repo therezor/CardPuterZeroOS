@@ -17,6 +17,7 @@ struct Recorder::State {
     Mp4 mp4;
     Mic mic;
     std::deque<Mic::Packet> sound;
+    bool micTold = false;
     std::string path;
     int frags = 0;
     int dropped = 0;
@@ -65,6 +66,7 @@ bool Recorder::start(const std::string &path, bool mic, const std::string &sourc
         return false;
     }
     s_->sound.clear();
+    s_->micTold = false;
     s_->path = path;
     s_->frags = 0;
     s_->dropped = 0;
@@ -146,6 +148,15 @@ bool Recorder::failed()
 std::string Recorder::why()
 {
     return s_->mp4.why();
+}
+
+bool Recorder::micLost(std::string &why)
+{
+    if (s_->micTold || !s_->mic.failed())
+        return false;
+    s_->micTold = true;
+    why = s_->mic.why();
+    return true;
 }
 
 const std::string &Recorder::path() const

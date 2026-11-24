@@ -24,20 +24,24 @@ public:
 
     ~Mic();
     // `source` empty: the one autoSource picks. Fills `track` for the MP4.
+    // The server is reached on the mic's own thread: a cold PipeWire takes
+    // half a second, which the preview must not wait out. A server that
+    // won't open shows later, in `failed`.
     bool open(const std::string &source, AudioTrack &track, std::string &why);
     bool active() const { return thread_.joinable(); }
     // Packets encoded since the last call.
     void take(std::deque<Packet> &out);
     // Stops the capture and encodes what it had.
     void close();
-    // Set when the capture stopped on its own.
+    // Set when the capture couldn't start or stopped on its own; `why` says.
     bool failed() const { return failed_; }
+    std::string why();
 
 private:
     void run();
 
     void *enc_ = nullptr;
-    void *in_ = nullptr;
+    std::string source_, why_;
     std::thread thread_;
     std::atomic<bool> quit_{false}, failed_{false};
     std::mutex mu_;

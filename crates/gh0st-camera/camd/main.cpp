@@ -330,6 +330,11 @@ private:
     {
         if (rec_.service())
             say({"rec", std::to_string(rec_.ms()), std::to_string(rec_.bytes())});
+        std::string micWhy;
+        if (rec_.micLost(micWhy)) {
+            fprintf(stderr, "gh0st-camd: recording without sound: %s\n", micWhy.c_str());
+            say({"nomic", micWhy});
+        }
         if (rec_.failed()) {
             std::string why = rec_.why();
             endRec();
