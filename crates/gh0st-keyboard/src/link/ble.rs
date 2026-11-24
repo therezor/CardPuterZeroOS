@@ -270,9 +270,8 @@ impl Ble {
                 out.push(Event::AdvertEnded);
             }
             Call::Advertise => {}
-            Call::Power if failed => {
-                out.push(Event::Power(false));
-            }
+            // Refused while the radio is still blocked: BlueZ powers the
+            // adapter itself once it is unblocked, and says so.
             Call::Power => {}
         }
     }

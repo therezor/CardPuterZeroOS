@@ -186,7 +186,7 @@ const SCENES: &[Scene] = &[
     },
     Scene {
         name: "10-modes",
-        keys: "fn+space\nc",
+        keys: "fn+space\nx",
         make: |d| mac_session(d, TYPE),
     },
     Scene {

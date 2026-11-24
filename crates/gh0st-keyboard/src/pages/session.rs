@@ -95,8 +95,8 @@ impl Session {
         let Some(at) = self.picker else { return };
         match k {
             PickKey::Digit(d) if (1..=5).contains(&d) => self.set_mode(s, d - 1, cx),
-            PickKey::Left => self.picker = Some(gh0st_app::cycle(at, -1, 5)),
-            PickKey::Right => self.picker = Some(gh0st_app::cycle(at, 1, 5)),
+            PickKey::Up => self.picker = Some(gh0st_app::cycle(at, -1, 5)),
+            PickKey::Down => self.picker = Some(gh0st_app::cycle(at, 1, 5)),
             PickKey::Enter => self.set_mode(s, at, cx),
             _ => {}
         }
@@ -191,53 +191,22 @@ impl Session {
         );
     }
 
-    fn draw_picker(&self, ui: &mut Ui) {
-        let Some(at) = self.picker else { return };
-        let a = ui.area();
-        let t = *ui.theme();
-        let c = ui.canvas();
-        widgets::scrim(c, &t, a);
-        let n = words::MODES.len() as i32;
-        let gap = t.m.tile_gap;
-        let w = (a.w - 2 * t.m.margin - gap * (n - 1)) / n;
-        let h = t.m.badge * 2;
-        let y = a.y + (a.h - h) / 2;
-        for i in 0..words::MODES.len() {
-            let r = Rect::new(a.x + t.m.margin + i as i32 * (w + gap), y, w, h);
-            let on = i == at;
-            let (fill, ink) = if on {
-                (t.c.accent, t.c.accent_fg)
-            } else {
-                (t.c.surface, t.c.fg)
-            };
-            c.round_rect(r, t.m.radius_large, fill);
-            let size = IconSize::Medium as i32;
-            icon::draw(
-                c,
-                words::MODE_ICONS[i],
-                IconSize::Medium,
-                r.x + (w - size) / 2,
-                r.y + t.m.pad,
-                ink,
-            );
-            let label = Rect::new(r.x, r.y + t.m.pad + size + t.m.gap, w, t.m.line_h);
-            widgets::text_centre(c, t.f.small_bold, label, words::MODES[i], ink);
-            let digit = Rect::new(r.x, label.bottom(), w, t.m.line_h);
-            widgets::text_centre(
-                c,
-                t.f.small,
-                digit,
-                &(i + 1).to_string(),
-                if on { ink } else { t.c.muted },
-            );
-        }
+    /// The modes as a list, the one in use selected, each with its digit.
+    fn draw_picker(&self, ui: &mut Ui, at: usize) {
+        let digits = ["1", "2", "3", "4", "5"];
+        let rows: Vec<Row> = (0..words::MODES.len())
+            .map(|i| Row::tag(words::MODES[i], digits[i], Tone::Info).icon(words::MODE_ICONS[i]))
+            .collect();
+        let mut list = List::new();
+        list.select(at);
+        ui.list(&list, &rows);
     }
 }
 
 enum PickKey {
     Digit(usize),
-    Left,
-    Right,
+    Up,
+    Down,
     Enter,
     Other,
 }
@@ -402,6 +371,9 @@ impl Screen for Session {
     }
 
     fn draw(&self, s: &Shared, ui: &mut Ui) {
+        if let Some(at) = self.picker {
+            return self.draw_picker(ui, at);
+        }
         if let Some((icon_name, line, note)) = self.not_live(s).filter(|_| self.mode != SNIPPETS) {
             let keys: &[(&str, &str)] = if note == words::NOT_BACK {
                 &[("Enter", "try again")]
@@ -418,7 +390,6 @@ impl Screen for Session {
                 _ => self.snippets.draw(s, ui),
             }
         }
-        self.draw_picker(ui);
     }
 
     fn raw(&mut self, s: &mut Shared, k: &RawKey, cx: &mut Cx) -> Nav {
@@ -426,8 +397,8 @@ impl Screen for Session {
             if k.state == KeyState::Press {
                 let pk = match k.code {
                     2..=6 => PickKey::Digit((k.code - 1) as usize),
-                    code::LEFT | code::Z => PickKey::Left,
-                    code::RIGHT | code::C => PickKey::Right,
+                    code::UP | code::F => PickKey::Up,
+                    code::DOWN | code::X => PickKey::Down,
                     code::ENTER => PickKey::Enter,
                     _ => PickKey::Other,
                 };
@@ -467,8 +438,8 @@ impl Screen for Session {
         if self.picker.is_some() {
             let pk = match key {
                 Key::Char(c) if c.is_ascii_digit() => PickKey::Digit(c as usize - '0' as usize),
-                Key::Left => PickKey::Left,
-                Key::Right => PickKey::Right,
+                Key::Up => PickKey::Up,
+                Key::Down => PickKey::Down,
                 Key::Enter => PickKey::Enter,
                 _ => PickKey::Other,
             };
