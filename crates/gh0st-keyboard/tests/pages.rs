@@ -263,3 +263,63 @@ fn bksp_is_the_right_button_and_p_the_middle() {
         .collect();
     assert_eq!(buttons, [2, 0, 4, 0]);
 }
+
+#[test]
+fn the_picker_works_from_every_mode() {
+    use gh0st_keyboard::pages::session::MEDIA;
+    for (mode, keys) in [
+        (MEDIA, "fn+space\n1"),
+        (SNIPPETS, "fn+space\n1"),
+        (MEDIA, "fn+space\nfn+f\nfn+f\nenter"),
+        (SNIPPETS, "fn+space\nf\nf\nf\nf\nenter"),
+        (MOUSE, "fn+space\n1"),
+    ] {
+        let (mut d, log) = session(&format!("pick{mode}{}", keys.len()), PC, mode);
+        d.keys(keys).keys("type a");
+        assert_eq!(
+            pressed(&log),
+            [(0, key::A)],
+            "from mode {mode} with {keys:?}"
+        );
+    }
+}
+
+#[test]
+fn media_and_macros_can_be_picked_from_type() {
+    use gh0st_keyboard::hid::usage::consumer;
+    let (mut d, log) = session("pick-media", PC, TYPE);
+    d.keys("fn+space\n3").keys("enter");
+    let media: Vec<Report> = log
+        .borrow()
+        .sent
+        .iter()
+        .filter(|r| matches!(r, Report::Consumer(_)))
+        .cloned()
+        .collect();
+    assert_eq!(
+        media.first(),
+        Some(&Report::Consumer(consumer::PLAY_PAUSE)),
+        "Media: Enter plays"
+    );
+    let (mut d, log) = session("pick-macros", PC, TYPE);
+    d.keys("fn+space\n5").wait(100).keys("enter");
+    assert_eq!(
+        pressed(&log),
+        [(mods::LCTRL, key::C)],
+        "Macros: Enter sends Copy"
+    );
+    let (mut d, log) = session("pick-nav", PC, TYPE);
+    d.keys("fn+space\nx\nx\nenter").keys("enter");
+    let media: Vec<Report> = log
+        .borrow()
+        .sent
+        .iter()
+        .filter(|r| matches!(r, Report::Consumer(_)))
+        .cloned()
+        .collect();
+    assert_eq!(
+        media.first(),
+        Some(&Report::Consumer(consumer::PLAY_PAUSE)),
+        "x x Enter picks Media"
+    );
+}

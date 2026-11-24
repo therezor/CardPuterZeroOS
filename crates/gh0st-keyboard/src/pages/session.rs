@@ -397,8 +397,8 @@ impl Screen for Session {
             if k.state == KeyState::Press {
                 let pk = match k.code {
                     2..=6 => PickKey::Digit((k.code - 1) as usize),
-                    code::UP | code::F => PickKey::Up,
-                    code::DOWN | code::X => PickKey::Down,
+                    code::UP | code::F | code::LEFT | code::Z => PickKey::Up,
+                    code::DOWN | code::X | code::RIGHT | code::C => PickKey::Down,
                     code::ENTER => PickKey::Enter,
                     _ => PickKey::Other,
                 };
@@ -438,8 +438,10 @@ impl Screen for Session {
         if self.picker.is_some() {
             let pk = match key {
                 Key::Char(c) if c.is_ascii_digit() => PickKey::Digit(c as usize - '0' as usize),
-                Key::Up => PickKey::Up,
-                Key::Down => PickKey::Down,
+                // The picker takes digits, so letters arrive typed: f and x
+                // move as they do in every list.
+                Key::Up | Key::Left | Key::Char('f' | 'z') => PickKey::Up,
+                Key::Down | Key::Right | Key::Char('x' | 'c') => PickKey::Down,
                 Key::Enter => PickKey::Enter,
                 _ => PickKey::Other,
             };
