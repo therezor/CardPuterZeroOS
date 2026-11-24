@@ -2619,6 +2619,37 @@ fn palette_list(tour_done: bool) -> Vec<theme::Palette> {
     all
 }
 
+/// Settings > Default apps: each kind of file, the app it opens with, and
+/// the apps it could.
+fn default_rows(config: &gh0st_core::config::Config) -> Vec<crate::model::pages::DefaultRow> {
+    use gh0st_core::handlers::{CATEGORIES, MimeApps, list_path};
+    let apps = apps::openers(&Dirs::from_env(), config);
+    let list = MimeApps::load(&list_path());
+    CATEGORIES
+        .iter()
+        .map(|c| {
+            let now = c.default(&apps, &list).map(|a| a.file.clone());
+            crate::model::pages::DefaultRow {
+                label: c.label,
+                icon: c.icon,
+                app: c
+                    .default(&apps, &list)
+                    .map(|a| a.entry.name.clone())
+                    .unwrap_or_default(),
+                picked: c.picked(&list),
+                choices: c
+                    .choices(&apps, &list)
+                    .into_iter()
+                    .map(|a| {
+                        let here = now.as_deref() == Some(a.file.as_str());
+                        (a.file.clone(), a.entry.name.clone(), here)
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2675,35 +2706,4 @@ mod tests {
         assert_eq!(parse_volume("Volume: 0.65 [MUTED]\n"), Some((65, true)));
         assert_eq!(parse_volume("nope"), None);
     }
-}
-
-/// Settings > Default apps: each kind of file, the app it opens with, and
-/// the apps it could.
-fn default_rows(config: &gh0st_core::config::Config) -> Vec<crate::model::pages::DefaultRow> {
-    use gh0st_core::handlers::{CATEGORIES, MimeApps, list_path};
-    let apps = apps::openers(&Dirs::from_env(), config);
-    let list = MimeApps::load(&list_path());
-    CATEGORIES
-        .iter()
-        .map(|c| {
-            let now = c.default(&apps, &list).map(|a| a.file.clone());
-            crate::model::pages::DefaultRow {
-                label: c.label,
-                icon: c.icon,
-                app: c
-                    .default(&apps, &list)
-                    .map(|a| a.entry.name.clone())
-                    .unwrap_or_default(),
-                picked: c.picked(&list),
-                choices: c
-                    .choices(&apps, &list)
-                    .into_iter()
-                    .map(|a| {
-                        let here = now.as_deref() == Some(a.file.as_str());
-                        (a.file.clone(), a.entry.name.clone(), here)
-                    })
-                    .collect(),
-            }
-        })
-        .collect()
 }
