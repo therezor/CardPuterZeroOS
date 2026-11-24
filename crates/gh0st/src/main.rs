@@ -33,12 +33,16 @@ fn main() {
             let rest: Vec<String> = args.collect();
             std::process::exit(update::main(&rest))
         }
+        "keyring" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(gh0st_keyringd::run::main(&rest))
+        }
         "store" => {
             let rest: Vec<String> = args.collect();
             std::process::exit(store::main(&rest))
         }
         _ => {
-            eprintln!("usage: gh0st <shell|helper|update|store|version>");
+            eprintln!("usage: gh0st <shell|helper|update|store|keyring|version>");
             std::process::exit(2);
         }
     }

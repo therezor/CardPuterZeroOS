@@ -22,6 +22,25 @@ pub struct Link {
     kept: std::cell::RefCell<std::collections::VecDeque<Vec<String>>>,
 }
 
+/// A socket pair that keeps message bounds: SEQPACKET where the system has
+/// it (Linux), datagrams elsewhere. Both ends close on exec.
+pub fn raw_pair() -> io::Result<(OwnedFd, OwnedFd)> {
+    let mut fds = [0; 2];
+    for ty in [libc::SOCK_SEQPACKET, libc::SOCK_DGRAM] {
+        // SAFETY: socketpair fills a two-int array.
+        if unsafe { libc::socketpair(libc::AF_UNIX, ty, 0, fds.as_mut_ptr()) } == 0 {
+            // SAFETY: both fds are fresh and owned from here.
+            let (a, b) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+            for fd in [&a, &b] {
+                // SAFETY: fcntl on an fd we own.
+                unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
+            }
+            return Ok((a, b));
+        }
+    }
+    Err(io::Error::last_os_error())
+}
+
 fn nonblock_cloexec(fd: RawFd) -> io::Result<()> {
     crate::rt::set_nonblock_cloexec(fd)
 }
@@ -30,22 +49,9 @@ impl Link {
     /// A new pair: the shell's end, and the app's end for the child to
     /// inherit. Both close on exec until the spawn clears the app's.
     pub fn pair() -> io::Result<(Link, OwnedFd)> {
-        let mut fds = [0; 2];
-        // SEQPACKET where the system has it (Linux), datagrams elsewhere:
-        // both keep message bounds.
-        for ty in [libc::SOCK_SEQPACKET, libc::SOCK_DGRAM] {
-            // SAFETY: socketpair fills a two-int array.
-            if unsafe { libc::socketpair(libc::AF_UNIX, ty, 0, fds.as_mut_ptr()) } == 0 {
-                // SAFETY: both fds are fresh and owned from here.
-                let (a, b) =
-                    unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
-                nonblock_cloexec(a.as_raw_fd())?;
-                // SAFETY: fcntl on an fd we own.
-                unsafe { libc::fcntl(b.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
-                return Ok((Link::new(a), b));
-            }
-        }
-        Err(io::Error::last_os_error())
+        let (a, b) = raw_pair()?;
+        nonblock_cloexec(a.as_raw_fd())?;
+        Ok((Link::new(a), b))
     }
 
     /// The app's end, from the env the shell set. Takes the variable out,

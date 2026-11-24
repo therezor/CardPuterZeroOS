@@ -242,7 +242,10 @@ impl Conn {
         }
         self.serial = self.serial.wrapping_add(1).max(1);
         msg.serial = self.serial;
-        let bytes = msg.encode(self.serial)?;
+        let bytes = msg.encode(self.serial);
+        // A reply may carry a secret: zero it once it is bytes.
+        msg.wipe();
+        let bytes = bytes?;
         let fds = std::mem::take(&mut msg.fds);
         self.queue(bytes, fds);
         self.flush()?;

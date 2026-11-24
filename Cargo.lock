@@ -248,6 +248,7 @@ name = "gh0st"
 version = "0.2.0"
 dependencies = [
  "gh0st-core",
+ "gh0st-keyringd",
  "gh0st-shell",
  "libc",
 ]
@@ -290,6 +291,7 @@ version = "0.2.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
+ "gh0st-core",
  "gh0st-dbus",
  "libc",
  "zeroize",

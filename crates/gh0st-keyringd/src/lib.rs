@@ -6,6 +6,8 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod db;
+pub mod ident;
+pub mod run;
 pub mod secret;
 pub mod secure;
 pub mod vault;

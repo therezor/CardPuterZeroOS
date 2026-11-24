@@ -15,6 +15,7 @@ pub mod esc;
 pub mod evdev;
 pub mod hotspot;
 pub mod job;
+pub mod keyring;
 pub mod keys;
 pub mod link;
 pub mod notify;
