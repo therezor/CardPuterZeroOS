@@ -234,6 +234,16 @@ impl Shared {
         }
     }
 
+    /// Tells Bluetooth hosts the battery level, which they show beside the
+    /// keyboard. Sent when one connects and when the app comes back, not on
+    /// a timer.
+    pub fn battery(&mut self) {
+        let Some(b) = gh0st_app::system::battery() else { return };
+        if let Some(bt) = &mut self.bt {
+            bt.battery(b.percent);
+        }
+    }
+
     /// Bookkeeping every screen relies on, before the screen in front hears
     /// the event.
     fn event(&mut self, e: &Event, cx: &mut Cx) {
@@ -243,6 +253,7 @@ impl Shared {
             Event::Power(true) => self.want_radio = false,
             Event::Leds(v) => self.leds = *v,
             Event::Connected(path) => {
+                self.battery();
                 let Some(addr) = self.device_at(path).map(|d| d.address.clone()) else {
                     return;
                 };
@@ -738,6 +749,7 @@ impl Page for App {
             return;
         }
         self.connect_bt();
+        self.s.battery();
         self.sync_watches(cx);
         if let Some(Target::Bt(_)) = &self.s.target
             && let Some(bt) = &mut self.s.bt
