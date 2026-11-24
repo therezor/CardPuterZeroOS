@@ -1435,7 +1435,7 @@ impl Editor {
         };
         let t0 = Instant::now();
         loop {
-            let r = f.step(&mut self.doc.borrow_mut().buf, 1 << 20);
+            let r = f.step(&mut self.doc.borrow_mut().buf, crate::find::STEP);
             match r {
                 Ok(Found::Hit(at)) => {
                     let n = f.needle().len() as u64;

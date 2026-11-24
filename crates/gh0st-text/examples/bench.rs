@@ -177,24 +177,44 @@ fn main() -> std::io::Result<()> {
     }
     let lex_ms = ms(t);
 
-    // Find as the app runs it: folded, in 1 MB steps. A match near the
-    // end, then a miss whose first letter is common in one case only.
+    // Find as the app runs it: folded, in steps, a reader warming
+    // the file ahead. A match near the end, then a miss whose first letter
+    // is common in one case only.
     let mut finds = Vec::new();
     for needle in ["LINE 7700000 ", "lzzq"] {
         let t = Instant::now();
         let mut f = Finder::new(needle.as_bytes(), 0, true);
+        let mut warm = (b.len() >= gh0st_text::warm::MIN)
+            .then(|| gh0st_text::warm::spawn(path.as_ref(), 0).ok())
+            .flatten();
+        b.set_warming(warm.is_some());
         let mut worst: f64 = 0.0;
         let found = loop {
+            if let Some(pid) = warm {
+                let mut st = 0;
+                // SAFETY: a non-blocking wait on our own child.
+                if unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) } == pid {
+                    warm = None;
+                    b.set_warming(false);
+                }
+            }
             let s = Instant::now();
-            let r = f.step(&mut b, 1 << 20)?;
+            let r = f.step(&mut b, gh0st_text::find::STEP)?;
             worst = worst.max(ms(s));
             match r {
                 Found::Hit(at) => break Some(at),
                 Found::Miss => break None,
                 Found::More => {}
-                Found::Wait => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Found::Wait => std::thread::sleep(std::time::Duration::from_millis(15)),
             }
         };
+        if let Some(pid) = warm {
+            gh0st_text::warm::stop(pid);
+            let mut st = 0;
+            // SAFETY: reaps the reader just stopped.
+            unsafe { libc::waitpid(pid, &mut st, 0) };
+            b.set_warming(false);
+        }
         finds.push((needle, ms(t), worst, found.is_some()));
     }
 
@@ -238,7 +258,7 @@ fn main() -> std::io::Result<()> {
     println!("undo 1000         {undo:.3} ms");
     println!("find in last 64MB {find:.1} ms ({})", found.is_some());
     for (needle, total, worst, hit) in finds {
-        println!("find {needle:14} {total:.0} ms, worst 1 MB step {worst:.2} ms ({hit})");
+        println!("find {needle:14} {total:.0} ms, worst step {worst:.2} ms ({hit})");
     }
     println!(
         "lex as Rust       {:.0} MB/s ({lex_ms:.1} ms for {} kB)",

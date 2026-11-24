@@ -1,13 +1,14 @@
 # Text
 
 A code and text editor for files of any size. It reads only what is on
-screen, so a gigabyte log opens as fast as a short note.
+screen, so a gigabyte log opens as fast as a short note. Up to four files
+are open at once.
 
 ```sh
-gh0st-text FILE
+gh0st-text [FILE]
 cargo run -p gh0st-text --example mockups   # writes mockups/text/*.png
 cargo run --release -p gh0st-text --example corpus -- DIR   # test files
-cargo run --release -p gh0st-text --example bench -- FILE   # engine timings
+cargo run --release -p gh0st-text --example bench -- FILE   # timings
 ```
 
 ## Opening
@@ -24,6 +25,9 @@ cargo run --release -p gh0st-text --example bench -- FILE   # engine timings
   there and try again 15 ms later, so the card's pace and its stalls never
   freeze the page. The reader dies with the editor.
 - A file with a NUL in its first 64 KB opens as hex, read only.
+- With no file, the page offers Open a file, New file and the files opened
+  lately, newest first. The list is Text's own, 20 paths in its data
+  folder.
 - Bytes stay as they were: text that is not UTF-8 shows as `?` in red and
   saves unchanged, CR LF stays CR LF, and a missing final newline stays
   missing.
@@ -34,7 +38,51 @@ cargo run --release -p gh0st-text --example bench -- FILE   # engine timings
   An edit touches a few pieces, never the file, whatever its size.
 - Undo takes back a typing run, a paste or a command as one step. It keeps
   1000 steps and reaches back past a save.
-- Enter keeps the line's indent. Tab types four spaces.
+- Enter keeps the line's indent, and adds one after `{`, `(` or `[`, and
+  after `:` in Python and YAML. Between a pair it opens a line inside. A
+  closer typed on a line of blanks steps back one indent. The indent is a
+  tab where the line starts with one, else four spaces. Tab types four
+  spaces.
+- Ctrl K comments the cursor's line or the selected lines out, or back in,
+  with the language's line comment.
+- The bracket at the cursor and its pair are marked, within 64 KB.
+- A line ending stays what it was: Enter on a CR LF line types CR LF.
+
+## Files
+
+- Ctrl O, or Open in the menu, asks the file chooser (Text, or All
+  files). Each picked file opens beside the others, up to four. A file
+  opened again shows the copy already open.
+- Ctrl Tab shows the next file; Alt and 1 to 4 a given one; the top bar
+  shows which, as 2/3. The menu lists them.
+- Ctrl W closes the file on screen. With changes it asks first. Esc on a
+  file with no changes closes it while others are open. The last one
+  closes Text.
+- Save as, in the menu, saves to a name the chooser gives, and the file is
+  called that from then on. A new file asks for a name on its first save.
+- Files the shell hands over open the same way.
+
+## Wrap
+
+Wrap long lines, in the menu, breaks a line into rows the screen's width;
+it is kept. Up and down move by rows. A line over 64 KB never wraps: it
+scrolls sideways, as all lines do with wrap off.
+
+## Unsaved edits
+
+Each edit is kept in a journal in Text's data folder, one per file, so a
+crash, a kill or a flat battery loses at most two seconds of typing.
+
+- The journal is written two seconds after an edit, when Text goes behind
+  and when it closes, then synced to the card. Saving, or undoing back to
+  the file as saved, deletes it.
+- Each record carries its length and a CRC. A record cut short by a crash
+  is dropped, and only it.
+- Opened again, the file offers to restore the edits when it is unchanged
+  since. If it changed, what was typed opens as a new file, Edits to its
+  name, to save somewhere.
+- Journals are readable by the user alone.
+- A new file has no journal until its first save.
 
 ## Keys
 
@@ -62,6 +110,10 @@ change it, and it is kept.
 | Ctrl Z, Ctrl Y | undo, redo |
 | Ctrl C, X, V | copy, cut, paste |
 | Ctrl F, then Enter | find, then the next match; `/` in View |
+| Ctrl K | comment lines in or out |
+| Ctrl O | open files |
+| Ctrl Tab, Alt 1 to 4 | the next file, a given file |
+| Ctrl W | close the file |
 | Ctrl N | find next |
 | Ctrl R | replace the match |
 | Ctrl G | go to a line |
@@ -101,9 +153,23 @@ A file's language comes from its name, then a `#!` on its first line.
 Colours are the palette's `Syntax` roles, drawn from its terminal colours,
 so a scheme file colours code too.
 
+## Budgets
+
+Measured by `examples/bench.rs` on the device, over the 1 GB log from
+`examples/corpus.rs`. The panel's send comes on top of a key's time; it
+is in `panel-driver.md`.
+
+| | Budget |
+|---|---|
+| First screen of a 1 GB file | under 150 ms |
+| An index or find slice | 8 ms at most |
+| A key to a drawn frame | under 4 ms; one text row changes |
+| A frame with nothing new | no heap allocation from Text |
+| PSS with a 1 GB file open | under 12 MB |
+| Wakes at idle once indexed | none |
+
 ## Limits
 
-- One file, no tabs yet.
 - The clipboard is the editor's own.
-- No soft wrap yet: long lines scroll sideways.
-- Save as and Open wait for the file picker.
+- Four files at once.
+- With wrap, a wide character that would cross a row's end is not drawn.

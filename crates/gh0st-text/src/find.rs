@@ -4,6 +4,10 @@
 use crate::buf::{Buffer, scan};
 use std::io;
 
+/// Bytes a step searches. On the device a megabyte took up to 20 ms; a
+/// quarter of that keeps a slice near its 8 ms.
+pub const STEP: u64 = 256 << 10;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Found {
     /// The next match starts here.
