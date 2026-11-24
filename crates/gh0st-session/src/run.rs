@@ -220,6 +220,31 @@ impl Session {
         if self.link.is_some() {
             return;
         }
+        // Or the real chooser, run as the shell would, under --sim with
+        // keys from GH0ST_PORTAL_KEYS.
+        if let (Some(exe), Some(keys), Some(["pick", id, _])) = (
+            std::env::var_os("GH0ST_PORTAL_CHOOSER"),
+            std::env::var_os("GH0ST_PORTAL_KEYS"),
+            f.iter().map(String::as_str).collect::<Vec<_>>().get(..3),
+        ) {
+            let frames = std::env::temp_dir().join(format!("gh0st-chooser-{id}"));
+            let _ = std::fs::create_dir_all(&frames);
+            let child = std::fs::File::open(&keys).and_then(|k| {
+                std::process::Command::new(&exe)
+                    .args(["--pick", id, "--sim"])
+                    .arg(&frames)
+                    .stdin(k)
+                    .spawn()
+            });
+            match child {
+                Ok(c) => {
+                    self.portal
+                        .shell_said(&["picker".into(), id.to_string(), c.id().to_string()])
+                }
+                Err(e) => eprintln!("gh0st session: chooser: {e}"),
+            }
+            return;
+        }
         let Some(answer) = std::env::var_os("GH0ST_PORTAL_ANSWER") else {
             return;
         };

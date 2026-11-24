@@ -2,7 +2,8 @@
 Type=Application
 Name=Files
 Comment=The card, archives and servers
-Exec=/usr/bin/gh0st-files
+Exec=/usr/bin/gh0st-files %f
+MimeType=inode/directory;
 Icon=gh0st:folder
 Terminal=false
 X-Gh0st-Bars=both

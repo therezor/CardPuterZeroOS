@@ -91,4 +91,23 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.portal.OpenURI.SchemeSupported file '{}' | grep -q true || fail "SchemeSupported"
 
+if [ -n "${GH0ST_FILES:-}" ]; then
+    echo "portal: the real chooser picks a file with keys"
+    kill $pid 2>/dev/null; wait $pid 2>/dev/null || true
+    printf 'wait 300\nenter\nwait 300\n' >"$work/keys"
+    mkdir -p "$work/home"
+    printf 'x\n' >"$work/home/pick me.txt"
+    HOME=$work/home XDG_STATE_HOME=$work/.local/state GH0ST_PORTAL_CHOOSER=$GH0ST_FILES \
+        GH0ST_PORTAL_KEYS=$work/keys "$GH0ST" session --test >"$work/out2" &
+    pid=$!
+    for _ in $(seq 100); do
+        gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+            --method org.freedesktop.DBus.NameHasOwner org.freedesktop.portal.Desktop 2>/dev/null \
+            | grep -q true && break
+        sleep 0.05
+    done
+    out=$(timeout 20 python3 "$work/pick.py" OpenFile) || fail "chooser: $out"
+    echo "$out" | grep -q "^0 \['file://.*/pick%20me.txt'\]" || fail "chooser answer: $out"
+fi
+
 echo "all passed"

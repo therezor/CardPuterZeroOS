@@ -1033,6 +1033,44 @@ file, the default first, for an Open-with list. `cx.always_open_with(path,
 id)` makes one the default for the file's type, in
 `~/.config/mimeapps.list`.
 
+To ask the user for a file, `cx.pick(spec)` goes through the file portal
+(`portal.md`): Files comes up over the app as the chooser, and the answer
+comes to `Page::picked`, the paths or None.
+
+```rust
+use gh0st_app::prelude::*;
+use gh0st_app::{Pick, PickSpec};
+use std::path::PathBuf;
+
+struct Editor;
+
+impl Page for Editor {
+    fn title(&self) -> &str {
+        "Editor"
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        let _ = ui;
+    }
+
+    fn key(&mut self, key: Key, cx: &mut Cx) {
+        if key == Key::Enter {
+            cx.pick(PickSpec::save("notes.txt").filter("Text", &["text/plain"]));
+        }
+    }
+
+    fn picked(&mut self, _pick: Pick, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {
+        if let Some(p) = paths.and_then(|p| p.into_iter().next()) {
+            cx.toast(&format!("Saving to {}", p.display()));
+        }
+    }
+}
+```
+
+`PickSpec::open()`, `save(name)` and `folder()` say what to ask;
+`filter`, `multiple` and `starting_in` refine it. In tests,
+`Driver::picks` lists what was asked and `Driver::answer_pick` answers.
+
 `gh0st_app::watch::DirWatch` watches a folder with inotify: hand its `fd()`
 to `cx.watch` and read `changes()` in `ready`. A file's own changes show up
 as its name in its folder, so watch the folder to see an editor save by

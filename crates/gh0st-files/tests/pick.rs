@@ -45,7 +45,7 @@ fn chooser(h: &Home, spec: Spec) -> (Driver, Answer) {
         keyring: Keyring::over(None),
         pick: Some(Picker {
             spec,
-            done: Box::new(move |p| *a.borrow_mut() = Some(p)),
+            done: Box::new(move |p, _| *a.borrow_mut() = Some(p)),
         }),
     });
     let mut d = Driver::new(page);

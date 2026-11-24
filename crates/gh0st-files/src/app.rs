@@ -73,11 +73,14 @@ pub struct Options {
 }
 
 /// The file chooser's question and where its answer goes: the paths
-/// picked, or None when the user gave up.
+/// picked, or None when the user gave up, and the file type in force.
 pub struct Picker {
     pub spec: Spec,
-    pub done: Box<dyn FnMut(Option<Vec<PathBuf>>)>,
+    pub done: Done,
 }
+
+/// Where a chooser's answer goes.
+pub type Done = Box<dyn FnMut(Option<Vec<PathBuf>>, Option<usize>)>;
 
 impl Options {
     pub fn system() -> Options {
@@ -429,7 +432,8 @@ impl Files {
     /// The chooser's answer: hand it over and close.
     fn finish(&mut self, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {
         if let Some(p) = &mut self.pick {
-            (p.done)(paths);
+            let filter = p.spec.filter;
+            (p.done)(paths, filter);
         }
         cx.quit();
     }
@@ -2129,6 +2133,34 @@ impl Page for Files {
             .unwrap_or_else(|| self.home.clone());
         self.sides[0].base = Loc::Local(first.clone());
         self.go(Loc::Local(first), cx);
+    }
+
+    /// A folder to show, or a file to show in its folder: another app
+    /// opened it here (OpenDirectory, `gh0st open`).
+    fn opened(&mut self, paths: &[PathBuf], cx: &mut Cx) {
+        let Some(p) = paths.first() else {
+            return;
+        };
+        let (dir, name) = if p.is_dir() {
+            (p.clone(), None)
+        } else {
+            match (p.parent(), p.file_name()) {
+                (Some(d), Some(n)) => (d.to_path_buf(), Some(n.to_string_lossy().into_owned())),
+                _ => return,
+            }
+        };
+        self.view = View::Browse;
+        let base = if dir.starts_with(&self.home) {
+            self.home.clone()
+        } else {
+            PathBuf::from("/")
+        };
+        self.side_mut().base = Loc::Local(base);
+        self.go(Loc::Local(dir), cx);
+        if let Some(n) = name {
+            self.side_mut().select_name(&n);
+        }
+        self.retitle();
     }
 
     fn bars(&self) -> Bars {

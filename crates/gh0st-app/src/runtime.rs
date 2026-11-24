@@ -201,6 +201,12 @@ pub(crate) struct Runtime {
     /// Every file a page asked to open, and in which app: what a test
     /// reads, since no shell is there to act on it.
     pub open_log: Vec<(Option<String>, PathBuf)>,
+    /// The file portal, once a page asked for a file.
+    portal: Option<crate::portal::Client>,
+    /// Tests answer picks themselves: no bus is asked.
+    pub(crate) portal_offline: bool,
+    /// Picks waiting for a test's answer: token, page, what was asked.
+    pub(crate) pick_log: Vec<(u64, usize, crate::portal::PickSpec)>,
     /// The app menu or Help, while one is open.
     overlay: Overlay,
     /// Keys whose press the menu or a command took: their repeats and
@@ -248,6 +254,9 @@ impl Runtime {
             shell_v: 0,
             files: Vec::new(),
             open_log: Vec::new(),
+            portal: None,
+            portal_offline: false,
+            pick_log: Vec::new(),
             overlay: Overlay::None,
             taken: Vec::new(),
             menu_last: None,
@@ -283,6 +292,33 @@ impl Runtime {
         if !files.is_empty() {
             self.opened(files, now);
         }
+    }
+
+    /// The portal's fd while a pick waits, and whether it wants to write.
+    pub fn portal_fd(&self) -> Option<(std::os::fd::RawFd, bool)> {
+        self.portal
+            .as_ref()
+            .filter(|c| !c.idle())
+            .map(|c| (c.fd(), c.wants_write()))
+    }
+
+    /// The portal's fd is ready: hand out the answers that came.
+    pub fn portal_ready(&mut self, now: u64) {
+        let answers = self.portal.as_mut().map(|c| c.ready()).unwrap_or_default();
+        for (token, owner, paths) in answers {
+            self.picked(token, owner, paths, now);
+        }
+    }
+
+    pub(crate) fn picked(
+        &mut self,
+        token: u64,
+        owner: usize,
+        paths: Option<Vec<PathBuf>>,
+        now: u64,
+    ) {
+        let pick = crate::page::Pick(token);
+        self.call(owner, now, |p, cx| p.picked(pick, paths, cx));
     }
 
     /// Hands `files` to the page on top.
@@ -337,6 +373,7 @@ impl Runtime {
                     | Request::Write { .. }
                     | Request::Adopt(_)
                     | Request::Ask(..)
+                    | Request::Pick { .. }
                     | Request::ShowKeys
                     | Request::Back
                     | Request::Done => continue,
@@ -426,7 +463,24 @@ impl Runtime {
                         l.send(&["open", &name]);
                     }
                 }
-                Request::Sound(s) => self.sound(s),
+                Request::Pick { token, spec } => {
+                    if self.portal_offline {
+                        self.pick_log.push((token, owner, spec));
+                        continue;
+                    }
+                    if self.portal.is_none() {
+                        self.portal = crate::portal::Client::connect();
+                    }
+                    let asked = match &mut self.portal {
+                        Some(c) => c.pick(token, owner, &spec),
+                        None => Err("no session bus".into()),
+                    };
+                    if let Err(why) = asked {
+                        eprintln!("gh0st app: pick: {why}");
+                        self.show_toast("No file chooser".into(), Tone::Warning, now);
+                        self.picked(token, owner, None, now);
+                    }
+                }
                 Request::OpenFile { app, path } => {
                     let field = gh0st_core::link::path_field(&path);
                     match &self.link {
@@ -446,6 +500,7 @@ impl Runtime {
                     }
                     self.open_log.push((app, path));
                 }
+                Request::Sound(s) => self.sound(s),
                 Request::Notify(text) => match &self.link {
                     Some(l) if self.paused => {
                         l.send(&["toast", &text]);

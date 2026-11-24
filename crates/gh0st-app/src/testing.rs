@@ -56,6 +56,7 @@ impl Driver {
         rt.s.closable = opts.closable;
         rt.off_device();
         rt.own_time();
+        rt.portal_offline = true;
         rt.start(0);
         Driver {
             rt,
@@ -187,6 +188,21 @@ impl Driver {
     pub fn open(&mut self, files: &[&Path]) -> &mut Driver {
         let files = files.iter().map(|f| f.to_path_buf()).collect();
         self.rt.opened(files, self.now);
+        self
+    }
+
+    /// What the pages asked the file chooser, oldest first, not yet
+    /// answered.
+    pub fn picks(&self) -> Vec<&crate::portal::PickSpec> {
+        self.rt.pick_log.iter().map(|(_, _, s)| s).collect()
+    }
+
+    /// Answers the oldest pick: the paths, or None for a user who gave up.
+    pub fn answer_pick(&mut self, paths: Option<Vec<std::path::PathBuf>>) -> &mut Driver {
+        if !self.rt.pick_log.is_empty() {
+            let (token, owner, _) = self.rt.pick_log.remove(0);
+            self.rt.picked(token, owner, paths, self.now);
+        }
         self
     }
 

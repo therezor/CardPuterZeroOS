@@ -154,7 +154,7 @@ fn picking(name: &'static str, keys: &'static str, spec: Spec) -> Scene {
     Scene {
         pick: Some(Picker {
             spec,
-            done: Box::new(|_| {}),
+            done: Box::new(|_, _| {}),
         }),
         ..scene(name, keys)
     }

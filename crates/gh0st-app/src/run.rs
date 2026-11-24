@@ -155,6 +155,10 @@ fn main_loop(
             fds.push(rt::pollfd(fd));
             fds.len() - 1
         });
+        let portal_at = rt_.portal_fd().map(|(fd, out)| {
+            fds.push(rt::pollfd_rw(fd, true, out));
+            fds.len() - 1
+        });
         let jobs_at = fds.len();
         fds.extend(jobs.iter().map(|&(_, fd)| rt::pollfd(fd)));
         let watch_at = fds.len();
@@ -175,6 +179,7 @@ fn main_loop(
                 0 => "signal",
                 i if Some(i) == link_at => "shell",
                 i if Some(i) == input_at => "keys",
+                i if Some(i) == portal_at => "portal",
                 i if i >= watch_at => "watch",
                 i if i >= jobs_at => "job",
                 _ => "?",
@@ -240,6 +245,9 @@ fn main_loop(
             if rt_.link.as_ref().is_some_and(|l| l.closed()) {
                 rt_.link = None;
             }
+        }
+        if portal_at.is_some_and(|i| fds[i].revents != 0) {
+            rt_.portal_ready(now);
         }
         raw.clear();
         match &mut input {

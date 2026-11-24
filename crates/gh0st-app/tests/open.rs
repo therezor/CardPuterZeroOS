@@ -51,3 +51,37 @@ fn a_page_asks_to_open_a_file_in_its_app_or_a_named_one() {
         ]
     );
 }
+
+struct Editor {
+    got: Option<Option<Vec<PathBuf>>>,
+}
+
+impl Page for Editor {
+    fn title(&self) -> &str {
+        "Editor"
+    }
+
+    fn draw(&self, _ui: &mut Ui) {}
+
+    fn key(&mut self, key: Key, cx: &mut Cx) {
+        if key == Key::Enter {
+            cx.pick(gh0st_app::PickSpec::save("notes.txt").filter("Text", &["text/plain", "*.md"]));
+        }
+    }
+
+    fn picked(&mut self, _pick: gh0st_app::Pick, paths: Option<Vec<PathBuf>>, _cx: &mut Cx) {
+        self.got = Some(paths);
+    }
+}
+
+#[test]
+fn a_pick_is_answered_to_the_page_that_asked() {
+    let mut d = Driver::new(Editor { got: None });
+    d.keys("enter");
+    let asked = d.picks();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].mode, gh0st_app::PickMode::Save);
+    assert_eq!(asked[0].name, "notes.txt");
+    d.answer_pick(Some(vec![PathBuf::from("/home/u/notes.txt")]));
+    assert!(d.picks().is_empty());
+}

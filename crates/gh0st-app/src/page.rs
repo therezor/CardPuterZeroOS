@@ -111,6 +111,12 @@ pub trait Page {
         let _ = (paths, cx);
     }
 
+    /// The answer to [`Cx::pick`]: the paths picked, or None when the user
+    /// gave up or no chooser was there.
+    fn picked(&mut self, pick: Pick, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {
+        let _ = (pick, paths, cx);
+    }
+
     /// A timer from [`Cx::after`] or [`Cx::every`] fired.
     fn timer(&mut self, timer: Timer, cx: &mut Cx) {
         let _ = (timer, cx);
@@ -193,6 +199,10 @@ pub trait Page {
     }
 }
 
+/// A question from [`Cx::pick`], to match its answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pick(pub(crate) u64);
+
 /// An app that opens a file, from [`Cx::handlers`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Handler {
@@ -260,12 +270,17 @@ pub(crate) enum Request {
     Notify(String),
     KeepAwake(bool),
     Open(String),
-    Sound(gh0st_core::sound::Sound),
+    /// Ask the portal for a file.
+    Pick {
+        token: u64,
+        spec: crate::portal::PickSpec,
+    },
     /// Open a file in `app`, or in the app its type opens with.
     OpenFile {
         app: Option<String>,
         path: PathBuf,
     },
+    Sound(gh0st_core::sound::Sound),
     ShowKeys,
     Ask(u32, Dialog),
 }
@@ -566,6 +581,15 @@ impl Cx<'_> {
             app: None,
             path: path.to_path_buf(),
         });
+    }
+
+    /// Asks the user for a file, a name to save to, or a folder, through
+    /// the file portal: Files comes up over this app as the chooser. The
+    /// answer comes to [`Page::picked`].
+    pub fn pick(&mut self, spec: crate::portal::PickSpec) -> Pick {
+        let token = self.s.id();
+        self.s.requests.push(Request::Pick { token, spec });
+        Pick(token)
     }
 
     /// Opens `path` in app `id`, one of [`handlers`](Cx::handlers).
