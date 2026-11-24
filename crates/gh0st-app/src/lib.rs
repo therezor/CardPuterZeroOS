@@ -54,6 +54,9 @@ pub use steps::Steps;
 pub use tiles::Tiles;
 pub use ui::Ui;
 
+/// The D-Bus codec, for an app that serves or calls on the session bus
+/// (MPRIS, a portal client).
+pub use gh0st_dbus as dbus;
 /// Pixels, for pages that draw their own: the canvas, colours, rects, the
 /// theme, fonts and icons.
 pub use gh0st_ui as gfx;

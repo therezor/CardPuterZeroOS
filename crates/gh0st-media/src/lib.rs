@@ -9,4 +9,5 @@ pub mod app;
 pub mod fake;
 pub mod files;
 pub mod helper;
+pub mod mpris;
 pub mod proto;

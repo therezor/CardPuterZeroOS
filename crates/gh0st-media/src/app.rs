@@ -12,6 +12,7 @@
 
 use crate::files::{self, Entry, Look, Place, Sort};
 use crate::helper::{Helper, Source};
+use crate::mpris;
 use crate::proto::{Cmd, Event, Fail, Flags, Info, Kind, PlayState, Tags};
 use gh0st_app::gfx::icon::{self, IconSize};
 use gh0st_app::gfx::theme::{CARDPUTER, Metrics, ON_PICTURE, PANEL_OFF};
@@ -156,6 +157,8 @@ pub struct Media {
     /// The file on screen is one another app opened here: Esc goes back
     /// to that app, not to this one's folder.
     given: bool,
+    /// The music on the session bus, while it plays.
+    mpris: Option<(mpris::Mpris, Watch)>,
     /// What plays is the music queue: it plays on behind the grid, behind
     /// pictures and behind other apps.
     music: bool,
@@ -210,6 +213,7 @@ impl Media {
             opened: file,
             quitting: false,
             given: false,
+            mpris: None,
             music: false,
         }
     }
@@ -446,7 +450,8 @@ impl Media {
     }
 
     fn start_play(&mut self, cx: &mut Cx, path: PathBuf, flags: Flags) {
-        self.music = self.view == View::Music;
+        // A track says it is music once started (`track`).
+        self.music = false;
         let id = self.id();
         let m = &CARDPUTER;
         let audio = flags.audio;
@@ -568,7 +573,7 @@ impl Media {
 
     /// Starts the queue's track at qpos.
     fn track(&mut self, cx: &mut Cx) {
-        let Some(path) = self.current() else {
+        let Some(path) = self.track_path() else {
             return;
         };
         self.tags = None;
@@ -576,8 +581,113 @@ impl Media {
         self.ask(For::Tags(path.clone()));
         self.ask(For::Cover(path.clone()));
         self.start_play(cx, path, Flags::default());
+        self.music = true;
         self.ahead();
         cx.keep_awake(false);
+        self.sync_mpris(cx);
+    }
+
+    /// The queue's track, whatever is on screen.
+    fn track_path(&self) -> Option<PathBuf> {
+        self.queue
+            .get(self.qpos)
+            .and_then(|&i| self.entries.get(i))
+            .map(|e| e.path.clone())
+    }
+
+    /// What MPRIS clients are told.
+    fn mpris_state(&self) -> mpris::State {
+        let Some(p) = self.play.as_ref().filter(|_| self.music) else {
+            return mpris::State::default();
+        };
+        let path = self.track_path().unwrap_or_default();
+        let (title, artist, album) = match &self.tags {
+            Some(t) => (t.title.as_str(), t.artist.clone(), t.album.clone()),
+            None => ("", String::new(), String::new()),
+        };
+        mpris::State {
+            status: match p.state {
+                PlayState::Playing => mpris::Status::Playing,
+                PlayState::Paused | PlayState::Done => mpris::Status::Paused,
+            },
+            title: mpris::title_of(title, &path),
+            artist,
+            album,
+            length_ms: p.bar.dur_ms,
+            pos_ms: p.bar.pos_ms,
+            track: self.qpos as u32 + 1,
+            can_next: self.qpos + 1 < self.queue.len() || self.repeat_all,
+            can_prev: !self.queue.is_empty(),
+            shuffle: self.shuffle,
+            repeat: self.repeat_all,
+        }
+    }
+
+    /// Owns the MPRIS name while music plays, and tells clients what
+    /// changed. Lets it go when the music stops.
+    fn sync_mpris(&mut self, cx: &mut Cx) {
+        let on = self.music && self.play.is_some();
+        let s = self.mpris_state();
+        match (&mut self.mpris, on) {
+            (Some((m, _)), true) => m.update(&s),
+            (None, true) => {
+                if let Some(m) = mpris::Mpris::start(&s) {
+                    let w = cx.watch(m.fd());
+                    self.mpris = Some((m, w));
+                }
+            }
+            (Some(_), false) => {
+                if let Some((_, w)) = self.mpris.take() {
+                    cx.unwatch(w);
+                }
+            }
+            (None, false) => {}
+        }
+    }
+
+    /// A remote's button: the music queue, whatever is on screen.
+    fn remote(&mut self, c: mpris::Control, cx: &mut Cx) {
+        let state = self.play.as_ref().map(|p| p.state);
+        match c {
+            mpris::Control::Play if state == Some(PlayState::Paused) => self.resume_music(),
+            mpris::Control::Play if state == Some(PlayState::Done) => {
+                self.send(&Cmd::Seek(0));
+                self.resume_music();
+            }
+            mpris::Control::Pause if state == Some(PlayState::Playing) => {
+                self.send(&Cmd::Pause);
+                if let Some(p) = &mut self.play {
+                    p.state = PlayState::Paused;
+                }
+            }
+            mpris::Control::PlayPause => {
+                let c = if state == Some(PlayState::Playing) {
+                    mpris::Control::Pause
+                } else {
+                    mpris::Control::Play
+                };
+                return self.remote(c, cx);
+            }
+            mpris::Control::Stop => self.stop_play(),
+            mpris::Control::Next => self.skip(1, cx),
+            mpris::Control::Previous => self.skip(-1, cx),
+            mpris::Control::Seek(d) => {
+                if let Some(p) = &self.play {
+                    let to = (p.bar.pos_ms as i64 + d).clamp(0, p.bar.dur_ms as i64);
+                    self.send(&Cmd::Seek(to as u64));
+                }
+            }
+            mpris::Control::SetPosition(ms) => self.send(&Cmd::Seek(ms)),
+            _ => {}
+        }
+        cx.redraw();
+    }
+
+    fn resume_music(&mut self) {
+        self.send(&Cmd::Resume);
+        if let Some(p) = &mut self.play {
+            p.state = PlayState::Playing;
+        }
     }
 
     /// Asks the helper to open the following track, so it starts the
@@ -1372,7 +1482,18 @@ impl Page for Media {
         cx.keep_awake(false);
     }
 
-    fn ready(&mut self, _: Watch, cx: &mut Cx) {
+    fn ready(&mut self, watch: Watch, cx: &mut Cx) {
+        let s = self.mpris_state();
+        if let Some((m, w)) = &mut self.mpris {
+            if *w == watch {
+                let controls = m.ready(&s);
+                for c in controls {
+                    self.remote(c, cx);
+                }
+                self.sync_mpris(cx);
+                return;
+            }
+        }
         loop {
             let Some(h) = &self.helper else {
                 return;
@@ -1387,6 +1508,7 @@ impl Page for Media {
                 }
             }
         }
+        self.sync_mpris(cx);
         cx.redraw();
     }
 

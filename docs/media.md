@@ -74,6 +74,12 @@ song playing goes back to its page. Leaving for another app posts a Now
 playing notice, gone when Media is in front again. A video takes the
 player and stops it.
 
+While music plays, Media is `org.mpris.MediaPlayer2.gh0st_media` on the
+session bus: `playerctl`, a headset's buttons (through BlueZ's
+mpris-proxy) and any player widget see the track and press Play, Pause,
+Next, Previous, Stop and Seek. The name goes when the music stops. The bus
+fd joins the page's loop: no thread, and nothing wakes at idle.
+
 ## The helper
 
 `crates/gh0st-media/mediad` is C++17 with a plain Makefile. It shares the
