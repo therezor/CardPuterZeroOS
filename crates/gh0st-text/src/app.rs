@@ -252,6 +252,10 @@ enum Purpose {
 impl Editor {
     /// The file at `path`, or a new one there if it doesn't exist.
     pub fn open(path: Option<&Path>, opts: Options) -> Editor {
+        // One name per file: the journal, recent files and the four slots
+        // go by it.
+        let abs = path.map(|p| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf()));
+        let path = abs.as_deref();
         let (buf, error) = match path {
             Some(p) => match Buffer::open(p) {
                 Ok(b) => (b, None),
@@ -392,11 +396,15 @@ impl Editor {
                 d.cache.clear(lang);
                 drop(d);
                 if let Some(j) = &mut self.journal {
-                    j.resume();
+                    j.resume(r.good);
                 }
                 cx.toast(&format!("Restored {} edits", r.changes.len()));
             }
             (ask::RECOVER, true) => {
+                if self.files.len() >= FILES {
+                    cx.toast("Four files are open: the edits stay in the journal");
+                    return;
+                }
                 let typed = r.typed();
                 if let Some(j) = &mut self.journal {
                     j.discard();
@@ -405,15 +413,11 @@ impl Editor {
                 let mut p = Editor::open(None, self.opts.clone()).take_file();
                 p.doc.buf = Buffer::from_bytes(&typed);
                 p.title = name;
-                if self.files.len() < FILES {
-                    let cur = self.park(cx);
-                    self.files[self.at] = Some(cur);
-                    self.files.push(None);
-                    self.at = self.files.len() - 1;
-                    self.unpark(p, cx);
-                } else {
-                    cx.toast("Four files are open: the edits stay in the journal");
-                }
+                let cur = self.park(cx);
+                self.files[self.at] = Some(cur);
+                self.files.push(None);
+                self.at = self.files.len() - 1;
+                self.unpark(p, cx);
             }
             _ => {
                 if let Some(j) = &mut self.journal {
@@ -484,6 +488,7 @@ impl Editor {
 
     /// Saves the file on screen to `path`, which it is called from now on.
     fn save_as(&mut self, path: PathBuf, cx: &mut Cx) {
+        let path = std::path::absolute(&path).unwrap_or(path);
         if let Some((_, w)) = self.watch.take() {
             cx.unwatch(w);
         }
@@ -499,6 +504,16 @@ impl Editor {
         self.doc.borrow_mut().cache.clear(lang);
         self.read_only = false;
         self.path = Some(path.clone());
+        // The journal follows the new name: edits kept from here on are
+        // that file's.
+        if let Some(j) = &mut self.journal {
+            j.discard();
+        }
+        if !self.binary {
+            let data = self.data_dir(cx);
+            self.doc.borrow_mut().buf.keep_changes(true);
+            self.journal = Some(Journal::new(&data, &path));
+        }
         let w = FileWatch::new(&path);
         if let Some(fd) = w.fd() {
             let id = cx.watch(fd);
@@ -643,6 +658,8 @@ impl Editor {
     /// Opens `path`: shows it if it is open already, else in a new slot, or
     /// in place of a blank new file. False when four files are open.
     fn open_file(&mut self, path: &Path, cx: &mut Cx) -> bool {
+        let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let path = abs.as_path();
         if self.saving.is_some() {
             cx.toast("Saving: open it when that is done");
             return false;

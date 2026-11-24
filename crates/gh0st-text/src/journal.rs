@@ -8,7 +8,7 @@ use crate::buf::Change;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 8] = b"gh0stJ1\n";
@@ -43,6 +43,9 @@ impl Stamp {
 pub struct Recovered {
     pub stamp: Stamp,
     pub changes: Vec<Change>,
+    /// Where the last whole record ends: a torn one past it is cut off
+    /// before more are added.
+    pub good: u64,
 }
 
 impl Recovered {
@@ -138,13 +141,17 @@ impl Journal {
                 self.pending.clear();
                 return Ok(());
             };
-            if let Some(dir) = self.path.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
+            // The edits are the file's text: only the user reads them.
+            let dir = self.path.parent().unwrap_or(Path::new("."));
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(dir)?;
             let mut f = OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
+                .mode(0o600)
                 .open(&self.path)?;
             let mut head = MAGIC.to_vec();
             let mut h = Vec::new();
@@ -155,6 +162,9 @@ impl Journal {
             h.extend_from_slice(self.of.as_os_str().as_bytes());
             frame(&mut head, &h);
             f.write_all(&head)?;
+            f.sync_data()?;
+            // The new name lasts too.
+            File::open(dir)?.sync_all()?;
             self.file = Some(f);
         }
         if let Some(f) = &mut self.file {
@@ -172,9 +182,15 @@ impl Journal {
         let _ = std::fs::remove_file(&self.path);
     }
 
-    /// Carries on the journal found on disk, as after a restore.
-    pub fn resume(&mut self) {
-        self.file = OpenOptions::new().append(true).open(&self.path).ok();
+    /// Carries on the journal found on disk, as after a restore: a torn
+    /// record past `good` goes, or the records after it could never be
+    /// read.
+    pub fn resume(&mut self, good: u64) {
+        self.file = OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .and_then(|f| f.set_len(good).map(|_| f))
+            .ok();
     }
 }
 
@@ -199,6 +215,7 @@ pub fn read(data: &Path, file: &Path) -> Option<Recovered> {
         mtime_ns: n(24) as i64,
     };
     let mut changes = Vec::new();
+    let mut good = bytes.len() - rest.len();
     while let Some((body, next)) = unframe(rest) {
         rest = next;
         match body.first() {
@@ -210,12 +227,17 @@ pub fn read(data: &Path, file: &Path) -> Option<Recovered> {
                     len,
                     bytes: body[17..].to_vec(),
                 });
+                good = bytes.len() - rest.len();
             }
             Some(&LOST) => return None,
             _ => break,
         }
     }
-    (!changes.is_empty()).then_some(Recovered { stamp, changes })
+    (!changes.is_empty()).then_some(Recovered {
+        stamp,
+        changes,
+        good: good as u64,
+    })
 }
 
 fn frame(out: &mut Vec<u8>, body: &[u8]) {
@@ -306,7 +328,18 @@ mod tests {
             .unwrap()
             .set_len(len - 3)
             .unwrap();
-        assert_eq!(read(&d, &f).unwrap().changes, [edit(0, 0, b"first")]);
+        let r = read(&d, &f).unwrap();
+        assert_eq!(r.changes, [edit(0, 0, b"first")]);
+        // Carried on after a restore: the torn bytes go, so what follows
+        // is read.
+        let mut j = Journal::new(&d, &f);
+        j.resume(r.good);
+        j.add(&edit(5, 0, b"third"));
+        j.flush().unwrap();
+        assert_eq!(
+            read(&d, &f).unwrap().changes,
+            [edit(0, 0, b"first"), edit(5, 0, b"third")]
+        );
     }
 
     #[test]

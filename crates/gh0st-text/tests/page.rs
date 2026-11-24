@@ -1,5 +1,6 @@
 //! The editor page driven by keys, in virtual time.
 
+use gh0st_app::portal::PickMode;
 use gh0st_app::testing::Driver;
 use gh0st_text::app::{Editor, KeyModel, Options};
 use std::path::{Path, PathBuf};
@@ -376,6 +377,64 @@ fn edits_kept_when_paused_come_back_after_a_kill() {
     drop(d);
     let d = journaled(&p, &data);
     assert!(d.dialog().is_none());
+}
+
+#[test]
+fn a_torn_journal_restores_and_keeps_what_comes_after() {
+    let data = journal_dir("torn");
+    let p = temp("torn.txt", b"base\n");
+    let mut d = journaled(&p, &data);
+    d.keys("type one");
+    d.pause();
+    d.keys("type two");
+    d.pause();
+    drop(d);
+    // Killed part way through the second write.
+    let j = gh0st_text::journal::path_for(&data, &p);
+    let len = std::fs::metadata(&j).unwrap().len();
+    let f = std::fs::OpenOptions::new().write(true).open(&j).unwrap();
+    f.set_len(len - 2).unwrap();
+    drop(f);
+    let mut d = journaled(&p, &data);
+    d.keys("enter\nctrl+e\ntype three");
+    d.pause();
+    drop(d);
+    let mut d = journaled(&p, &data);
+    assert_eq!(d.dialog().map(|x| x.0), Some("Restore unsaved edits?"));
+    d.keys("enter\nctrl+s");
+    d.wait(100);
+    // The torn "o" is gone; the rest, before and after, came back.
+    assert_eq!(std::fs::read(&p).unwrap(), b"onetwbasethree\n");
+}
+
+#[test]
+fn the_journal_follows_save_as() {
+    let data = journal_dir("saveas");
+    let p = temp("before.txt", b"x\n");
+    let mut d = journaled(&p, &data);
+    // Help, then the menu: Open, then Save as.
+    d.keys("type a\nhelp\n8\nx\nenter");
+    let target = data.join("after.txt");
+    assert_eq!(d.picks().last().map(|s| s.mode), Some(PickMode::Save));
+    assert_eq!(
+        d.picks().last().map(|s| s.name.as_str()),
+        Some("before.txt")
+    );
+    d.answer_pick(Some(vec![target.clone()]));
+    d.wait(200);
+    assert_eq!(std::fs::read(&target).unwrap(), b"ax\n");
+    d.keys("ctrl+up\ntype b");
+    d.pause();
+    drop(d);
+    assert!(
+        journaled(&p, &data).dialog().is_none(),
+        "not the old name's"
+    );
+    let mut d = journaled(&target, &data);
+    assert_eq!(d.dialog().map(|x| x.0), Some("Restore unsaved edits?"));
+    d.keys("enter\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&target).unwrap(), b"bax\n");
 }
 
 #[test]
