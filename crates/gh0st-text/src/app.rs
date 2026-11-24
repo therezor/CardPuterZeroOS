@@ -940,14 +940,41 @@ impl Editor {
         (a != self.cursor).then(|| (a.min(self.cursor), a.max(self.cursor)))
     }
 
-    /// The line holding `off`: its start, end and bytes up to the lex limit.
+    /// The line holding `off`: its start, end and bytes up to the lex
+    /// limit. The CR of a CR LF ending is part of the ending, not the text:
+    /// the end is where the CR is.
     fn line_at(&self, off: u64) -> (u64, u64, Vec<u8>) {
         let mut d = self.doc.borrow_mut();
         let start = d.buf.line_start(off).unwrap_or(0);
-        let end = d.buf.line_end(off).unwrap_or(start);
+        let mut end = d.buf.line_end(off).unwrap_or(start);
         let take = (end - start).min(lex::LINE_MAX as u64 * 4);
-        let bytes = d.buf.bytes(start..start + take).unwrap_or_default();
+        let mut bytes = d.buf.bytes(start..start + take).unwrap_or_default();
+        if take == end - start && bytes.last() == Some(&b'\r') {
+            bytes.pop();
+            end -= 1;
+        }
         (start, end, bytes)
+    }
+
+    /// Where the next line starts, after the line ending at `end`.
+    fn next_line(&self, end: u64) -> u64 {
+        end + self.eol_len(end)
+    }
+
+    /// The length of the line ending at `end`: 2 for CR LF, else 1.
+    fn eol_len(&self, end: u64) -> u64 {
+        let mut d = self.doc.borrow_mut();
+        let two = d.buf.bytes(end..end + 2).unwrap_or_default();
+        if two == b"\r\n" { 2 } else { 1 }
+    }
+
+    /// Where the line before the one starting at `start` ends.
+    fn end_before(&self, start: u64) -> u64 {
+        if start >= 2 && self.eol_len(start - 2) == 2 {
+            start - 2
+        } else {
+            start.saturating_sub(1)
+        }
     }
 
     fn col_of(&self, off: u64) -> u32 {
@@ -975,7 +1002,7 @@ impl Editor {
         let (start, _, line) = self.line_at(self.cursor);
         let at = (self.cursor - start) as usize;
         let to = if at == 0 {
-            self.cursor.saturating_sub(1)
+            self.end_before(self.cursor)
         } else if word {
             start + view::word_left(&line, at) as u64
         } else {
@@ -993,7 +1020,7 @@ impl Editor {
         let (start, end, line) = self.line_at(self.cursor);
         let at = (self.cursor - start) as usize;
         let to = if self.cursor >= end {
-            self.cursor + 1
+            end + self.eol_len(end)
         } else if word {
             start + view::word_right(&line, at) as u64
         } else {
@@ -1024,7 +1051,7 @@ impl Editor {
                 if end >= len {
                     break;
                 }
-                at = end + 1;
+                at = end + self.eol_len(end);
             }
         }
         let (start, _, line) = self.line_at(at);
@@ -1089,7 +1116,7 @@ impl Editor {
             } else if at + l >= len {
                 break;
             } else {
-                at += l + 1;
+                at = self.next_line(at + l);
                 seg = 0;
             }
         }
@@ -1140,7 +1167,7 @@ impl Editor {
                 } else if line + l >= len {
                     break;
                 } else {
-                    line += l + 1;
+                    line = self.next_line(line + l);
                     seg = 0;
                 }
             }
@@ -1247,14 +1274,24 @@ impl Editor {
             (last, next),
             (Some(b'{'), Some(b'}')) | (Some(b'('), Some(b')')) | (Some(b'['), Some(b']'))
         );
-        let mut ins = b"\n".to_vec();
+        // A CR LF file gets CR LF: as this line ends, or the one before
+        // when this one is the last and has no ending.
+        let (_, end, _) = self.line_at(self.cursor);
+        let len = self.doc.borrow().buf.len();
+        let crlf = if end < len {
+            self.eol_len(end) == 2
+        } else {
+            start > 0 && self.eol_len(self.end_before(start)) == 2
+        };
+        let eol: &[u8] = if crlf { b"\r\n" } else { b"\n" };
+        let mut ins = eol.to_vec();
         ins.extend_from_slice(&indent);
         if opens {
             ins.extend_from_slice(Self::unit(&line));
         }
         let land = ins.len() as u64;
         if closes {
-            ins.push(b'\n');
+            ins.extend_from_slice(eol);
             ins.extend_from_slice(&indent);
         }
         self.doc.borrow_mut().buf.seal();
@@ -1274,13 +1311,13 @@ impl Editor {
                 let at = (self.cursor - start) as usize;
                 if forward {
                     let to = if self.cursor >= end {
-                        self.cursor + 1
+                        end + self.eol_len(end)
                     } else {
                         start + view::next_char(&line, at) as u64
                     };
                     (self.cursor, to.min(self.doc.borrow().buf.len()))
                 } else if at == 0 {
-                    (self.cursor.saturating_sub(1), self.cursor)
+                    (self.end_before(self.cursor), self.cursor)
                 } else {
                     (start + view::prev_char(&line, at) as u64, self.cursor)
                 }

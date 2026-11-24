@@ -414,3 +414,55 @@ fn edits_to_a_file_changed_since_open_as_a_new_file() {
     assert_eq!(std::fs::read(&target).unwrap(), b"kept words\n");
     assert_eq!(std::fs::read(&p).unwrap(), b"someone else wrote this\n");
 }
+
+#[test]
+fn cr_lf_lines_stay_cr_lf_through_moves_edits_and_new_lines() {
+    let p = temp("dos.txt", b"a\r\nb\r\nlast");
+    let mut d = editing(&p);
+    // Down, to the end of "b", type, then a new line and more.
+    d.keys("fn+x\nctrl+e\ntype c\nenter\ntype d\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"a\r\nbc\r\nd\r\nlast");
+    // Right at a line's end goes to the next line's start, past both.
+    d.keys("ctrl+up\nctrl+e\nfn+c\ntype X\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"a\r\nXbc\r\nd\r\nlast");
+    // Backspace takes the X; at the line's start, the whole CR LF.
+    d.keys("backspace\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"a\r\nbc\r\nd\r\nlast");
+    d.keys("backspace\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"abc\r\nd\r\nlast");
+    // A new line at the end, after a line with no ending, is CR LF too.
+    d.keys("ctrl+down\nenter\ntype e\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"abc\r\nd\r\nlast\r\ne");
+}
+
+#[test]
+fn bytes_that_are_not_utf8_save_as_they_were() {
+    let p = temp("raw.txt", b"\xff\xfe ok\n\xc3(\n");
+    let mut d = editing(&p);
+    d.keys("ctrl+e\ntype !\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"\xff\xfe ok!\n\xc3(\n");
+    assert!(d.lint().is_empty());
+}
+
+#[test]
+fn nothing_wakes_while_reading_or_editing_once_the_journal_is_written() {
+    let p = temp("still.txt", b"one\ntwo\n");
+    let opts = Options {
+        data: Some(data()),
+        ..Options::default()
+    };
+    let mut d = Driver::new(Editor::open(Some(&p), opts));
+    d.wait(100);
+    assert!(d.idle_wakes(600_000) <= 11, "View");
+    d.keys("enter\ntype x");
+    // The journal's one write, two seconds on; then nothing.
+    d.wait(2_500);
+    let wakes = d.idle_wakes(600_000);
+    assert!(wakes <= 11, "Edit: {wakes}");
+}
