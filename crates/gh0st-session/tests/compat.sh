@@ -9,9 +9,9 @@ work=$(mktemp -d)
 pid=
 fail() { echo "FAIL: $*" >&2; exit 1; }
 trap '[ -n "$pid" ] && kill $pid 2>/dev/null; rm -rf "$work"' EXIT
-mkdir -p "$work/files" && printf 'hi\n' >"$work/files/a note.txt"
+mkdir -p "$work/files" "$work/.config/cardputerzero" && printf 'hi\n' >"$work/files/a note.txt"
 HOME=$work XDG_STATE_HOME=$work/.local/state GH0ST_PORTAL_ANSWER="$work/files/a note.txt" \
-    "$GH0ST" session --test >"$work/out" &
+    GH0ST_PORTAL_ACCOUNT=once "$GH0ST" session --test >"$work/out" &
 pid=$!
 i=0
 until dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus \
@@ -90,6 +90,72 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
     && fail "OpenURI took a web address"
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.portal.OpenURI.SchemeSupported file '{}' | grep -q true || fail "SchemeSupported"
+
+echo "portal: Settings reads the look and signals a change"
+gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.Settings.ReadOne org.freedesktop.appearance color-scheme \
+    | grep -q 'uint32 1' || fail "ReadOne color-scheme"
+cat >"$work/look.py" <<'PY'
+import sys
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+got = []
+loop = GLib.MainLoop()
+def changed(conn, sender, obj, iface, sig, params):
+    got.append(params.unpack()[:2])
+    loop.quit()
+bus.signal_subscribe(None, "org.freedesktop.portal.Settings", "SettingChanged",
+                     "/org/freedesktop/portal/desktop", None, Gio.DBusSignalFlags.NONE, changed)
+r = bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+                  "org.freedesktop.portal.Settings", "ReadAll", GLib.Variant("(as)", ([""],)),
+                  None, Gio.DBusCallFlags.NONE, -1, None)
+assert "org.freedesktop.appearance" in r.unpack()[0], r.unpack()
+with open(sys.argv[1] + ".tmp", "w") as f:
+    f.write('{"gh0st": {"palette": "Paper"}}')
+import os
+os.rename(sys.argv[1] + ".tmp", sys.argv[1])
+GLib.timeout_add(5000, loop.quit)
+loop.run()
+print(got)
+PY
+out=$(timeout 10 python3 "$work/look.py" "$work/.config/cardputerzero/config.json") || fail "Settings: $out"
+echo "$out" | grep -q "org.freedesktop.appearance" || fail "SettingChanged: $out"
+
+echo "portal: Inhibit keeps the caller awake until it leaves"
+gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.Inhibit.Inhibit '' 8 '{}' | grep -q request || fail "Inhibit"
+i=0
+until grep -q '^awake pid:[0-9]* 0$' "$work/out"; do
+    i=$((i + 1))
+    [ $i -lt 40 ] || fail "Inhibit never ended"
+    sleep 0.05
+done
+grep -q '^awake pid:[0-9]* 1$' "$work/out" || fail "Inhibit never began"
+
+echo "portal: Account answers after the user's yes"
+cat >"$work/account.py" <<'PY'
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+me = bus.get_unique_name()[1:].replace(".", "_")
+path = "/org/freedesktop/portal/desktop/request/%s/a1" % me
+got = {}
+loop = GLib.MainLoop()
+def response(conn, sender, obj, iface, sig, params):
+    got["r"] = params.unpack()
+    loop.quit()
+bus.signal_subscribe(None, "org.freedesktop.portal.Request", "Response", path, None,
+                     Gio.DBusSignalFlags.NONE, response)
+bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+              "org.freedesktop.portal.Account", "GetUserInformation",
+              GLib.Variant("(sa{sv})", ("", {"handle_token": GLib.Variant("s", "a1")})),
+              None, Gio.DBusCallFlags.NONE, -1, None)
+GLib.timeout_add(5000, loop.quit)
+loop.run()
+code, results = got["r"]
+print(code, results.get("id"))
+PY
+out=$(timeout 10 python3 "$work/account.py") || fail "Account: $out"
+echo "$out" | grep -q "^0 [^N]" || fail "Account answer: $out"
 
 echo "gh0st open and xdg-open: a file through OpenURI"
 timeout 10 "$GH0ST" open "$work/files/a note.txt" || fail "gh0st open"

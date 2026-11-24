@@ -14,6 +14,9 @@ which the device has none of.
 | `FileChooser` | 4 | `OpenFile`, `SaveFile`, `SaveFiles`, through Files as the chooser |
 | `OpenURI` | 5 | `OpenFile` and `OpenDirectory` by fd, `OpenURI` for `file://` |
 | `Notification` | 2 | `AddNotification` and `RemoveNotification`: a notice, its buttons as chips |
+| `Settings` | 2 | The look: light or dark, the accent, reduced motion |
+| `Inhibit` | 3 | Keeps the screen on; `CreateMonitor` reports the session |
+| `Account` | 1 | The user's name, after the user's yes |
 
 ## Requests
 
@@ -74,12 +77,46 @@ id again replaces it; `RemoveNotification(id)` takes it away. A picked
 button or Enter sends `ActionInvoked(id, action, [target])` to the app
 that posted it.
 
+## Settings
+
+`ReadAll`, `ReadOne` and the older `Read` serve
+`org.freedesktop.appearance` from the shared config:
+
+| Key | Value |
+|---|---|
+| `color-scheme` | `1` dark, `2` light (Paper) |
+| `accent-color` | The palette's accent, `(ddd)` from 0 to 1 |
+| `contrast` | `0` |
+| `reduced-motion` | `1` when animations are off in Settings |
+
+A change to config.json sends `SettingChanged` for each key that moved.
+
+## Inhibit
+
+- `Inhibit` with flag `4` (suspend) or `8` (idle) keeps the screen on, as
+  `awake 1` does for the app the caller belongs to. Flags `1` and `2` hold
+  nothing: there is no logout and no user switch.
+- It ends with `Request.Close` or when the caller leaves the bus.
+- `CreateMonitor` answers with a session at
+  `/org/freedesktop/portal/desktop/session/SENDER/TOKEN` and one
+  `StateChanged`: running, the screen saver off. `Session.Close` ends it.
+  `QueryEndResponse` does nothing.
+
+## Account
+
+`GetUserInformation` answers `id` (the login name chosen at setup), `name`
+(the full name in passwd, else the login) and an empty `image`. The shell
+asks first: "<App> wants to see your name", Once on 5 or Always on 7. Esc
+denies (`1`). Always is kept in
+`~/.local/state/gh0st/portal-account`, one app per line.
+
 ## Who may ask
 
 The shell decides, as it does for the keyring's questions:
 
-- Only the app in front, or a program it started, gets a chooser or opens
-  an app. Anything running behind gets `2`.
+- Only the app in front, or a program it started, gets a chooser, opens
+  an app or is asked about the user's name. Anything running behind gets
+  `2`, or `1` for Account.
 - Not while the device is locked or dark: the request waits.
 - The caller is parked as Fn+K parks it, and comes back when the chooser or
   the opened app closes.

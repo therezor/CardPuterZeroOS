@@ -32,7 +32,9 @@ impl Inhibit {
         self.holds.values().filter(|h| h.app == app).count()
     }
 
-    pub fn call(&mut self, m: &Message, who: &Who, bus_name: &str) -> Message {
+    /// `pid` is the caller's: a program outside apps is kept awake as
+    /// `pid:N`, which the shell finds in the task that started it.
+    pub fn call(&mut self, m: &Message, who: &Who, bus_name: &str, pid: Option<i32>) -> Message {
         if let Some(r) = bus::peer(m) {
             return r;
         }
@@ -44,11 +46,10 @@ impl Inhibit {
                 if self.holds.values().filter(|h| h.owner == bus_name).count() >= PER_CONN {
                     return Message::error(m, err::LIMITS, "too many inhibitors");
                 }
-                // Only an app the shell runs can be kept in front.
-                let app = if who.app.starts_with("exe:") {
-                    String::new()
-                } else {
-                    who.app.clone()
+                let app = match (who.app.starts_with("exe:"), pid) {
+                    (false, _) => who.app.clone(),
+                    (true, Some(p)) if p > 0 => format!("pid:{p}"),
+                    (true, _) => String::new(),
                 };
                 if !app.is_empty() && self.count(&app) == 0 {
                     self.out.push((app.clone(), true));
@@ -116,7 +117,7 @@ mod tests {
             m = m.arg(Value::str("mpv")).arg(Value::str("playing"));
         }
         m.serial = 1;
-        i.call(&m, who, bus)
+        i.call(&m, who, bus, Some(77))
     }
 
     #[test]
@@ -145,17 +146,17 @@ mod tests {
     }
 
     #[test]
-    fn a_process_outside_apps_gets_a_cookie_and_nothing_else() {
+    fn a_process_outside_apps_is_kept_awake_by_its_pid() {
         let mut i = Inhibit::default();
         let w = Who {
             app: "exe:/usr/bin/x".into(),
             label: "x".into(),
         };
-        assert!(
-            call(&mut i, "Inhibit", None, &w, ":1.1").body[0]
-                .as_u32()
-                .is_some()
-        );
-        assert!(i.out.is_empty());
+        let c = call(&mut i, "Inhibit", None, &w, ":1.1").body[0]
+            .as_u32()
+            .unwrap();
+        assert_eq!(i.out, [("pid:77".to_string(), true)]);
+        call(&mut i, "UnInhibit", Some(c), &w, ":1.1");
+        assert_eq!(i.out.last(), Some(&("pid:77".to_string(), false)));
     }
 }

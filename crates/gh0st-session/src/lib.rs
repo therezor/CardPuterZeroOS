@@ -8,3 +8,4 @@ pub mod inhibit;
 pub mod notify;
 pub mod portal;
 pub mod run;
+pub mod settings;

@@ -243,7 +243,8 @@ The shell runs these on the session bus before any app starts
 |---|---|
 | `org.freedesktop.secrets` | The keyring. An app reads its own secrets; another app's take the user's yes on a shell screen |
 | `org.freedesktop.Notifications` | Each notification becomes a notice, as above. Its actions are chips; `ActionInvoked` and `NotificationClosed` go back to the poster |
-| `org.freedesktop.ScreenSaver` | Inhibit keeps the app's screen on, as `awake 1` does |
+| `org.freedesktop.ScreenSaver` | Inhibit keeps the app's screen on, as `awake 1` does. A program an app started counts as that app |
+| `org.freedesktop.portal.Desktop` | The XDG portal (`docs/portal.md`): files, opening, notifications, the look, inhibit, the user's name |
 
 The keyring's questions show on a shell screen. The app in front is parked
 for it, as Fn+K parks it, and gets `pause` and `resume` on its link.

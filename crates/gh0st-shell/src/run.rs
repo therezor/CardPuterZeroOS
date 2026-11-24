@@ -790,8 +790,16 @@ impl Shell {
                             });
                         }
                     }
+                    Some("account") => {
+                        if let [_, id, pid, app] = m.as_slice() {
+                            self.ask_account(id, pid.parse().unwrap_or(0), app);
+                        }
+                    }
                     Some("cancel") => {
                         if let Some(id) = m.get(1) {
+                            if let Ok(n) = id.parse() {
+                                self.prompts.remove(&Origin::Portal(n));
+                            }
                             self.portal.retain(|a| match a {
                                 PortalAsk::Pick { id: i, .. } | PortalAsk::Open { id: i, .. } => {
                                     i != id
@@ -857,10 +865,51 @@ impl Shell {
         self.undim();
     }
 
-    /// `gh0st session` relays a ScreenSaver inhibit as the app's `awake`.
+    /// An app asks for the user's name: the app in front, or a program
+    /// it started, gets a yes or no. Anything else is refused.
+    fn ask_account(&mut self, id: &str, pid: i32, app: &str) {
+        let front = self.tasks.front().map(|t| t.pgid);
+        let allowed = front.is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g));
+        match id.parse() {
+            Ok(n) if allowed => {
+                self.prompts.push(Ask {
+                    origin: Origin::Portal(n),
+                    kind: Kind::Approve {
+                        app: app.into(),
+                        what: "see your name".into(),
+                    },
+                });
+                self.light_for_question();
+            }
+            _ => {
+                self.services.say_session(&["account", id, "deny"]);
+            }
+        }
+    }
+
+    /// The answer to a portal's question.
+    fn answer_portal(&self, id: u64, answer: Answer) {
+        let word = match answer {
+            Answer::Once => "once",
+            Answer::Always => "always",
+            Answer::Deny => "deny",
+        };
+        self.services
+            .say_session(&["account", &id.to_string(), word]);
+    }
+
+    /// `gh0st session` relays an inhibit as the app's `awake`. `pid:N` is a
+    /// program outside apps: its task is the one that started it.
     fn inhibit(&mut self, stem: &str, on: bool) {
         let file = format!("{stem}.desktop");
-        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == file) {
+        let pid = stem
+            .strip_prefix("pid:")
+            .and_then(|p| p.parse::<i32>().ok());
+        let task = self.tasks.iter_mut().find(|t| match pid {
+            Some(p) => p > 0 && gh0st_core::procfs::belongs_to(p, t.pgid),
+            None => t.id == file,
+        });
+        if let Some(t) = task {
             t.awake = on;
         }
         if on && self.tasks.front().is_some_and(|t| t.awake) {
@@ -1042,11 +1091,15 @@ impl Shell {
     /// Every waiting question is answered no.
     fn refuse_prompts(&mut self, why: &str) {
         while let Some(a) = self.prompts.current().cloned() {
-            if let Origin::Daemon(id) = a.origin {
-                self.services.tell(&ToDaemon::Answer {
-                    id,
-                    answer: Answer::Deny,
-                });
+            match a.origin {
+                Origin::Daemon(id) => {
+                    self.services.tell(&ToDaemon::Answer {
+                        id,
+                        answer: Answer::Deny,
+                    });
+                }
+                Origin::Portal(id) => self.answer_portal(id, Answer::Deny),
+                _ => {}
             }
             self.prompts.done();
         }
@@ -1082,17 +1135,27 @@ impl Shell {
                 self.prompts.done();
                 self.dirty = true;
             }
-            prompt::Action::Answer(id, answer) => {
-                self.services.tell(&ToDaemon::Answer { id, answer });
+            prompt::Action::Answer(origin, answer) => {
+                match origin {
+                    Origin::Daemon(id) => {
+                        self.services.tell(&ToDaemon::Answer { id, answer });
+                    }
+                    Origin::Portal(id) => self.answer_portal(id, answer),
+                    _ => {}
+                }
                 self.prompts.done();
                 self.dirty = true;
             }
             prompt::Action::Dismiss(origin) => {
-                if let Origin::Daemon(id) = origin {
-                    self.services.tell(&ToDaemon::Answer {
-                        id,
-                        answer: Answer::Deny,
-                    });
+                match origin {
+                    Origin::Daemon(id) => {
+                        self.services.tell(&ToDaemon::Answer {
+                            id,
+                            answer: Answer::Deny,
+                        });
+                    }
+                    Origin::Portal(id) => self.answer_portal(id, Answer::Deny),
+                    _ => {}
                 }
                 if let Some(mut old) = self.prompt_input.take() {
                     password::wipe(&mut old);

@@ -27,6 +27,8 @@ pub enum Origin {
     Stale,
     /// The lock password is off, so nothing opened the keyring: ask once.
     Open,
+    /// A portal request of `gh0st session`, by its id.
+    Portal(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,7 +52,8 @@ pub enum Action {
     /// The old password goes straight to the daemon: the system no longer
     /// knows it.
     Old(Vec<u8>),
-    Answer(u64, Answer),
+    /// An approval, for a daemon prompt or a portal request.
+    Answer(Origin, Answer),
     /// Esc: no answer.
     Dismiss(Origin),
 }
@@ -174,14 +177,14 @@ impl Prompts {
                 if k.state != State::Press {
                     return Action::None;
                 }
-                let Origin::Daemon(id) = a.origin else {
+                if !matches!(a.origin, Origin::Daemon(_) | Origin::Portal(_)) {
                     return Action::None;
-                };
+                }
                 // On chips, not Enter: Enter is the key a typing user hits
                 // without looking.
                 match k.ch {
-                    Some('5') => Action::Answer(id, Answer::Once),
-                    Some('7') => Action::Answer(id, Answer::Always),
+                    Some('5') => Action::Answer(a.origin.clone(), Answer::Once),
+                    Some('7') => Action::Answer(a.origin.clone(), Answer::Always),
                     _ => Action::None,
                 }
             }
@@ -505,11 +508,24 @@ mod tests {
         );
         assert_eq!(
             p.key(&key(6, Some('5')), T),
-            Action::Answer(9, Answer::Once)
+            Action::Answer(Origin::Daemon(9), Answer::Once)
         );
         assert_eq!(
             p.key(&key(8, Some('7')), T),
-            Action::Answer(9, Answer::Always)
+            Action::Answer(Origin::Daemon(9), Answer::Always)
+        );
+        p.push(Ask {
+            origin: Origin::Portal(4),
+            kind: Kind::Approve {
+                app: "Chat".into(),
+                what: "see your name".into(),
+            },
+        });
+        p.done();
+        p.seen(T);
+        assert_eq!(
+            p.key(&key(6, Some('5')), T + ARM_MS),
+            Action::Answer(Origin::Portal(4), Answer::Once)
         );
         assert_eq!(p.key(&key(30, Some('a')), T), Action::None);
     }
@@ -525,7 +541,7 @@ mod tests {
         assert_eq!(p.key(&key(6, Some('5')), T + 1), Action::None);
         assert_eq!(
             p.key(&key(6, Some('5')), T + ARM_MS),
-            Action::Answer(2, Answer::Once)
+            Action::Answer(Origin::Daemon(2), Answer::Once)
         );
     }
 

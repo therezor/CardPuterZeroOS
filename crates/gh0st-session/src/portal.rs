@@ -21,6 +21,14 @@ const CHOOSER_VERSION: u32 = 4;
 const OPEN_URI_VERSION: u32 = 5;
 const NOTIFICATION: &str = "org.freedesktop.portal.Notification";
 const NOTIFICATION_VERSION: u32 = 2;
+pub const INHIBIT: &str = "org.freedesktop.portal.Inhibit";
+const INHIBIT_VERSION: u32 = 3;
+pub const ACCOUNT: &str = "org.freedesktop.portal.Account";
+const ACCOUNT_VERSION: u32 = 1;
+const SESSION: &str = "org.freedesktop.portal.Session";
+pub const SESSION_ROOT: &str = "/org/freedesktop/portal/desktop/session";
+/// Inhibit's flags: suspending and the screen going dark.
+const KEEP_AWAKE: u32 = 4 | 8;
 /// Requests a caller may have open at once.
 const PER_CALLER: usize = 4;
 /// Bounds on what a caller's options may hold.
@@ -83,6 +91,19 @@ pub struct Question {
 enum Kind {
     Pick(Box<Question>),
     Open,
+    /// Keeps the caller's app awake until Close or the caller leaves; pid 0
+    /// holds nothing.
+    Inhibit {
+        pid: i32,
+    },
+    /// Asks the user before giving the caller the user's name.
+    Account {
+        app: String,
+    },
+    /// A session state monitor; its session object is at `session`.
+    Monitor {
+        session: String,
+    },
 }
 
 #[derive(Debug)]
@@ -100,6 +121,31 @@ pub struct Portal {
     reqs: Vec<Req>,
     next: u64,
     pub out: Vec<Out>,
+    /// Where apps the user let read their name are kept; None: nowhere.
+    pub remember: Option<PathBuf>,
+}
+
+/// The user, as the Account portal gives them: login name and real name.
+fn user() -> (String, String) {
+    // SAFETY: getpwuid's record is read at once, before any other call.
+    unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if pw.is_null() {
+            return (String::new(), String::new());
+        }
+        let s = |p: *const libc::c_char| {
+            if p.is_null() {
+                String::new()
+            } else {
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
+            }
+        };
+        let login = s((*pw).pw_name);
+        let gecos = s((*pw).pw_gecos);
+        let name = gecos.split(',').next().unwrap_or("").to_string();
+        let name = if name.is_empty() { login.clone() } else { name };
+        (login, name)
+    }
 }
 
 fn text(v: Option<&Value>) -> String {
@@ -316,6 +362,9 @@ impl Portal {
         if path.starts_with(REQUEST_ROOT) {
             return self.request_call(m, sender, path);
         }
+        if path.starts_with(SESSION_ROOT) {
+            return self.session_call(m, sender);
+        }
         if m.is(bus::PROPERTIES, "Get") || m.is(bus::PROPERTIES, "GetAll") {
             return properties(m);
         }
@@ -323,6 +372,22 @@ impl Portal {
             return Message::reply(m).arg(Value::str(introspect()));
         }
         let pid = pid.unwrap_or(0);
+        if m.interface.as_deref() == Some(INHIBIT) {
+            return self.inhibit_call(m, sender, pid);
+        }
+        if m.is(ACCOUNT, "GetUserInformation") {
+            return match self.new_request(m, sender, Kind::Account { app: app.into() }) {
+                Some((id, rp)) => {
+                    if self.remembered(app) {
+                        self.account_answer(id, "once");
+                    } else {
+                        self.shell(&["account", &id.to_string(), &pid.to_string(), app]);
+                    }
+                    Message::reply(m).arg(Value::path(rp))
+                }
+                None => Message::error(m, bus::err::LIMITS, "too many requests"),
+            };
+        }
         let title = m.body.get(1).and_then(Value::as_str).unwrap_or("");
         let options = m.body.get(2);
         let mode = match (m.interface.as_deref(), m.member.as_deref()) {
@@ -384,6 +449,109 @@ impl Portal {
         }
     }
 
+    fn inhibit_call(&mut self, m: &Message, sender: &str, pid: i32) -> Message {
+        match m.member.as_deref().unwrap_or("") {
+            "Inhibit" => {
+                let flags = m.body.get(1).and_then(Value::as_u32).unwrap_or(0);
+                let pid = if flags & KEEP_AWAKE != 0 { pid } else { 0 };
+                match self.new_request(m, sender, Kind::Inhibit { pid }) {
+                    Some((_, rp)) => {
+                        self.awake(pid, true);
+                        Message::reply(m).arg(Value::path(rp))
+                    }
+                    None => Message::error(m, bus::err::LIMITS, "too many requests"),
+                }
+            }
+            "CreateMonitor" => {
+                let token = text(m.body.get(1).and_then(|o| o.get("session_handle_token")));
+                let token = if token_ok(&token) {
+                    token
+                } else {
+                    format!("s{}", self.next + 1)
+                };
+                let session = format!("{SESSION_ROOT}/{}/{token}", sender_part(sender));
+                let kind = Kind::Monitor {
+                    session: session.clone(),
+                };
+                match self.new_request(m, sender, kind) {
+                    Some((_, rp)) => {
+                        let handle = vec![("session_handle", Value::path(session.clone()))];
+                        self.respond(sender, &rp, RESPONSE_OK, handle);
+                        // Running, and the screen saver is not on.
+                        let mut s = Message::signal(PATH, INHIBIT, "StateChanged")
+                            .arg(Value::path(session))
+                            .arg(Value::props([
+                                ("screensaver-active", Value::Bool(false)),
+                                ("session-state", Value::U32(1)),
+                            ]));
+                        s.destination = Some(sender.to_string());
+                        self.out.push(Out::Bus(s));
+                        Message::reply(m).arg(Value::path(rp))
+                    }
+                    None => Message::error(m, bus::err::LIMITS, "too many requests"),
+                }
+            }
+            "QueryEndResponse" => Message::reply(m),
+            _ => Message::error(m, bus::err::UNKNOWN_METHOD, "no such method"),
+        }
+    }
+
+    /// Keeps the app holding `pid` awake, or lets it sleep once no other
+    /// inhibitor of that pid is left.
+    fn awake(&mut self, pid: i32, on: bool) {
+        if pid <= 0 {
+            return;
+        }
+        let held = self
+            .reqs
+            .iter()
+            .filter(|r| matches!(r.kind, Kind::Inhibit { pid: p } if p == pid))
+            .count();
+        if (on && held == 1) || (!on && held == 0) {
+            self.shell(&["awake", &format!("pid:{pid}"), if on { "1" } else { "0" }]);
+        }
+    }
+
+    fn remembered(&self, app: &str) -> bool {
+        self.remember
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .is_some_and(|t| t.lines().any(|l| l == app))
+    }
+
+    /// The user's answer about their name: once, always or deny.
+    fn account_answer(&mut self, id: u64, answer: &str) {
+        let Some(at) = self.reqs.iter().position(|r| r.id == id) else {
+            return;
+        };
+        let r = self.reqs.remove(at);
+        let Kind::Account { app } = &r.kind else {
+            return;
+        };
+        if answer == "deny" {
+            self.respond(&r.sender, &r.path, RESPONSE_CANCELLED, Vec::new());
+            return;
+        }
+        if answer == "always" && !self.remembered(app) {
+            if let Some(p) = &self.remember {
+                let mut t = std::fs::read_to_string(p).unwrap_or_default();
+                t.push_str(app);
+                t.push('\n');
+                if let Some(d) = p.parent() {
+                    let _ = std::fs::create_dir_all(d);
+                }
+                let _ = gh0st_core::config::write_atomic(p, t.as_bytes());
+            }
+        }
+        let (login, name) = user();
+        let info = vec![
+            ("id", Value::str(login)),
+            ("name", Value::str(name)),
+            ("image", Value::str("")),
+        ];
+        self.respond(&r.sender, &r.path, RESPONSE_OK, info);
+    }
+
     fn request_call(&mut self, m: &Message, sender: &str, path: &str) -> Message {
         if m.is(bus::INTROSPECTABLE, "Introspect") {
             let xml = bus::introspect(
@@ -400,7 +568,11 @@ impl Portal {
         match self.reqs.iter().position(|r| r.path == path) {
             Some(i) if self.reqs[i].sender == sender => {
                 let r = self.reqs.remove(i);
-                self.shell(&["cancel", &r.id.to_string()]);
+                match r.kind {
+                    Kind::Inhibit { pid } => self.awake(pid, false),
+                    Kind::Monitor { .. } => {}
+                    _ => self.shell(&["cancel", &r.id.to_string()]),
+                }
                 Message::reply(m)
             }
             Some(_) => Message::error(m, bus::err::ACCESS_DENIED, "not yours"),
@@ -421,7 +593,7 @@ impl Portal {
         if m.is(OURS, "Take") {
             return match &self.reqs[at].kind {
                 Kind::Pick(q) => Message::reply(m).arg(q.to_value()),
-                Kind::Open => Message::error(m, bus::err::INVALID_ARGS, "not a chooser"),
+                _ => Message::error(m, bus::err::INVALID_ARGS, "not a chooser"),
             };
         }
         if !m.is(OURS, "Done") {
@@ -489,6 +661,10 @@ impl Portal {
         let Some(id) = fields.get(1).and_then(|v| v.parse::<u64>().ok()) else {
             return;
         };
+        if verb == "account" {
+            let answer = fields.get(2).map(String::as_str).unwrap_or("deny");
+            return self.account_answer(id, answer);
+        }
         let Some(at) = self.reqs.iter().position(|r| r.id == id) else {
             return;
         };
@@ -512,15 +688,32 @@ impl Portal {
         }
     }
 
-    /// A caller left the bus: its requests go, and their choosers close.
+    /// A caller left the bus: its requests go, its inhibitors let go, and
+    /// its choosers close.
     pub fn gone(&mut self, sender: &str) {
         let (theirs, rest): (Vec<Req>, Vec<Req>) = std::mem::take(&mut self.reqs)
             .into_iter()
             .partition(|r| r.sender == sender);
         self.reqs = rest;
         for r in theirs {
-            self.shell(&["cancel", &r.id.to_string()]);
+            match r.kind {
+                Kind::Inhibit { pid } => self.awake(pid, false),
+                Kind::Monitor { .. } => {}
+                _ => self.shell(&["cancel", &r.id.to_string()]),
+            }
         }
+    }
+
+    /// A call to a monitor's session object: Close ends it.
+    pub fn session_call(&mut self, m: &Message, sender: &str) -> Message {
+        let path = m.path.as_deref().unwrap_or("");
+        if !m.is(SESSION, "Close") {
+            return Message::error(m, bus::err::UNKNOWN_METHOD, "no such method");
+        }
+        self.reqs.retain(|r| {
+            !(r.sender == sender && matches!(&r.kind, Kind::Monitor { session } if session == path))
+        });
+        Message::reply(m)
     }
 
     /// `gh0st session --test` with no shell: answers request `id` at once,
@@ -533,7 +726,7 @@ impl Portal {
         let r = self.reqs.remove(at);
         let results = match r.kind {
             Kind::Pick(_) => vec![("uris", Value::strs([gh0st_core::uri::from_path(path)]))],
-            Kind::Open => Vec::new(),
+            _ => Vec::new(),
         };
         self.respond(&r.sender, &r.path, RESPONSE_OK, results);
     }
@@ -569,6 +762,9 @@ fn properties(m: &Message) -> Message {
         CHOOSER => CHOOSER_VERSION,
         OPEN_URI => OPEN_URI_VERSION,
         NOTIFICATION => NOTIFICATION_VERSION,
+        INHIBIT => INHIBIT_VERSION,
+        ACCOUNT => ACCOUNT_VERSION,
+        crate::settings::IFACE => crate::settings::VERSION,
         _ => return Message::error(m, bus::err::UNKNOWN_INTERFACE, "no such interface"),
     };
     if m.is(bus::PROPERTIES, "GetAll") {
@@ -584,11 +780,16 @@ fn introspect() -> String {
     const CHOOSER_XML: &str = r#"<interface name="org.freedesktop.portal.FileChooser"><method name="OpenFile"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SaveFile"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SaveFiles"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     const OPEN_URI_XML: &str = r#"<interface name="org.freedesktop.portal.OpenURI"><method name="OpenURI"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="OpenFile"><arg type="s" direction="in"/><arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="OpenDirectory"><arg type="s" direction="in"/><arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SchemeSupported"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="b" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     const NOTIFICATION_XML: &str = r#"<interface name="org.freedesktop.portal.Notification"><method name="AddNotification"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/></method><method name="RemoveNotification"><arg type="s" direction="in"/></method><signal name="ActionInvoked"><arg type="s"/><arg type="s"/><arg type="av"/></signal><property name="version" type="u" access="read"/></interface>"#;
+    const INHIBIT_XML: &str = r#"<interface name="org.freedesktop.portal.Inhibit"><method name="Inhibit"><arg type="s" direction="in"/><arg type="u" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="CreateMonitor"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="QueryEndResponse"><arg type="o" direction="in"/></method><signal name="StateChanged"><arg type="o"/><arg type="a{sv}"/></signal><property name="version" type="u" access="read"/></interface>"#;
+    const ACCOUNT_XML: &str = r#"<interface name="org.freedesktop.portal.Account"><method name="GetUserInformation"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     bus::introspect(
         &[
             CHOOSER_XML,
             OPEN_URI_XML,
             NOTIFICATION_XML,
+            INHIBIT_XML,
+            ACCOUNT_XML,
+            crate::settings::XML,
             bus::PROPERTIES_XML,
         ],
         &[],
@@ -738,6 +939,84 @@ mod tests {
         p.gone(ME);
         assert_eq!(shell_lines(&mut p), [["cancel", "4"]]);
         assert_eq!(p.open(), 0);
+    }
+
+    #[test]
+    fn inhibit_keeps_the_caller_awake_until_its_last_request_goes() {
+        let mut p = Portal::default();
+        let idle = |flags| {
+            call(
+                INHIBIT,
+                "Inhibit",
+                vec![Value::str(""), Value::U32(flags), Value::props::<&str>([])],
+            )
+        };
+        let first = p.call(&idle(8), ME, Some(300), "mpv").body[0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        p.call(&idle(8), ME, Some(300), "mpv");
+        p.call(&idle(1), ME, Some(300), "mpv");
+        assert_eq!(shell_lines(&mut p), [["awake", "pid:300", "1"]]);
+        let mut close = Message::call(NAME, &first, REQUEST, "Close");
+        close.sender = Some(ME.into());
+        p.call(&close, ME, None, "mpv");
+        assert!(shell_lines(&mut p).is_empty(), "the second still holds");
+        p.gone(ME);
+        assert_eq!(shell_lines(&mut p), [["awake", "pid:300", "0"]]);
+        let monitor = call(
+            INHIBIT,
+            "CreateMonitor",
+            vec![
+                Value::str(""),
+                Value::props([("session_handle_token", Value::str("m"))]),
+            ],
+        );
+        p.call(&monitor, ME, Some(300), "mpv");
+        let session = "/org/freedesktop/portal/desktop/session/1_42/m";
+        let r = responses(&mut p);
+        assert_eq!(
+            r[0].2
+                .get("session_handle")
+                .map(Value::inner)
+                .and_then(Value::as_str),
+            Some(session)
+        );
+        let mut end = Message::call(NAME, session, SESSION, "Close");
+        end.sender = Some(ME.into());
+        assert!(p.call(&end, ME, None, "mpv").error_name.is_none());
+        assert_eq!(p.open(), 0);
+    }
+
+    #[test]
+    fn the_users_name_needs_a_yes_and_always_is_kept() {
+        let dir = std::env::temp_dir().join(format!("gh0st-account-{}", std::process::id()));
+        let mut p = Portal {
+            remember: Some(dir.join("portal-account")),
+            ..Portal::default()
+        };
+        let ask = || {
+            call(
+                ACCOUNT,
+                "GetUserInformation",
+                vec![Value::str(""), Value::props::<&str>([])],
+            )
+        };
+        p.call(&ask(), ME, Some(300), "Chat");
+        assert_eq!(shell_lines(&mut p), [["account", "1", "300", "Chat"]]);
+        p.shell_said(&["account".into(), "1".into(), "deny".into()]);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
+        p.call(&ask(), ME, Some(300), "Chat");
+        p.out.clear();
+        p.shell_said(&["account".into(), "2".into(), "always".into()]);
+        let r = responses(&mut p);
+        assert_eq!(r[0].1, RESPONSE_OK);
+        assert!(r[0].2.get("name").is_some() && r[0].2.get("id").is_some());
+        // Asked again, the answer comes without the shell.
+        p.call(&ask(), ME, Some(300), "Chat");
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
+        assert!(shell_lines(&mut p).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

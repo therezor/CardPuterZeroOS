@@ -11,7 +11,9 @@ other Linux app that keeps secrets use it unchanged.
   shell toasts (`docs/apps.md`, Notifications). An app keeps eight at most.
 - `org.freedesktop.ScreenSaver` Inhibit and UnInhibit: the app's `awake`, as
   if it had said it on its link. It ends with the last inhibitor or the
-  connection.
+  connection. A program outside apps is named by its pid, and keeps awake
+  the app whose process group it is in.
+- The XDG portal (`docs/portal.md`).
 
 The shell starts both on socket pairs before any app, and starts one again
 the moment it dies, so no app gets time to take its bus names. A dead shell
@@ -66,8 +68,7 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
 
 - A process in a cgroup `app-<desktop stem>` right under `gh0st.service` is
   that app. The shell puts apps there once isolation is on
-  (`docs/isolation.md`); until then every caller is its executable's path,
-  and a ScreenSaver inhibit, which needs the app, does nothing.
+  (`docs/isolation.md`); until then every caller is its executable's path.
 - The pid comes from the bus, with a pidfd where dbus-daemon gives one, so a
   reused pid can't pass for another program.
 - An item belongs to the app that stored it. To any other app it looks

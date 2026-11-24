@@ -11,6 +11,7 @@ use gh0st_dbus::{Conn, Kind, Message, Value, bus};
 use crate::inhibit::{self, Inhibit};
 use crate::notify::{self, Notifications};
 use crate::portal::{self, Portal};
+use crate::settings::{self, Settings};
 
 /// Where the session daemon finds its end of the shell's socket pair.
 pub const ENV: &str = "GH0ST_SESSION_FD";
@@ -23,6 +24,10 @@ struct Session {
     notes: Notifications,
     inhibit: Inhibit,
     portal: Portal,
+    settings: Settings,
+    /// config.json's folder, for SettingChanged.
+    #[cfg(target_os = "linux")]
+    config_watch: Option<gh0st_core::status::Watch>,
 }
 
 fn take_link() -> Option<Link> {
@@ -78,13 +83,22 @@ pub fn main(args: &[String]) -> i32 {
         eprintln!("gh0st session: {e}");
         return 1;
     }
+    let config = gh0st_core::config::default_path();
+    let mut portal = Portal::default();
+    portal.remember = std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".local/state/gh0st/portal-account"));
     let mut s = Session {
         bus: conn,
         link,
         who: HashMap::new(),
         notes: Notifications::new(gh0st_core::notify::user_dir()),
         inhibit: Inhibit::default(),
-        portal: Portal::default(),
+        portal,
+        settings: Settings::new(&config),
+        #[cfg(target_os = "linux")]
+        config_watch: config
+            .parent()
+            .and_then(|d| gh0st_core::status::Watch::dirs(&[d]).ok()),
     };
     s.say(&["ready"]);
     s.run()
@@ -110,8 +124,19 @@ impl Session {
             if let Some(l) = &self.link {
                 fds.push(gh0st_core::rt::pollfd(l.fd()));
             }
+            #[cfg(target_os = "linux")]
+            let watch_at = self.config_watch.as_ref().map(|w| {
+                fds.push(gh0st_core::rt::pollfd(w.fd()));
+                fds.len() - 1
+            });
             if gh0st_core::rt::wait(&mut fds, None).is_err() {
                 continue;
+            }
+            #[cfg(target_os = "linux")]
+            if let (Some(i), Some(w)) = (watch_at, self.config_watch.as_mut()) {
+                if fds[i].revents != 0 && w.drain() {
+                    self.settings.changed();
+                }
             }
             if fds[0].revents != 0 {
                 if let Err(e) = self.bus.flush().and_then(|()| self.bus.fill()) {
@@ -187,6 +212,8 @@ impl Session {
             let r = self.notes.portal_call(&m, &who, &sender);
             self.test_press();
             r
+        } else if path == portal::PATH && m.interface.as_deref() == Some(settings::IFACE) {
+            self.settings.call(&m)
         } else if path.starts_with(portal::PATH) {
             self.portal.call(&m, &sender, pid, &who.label)
         } else if path == notify::PATH {
@@ -194,7 +221,7 @@ impl Session {
             self.test_press();
             r
         } else if inhibit::PATHS.contains(&path) {
-            self.inhibit.call(&m, &who, &sender)
+            self.inhibit.call(&m, &who, &sender, pid)
         } else if m.is(bus::INTROSPECTABLE, "Introspect") {
             let child = match path {
                 "/" => vec!["org", "ScreenSaver"],
@@ -266,6 +293,15 @@ impl Session {
         let Some(answer) = std::env::var_os("GH0ST_PORTAL_ANSWER") else {
             return;
         };
+        if let (Some("account"), Some(id), Some(a)) = (
+            f.first().map(String::as_str),
+            f.get(1),
+            std::env::var_os("GH0ST_PORTAL_ACCOUNT"),
+        ) {
+            let a = a.to_string_lossy().into_owned();
+            self.portal.shell_said(&["account".into(), id.clone(), a]);
+            return;
+        }
         if let (Some(verb), Some(id)) = (f.first(), f.get(1).and_then(|i| i.parse().ok())) {
             if verb == "pick" || verb == "open" {
                 self.portal
@@ -295,6 +331,9 @@ impl Session {
 
     fn flush_out(&mut self) -> gh0st_dbus::Result<()> {
         for s in std::mem::take(&mut self.notes.out) {
+            self.bus.send(s)?;
+        }
+        for s in std::mem::take(&mut self.settings.out) {
             self.bus.send(s)?;
         }
         // Answers can make more answers (a test's), so drain until quiet.
