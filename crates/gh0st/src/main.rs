@@ -55,8 +55,22 @@ fn main() {
             let rest: Vec<String> = args.collect();
             std::process::exit(open::main(&rest))
         }
+        "screenshot" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(open::screenshot(&rest))
+        }
+        "pick-color" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(open::pick_color(&rest))
+        }
+        "wallpaper" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(open::wallpaper(&rest))
+        }
         _ => {
-            eprintln!("usage: gh0st <shell|helper|update|store|keyring|session|audio|open|version>");
+            eprintln!(
+                "usage: gh0st <shell|helper|update|store|keyring|session|open|screenshot|pick-color|wallpaper|audio|version>"
+            );
             std::process::exit(2);
         }
     }

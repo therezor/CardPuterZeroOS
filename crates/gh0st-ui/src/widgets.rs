@@ -1556,6 +1556,15 @@ pub fn form_field(c: &mut Canvas, t: &Theme, r: Rect, f: &Field) -> i32 {
     field_error(c, t, fr, why) - r.y
 }
 
+/// A passing word under the field at `fr`, such as "Checking…": muted,
+/// the field's edge left alone. Nothing is wrong yet. Returns that line's
+/// foot.
+pub fn field_note(c: &mut Canvas, t: &Theme, fr: Rect, note: &str) -> i32 {
+    let nr = Rect::new(fr.x + 3, fr.bottom() + 2, fr.w - 6, t.m.field_note_h);
+    text_in(c, t.f.small, nr, note, t.c.muted);
+    nr.bottom()
+}
+
 /// What is wrong with the field at `fr`: a red edge, and `why` on a line
 /// under it. Returns that line's foot.
 pub fn field_error(c: &mut Canvas, t: &Theme, fr: Rect, why: &str) -> i32 {

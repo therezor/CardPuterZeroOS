@@ -118,8 +118,10 @@ Measured on the device unless marked.
   themselves non-dumpable instead.
 - `CONFIG_PSI=y` with `CONFIG_PSI_DEFAULT_DISABLED=y`: no
   `/proc/pressure/memory` until `psi=1` is on the command line. The stock
-  line has `cgroup_disable=memory`, so memcg events are out too. Whether
-  unprivileged triggers with a 2 s window work there is not checked yet.
+  line has `cgroup_disable=memory`, so memcg events are out too. With
+  `psi=1` the file is mode 0666, and UID 1000 sets triggers with a 2 s
+  window. An awk filling 380 MB (206 MB of swap there) stalled tasks for
+  533 ms, and `gh0st session` sent `LowMemoryWarning 255` once.
 - `user.max_user_namespaces` is 1494. `unshare -Ur` and `unshare -Urm` work
   as UID 1000; inside, `/dev/fb_lcd` and `/dev/input` open and a tmpfs
   mounts.

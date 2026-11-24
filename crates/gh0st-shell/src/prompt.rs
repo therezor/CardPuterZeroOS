@@ -414,12 +414,13 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
         ),
         (_, Kind::PickColor) => (Vec::new(), false, None),
     };
+    // A check under way is no error: a right password never shows red.
     let note = if v.checking {
-        Some("Checking\u{2026}")
+        Some(("Checking\u{2026}", false))
     } else if v.wrong {
-        Some("Wrong password")
+        Some(("Wrong password", true))
     } else {
-        note
+        note.map(|n| (n, true))
     };
     let line_font = if field { t.f.small } else { t.f.body };
     let lines_h = lines.len() as i32 * t.m.line_h;
@@ -449,7 +450,8 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
         let dots = "\u{2022}".repeat(v.typed);
         widgets::text_field(c, t, fr, &dots, true, !v.checking, "Password");
         y = match note {
-            Some(why) => widgets::field_error(c, t, fr, why),
+            Some((why, true)) => widgets::field_error(c, t, fr, why),
+            Some((word, false)) => widgets::field_note(c, t, fr, word),
             None => fr.bottom(),
         } + t.m.card_gap;
     }
@@ -703,6 +705,41 @@ mod tests {
             p.key(&key(code::ENTER, None), T),
             Action::Color(Origin::Portal(5, "color"), (319, 95))
         );
+    }
+
+    #[test]
+    fn a_check_under_way_shows_no_red() {
+        let t = Theme::new(gh0st_ui::theme::named(None));
+        let ask = pw(Origin::Open);
+        let draw = |checking: bool, wrong: bool| {
+            let mut c = Canvas::new(t.m.width, t.m.height);
+            let s = Status {
+                dock: &[],
+                front: None,
+                icon: "key-round",
+                title: "Keyring",
+                context: "",
+                tabs: &[],
+                front_tab: 0,
+                item: None,
+                clock: "20:45",
+                battery: None,
+                net: gh0st_ui::widgets::Net::Wifi(3),
+                bluetooth: false,
+                notices: 0,
+            };
+            let v = View {
+                ask: &ask,
+                typed: 4,
+                checking,
+                wrong,
+                at: (0, 0),
+            };
+            draw(&mut c, &t, &s, &v);
+            c.pixels().iter().filter(|&&p| p == t.c.critical).count()
+        };
+        assert_eq!(draw(true, false), 0, "a right password never flashes red");
+        assert!(draw(false, true) > 0, "a wrong one does");
     }
 
     #[test]
