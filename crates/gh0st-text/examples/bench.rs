@@ -102,6 +102,21 @@ fn main() -> std::io::Result<()> {
     })?;
     let find = ms(t);
 
+    // Lexing: the first 4 MB, line by line, as Rust, the busiest table.
+    let t = Instant::now();
+    let mut state = 0;
+    let mut spans = Vec::new();
+    let mut lexed = 0u64;
+    let mut off = 0;
+    while off < len.min(4 << 20) {
+        let end = b.line_end(off)?;
+        let line = b.bytes(off..end.min(off + gh0st_text::lex::LINE_MAX as u64))?;
+        state = gh0st_text::lex::lex(gh0st_text::lex::Lang::Rust, state, &line, &mut spans);
+        lexed += line.len() as u64 + 1;
+        off = end + 1;
+    }
+    let lex_ms = ms(t);
+
     println!("file              {} MB", len >> 20);
     println!("open              {open:.2} ms");
     println!("first screen      {first:.2} ms");
@@ -118,6 +133,11 @@ fn main() -> std::io::Result<()> {
     );
     println!("undo 1000         {undo:.3} ms");
     println!("find in last 64MB {find:.1} ms ({})", found.is_some());
+    println!(
+        "lex as Rust       {:.0} MB/s ({lex_ms:.1} ms for {} kB)",
+        (lexed as f64 / 1048576.0) / (lex_ms / 1000.0),
+        lexed >> 10
+    );
     println!("max RSS           {} kB", rss_kb());
     Ok(())
 }

@@ -65,6 +65,67 @@ impl Palette {
             Tone::Critical => self.critical,
         }
     }
+
+    /// The colour of a run of code. From the terminal's colours, which
+    /// every palette already keeps readable on `bg`, so a scheme file
+    /// colours code too.
+    pub fn syntax(&self, role: Syntax) -> Color {
+        match role {
+            Syntax::Plain => self.fg,
+            Syntax::Comment => self.muted,
+            Syntax::Punct => self.soft(),
+            Syntax::String => self.ansi[2],
+            Syntax::Keyword => self.ansi[5],
+            Syntax::Type => self.ansi[6],
+            Syntax::Number => self.ansi[3],
+            Syntax::Func => self.ansi[4],
+            Syntax::Attr => self.ansi[11],
+            Syntax::Heading => self.ansi[12],
+            Syntax::Added => self.ansi[2],
+            Syntax::Removed => self.ansi[1],
+        }
+    }
+}
+
+/// What a run of code or markup is, for its colour in an editor. Apps name
+/// a role, never a colour.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Syntax {
+    #[default]
+    Plain,
+    Comment,
+    String,
+    Keyword,
+    Type,
+    /// Numbers and constants: `42`, `true`, `None`.
+    Number,
+    /// Functions called or defined, and keys in data files.
+    Func,
+    Punct,
+    /// Attributes, decorators, preprocessor lines, tags' attributes.
+    Attr,
+    /// Headings in prose, sections in config files.
+    Heading,
+    /// Lines a diff adds and removes.
+    Added,
+    Removed,
+}
+
+impl Syntax {
+    pub const ALL: [Syntax; 12] = [
+        Syntax::Plain,
+        Syntax::Comment,
+        Syntax::String,
+        Syntax::Keyword,
+        Syntax::Type,
+        Syntax::Number,
+        Syntax::Func,
+        Syntax::Punct,
+        Syntax::Attr,
+        Syntax::Heading,
+        Syntax::Added,
+        Syntax::Removed,
+    ];
 }
 
 /// What a toast, banner, tag or row icon says about itself. Apps name a tone,
@@ -1258,6 +1319,13 @@ mod tests {
         // Black is a background colour in the terminal; the rest is text.
         for (i, &c) in p.ansi.iter().enumerate().filter(|&(i, _)| i != 0) {
             need(format!("ansi {i}"), contrast(c, p.bg), 3.0);
+        }
+        for role in Syntax::ALL {
+            need(
+                format!("{role:?} code"),
+                contrast(p.syntax(role), p.bg),
+                3.0,
+            );
         }
         out
     }
