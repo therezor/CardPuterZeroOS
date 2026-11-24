@@ -57,8 +57,8 @@ travel the shell link.
 ## OpenURI
 
 - `OpenFile(s parent, h fd, a{sv})` opens the file the fd names in its app
-  (`apps.md`, Opening files), as Files' Enter does. `ask` shows the
-  Open-with list first. `OpenDirectory` opens its folder in Files.
+  (`apps.md`, Opening files), as Files' Enter does. `OpenDirectory` opens
+  its folder in Files. `ask` is not offered yet: the default app opens.
 - `OpenURI` takes `file://` and acts as `OpenFile`. The spec sends those to
   `OpenFile`; we take them anyway. Other schemes answer 2: there is no
   browser. `SchemeSupported` is true for `file` alone.

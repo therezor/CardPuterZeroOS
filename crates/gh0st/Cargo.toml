@@ -8,6 +8,7 @@ description.workspace = true
 
 [dependencies]
 gh0st-core.workspace = true
+gh0st-dbus.workspace = true
 gh0st-keyringd.workspace = true
 gh0st-session.workspace = true
 gh0st-shell.workspace = true

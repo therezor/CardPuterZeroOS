@@ -248,6 +248,7 @@ name = "gh0st"
 version = "0.2.0"
 dependencies = [
  "gh0st-core",
+ "gh0st-dbus",
  "gh0st-keyringd",
  "gh0st-session",
  "gh0st-shell",

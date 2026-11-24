@@ -6,6 +6,7 @@ use std::path::Path;
 mod audio;
 mod auth;
 mod helper;
+mod open;
 mod store;
 mod update;
 
@@ -50,8 +51,12 @@ fn main() {
             let rest: Vec<String> = args.collect();
             std::process::exit(store::main(&rest))
         }
+        "open" | "xdg-open" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(open::main(&rest))
+        }
         _ => {
-            eprintln!("usage: gh0st <shell|helper|update|store|keyring|session|audio|version>");
+            eprintln!("usage: gh0st <shell|helper|update|store|keyring|session|audio|open|version>");
             std::process::exit(2);
         }
     }

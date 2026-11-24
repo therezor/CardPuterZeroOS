@@ -91,6 +91,12 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.portal.OpenURI.SchemeSupported file '{}' | grep -q true || fail "SchemeSupported"
 
+echo "gh0st open and xdg-open: a file through OpenURI"
+timeout 10 "$GH0ST" open "$work/files/a note.txt" || fail "gh0st open"
+ln -sf "$GH0ST" "$work/xdg-open"
+timeout 10 "$work/xdg-open" "$work/files" || fail "xdg-open"
+"$GH0ST" open "$work/nope" 2>/dev/null && fail "gh0st open took a missing file"
+
 echo "notifications: actions come back to the poster"
 kill $pid 2>/dev/null; wait $pid 2>/dev/null || true
 HOME=$work XDG_STATE_HOME=$work/.local/state GH0ST_NOTIFY_PRESS=1 \

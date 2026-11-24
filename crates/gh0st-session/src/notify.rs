@@ -29,8 +29,11 @@ struct Live {
     /// The poster's action names, by the ids the notice file uses.
     actions: Vec<(String, String)>,
     /// A portal notification: its id, and each action's target.
-    portal: Option<(String, Vec<(String, Option<Value>)>)>,
+    portal: Option<(String, Targets)>,
 }
+
+/// A portal notification's actions, each with the target it goes back with.
+type Targets = Vec<(String, Option<Value>)>;
 
 /// Lowercase letters and digits of `s`: a tag from a portal id.
 fn tag_of(prefix: &str, s: &str) -> String {
