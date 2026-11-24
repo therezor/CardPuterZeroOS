@@ -105,6 +105,17 @@ Measured on the device unless marked.
   its own: it comes up as `enx4adbd2912288`, a locally administered MAC,
   with NetworkManager's "Wired connection 1". Its stable-id is now fixed
   (`50-gh0st.conf`) so the lease survives a replug.
+- The keyring on the device (gh0st 11d399c): its daemon and `gh0st session`
+  are one thread and about 490 kB PSS each, and woke 0 times in 20 s idle.
+  From Enter on a prompt to the app holding its secret, through
+  `unix_chkpwd` and Argon2id m=64 MiB t=3: about 2.1 s. Creating the vault
+  takes about as long.
+- Checked by hand there: open at start with the lock password off, an app
+  storing and reading its own secret, a second app approved (always) and
+  a third denied, a question lighting a dark screen, Show in the Keyring
+  app after the password, Lock then a lookup that asks for it, a
+  notification as a toast. Settings, Store, Terminal, Updates, Files,
+  Camera, Weather and Music all start as before.
 
 ## Gh0st OS memory
 
