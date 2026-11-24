@@ -48,7 +48,8 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.OpenURI version | grep -q 'uint32 5' \
     || fail "OpenURI version"
-for v in Settings:2 Inhibit:3 Account:1 Trash:1 Wallpaper:1 MemoryMonitor:1 Screenshot:2; do
+for v in Settings:2 Inhibit:3 Account:1 Trash:1 Wallpaper:1 MemoryMonitor:1 Screenshot:2 \
+    NetworkMonitor:3 PowerProfileMonitor:1; do
     gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
         --method org.freedesktop.DBus.Properties.Get "org.freedesktop.portal.${v%:*}" version \
         | grep -q "uint32 ${v#*:}" || fail "${v%:*} version"
@@ -96,6 +97,16 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
     && fail "OpenURI took a web address"
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.portal.OpenURI.SchemeSupported file '{}' | grep -q true || fail "SchemeSupported"
+
+echo "portal: NetworkMonitor without NetworkManager, PowerProfileMonitor"
+gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.NetworkMonitor.GetStatus | grep -q "'connectivity': <uint32 4>" \
+    || fail "GetStatus"
+gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.NetworkMonitor.CanReach example.org 443 | grep -q true || fail "CanReach"
+gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.PowerProfileMonitor \
+    power-saver-enabled | grep -q false || fail "power-saver-enabled"
 
 echo "portal: Settings reads the look and signals a change"
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \

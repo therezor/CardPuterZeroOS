@@ -10,6 +10,7 @@ use gh0st_dbus::{Conn, Kind, Message, Value, bus};
 
 use crate::inhibit::{self, Inhibit};
 use crate::memory::{self, Memory};
+use crate::monitor::{self, Network, Power};
 use crate::notify::{self, Notifications};
 use crate::portal::{self, Portal};
 use crate::settings::{self, Settings};
@@ -27,6 +28,11 @@ struct Session {
     portal: Portal,
     settings: Settings,
     memory: Memory,
+    network: Network,
+    power: Power,
+    /// The CPU mode's rule folder, for Power Saver.
+    #[cfg(target_os = "linux")]
+    rules_watch: Option<gh0st_core::status::Watch>,
     /// config.json's folder, for SettingChanged.
     #[cfg(target_os = "linux")]
     config_watch: Option<gh0st_core::status::Watch>,
@@ -107,6 +113,10 @@ pub fn main(args: &[String]) -> i32 {
         portal,
         settings: Settings::new(&config),
         memory: Memory::open(),
+        network: Network::default(),
+        power: Power::new(),
+        #[cfg(target_os = "linux")]
+        rules_watch: gh0st_core::status::Watch::dirs(&[std::path::Path::new(monitor::RULES)]).ok(),
         #[cfg(target_os = "linux")]
         config_watch: config
             .parent()
@@ -136,6 +146,19 @@ impl Session {
             if let Some(l) = &self.link {
                 fds.push(gh0st_core::rt::pollfd(l.fd()));
             }
+            let net_at = self.network.fd().map(|fd| {
+                fds.push(gh0st_core::rt::pollfd_rw(
+                    fd,
+                    true,
+                    self.network.wants_write(),
+                ));
+                fds.len() - 1
+            });
+            #[cfg(target_os = "linux")]
+            let rules_at = self.rules_watch.as_ref().map(|w| {
+                fds.push(gh0st_core::rt::pollfd(w.fd()));
+                fds.len() - 1
+            });
             let pressure_at = fds.len();
             fds.extend(self.memory.pollfds());
             let job_at = self.portal.job_fd().map(|fd| {
@@ -156,6 +179,15 @@ impl Session {
                 .collect();
             if let Some(level) = self.memory.level(&fired) {
                 self.low_memory(level);
+            }
+            if net_at.is_some_and(|i| fds[i].revents != 0) {
+                self.network.ready();
+            }
+            #[cfg(target_os = "linux")]
+            if let (Some(i), Some(w)) = (rules_at, self.rules_watch.as_ref()) {
+                if fds[i].revents != 0 && w.drain() {
+                    self.power.changed();
+                }
             }
             if job_at.is_some_and(|i| fds[i].revents != 0) {
                 self.portal.job_done();
@@ -240,6 +272,13 @@ impl Session {
             let r = self.notes.portal_call(&m, &who, &sender);
             self.test_press();
             r
+        } else if path == portal::PATH && m.interface.as_deref() == Some(monitor::NETWORK) {
+            self.network.call(&m)
+        } else if path == portal::PATH
+            && (m.is(bus::PROPERTIES, "Get") || m.is(bus::PROPERTIES, "GetAll"))
+            && m.body.first().and_then(Value::as_str) == Some(monitor::POWER)
+        {
+            self.power.properties(&m)
         } else if path == portal::PATH && m.interface.as_deref() == Some(settings::IFACE) {
             self.settings.call(&m)
         } else if path.starts_with(portal::PATH) {
@@ -383,6 +422,12 @@ impl Session {
             self.bus.send(s)?;
         }
         for s in std::mem::take(&mut self.settings.out) {
+            self.bus.send(s)?;
+        }
+        let monitors = std::mem::take(&mut self.network.out)
+            .into_iter()
+            .chain(std::mem::take(&mut self.power.out));
+        for s in monitors {
             self.bus.send(s)?;
         }
         // Answers can make more answers (a test's), so drain until quiet.

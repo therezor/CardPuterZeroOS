@@ -21,6 +21,8 @@ which the device has none of.
 | `Wallpaper` | 1 | Sets the wallpaper, after the user's yes over the picture itself |
 | `MemoryMonitor` | 1 | `LowMemoryWarning` when memory runs short |
 | `Screenshot` | 2 | `Screenshot` after the user's yes over the frozen screen; `PickColor` with a crosshair |
+| `NetworkMonitor` | 3 | The network as NetworkManager sees it, and `changed` |
+| `PowerProfileMonitor` | 1 | `power-saver-enabled`: Settings' CPU mode is Power Saver |
 
 ## Requests
 
@@ -147,6 +149,25 @@ answers `1` done, `0` not: a folder on another drive has no Trash here.
   colour under it and its hex, away from the crosshair. Enter answers
   `color` as `(ddd)` from 0 to 1; Esc answers `1`. Picking is the user's
   yes: there is no question first.
+
+## NetworkMonitor
+
+- `GetStatus`, `GetAvailable`, `GetMetered` and `GetConnectivity` read
+  NetworkManager on the system bus. The connection opens on the first
+  call, so a session no app asks keeps none. Its PropertiesChanged signals
+  then wake the loop, and `changed` goes out when the answer moves.
+- Connectivity is NetworkManager's, as `1` local, `2` limited, `3` captive
+  portal, `4` full. Its check is off on the image, so its state stands in:
+  connected to the internet is `4`, to a site `2`.
+- Metered is NetworkManager's yes or guess-yes.
+- `CanReach` answers whether the network is there: no name is looked up.
+- Without NetworkManager, the network is there and full.
+
+## PowerProfileMonitor
+
+`power-saver-enabled` is true while Settings' CPU mode is Power Saver (the
+`powersave` governor). Settings keeps the mode as a udev rule in
+`/etc/udev/rules.d`; a change there sends PropertiesChanged.
 
 ## MemoryMonitor
 

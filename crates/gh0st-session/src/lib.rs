@@ -6,6 +6,7 @@
 
 pub mod inhibit;
 pub mod memory;
+pub mod monitor;
 pub mod notify;
 pub mod portal;
 pub mod run;
