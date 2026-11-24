@@ -6,7 +6,7 @@
 use gh0st_app::gfx::theme;
 use gh0st_app::testing::Driver;
 use gh0st_settings::app::{Embed, Settings};
-use gh0st_settings::model::PageId;
+use gh0st_settings::model::{Choice, PageId};
 
 mod common;
 use common::stub_tools;
@@ -33,6 +33,7 @@ fn pages() -> Vec<PageId> {
         PageId::CountryZones,
         PageId::Hotspot,
         PageId::Pictures,
+        PageId::Choose(Choice::Palette),
     ]
 }
 

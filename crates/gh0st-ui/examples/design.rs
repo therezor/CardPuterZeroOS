@@ -565,7 +565,7 @@ fn picker(t: &Theme) -> Canvas {
     let mut c = frame(t);
     widgets::status_bar(&mut c, t, &sub("palette", "Palette", "Settings"));
     let (area, _) = widgets::rows_area(t, t.m.row_h);
-    for (i, name) in ["Mint", "Nord", "Paper"].iter().enumerate() {
+    for (i, name) in theme::PALETTES.iter().map(|p| p.name).take(5).enumerate() {
         let tr = if i == 0 {
             Trailing::Check
         } else {

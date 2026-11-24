@@ -314,6 +314,15 @@ impl Settings {
             .palette_name()
             .and_then(theme::find)
             .map_or(cx.theme().c.name, |p| p.name);
+        s.palettes = if self.stack.last().map(|(p, _)| p) == Some(&PageId::Choose(Choice::Palette))
+        {
+            palettes(cx)
+                .iter()
+                .map(|p| (p.name, gh0st_app::gfx::color::luminance(p.bg) > 0.5))
+                .collect()
+        } else {
+            Vec::new()
+        };
         s.animations = config.animations();
         s.wallpaper = config.wallpaper().to_string();
         s.own_picture = crate::wallpaper::kept().is_file();
@@ -406,9 +415,14 @@ impl Settings {
 
     /// Enter on a row.
     fn activate(&mut self, cx: &mut Cx) {
-        let Some((act, value)) = self.selected_act() else {
+        let Some((mut act, value)) = self.selected_act() else {
             return;
         };
+        // Enter lists the palettes; Left and Right still step through them.
+        // Setup keeps stepping.
+        if act == Act::Set(Setting::Palette) && self.embed.is_none() {
+            act = Act::Open(PageId::Choose(Choice::Palette));
+        }
         match act {
             Act::Open(id) => {
                 if matches!(id, PageId::TimeZone(_)) && self.state.zones.is_empty() {
@@ -494,15 +508,7 @@ impl Settings {
                 cx.settings().set_str(key::HOME_LAYOUT, l.config_name());
             }
             Setting::Palette => {
-                // Built-ins, then the user's colour schemes. Phantom joins
-                // once setup's training is done.
-                let mut all = theme::all();
-                if cx.settings().get_bool("gh0st.tour_done") == Some(true) {
-                    all.splice(
-                        theme::PALETTES.len()..theme::PALETTES.len(),
-                        theme::EARNED.iter().copied(),
-                    );
-                }
+                let all = palettes(cx);
                 let i = all
                     .iter()
                     .position(|p| p.name == self.state.palette)
@@ -645,6 +651,13 @@ impl Settings {
                     return;
                 }
                 HelperCall::new(&["swappiness", word], format!("Swappiness: {word}"))
+            }
+            // Not gated: the SDK follows the key and redraws in it.
+            Choice::Palette => {
+                if word != s.palette {
+                    cx.settings().set_str(key::PALETTE, word);
+                }
+                return;
             }
         };
         self.helper_call(cx, call);
@@ -2435,6 +2448,23 @@ fn size(b: u64) -> String {
     }
 }
 
+/// Every palette to pick from: the built-ins, then the user's colour
+/// schemes. Phantom joins after the built-ins once setup's training is done.
+fn palettes(cx: &mut Cx) -> Vec<theme::Palette> {
+    palette_list(cx.settings().get_bool("gh0st.tour_done") == Some(true))
+}
+
+fn palette_list(tour_done: bool) -> Vec<theme::Palette> {
+    let mut all = theme::all();
+    if tour_done {
+        all.splice(
+            theme::PALETTES.len()..theme::PALETTES.len(),
+            theme::EARNED.iter().copied(),
+        );
+    }
+    all
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2467,6 +2497,15 @@ mod tests {
     fn choices_wrap_both_ways() {
         assert_eq!(cycle(0, -1, 3), 2);
         assert_eq!(cycle(2, 1, 3), 0);
+    }
+
+    #[test]
+    fn phantom_is_listed_once_the_training_is_done() {
+        let names = |done| -> Vec<&str> { palette_list(done).iter().map(|p| p.name).collect() };
+        let before = names(false);
+        assert!(theme::PALETTES.iter().all(|p| before.contains(&p.name)));
+        assert!(!before.contains(&"Phantom"));
+        assert_eq!(names(true)[theme::PALETTES.len()], "Phantom");
     }
 
     #[test]

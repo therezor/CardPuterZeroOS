@@ -109,6 +109,7 @@ pub enum Choice {
     Logs,
     Compression,
     Swappiness,
+    Palette,
 }
 
 /// Something Enter starts that is not a value.

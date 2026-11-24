@@ -3,9 +3,7 @@
 1. **Keyboard app.** Pair and connect Bluetooth and USB keyboards, and pick a
    layout.
 2. **File manager.** Browse, open, copy, move and delete files on the card.
-3. **Custom colour schemes.** Make and edit a scheme on the device. Today a
-   scheme is a `.palette` file written by hand (`design.md`, Colour).
-4. **App isolation.** Every app runs as UID 1000, the same user as the shell,
+3. **App isolation.** Every app runs as UID 1000, the same user as the shell,
    with the network, the camera, the mic and the home directory open to it.
    In steps:
 

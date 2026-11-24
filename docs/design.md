@@ -50,8 +50,12 @@ bars thin and match it where it counts: the same keys do the same things.
 
 ## Colour
 
-Apps never pick colours. They name a role and the palette fills it, so Mint,
-Nord and Paper all work and an app looks like the rest of the device. A fourth,
+Apps never pick colours. They name a role and the palette fills it, so every
+palette works and an app looks like the rest of the device. The built-ins are
+Mint, Nord and Paper, and the popular schemes: Catppuccin Mocha and Latte,
+Dracula, Gruvbox Dark and Light, Rosé Pine and Rosé Pine Dawn, Solarized
+Light and Tokyo Night. Each keeps its upstream colours, except a role moved a
+step to pass the contrast rules below; the source says which. One more,
 Phantom, is earned: finishing setup's training unlocks it (`theme::EARNED`).
 
 ![Colour roles in Mint](design/01-roles.png)
@@ -80,24 +84,48 @@ Contrast is tested for every palette: `fg` on `bg` 7:1, `fg` on `surface` 4.5:1,
 
 ### Custom colour schemes
 
-A scheme is a file of roles, `<name>.palette`, in
-`~/.config/cardputerzero/palettes/` or `/usr/share/gh0st/palettes/`. Settings
-lists it after the built-ins, and `gh0st.palette` names it as it names Mint.
+A scheme is a text file, `<Name>.palette`. The file name is the name Settings
+shows. Yours go in `~/.config/cardputerzero/palettes/`; the ones we ship are
+in `/usr/share/gh0st/palettes/`. To make one, in the Terminal:
+
+```sh
+mkdir -p ~/.config/cardputerzero/palettes
+cp "/usr/share/gh0st/palettes/Solarized Dark.palette" \
+    ~/.config/cardputerzero/palettes/Mine.palette
+nano ~/.config/cardputerzero/palettes/Mine.palette
+```
+
+Over SSH works the same, once SSH is on. Then pick it in Settings >
+Appearance > Palette: Enter lists every palette, Left and Right step through
+them. Yours come after the built-ins.
+
+A line is `role = #rrggbb`, and `#` starts a comment. `Solarized Dark`
+writes out every role, so it is the one to copy. A scheme can also name only
+what it changes, as `Dusk` does:
 
 ```
 # Dusk: Nord with an orange accent
 base = nord
 accent = #f0a35e
 accent_fg = #2e3440
-tint2 = #d08770
+tint1 = #f0a35e
 ```
 
-`base` picks the built-in to start from, Mint if left out. Every role it
-does not set keeps the base's: `bg surface fg muted accent accent_fg info
-warning critical ok border`, `tint1` to `tint6`, `ansi0` to `ansi15`.
-`soft` and `disabled` follow from the rest. A scheme whose text would not
-read (`fg` under 4.5:1 on `bg`, or `accent_fg` under 3:1 on `accent`) is
-refused, and the device stays on Mint.
+`base` picks the built-in to start from, by its name in any case, Mint if
+left out. Every role it does not set keeps the base's. The roles are the table above: `bg surface border
+fg muted accent accent_fg info ok warning critical`, `tint1` to `tint6`, and
+the terminal's `ansi0` to `ansi15` (black, red, green, yellow, blue, magenta,
+cyan, white, then the bright eight). `soft` and `disabled` follow from the
+rest.
+
+A scheme whose text would not read is refused: `fg` under 4.5:1 on `bg` or
+3:1 on `surface`, or `accent_fg` under 3:1 on `accent`. A refused file is
+left out of the list, and if `gh0st.palette` names it, the device stays on
+Mint. Aim for the built-ins' rules above, so hints and tones read too. A
+built-in's name is taken: a file called `Dracula.palette` never shows.
+
+Apps load a scheme when its name is picked. After editing the one in use,
+pick another palette and back.
 
 ## Type
 

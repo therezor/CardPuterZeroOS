@@ -21,7 +21,8 @@ Faster than stock, private by default, and every CardputerZero app still runs.
 🎨 **A look made for 320x170.** Small text is Terminus, a pixel font that stays
 sharp on the panel. Icons sit on coloured tiles, and each action sits right
 above the key that runs it. Pick a wallpaper (Aurora, Contour or your own
-photo) and a palette (Mint, Nord or Paper).
+photo) and a palette: Mint, Nord, Paper, Catppuccin, Dracula, Gruvbox, Rosé
+Pine, Solarized, Tokyo Night, or [your own](docs/design.md#custom-colour-schemes).
 
 🔀 **Jump between apps.** Fn+K pauses the app in front and shows every open
 app with the memory it uses. Go back to one where you left it, or close it.
@@ -125,7 +126,6 @@ Next on the [roadmap](docs/roadmap.md):
 
 - ⌨️ A keyboard app for Bluetooth and USB keyboards.
 - 📁 A file manager.
-- 🎨 Custom colour schemes, made on the device.
 - 🛡️ App isolation: network, files, camera and mic per app.
 
 ## 🛠️ For developers

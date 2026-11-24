@@ -1,0 +1,50 @@
+# Solarized Dark, every role written out. Copy it to
+# ~/.config/cardputerzero/palettes/<Name>.palette and change what you like.
+# The file name is the scheme's name. One role a line, #rrggbb; # starts a
+# comment.
+
+# The ground: the screen, then rows, chips and cards on it, then lines.
+bg = #002b36
+surface = #073642
+border = #586e75
+
+# Text, and labels, values and hints. base2, not base0, so text reads at 7:1.
+fg = #eee8d5
+muted = #93a1a1
+
+# Focus and the main pill, and the text on it.
+accent = #268bd2
+accent_fg = #001a21   # base03 darkened, so text on blue reads
+
+# Tones: notices, done, take care, errors.
+info = #268bd2
+ok = #859900
+warning = #b58900
+critical = #de403e    # red lifted a step to read on surface
+
+# Six tints for app badges and charts.
+tint1 = #268bd2
+tint2 = #2aa198
+tint3 = #b58900
+tint4 = #dc322f
+tint5 = #7a7fcc       # violet lifted a step
+tint6 = #cb4b16
+
+# The terminal: black, red, green, yellow, blue, magenta, cyan, white,
+# then the bright eight.
+ansi0 = #073642
+ansi1 = #dc322f
+ansi2 = #859900
+ansi3 = #b58900
+ansi4 = #268bd2
+ansi5 = #d33682
+ansi6 = #2aa198
+ansi7 = #eee8d5
+ansi8 = #657b83       # base00: base03 is the ground
+ansi9 = #cb4b16
+ansi10 = #5f747b      # base01 lifted a step
+ansi11 = #657b83
+ansi12 = #839496
+ansi13 = #6c71c4
+ansi14 = #93a1a1
+ansi15 = #fdf6e3

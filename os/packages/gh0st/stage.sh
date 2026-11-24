@@ -21,6 +21,8 @@ install -D -m 644 "$pk/polkit/50-gh0st.rules" "$dest/usr/share/polkit-1/rules.d/
 install -D -m 644 "$pk/polkit/org.gh0st.policy" \
     "$dest/usr/share/polkit-1/actions/org.gh0st.policy"
 install -d "$dest/usr/share/APPLaunch/applications"
+# Example colour schemes, listed after the built-ins (docs/design.md).
+install -D -m 644 -t "$dest/usr/share/gh0st/palettes" "$pk"/palettes/*.palette
 # The update engine: its units, folders and network trigger (docs/updates.md).
 up=$pk/systemd/update
 install -D -m 644 -t "$dest/usr/lib/systemd/system" \

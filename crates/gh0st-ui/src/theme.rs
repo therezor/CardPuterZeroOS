@@ -388,18 +388,431 @@ pub const PHANTOM: Palette = Palette {
     ],
 };
 
-pub const PALETTES: &[Palette] = &[MINT, NORD, PAPER];
+/// Catppuccin's dark flavour: pastels on blue-grey.
+pub const CATPPUCCIN_MOCHA: Palette = Palette {
+    name: "Catppuccin Mocha",
+    bg: hex("#1e1e2e"),
+    surface: hex("#313244"),
+    fg: hex("#cdd6f4"),
+    muted: hex("#9399b2"),
+    accent: hex("#cba6f7"),
+    accent_fg: hex("#11111b"),
+    info: hex("#89b4fa"),
+    warning: hex("#f9e2af"),
+    critical: hex("#f38ba8"),
+    ok: hex("#a6e3a1"),
+    border: hex("#45475a"),
+    tints: [
+        hex("#cba6f7"),
+        hex("#89b4fa"),
+        hex("#f9e2af"),
+        hex("#f38ba8"),
+        hex("#a6e3a1"),
+        hex("#fab387"),
+    ],
+    ansi: [
+        hex("#45475a"),
+        hex("#f38ba8"),
+        hex("#a6e3a1"),
+        hex("#f9e2af"),
+        hex("#89b4fa"),
+        hex("#f5c2e7"),
+        hex("#94e2d5"),
+        hex("#a6adc8"),
+        // Overlay 1, not Surface 2: bright black reads on the base.
+        hex("#7f849c"),
+        hex("#f37799"),
+        hex("#89d88b"),
+        hex("#ebd391"),
+        hex("#74a8fc"),
+        hex("#f2aede"),
+        hex("#6bd7ca"),
+        hex("#bac2de"),
+    ],
+};
+
+/// Catppuccin's light flavour.
+pub const CATPPUCCIN_LATTE: Palette = Palette {
+    name: "Catppuccin Latte",
+    bg: hex("#eff1f5"),
+    surface: hex("#e6e9ef"),
+    fg: hex("#4c4f69"),
+    muted: hex("#6c6f85"),
+    accent: hex("#8839ef"),
+    accent_fg: hex("#eff1f5"),
+    info: hex("#1e66f5"),
+    // Yellow and green darkened a step, so they read on the light ground.
+    warning: hex("#b77418"),
+    critical: hex("#d20f39"),
+    ok: hex("#3b9328"),
+    border: hex("#bcc0cc"),
+    tints: [
+        hex("#8839ef"),
+        hex("#1e66f5"),
+        hex("#df8e1d"),
+        hex("#d20f39"),
+        hex("#40a02b"),
+        hex("#fe640b"),
+    ],
+    // Green, yellow, pink and teal darkened a step for the light ground.
+    // White and bright white are Overlay 2 and Subtext 1: text, not ground.
+    ansi: [
+        hex("#5c5f77"),
+        hex("#d20f39"),
+        hex("#3e9b2a"),
+        hex("#be7919"),
+        hex("#1e66f5"),
+        hex("#c764ad"),
+        hex("#179299"),
+        hex("#7c7f93"),
+        hex("#6c6f85"),
+        hex("#de293e"),
+        hex("#409a36"),
+        hex("#b77b23"),
+        hex("#456eff"),
+        hex("#c466a6"),
+        hex("#2a959e"),
+        hex("#5c5f77"),
+    ],
+};
+
+/// Dracula: purple and pink on blue-grey.
+pub const DRACULA: Palette = Palette {
+    name: "Dracula",
+    bg: hex("#282a36"),
+    // BG Light, not Selection, so the accent reads on a badge.
+    surface: hex("#343746"),
+    fg: hex("#f8f8f2"),
+    // Comment lifted a step, so hints and disabled rows read.
+    muted: hex("#8894ba"),
+    accent: hex("#bd93f9"),
+    accent_fg: hex("#282a36"),
+    info: hex("#8be9fd"),
+    warning: hex("#ffb86c"),
+    critical: hex("#ff5555"),
+    ok: hex("#50fa7b"),
+    border: hex("#44475a"),
+    tints: [
+        hex("#bd93f9"),
+        hex("#8be9fd"),
+        hex("#f1fa8c"),
+        hex("#ff5555"),
+        hex("#ff79c6"),
+        hex("#ffb86c"),
+    ],
+    ansi: [
+        hex("#21222c"),
+        hex("#ff5555"),
+        hex("#50fa7b"),
+        hex("#f1fa8c"),
+        hex("#bd93f9"),
+        hex("#ff79c6"),
+        hex("#8be9fd"),
+        hex("#f8f8f2"),
+        hex("#6272a4"),
+        hex("#ff6e6e"),
+        hex("#69ff94"),
+        hex("#ffffa5"),
+        hex("#d6acff"),
+        hex("#ff92df"),
+        hex("#a4ffff"),
+        hex("#ffffff"),
+    ],
+};
+
+/// Gruvbox's warm retro dark.
+pub const GRUVBOX_DARK: Palette = Palette {
+    name: "Gruvbox Dark",
+    bg: hex("#282828"),
+    surface: hex("#3c3836"),
+    fg: hex("#ebdbb2"),
+    muted: hex("#a89984"),
+    accent: hex("#fe8019"),
+    accent_fg: hex("#282828"),
+    info: hex("#83a598"),
+    warning: hex("#fabd2f"),
+    critical: hex("#fb4934"),
+    ok: hex("#b8bb26"),
+    border: hex("#504945"),
+    tints: [
+        hex("#fe8019"),
+        hex("#83a598"),
+        hex("#fabd2f"),
+        hex("#fb4934"),
+        hex("#d3869b"),
+        hex("#8ec07c"),
+    ],
+    ansi: [
+        hex("#3c3836"),
+        // Red lifted a step to read on bg0.
+        hex("#d23c36"),
+        hex("#98971a"),
+        hex("#d79921"),
+        hex("#458588"),
+        hex("#b16286"),
+        hex("#689d6a"),
+        hex("#a89984"),
+        hex("#928374"),
+        hex("#fb4934"),
+        hex("#b8bb26"),
+        hex("#fabd2f"),
+        hex("#83a598"),
+        hex("#d3869b"),
+        hex("#8ec07c"),
+        hex("#ebdbb2"),
+    ],
+};
+
+/// Gruvbox's light, on its cream.
+pub const GRUVBOX_LIGHT: Palette = Palette {
+    name: "Gruvbox Light",
+    bg: hex("#fbf1c7"),
+    surface: hex("#ebdbb2"),
+    fg: hex("#3c3836"),
+    // fg3, so disabled rows still read.
+    muted: hex("#665c54"),
+    accent: hex("#af3a03"),
+    accent_fg: hex("#fbf1c7"),
+    info: hex("#076678"),
+    // Faded yellow darkened a step to read on bg1.
+    warning: hex("#a76d12"),
+    critical: hex("#9d0006"),
+    ok: hex("#79740e"),
+    border: hex("#bdae93"),
+    tints: [
+        hex("#af3a03"),
+        hex("#076678"),
+        hex("#b57614"),
+        hex("#9d0006"),
+        hex("#8f3f71"),
+        hex("#427b58"),
+    ],
+    // Neutral green, yellow and aqua darkened a step for the light ground.
+    ansi: [
+        hex("#fbf1c7"),
+        hex("#cc241d"),
+        hex("#8c8b18"),
+        hex("#b27f1b"),
+        hex("#458588"),
+        hex("#b16286"),
+        hex("#619263"),
+        hex("#7c6f64"),
+        hex("#928374"),
+        hex("#9d0006"),
+        hex("#79740e"),
+        hex("#b57614"),
+        hex("#076678"),
+        hex("#8f3f71"),
+        hex("#427b58"),
+        hex("#3c3836"),
+    ],
+};
+
+/// Rosé Pine: muted rose and gold on deep violet.
+pub const ROSE_PINE: Palette = Palette {
+    name: "Rosé Pine",
+    bg: hex("#191724"),
+    surface: hex("#26233a"),
+    fg: hex("#e0def4"),
+    muted: hex("#908caa"),
+    accent: hex("#ebbcba"),
+    accent_fg: hex("#191724"),
+    info: hex("#c4a7e7"),
+    warning: hex("#f6c177"),
+    critical: hex("#eb6f92"),
+    ok: hex("#9ccfd8"),
+    border: hex("#403d52"),
+    tints: [
+        hex("#ebbcba"),
+        hex("#9ccfd8"),
+        hex("#f6c177"),
+        hex("#eb6f92"),
+        hex("#c4a7e7"),
+        hex("#31748f"),
+    ],
+    ansi: [
+        hex("#26233a"),
+        hex("#eb6f92"),
+        hex("#31748f"),
+        hex("#f6c177"),
+        hex("#9ccfd8"),
+        hex("#c4a7e7"),
+        hex("#ebbcba"),
+        hex("#e0def4"),
+        hex("#6e6a86"),
+        hex("#eb6f92"),
+        hex("#31748f"),
+        hex("#f6c177"),
+        hex("#9ccfd8"),
+        hex("#c4a7e7"),
+        hex("#ebbcba"),
+        hex("#e0def4"),
+    ],
+};
+
+/// Rosé Pine's light, on warm paper.
+pub const ROSE_PINE_DAWN: Palette = Palette {
+    name: "Rosé Pine Dawn",
+    bg: hex("#faf4ed"),
+    surface: hex("#f2e9e1"),
+    fg: hex("#464261"),
+    // Subtle, foam and gold darkened a step, so they read on the paper.
+    muted: hex("#736f8c"),
+    accent: hex("#286983"),
+    accent_fg: hex("#faf4ed"),
+    info: hex("#907aa9"),
+    warning: hex("#b27728"),
+    critical: hex("#b4637a"),
+    ok: hex("#538e99"),
+    border: hex("#dfdad9"),
+    tints: [
+        hex("#286983"),
+        hex("#56949f"),
+        hex("#ea9d34"),
+        hex("#b4637a"),
+        hex("#907aa9"),
+        hex("#d7827e"),
+    ],
+    ansi: [
+        hex("#f2e9e1"),
+        hex("#b4637a"),
+        hex("#286983"),
+        hex("#be7f2a"),
+        hex("#56949f"),
+        hex("#907aa9"),
+        hex("#c47673"),
+        hex("#575279"),
+        hex("#8f8a9b"),
+        hex("#b4637a"),
+        hex("#286983"),
+        hex("#be7f2a"),
+        hex("#56949f"),
+        hex("#907aa9"),
+        hex("#c47673"),
+        hex("#575279"),
+    ],
+};
+
+/// Solarized on its light base.
+pub const SOLARIZED_LIGHT: Palette = Palette {
+    name: "Solarized Light",
+    bg: hex("#fdf6e3"),
+    surface: hex("#eee8d5"),
+    // base02, not base00: body text needs 7:1.
+    fg: hex("#073642"),
+    muted: hex("#586e75"),
+    // Blue, cyan, green and yellow darkened a step to read on base2.
+    accent: hex("#1b679c"),
+    accent_fg: hex("#fdf6e3"),
+    info: hex("#26938a"),
+    warning: hex("#a77e00"),
+    critical: hex("#dc322f"),
+    ok: hex("#798b00"),
+    border: hex("#93a1a1"),
+    tints: [
+        hex("#268bd2"),
+        hex("#2aa198"),
+        hex("#b58900"),
+        hex("#dc322f"),
+        // Violet darkened a step, so a badge's ink reads on it.
+        hex("#6569b8"),
+        hex("#cb4b16"),
+    ],
+    // Green, yellow, cyan and the light greys darkened a step. Solarized's
+    // whites are this ground, so base00 and base01 stand in.
+    ansi: [
+        hex("#073642"),
+        hex("#dc322f"),
+        hex("#809300"),
+        hex("#ae8400"),
+        hex("#268bd2"),
+        hex("#d33682"),
+        hex("#289b92"),
+        hex("#657b83"),
+        hex("#002b36"),
+        hex("#cb4b16"),
+        hex("#586e75"),
+        hex("#657b83"),
+        hex("#7e8e90"),
+        hex("#6c71c4"),
+        hex("#838f8f"),
+        hex("#586e75"),
+    ],
+};
+
+/// Tokyo Night: neon blues on navy.
+pub const TOKYO_NIGHT: Palette = Palette {
+    name: "Tokyo Night",
+    bg: hex("#1a1b26"),
+    surface: hex("#292e42"),
+    fg: hex("#c0caf5"),
+    // dark5 lifted a step, so disabled rows read.
+    muted: hex("#7b82a8"),
+    accent: hex("#7aa2f7"),
+    accent_fg: hex("#1a1b26"),
+    info: hex("#7dcfff"),
+    warning: hex("#e0af68"),
+    critical: hex("#f7768e"),
+    ok: hex("#9ece6a"),
+    border: hex("#3b4261"),
+    tints: [
+        hex("#7aa2f7"),
+        hex("#7dcfff"),
+        hex("#e0af68"),
+        hex("#f7768e"),
+        hex("#bb9af7"),
+        hex("#ff9e64"),
+    ],
+    ansi: [
+        hex("#15161e"),
+        hex("#f7768e"),
+        hex("#9ece6a"),
+        hex("#e0af68"),
+        hex("#7aa2f7"),
+        hex("#bb9af7"),
+        hex("#7dcfff"),
+        hex("#a9b1d6"),
+        // Terminal black lifted, so bright black reads on the night bg.
+        hex("#636983"),
+        hex("#ff899d"),
+        hex("#9fe044"),
+        hex("#faba4a"),
+        hex("#8db0ff"),
+        hex("#c7a9ff"),
+        hex("#a4daff"),
+        hex("#c0caf5"),
+    ],
+};
+
+/// Ours first, then the popular schemes by name. Each keeps its upstream
+/// colours except where a role moved to pass the contrast rules; those say so.
+pub const PALETTES: &[Palette] = &[
+    MINT,
+    NORD,
+    PAPER,
+    CATPPUCCIN_LATTE,
+    CATPPUCCIN_MOCHA,
+    DRACULA,
+    GRUVBOX_DARK,
+    GRUVBOX_LIGHT,
+    ROSE_PINE,
+    ROSE_PINE_DAWN,
+    SOLARIZED_LIGHT,
+    TOKYO_NIGHT,
+];
 
 /// Built-ins a picker lists only once earned: Phantom, after setup's
 /// training (`gh0st.tour_done`). `gh0st.palette` finds them any time.
 pub const EARNED: &[Palette] = &[PHANTOM];
 
-/// A built-in palette by its name, any case.
+/// A built-in palette by its name, any case, with or without the é.
 pub fn palette(name: &str) -> Option<Palette> {
+    let fold = |s: &str| s.replace('é', "e").to_ascii_lowercase();
+    let name = fold(name);
     PALETTES
         .iter()
         .chain(EARNED)
-        .find(|p| p.name.eq_ignore_ascii_case(name))
+        .find(|p| fold(p.name) == name)
         .copied()
 }
 
@@ -472,13 +885,16 @@ pub fn parse_palette(text: &str, name: &str) -> Result<Palette, String> {
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .filter_map(|l| l.split_once('='))
-        // The value is the first word: what follows it is a comment.
-        .map(|(k, v)| (k.trim(), v.split_whitespace().next().unwrap_or("")))
+        .map(|(k, v)| (k.trim(), v))
         .collect();
+    // A base is a name of one or more words, up to any comment.
     let base = lines
         .iter()
         .find(|(k, _)| *k == "base")
-        .map(|(_, v)| palette(v).ok_or(format!("no built-in palette {v}")))
+        .map(|(_, v)| {
+            let v = v.split('#').next().unwrap_or("").trim();
+            palette(v).ok_or(format!("no built-in palette {v}"))
+        })
         .transpose()?
         .unwrap_or(MINT);
     let mut p = base;
@@ -487,6 +903,8 @@ pub fn parse_palette(text: &str, name: &str) -> Result<Palette, String> {
         if k == "base" {
             continue;
         }
+        // A colour is the first word: what follows it is a comment.
+        let v = v.split_whitespace().next().unwrap_or("");
         let c = crate::color::parse_hex(v).ok_or(format!("{k}: {v} is not #rrggbb"))?;
         let slot = match k {
             "bg" => &mut p.bg,
@@ -792,42 +1210,74 @@ mod tests {
             "fg on a light bg"
         );
         assert!(parse_palette("accent = red\n", "Bad").is_err());
+        let warm = parse_palette("base = gruvbox dark # warm\n", "Warm").unwrap();
+        assert_eq!(warm.bg, GRUVBOX_DARK.bg);
+        let dawn = parse_palette("base = Rose Pine Dawn\n", "Dawn").unwrap();
+        assert_eq!(dawn.bg, ROSE_PINE_DAWN.bg);
         assert!(find("../etc/passwd").is_none());
+    }
+
+    /// The rules every shipped palette keeps, one line per break.
+    pub(super) fn lint(p: &Palette) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut need = |what: String, got: f32, min: f32| {
+            if got < min {
+                out.push(format!("{} {what}: {got:.2} < {min}", p.name));
+            }
+        };
+        need("fg".into(), contrast(p.fg, p.bg), 7.0);
+        need("fg on surface".into(), contrast(p.fg, p.surface), 4.5);
+        need("muted".into(), contrast(p.muted, p.bg), 3.0);
+        need("disabled".into(), contrast(p.disabled(), p.bg), 2.8);
+        for tone in [Tone::Info, Tone::Ok, Tone::Warning, Tone::Critical] {
+            need(
+                format!("{tone:?} on surface"),
+                contrast(p.tone(tone), p.surface),
+                3.0,
+            );
+        }
+        need("accent text".into(), contrast(p.accent_fg, p.accent), 4.5);
+        for (i, tint) in p.tints.iter().chain([&p.accent]).enumerate() {
+            // Icons and large letters: 3:1, as for graphics.
+            let ink = on_tint(*tint);
+            let got = contrast(ink, lit(*tint)).min(contrast(ink, shade(*tint)));
+            need(format!("ink on tint {i}"), got, 3.0);
+        }
+        // Black is a background colour in the terminal; the rest is text.
+        for (i, &c) in p.ansi.iter().enumerate().filter(|&(i, _)| i != 0) {
+            need(format!("ansi {i}"), contrast(c, p.bg), 3.0);
+        }
+        out
+    }
+
+    /// The schemes we ship as files meet the built-ins' rules, not only
+    /// the looser check every file gets.
+    #[test]
+    fn shipped_schemes_keep_text_readable() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/palettes");
+        let mut bad = Vec::new();
+        let mut n = 0;
+        for e in std::fs::read_dir(dir).unwrap() {
+            let path = e.unwrap().path();
+            let Some(name) = path
+                .file_name()
+                .and_then(|n| n.to_str()?.strip_suffix(".palette"))
+            else {
+                continue;
+            };
+            n += 1;
+            match parse_palette(&std::fs::read_to_string(&path).unwrap(), name) {
+                Ok(p) => bad.extend(lint(&p)),
+                Err(e) => bad.push(format!("{name}: {e}")),
+            }
+        }
+        assert!(n >= 2, "{n} schemes");
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 
     #[test]
     fn every_palette_keeps_text_readable() {
-        for p in PALETTES.iter().chain(EARNED) {
-            assert!(contrast(p.fg, p.bg) >= 7.0, "{} fg", p.name);
-            assert!(contrast(p.fg, p.surface) >= 4.5, "{} fg on surface", p.name);
-            assert!(contrast(p.muted, p.bg) >= 3.0, "{} muted", p.name);
-            assert!(contrast(p.disabled(), p.bg) >= 2.8, "{} disabled", p.name);
-            for tone in [Tone::Info, Tone::Ok, Tone::Warning, Tone::Critical] {
-                let c = p.tone(tone);
-                assert!(
-                    contrast(c, p.surface) >= 3.0,
-                    "{} {tone:?} on surface",
-                    p.name
-                );
-            }
-            assert!(
-                contrast(p.accent_fg, p.accent) >= 4.5,
-                "{} accent text",
-                p.name
-            );
-            for tint in p.tints.iter().chain([&p.accent]) {
-                // Icons and large letters: 3:1, as for graphics.
-                let ink = on_tint(*tint);
-                assert!(
-                    contrast(ink, lit(*tint)).min(contrast(ink, shade(*tint))) >= 3.0,
-                    "{} ink on a tint",
-                    p.name
-                );
-            }
-            // Black is a background colour in the terminal; the rest is text.
-            for (i, &c) in p.ansi.iter().enumerate().filter(|&(i, _)| i != 0) {
-                assert!(contrast(c, p.bg) >= 3.0, "{} ansi {i}", p.name);
-            }
-        }
+        let bad: Vec<String> = PALETTES.iter().chain(EARNED).flat_map(lint).collect();
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
 }

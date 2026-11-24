@@ -57,7 +57,7 @@ spy", and 6 has a Skip chip. Esc goes back to the notice.
 | 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. A cable needs no step: NetworkManager connects it as soon as it is in, before setup too, and network time then syncs (System turns it off). The address and hostname defaults cover a cable from the start. Wi-Fi goes online only here. |
 | 5 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
 | 6 | Account | The name and the password, then the password again on its own screen. |
-| 7 | Device name and look | The device name (`zero` unless changed), the home layout, the palette (Mint, Nord, Paper) and the clock. 5 and 7 change a choice; Done on 6 goes on. The look applies at once. |
+| 7 | Device name and look | The device name (`zero` unless changed), the home layout, the palette (any built-in) and the clock. 5 and 7 change a choice; Done on 6 goes on. The look applies at once. |
 | 8 | Done | What was set, then "Starting" while the shell comes up. |
 
 Esc on Country goes back to the training's last screen, or to the welcome screen when the

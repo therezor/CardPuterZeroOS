@@ -1,0 +1,6 @@
+# Dusk: Nord with an orange accent. A scheme names only what it changes;
+# every other role keeps its base's.
+base = nord
+accent = #f0a35e
+accent_fg = #2e3440
+tint1 = #f0a35e

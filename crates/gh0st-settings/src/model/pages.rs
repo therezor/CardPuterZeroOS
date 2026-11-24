@@ -190,6 +190,9 @@ pub struct State {
     pub muted: bool,
     pub layout: Layout,
     pub palette: &'static str,
+    /// Every palette there is, and whether each is light: filled only for
+    /// the Palette page, as it reads the scheme files.
+    pub palettes: Vec<(&'static str, bool)>,
     /// `gh0st.wallpaper` as set, whether an own picture is kept, and the
     /// PNGs in ~/Pictures.
     pub wallpaper: String,
@@ -579,6 +582,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
                 Choice::Logs => "Logs",
                 Choice::Compression => "Compression",
                 Choice::Swappiness => "Swappiness",
+                Choice::Palette => "Palette",
             },
             Body::List(options(s, *c)),
             vec![],
@@ -1411,6 +1415,14 @@ fn options(s: &State, c: Choice) -> Vec<Item> {
                 )
             })
             .collect(),
+        Choice::Palette => s
+            .palettes
+            .iter()
+            .map(|&(name, light)| {
+                let note = if light { "Light" } else { "Dark" };
+                row(name.into(), note, name.into(), s.palette == name)
+            })
+            .collect(),
     }
 }
 
@@ -1762,6 +1774,24 @@ mod tests {
         assert_eq!(
             pick.item(1).unwrap().act,
             Act::Run(Command::Choose(Choice::Compression, "lz4".into()))
+        );
+    }
+
+    #[test]
+    fn the_palette_page_checks_the_one_in_use() {
+        let s = State {
+            palette: "Dracula",
+            palettes: vec![("Mint", false), ("Dracula", false), ("Paper", true)],
+            ..state()
+        };
+        let p = build(&PageId::Choose(Choice::Palette), &s);
+        assert_eq!(p.len(), 3);
+        assert_eq!(p.item(1).unwrap().icon, Some("check"));
+        assert_eq!(p.item(0).unwrap().value, Value::Text("Dark".into()));
+        assert_eq!(p.item(2).unwrap().value, Value::Text("Light".into()));
+        assert_eq!(
+            p.item(1).unwrap().act,
+            Act::Run(Command::Choose(Choice::Palette, "Dracula".into()))
         );
     }
 

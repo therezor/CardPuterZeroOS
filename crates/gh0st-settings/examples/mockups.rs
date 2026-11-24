@@ -40,6 +40,10 @@ fn sample_state() -> State {
         muted: false,
         layout: Layout::Grid,
         palette: "Mint",
+        palettes: theme::PALETTES
+            .iter()
+            .map(|p| (p.name, gh0st_app::gfx::color::luminance(p.bg) > 0.5))
+            .collect(),
         wallpaper: "aurora".into(),
         own_picture: true,
         pictures: vec![
@@ -288,7 +292,13 @@ fn main() {
     let out = PathBuf::from("mockups/settings");
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
-    for palette in [theme::MINT, theme::NORD, theme::PAPER] {
+    for palette in [
+        theme::MINT,
+        theme::NORD,
+        theme::PAPER,
+        theme::DRACULA,
+        theme::CATPPUCCIN_LATTE,
+    ] {
         let tag = palette.name.to_lowercase();
         for (name, c) in &scenes(palette, false) {
             write_png(c, &out.join(format!("{tag}-{name}.png")), 1).unwrap();
@@ -326,6 +336,7 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                 ("display", s(PageId::Display, 0)),
                 ("sound", s(PageId::Sound, 0)),
                 ("appearance", s(PageId::Appearance, 2)),
+                ("palette", s(PageId::Choose(Choice::Palette), 5)),
                 ("pictures", s(PageId::Pictures, 1)),
                 ("apps", s(PageId::Apps, 0)),
                 (
