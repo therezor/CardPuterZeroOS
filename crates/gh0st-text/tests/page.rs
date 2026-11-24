@@ -205,3 +205,58 @@ fn comment_toggles_the_lines_in_one_undo() {
         b"# a = 1\n#   b = 2\n\n# c = 3\n"
     );
 }
+
+fn wrapping(p: &Path, wrap: bool) -> Driver {
+    let opts = Options {
+        keys: Some(KeyModel::Modeless),
+        data: Some(data()),
+        wrap: Some(wrap),
+        ..Options::default()
+    };
+    let mut d = Driver::new(Editor::open(Some(p), opts));
+    d.wait(100);
+    d
+}
+
+#[test]
+fn down_moves_by_rows_on_screen_when_long_lines_wrap() {
+    let mut text = vec![b'a'; 120];
+    text.extend_from_slice(b"\nb\n");
+    let p = temp("wrap.txt", &text);
+    let mut d = wrapping(&p, true);
+    d.keys("fn+x\ntype X\nctrl+s");
+    d.wait(100);
+    let got = std::fs::read(&p).unwrap();
+    let x = got.iter().position(|&b| b == b'X').unwrap();
+    assert!(
+        (40..70).contains(&x),
+        "X went into the long line's second row, at {x}"
+    );
+    assert!(got.ends_with(b"\nb\n"));
+    assert!(d.lint().is_empty());
+
+    let p = temp("nowrap.txt", &text);
+    let mut d = wrapping(&p, false);
+    d.keys("fn+x\ntype X\nctrl+s");
+    d.wait(100);
+    assert!(std::fs::read(&p).unwrap().ends_with(b"\nXb\n"));
+}
+
+#[test]
+fn the_end_of_a_wrapped_file_comes_into_view() {
+    let mut text = Vec::new();
+    for _ in 0..40 {
+        text.extend_from_slice(&[b'w'; 150]);
+        text.push(b'\n');
+    }
+    text.extend_from_slice(b"last\n");
+    let p = temp("wraptail.txt", &text);
+    let mut d = wrapping(&p, true);
+    // To the end of the file: the last line must be drawn.
+    d.keys("ctrl+down");
+    d.wait(50);
+    assert!(d.lint().is_empty());
+    d.keys("type Z\nctrl+s");
+    d.wait(100);
+    assert!(std::fs::read(&p).unwrap().ends_with(b"last\nZ"));
+}

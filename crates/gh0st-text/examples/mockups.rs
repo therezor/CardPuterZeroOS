@@ -158,6 +158,7 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             index_budget: s.index_budget,
             restore: s.restore,
             data: Some(dir.join("data")),
+            wrap: None,
         };
         let path = dir.join(s.file);
         let mut d = Driver::new(Editor::open(Some(&path), opts));

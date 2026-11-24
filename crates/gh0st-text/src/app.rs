@@ -31,6 +31,7 @@ mod key {
     pub const KEYS: &str = "gh0st.text.keys";
     pub const SIZE: &str = "gh0st.text.size";
     pub const NUMBERS: &str = "gh0st.text.numbers";
+    pub const WRAP: &str = "gh0st.text.wrap";
 }
 
 /// Command ids.
@@ -59,6 +60,7 @@ mod cmd {
     pub const LEFT_RIGHT: u32 = 22;
     pub const PAGE: u32 = 23;
     pub const COMMENT: u32 = 24;
+    pub const WRAP: u32 = 25;
 }
 
 /// Dialog ids.
@@ -83,6 +85,8 @@ const DISK_WAIT_MS: u64 = 15;
 const SAVE_AT_ONCE: u64 = 8 << 20;
 /// How far a bracket's pair is looked for.
 const PAIR_REACH: u64 = 64 << 10;
+/// Lines longer than this never wrap: they scroll sideways.
+const WRAP_MAX: u64 = 64 << 10;
 /// One step of indent when the file's own can't be told.
 const INDENT: &[u8] = b"    ";
 
@@ -125,6 +129,8 @@ pub struct Options {
     /// Where the recent files and the journal go, instead of the app's
     /// data folder.
     pub data: Option<PathBuf>,
+    /// Wrap long lines, instead of the setting.
+    pub wrap: Option<bool>,
 }
 
 struct Doc {
@@ -152,6 +158,10 @@ pub struct Editor {
     top: u64,
     /// The first column on screen.
     pan: u32,
+    /// Long lines wrap onto the rows under them.
+    wrap: bool,
+    /// With wrap, the first row of the top line on screen.
+    top_seg: u32,
     size: usize,
     numbers: bool,
     /// The undo state the file on disk has.
@@ -221,6 +231,8 @@ impl Editor {
             want: None,
             top: 0,
             pan: 0,
+            wrap: false,
+            top_seg: 0,
             size: 0,
             numbers: true,
             saved: 0,
@@ -542,6 +554,9 @@ impl Editor {
     }
 
     fn vertical(&mut self, lines: i64, select: bool) {
+        if self.wrap {
+            return self.vertical_wrapped(lines, select);
+        }
         let col = match self.want {
             Some(c) => c,
             None => self.col_of(self.cursor),
@@ -581,8 +596,122 @@ impl Editor {
         self.go(to, select);
     }
 
+    /// Rows the line starting at `start` takes, its bytes and length: one
+    /// unless it wraps.
+    fn segs_at(&self, start: u64) -> (u32, Vec<u8>, u64) {
+        let (s, end, line) = self.line_at(start);
+        let n = self.segs(&line, end - s);
+        (n, line, end - s)
+    }
+
+    fn segs(&self, line: &[u8], len: u64) -> u32 {
+        if !self.wrap || len > WRAP_MAX {
+            return 1;
+        }
+        view::col_of(line, line.len()).div_ceil(self.cols()).max(1)
+    }
+
+    /// The row of its line the byte at `off` sits on.
+    fn seg_of(&self, off: u64) -> (u64, u32) {
+        let (start, end, line) = self.line_at(off);
+        let n = self.segs(&line, end - start);
+        let col = view::col_of(&line, (off - start) as usize);
+        (start, (col / self.cols()).min(n - 1))
+    }
+
+    /// With wrap: keeps the cursor's row on screen, by line and row.
+    fn reveal_wrapped(&mut self) {
+        let rows = self.rows() as u32;
+        let (cur, cs) = self.seg_of(self.cursor);
+        self.pan = 0;
+        if (cur, cs) < (self.top, self.top_seg) {
+            self.top = cur;
+            self.top_seg = cs;
+            return;
+        }
+        let (mut at, mut seg, mut n) = (self.top, self.top_seg, 0);
+        let len = self.doc.borrow().buf.len();
+        while (at, seg) < (cur, cs) && n < rows {
+            n += 1;
+            let (segs, _, l) = self.segs_at(at);
+            if seg + 1 < segs {
+                seg += 1;
+            } else if at + l >= len {
+                break;
+            } else {
+                at += l + 1;
+                seg = 0;
+            }
+        }
+        if n < rows {
+            return;
+        }
+        // Put it on the last row.
+        let (mut a, mut sg) = (cur, cs);
+        for _ in 0..rows - 1 {
+            if sg > 0 {
+                sg -= 1;
+            } else if a == 0 {
+                break;
+            } else {
+                a = self.doc.borrow_mut().buf.line_start(a - 1).unwrap_or(0);
+                sg = self.segs_at(a).0 - 1;
+            }
+        }
+        self.top = a;
+        self.top_seg = sg;
+    }
+
+    /// With wrap: up and down by rows on screen, keeping the column in the
+    /// row.
+    fn vertical_wrapped(&mut self, rows: i64, select: bool) {
+        let cols = self.cols();
+        let (start, seg) = self.seg_of(self.cursor);
+        let vcol = match self.want {
+            Some(c) => c,
+            None => self.col_of(self.cursor) - seg * cols,
+        };
+        let len = self.doc.borrow().buf.len();
+        let (mut line, mut seg) = (start, seg);
+        for _ in 0..rows.unsigned_abs() {
+            if rows < 0 {
+                if seg > 0 {
+                    seg -= 1;
+                } else if line == 0 {
+                    break;
+                } else {
+                    line = self.doc.borrow_mut().buf.line_start(line - 1).unwrap_or(0);
+                    seg = self.segs_at(line).0 - 1;
+                }
+            } else {
+                let (segs, _, l) = self.segs_at(line);
+                if seg + 1 < segs {
+                    seg += 1;
+                } else if line + l >= len {
+                    break;
+                } else {
+                    line += l + 1;
+                    seg = 0;
+                }
+            }
+        }
+        let (_, bytes, _) = self.segs_at(line);
+        // The row's last cell, not the next row's first.
+        let col = seg * cols + vcol.min(cols - 1);
+        let mut to = line + view::byte_at(&bytes, col) as u64;
+        if self.seg_of(to).1 > seg {
+            to = line + view::prev_char(&bytes, (to - line) as usize) as u64;
+        }
+        self.go(to, select);
+        self.want = Some(vcol);
+    }
+
     /// Keeps the cursor on screen.
     fn reveal(&mut self) {
+        if self.wrap && !self.binary {
+            return self.reveal_wrapped();
+        }
+        self.top_seg = 0;
         let rows = self.rows() as u64;
         if self.binary {
             let per = self.hex_per();
@@ -1141,6 +1270,14 @@ impl Editor {
                 self.numbers = !self.numbers;
                 cx.settings().set_bool(key::NUMBERS, self.numbers);
             }
+            cmd::WRAP => {
+                self.wrap = !self.wrap;
+                self.top_seg = 0;
+                self.pan = 0;
+                self.want = None;
+                self.top = self.doc.borrow_mut().buf.line_start(self.top).unwrap_or(0);
+                cx.settings().set_bool(key::WRAP, self.wrap);
+            }
             cmd::KEYS => {
                 self.model = match self.model {
                     KeyModel::Modeless => KeyModel::Modal,
@@ -1301,6 +1438,10 @@ impl Page for Editor {
             .unwrap_or(0)
             .min(theme::TERM_TERMINUS.len() - 1);
         self.numbers = s.get_bool(key::NUMBERS).unwrap_or(true);
+        self.wrap = self
+            .opts
+            .wrap
+            .unwrap_or_else(|| s.get_bool(key::WRAP).unwrap_or(false));
         let data = self.opts.data.clone().unwrap_or_else(|| cx.data_dir());
         self.recent = Recent::load(&data);
         if let Some(p) = self.path.clone().filter(|p| p.exists()) {
@@ -1578,6 +1719,7 @@ impl Page for Editor {
                 .repeats(),
         );
         c.add(Command::toggle(cmd::NUMBERS, "Line numbers", self.numbers));
+        c.add(Command::toggle(cmd::WRAP, "Wrap long lines", self.wrap));
         c.add(Command::choice(cmd::KEYS, "Keys", self.model.word()));
         c.group("Close");
         c.add(
@@ -1625,16 +1767,24 @@ impl Page for Editor {
         let sel_bg = mix(t.c.bg, t.c.accent, theme::TEXT_SELECT);
         let hit_bg = mix(t.c.bg, t.c.warning, theme::TEXT_MATCH);
         let pair_bg = mix(t.c.bg, t.c.accent, theme::TEXT_PAIR);
+        let mut num = String::new();
         let c = ui.canvas();
         let mut start = self.top;
+        let mut first_seg = self.top_seg;
         let mut run = String::new();
-        for r in 0..rows {
+        let mut r = 0usize;
+        let mut line_no = first_line;
+        while r < rows {
             if start > len {
                 break;
             }
-            let y = area.y + r as i32 * look.ch;
             let end = d.buf.line_end(start).unwrap_or(len);
-            let take = (end - start).min(lex::LINE_MAX as u64);
+            let wraps = self.wrap && end - start <= WRAP_MAX;
+            let take = (end - start).min(if wraps {
+                WRAP_MAX
+            } else {
+                lex::LINE_MAX as u64
+            });
             d.line.clear();
             let line = &mut d.line;
             let _ = d.buf.for_each(start..start + take, |ch| {
@@ -1646,102 +1796,135 @@ impl Page for Editor {
             }
             state = lex::lex(lang, state, &d.line, &mut d.spans);
             let on_line = self.cursor >= start && self.cursor <= end;
-            if on_line && self.mode != Mode::View {
-                c.fill(Rect::new(area.x, y, area.w, look.ch), line_bg);
-            }
-            if gutter > 0 {
-                let n = first_line.map_or("?".to_string(), |f| (f + r as u64 + 1).to_string());
-                let w = look.font.measure(&n);
-                let ink = if on_line { t.c.soft() } else { t.c.muted };
-                look.font.draw(
-                    c,
-                    x0 - theme::TEXT_GUTTER_GAP - w - look.cw / 2,
-                    y + look.base,
-                    &n,
-                    ink,
-                );
-            }
-            // Cells on screen, with their colour from the spans.
-            let mut si = 0;
-            let mut run_x = 0;
-            let mut run_color = 0;
-            let flush = |c: &mut gh0st_app::gfx::Canvas, run: &mut String, x: i32, color| {
-                if !run.is_empty() {
-                    look.font.draw(c, x, y + look.base, run, color);
-                    run.clear();
-                }
+            let segs = if wraps {
+                view::col_of(&d.line, d.line.len()).div_ceil(cols).max(1)
+            } else {
+                1
             };
-            for cell in view::cells(&d.line) {
-                if cell.col + cell.width <= self.pan {
-                    continue;
-                }
-                if cell.col >= self.pan + cols {
+            let cur_col = on_line.then(|| {
+                let at = (self.cursor - start).min(d.line.len() as u64) as usize;
+                view::col_of(&d.line, at)
+            });
+            for seg in first_seg..segs {
+                if r >= rows {
                     break;
                 }
-                while si < d.spans.len() && d.spans[si].end as usize <= cell.byte {
-                    si += 1;
+                let y = area.y + r as i32 * look.ch;
+                // The columns this row shows.
+                let c0 = if wraps { seg * cols } else { self.pan };
+                if on_line && self.mode != Mode::View {
+                    c.fill(Rect::new(area.x, y, area.w, look.ch), line_bg);
                 }
-                let role = d.spans.get(si).map_or(Role::Plain, |s| s.role);
-                let x = x0 + (cell.col - self.pan.min(cell.col)) as i32 * look.cw;
-                let off = start + cell.byte as u64;
-                let w = cell.width as i32 * look.cw;
-                if sel.is_some_and(|(a, b)| off >= a && off < b) {
-                    flush(c, &mut run, run_x, run_color);
-                    c.fill(Rect::new(x, y, w, look.ch), sel_bg);
-                } else if self.hit.is_some_and(|(a, b)| off >= a && off < b) {
-                    flush(c, &mut run, run_x, run_color);
-                    c.fill(Rect::new(x, y, w, look.ch), hit_bg);
-                } else if self.pair.is_some_and(|(a, b)| off == a || off == b) {
-                    flush(c, &mut run, run_x, run_color);
-                    c.fill(Rect::new(x, y, w, look.ch), pair_bg);
-                }
-                let color = match cell.glyph {
-                    Glyph::Bad(_) => t.c.syntax(Role::Removed),
-                    Glyph::Control(_) => t.c.muted,
-                    _ => t.c.syntax(role),
-                };
-                let font = if role == Role::Heading {
-                    look.bold
-                } else {
-                    look.font
-                };
-                match cell.glyph {
-                    Glyph::Char(ch) if ch.is_ascii() && std::ptr::eq(font, look.font) => {
-                        if run.is_empty() || color != run_color {
-                            flush(c, &mut run, run_x, run_color);
-                            run_x = x;
-                            run_color = color;
+                if gutter > 0 && seg == 0 {
+                    let ink = if on_line { t.c.soft() } else { t.c.muted };
+                    num.clear();
+                    match line_no {
+                        Some(n) => {
+                            use std::fmt::Write;
+                            let _ = write!(num, "{}", n + 1);
                         }
-                        run.push(ch);
+                        None => num.push('?'),
                     }
-                    other => {
+                    let w = look.font.measure(&num);
+                    look.font.draw(
+                        c,
+                        x0 - theme::TEXT_GUTTER_GAP - w - look.cw / 2,
+                        y + look.base,
+                        &num,
+                        ink,
+                    );
+                }
+                // Cells on screen, with their colour from the spans.
+                let mut si = 0;
+                let mut run_x = 0;
+                let mut run_color = 0;
+                let flush = |c: &mut gh0st_app::gfx::Canvas, run: &mut String, x: i32, color| {
+                    if !run.is_empty() {
+                        look.font.draw(c, x, y + look.base, run, color);
+                        run.clear();
+                    }
+                };
+                for cell in view::cells(&d.line) {
+                    if cell.col + cell.width <= c0 || (wraps && cell.col < c0) {
+                        continue;
+                    }
+                    if cell.col >= c0 + cols || (wraps && cell.col + cell.width > c0 + cols) {
+                        break;
+                    }
+                    while si < d.spans.len() && d.spans[si].end as usize <= cell.byte {
+                        si += 1;
+                    }
+                    let role = d.spans.get(si).map_or(Role::Plain, |s| s.role);
+                    let x = x0 + (cell.col - c0.min(cell.col)) as i32 * look.cw;
+                    let off = start + cell.byte as u64;
+                    let w = cell.width as i32 * look.cw;
+                    if sel.is_some_and(|(a, b)| off >= a && off < b) {
                         flush(c, &mut run, run_x, run_color);
-                        let s = match other {
-                            Glyph::Char(ch) => ch.to_string(),
-                            Glyph::Tab => String::new(),
-                            Glyph::Bad(_) => "?".into(),
-                            Glyph::Control(_) => "\u{b7}".into(),
-                        };
-                        if !s.is_empty() {
-                            font.draw(c, x, y + look.base, &s, color);
+                        c.fill(Rect::new(x, y, w, look.ch), sel_bg);
+                    } else if self.hit.is_some_and(|(a, b)| off >= a && off < b) {
+                        flush(c, &mut run, run_x, run_color);
+                        c.fill(Rect::new(x, y, w, look.ch), hit_bg);
+                    } else if self.pair.is_some_and(|(a, b)| off == a || off == b) {
+                        flush(c, &mut run, run_x, run_color);
+                        c.fill(Rect::new(x, y, w, look.ch), pair_bg);
+                    }
+                    let color = match cell.glyph {
+                        Glyph::Bad(_) => t.c.syntax(Role::Removed),
+                        Glyph::Control(_) => t.c.muted,
+                        _ => t.c.syntax(role),
+                    };
+                    let font = if role == Role::Heading {
+                        look.bold
+                    } else {
+                        look.font
+                    };
+                    match cell.glyph {
+                        Glyph::Char(ch) if ch.is_ascii() && std::ptr::eq(font, look.font) => {
+                            if run.is_empty() || color != run_color {
+                                flush(c, &mut run, run_x, run_color);
+                                run_x = x;
+                                run_color = color;
+                            }
+                            run.push(ch);
+                        }
+                        other => {
+                            flush(c, &mut run, run_x, run_color);
+                            let mut b = [0u8; 4];
+                            let s: &str = match other {
+                                Glyph::Char(ch) => ch.encode_utf8(&mut b),
+                                Glyph::Tab => "",
+                                Glyph::Bad(_) => "?",
+                                Glyph::Control(_) => "\u{b7}",
+                            };
+                            if !s.is_empty() {
+                                font.draw(c, x, y + look.base, s, color);
+                            }
                         }
                     }
                 }
-            }
-            flush(c, &mut run, run_x, run_color);
-            if on_line {
-                let at = (self.cursor - start).min(d.line.len() as u64) as usize;
-                let col = view::col_of(&d.line, at);
-                if col >= self.pan && col < self.pan + cols {
-                    let x = x0 + (col - self.pan) as i32 * look.cw;
-                    let ink = if self.mode == Mode::View {
-                        t.c.muted
+                flush(c, &mut run, run_x, run_color);
+                if let Some(col) = cur_col {
+                    // With wrap, the cursor sits on the row holding its column;
+                    // at a full row's end, on that row's last cell.
+                    let on_row = if wraps {
+                        (col / cols).min(segs - 1) == seg
                     } else {
-                        t.c.accent
+                        col >= self.pan && col < self.pan + cols
                     };
-                    c.fill(Rect::new(x, y, theme::TERM_CURSOR_W, look.ch), ink);
+                    if on_row {
+                        let x = x0 + (col - c0).min(cols - 1) as i32 * look.cw;
+                        let ink = if self.mode == Mode::View {
+                            t.c.muted
+                        } else {
+                            t.c.accent
+                        };
+                        c.fill(Rect::new(x, y, theme::TERM_CURSOR_W, look.ch), ink);
+                    }
                 }
+                r += 1;
             }
+            first_seg = 0;
+            line_no = line_no.map(|n| n + 1);
             if end >= len {
                 break;
             }
