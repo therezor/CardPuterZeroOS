@@ -155,7 +155,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   (the image has them for Files) and libpulse (PipeWire's client library).
   The media helper is C++ for the same libraries, with libheif (HEIC grids
   and rotation, which FFmpeg leaves to the caller), LibRaw (a camera RAW's
-  preview), libwebpdemux (animated WebP) and libass (subtitles). Its
+  preview), libwebpdemux (animated WebP) and libass (subtitles); all but
+  libwebpdemux, and libavfilter, load only when a file needs them. Its
   picture, player and link code is the camera helper's, in `native/av`.
 
 ## Build and test

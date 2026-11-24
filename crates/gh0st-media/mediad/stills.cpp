@@ -19,6 +19,32 @@ extern "C" {
 }
 #include <libheif/heif.h>
 #include <libraw/libraw.h>
+#include "lazy.h"
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_context_alloc)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_context_free)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_context_get_primary_image_handle)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_context_read_from_file)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_decode_image)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_decoding_options_alloc)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_decoding_options_free)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_get_height)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_get_plane_readonly)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_get_width)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_handle_get_height)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_handle_get_width)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_handle_has_alpha_channel)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_handle_release)
+GH0ST_LAZY(gh0st::lazy::HEIF, heif_image_release)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_close)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_dcraw_clear_mem)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_dcraw_make_mem_image)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_dcraw_make_mem_thumb)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_dcraw_process)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_init)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_open_file)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_unpack)
+GH0ST_LAZY(gh0st::lazy::RAW, libraw_unpack_thumb)
+
 #include <webp/decode.h>
 #include <webp/demux.h>
 
@@ -334,15 +360,15 @@ bool sidecarSrt(const std::string &path)
 // libheif decodes HEVC through libavcodec when its plugin is there.
 heif_error heifDecode(heif_image_handle *h, heif_image **img, bool alpha)
 {
-    heif_decoding_options *o = heif_decoding_options_alloc();
+    heif_decoding_options *o = lz_heif_decoding_options_alloc();
     heif_chroma chroma = alpha ? heif_chroma_interleaved_RGBA : heif_chroma_interleaved_RGB;
     o->decoder_id = "ffmpeg";
-    heif_error e = heif_decode_image(h, img, heif_colorspace_RGB, chroma, o);
+    heif_error e = lz_heif_decode_image(h, img, heif_colorspace_RGB, chroma, o);
     if (e.code != heif_error_Ok) {
         o->decoder_id = nullptr;
-        e = heif_decode_image(h, img, heif_colorspace_RGB, chroma, o);
+        e = lz_heif_decode_image(h, img, heif_colorspace_RGB, chroma, o);
     }
-    heif_decoding_options_free(o);
+    lz_heif_decoding_options_free(o);
     return e;
 }
 
@@ -368,23 +394,25 @@ std::vector<uint8_t> slurp(const std::string &path, int &err)
 // A RAW's embedded preview, when it is a JPEG.
 bool rawPreview(const std::string &path, std::vector<uint8_t> &jpg, int &orient)
 {
-    libraw_data_t *lr = libraw_init(0);
+    if (!gh0st::lazy::open(gh0st::lazy::RAW))
+        return false;
+    libraw_data_t *lr = lz_libraw_init(0);
     if (!lr)
         return false;
     bool ok = false;
-    if (libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS &&
-        libraw_unpack_thumb(lr) == LIBRAW_SUCCESS) {
+    if (lz_libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS &&
+        lz_libraw_unpack_thumb(lr) == LIBRAW_SUCCESS) {
         int e = 0;
-        libraw_processed_image_t *t = libraw_dcraw_make_mem_thumb(lr, &e);
+        libraw_processed_image_t *t = lz_libraw_dcraw_make_mem_thumb(lr, &e);
         if (t && t->type == LIBRAW_IMAGE_JPEG && t->data_size > 0) {
             jpg.assign(t->data, t->data + t->data_size);
             orient = orientOfFlip(lr->sizes.flip);
             ok = true;
         }
         if (t)
-            libraw_dcraw_clear_mem(t);
+            lz_libraw_dcraw_clear_mem(t);
     }
-    libraw_close(lr);
+    lz_libraw_close(lr);
     return ok;
 }
 
@@ -457,22 +485,22 @@ Fail Stills::probe(const std::string &path, Info &out)
         out.vcodec = "jpeg";
         return double(out.w) * out.h > MAX_JPEG_PIXELS ? Fail::TooBig : Fail::None;
     }
-    if (isHeif(h, n)) {
-        heif_context *ctx = heif_context_alloc();
+    if (isHeif(h, n) && gh0st::lazy::open(gh0st::lazy::HEIF)) {
+        heif_context *ctx = lz_heif_context_alloc();
         heif_image_handle *hh = nullptr;
         Fail fail = Fail::Corrupt;
-        if (heif_context_read_from_file(ctx, path.c_str(), nullptr).code == heif_error_Ok &&
-            heif_context_get_primary_image_handle(ctx, &hh).code == heif_error_Ok) {
-            out.w = heif_image_handle_get_width(hh);
-            out.h = heif_image_handle_get_height(hh);
+        if (lz_heif_context_read_from_file(ctx, path.c_str(), nullptr).code == heif_error_Ok &&
+            lz_heif_context_get_primary_image_handle(ctx, &hh).code == heif_error_Ok) {
+            out.w = lz_heif_image_handle_get_width(hh);
+            out.h = lz_heif_image_handle_get_height(hh);
             out.codec = Codec::Heif;
             bool avif = memcmp(h + 8, "avi", 3) == 0;
             out.format = avif ? "avif" : "heif";
             out.vcodec = avif ? "av1" : "hevc";
             fail = double(out.w) * out.h > MAX_PIXELS ? Fail::TooBig : Fail::None;
-            heif_image_handle_release(hh);
+            lz_heif_image_handle_release(hh);
         }
-        heif_context_free(ctx);
+        lz_heif_context_free(ctx);
         return fail;
     }
     if (isWebp(h, n)) {
@@ -487,10 +515,10 @@ Fail Stills::probe(const std::string &path, Info &out)
             return double(out.w) * out.h > MAX_PIXELS ? Fail::TooBig : Fail::None;
         }
     }
-    if (rawName(path)) {
-        libraw_data_t *lr = libraw_init(0);
+    if (rawName(path) && gh0st::lazy::open(gh0st::lazy::RAW)) {
+        libraw_data_t *lr = lz_libraw_init(0);
         Fail fail = Fail::Unsupported;
-        if (lr && libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS) {
+        if (lr && lz_libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS) {
             out.orient = orientOfFlip(lr->sizes.flip);
             out.w = lr->sizes.width;
             out.h = lr->sizes.height;
@@ -502,7 +530,7 @@ Fail Stills::probe(const std::string &path, Info &out)
             fail = Fail::None;
         }
         if (lr)
-            libraw_close(lr);
+            lz_libraw_close(lr);
         if (fail == Fail::None)
             return fail;
     }
@@ -620,44 +648,44 @@ Fail Stills::base(const std::string &path, const Info &info)
     Fail fail = Fail::Corrupt;
     switch (info.codec) {
     case Codec::Heif: {
-        heif_context *ctx = heif_context_alloc();
+        heif_context *ctx = lz_heif_context_alloc();
         heif_image_handle *hh = nullptr;
         heif_image *img = nullptr;
-        if (heif_context_read_from_file(ctx, path.c_str(), nullptr).code == heif_error_Ok &&
-            heif_context_get_primary_image_handle(ctx, &hh).code == heif_error_Ok) {
-            bool alpha = heif_image_handle_has_alpha_channel(hh);
+        if (lz_heif_context_read_from_file(ctx, path.c_str(), nullptr).code == heif_error_Ok &&
+            lz_heif_context_get_primary_image_handle(ctx, &hh).code == heif_error_Ok) {
+            bool alpha = lz_heif_image_handle_has_alpha_channel(hh);
             heif_error e = heifDecode(hh, &img, alpha);
             if (e.code == heif_error_Ok) {
                 int stride = 0;
-                const uint8_t *p = heif_image_get_plane_readonly(img, heif_channel_interleaved, &stride);
-                int w = heif_image_get_width(img, heif_channel_interleaved);
-                int h = heif_image_get_height(img, heif_channel_interleaved);
+                const uint8_t *p = lz_heif_image_get_plane_readonly(img, heif_channel_interleaved, &stride);
+                int w = lz_heif_image_get_width(img, heif_channel_interleaved);
+                int h = lz_heif_image_get_height(img, heif_channel_interleaved);
                 const uint8_t *data[4] = {p, nullptr, nullptr, nullptr};
                 int ls[4] = {stride, 0, 0, 0};
                 fail = packBase(data, ls, alpha ? AV_PIX_FMT_RGBA : AV_PIX_FMT_RGB24, w, h, 1, base_);
-                heif_image_release(img);
+                lz_heif_image_release(img);
             } else if (e.code == heif_error_Memory_allocation_error) {
                 fail = Fail::NoMem;
             } else if (e.code == heif_error_Unsupported_feature ||
                        e.code == heif_error_Unsupported_filetype) {
                 fail = Fail::Unsupported;
             }
-            heif_image_handle_release(hh);
+            lz_heif_image_handle_release(hh);
         }
-        heif_context_free(ctx);
+        lz_heif_context_free(ctx);
         break;
     }
     case Codec::Raw: {
         // No JPEG preview: a half-size render of the mosaic.
-        libraw_data_t *lr = libraw_init(0);
+        libraw_data_t *lr = lz_libraw_init(0);
         if (!lr)
             return Fail::NoMem;
         lr->params.half_size = 1;
         lr->params.use_camera_wb = 1;
-        if (libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS &&
-            libraw_unpack(lr) == LIBRAW_SUCCESS && libraw_dcraw_process(lr) == LIBRAW_SUCCESS) {
+        if (lz_libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS &&
+            lz_libraw_unpack(lr) == LIBRAW_SUCCESS && lz_libraw_dcraw_process(lr) == LIBRAW_SUCCESS) {
             int e = 0;
-            libraw_processed_image_t *im = libraw_dcraw_make_mem_image(lr, &e);
+            libraw_processed_image_t *im = lz_libraw_dcraw_make_mem_image(lr, &e);
             if (im && im->type == LIBRAW_IMAGE_BITMAP && im->colors == 3 && im->bits == 8) {
                 const uint8_t *data[4] = {im->data, nullptr, nullptr, nullptr};
                 int ls[4] = {im->width * 3, 0, 0, 0};
@@ -666,11 +694,11 @@ Fail Stills::base(const std::string &path, const Info &info)
                 fail = Fail::NoMem;
             }
             if (im)
-                libraw_dcraw_clear_mem(im);
+                lz_libraw_dcraw_clear_mem(im);
         } else {
             fail = Fail::Unsupported;
         }
-        libraw_close(lr);
+        lz_libraw_close(lr);
         break;
     }
     case Codec::WebpAnim: {

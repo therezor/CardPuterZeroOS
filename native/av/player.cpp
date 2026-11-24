@@ -23,7 +23,8 @@ extern "C" {
 }
 
 // Speed and subtitles need libavfilter and libass, which the media helper
-// links and the camera helper, playing its own clips, does without.
+// loads when asked (lazy.h) and the camera helper, playing its own clips,
+// does without.
 #ifdef GH0ST_PLAYER_EXTRAS
 extern "C" {
 #include <libavfilter/avfilter.h>
@@ -31,6 +32,26 @@ extern "C" {
 #include <libavfilter/buffersrc.h>
 }
 #include <ass/ass.h>
+#include "lazy.h"
+GH0ST_LAZY(gh0st::lazy::ASS, ass_free_track)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_library_done)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_library_init)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_new_track)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_process_chunk)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_process_codec_private)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_render_frame)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_renderer_done)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_renderer_init)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_set_font_scale)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_set_fonts)
+GH0ST_LAZY(gh0st::lazy::ASS, ass_set_frame_size)
+GH0ST_LAZY(gh0st::lazy::AVFILTER, av_buffersink_get_frame)
+GH0ST_LAZY(gh0st::lazy::AVFILTER, av_buffersrc_add_frame_flags)
+GH0ST_LAZY(gh0st::lazy::AVFILTER, avfilter_graph_alloc)
+GH0ST_LAZY(gh0st::lazy::AVFILTER, avfilter_graph_config)
+GH0ST_LAZY(gh0st::lazy::AVFILTER, avfilter_graph_free)
+GH0ST_LAZY(gh0st::lazy::AVFILTER, avfilter_graph_parse_ptr)
+
 #else
 struct AVFilterGraph;
 struct AVFilterContext;
@@ -202,7 +223,7 @@ struct Player::State {
         for (unsigned i = 0; i < sub.num_rects; i++) {
             AVSubtitleRect *r = sub.rects[i];
             if (r->type == SUBTITLE_ASS && r->ass && assT) {
-                ass_process_chunk(assT, r->ass, int(strlen(r->ass)), start, dur);
+                lz_ass_process_chunk(assT, r->ass, int(strlen(r->ass)), start, dur);
             } else if (r->type == SUBTITLE_BITMAP && r->w > 0 && r->h > 0 && r->data[0] &&
                        r->data[1]) {
                 SubPic sp{start, start + dur, r->x, r->y, r->w, r->h, {}};
@@ -339,7 +360,7 @@ struct Player::State {
         std::lock_guard<std::mutex> l(assMu);
 #ifdef GH0ST_PLAYER_EXTRAS
         if (assR && assT) {
-            for (ASS_Image *im = ass_render_frame(assR, assT, ms, nullptr); im; im = im->next) {
+            for (ASS_Image *im = lz_ass_render_frame(assR, assT, ms, nullptr); im; im = im->next) {
                 int r = im->color >> 24, g = (im->color >> 16) & 255, b = (im->color >> 8) & 255;
                 int op = 255 - int(im->color & 255);
                 for (int y = 0; y < im->h; y++) {
@@ -616,11 +637,14 @@ struct Player::State {
         graphSpeed = sp;
         return sp == 100;
 #else
-        avfilter_graph_free(&graph);
+        if (graph)
+            lz_avfilter_graph_free(&graph);
         asrc = asink = nullptr;
         graphSpeed = sp;
         if (sp == 100)
             return true;
+        if (!gh0st::lazy::open(gh0st::lazy::AVFILTER))
+            return false;
         char layout[64] = "mono";
         av_channel_layout_describe(&adec->ch_layout, layout, sizeof layout);
         char desc[512];
@@ -630,10 +654,10 @@ struct Player::State {
                  "abuffersink",
                  adec->sample_rate, adec->sample_rate, av_get_sample_fmt_name(adec->sample_fmt),
                  layout, sp / 100.0, ch > 1 ? "stereo" : "mono", adec->sample_rate);
-        graph = avfilter_graph_alloc();
-        if (!graph || avfilter_graph_parse_ptr(graph, desc, nullptr, nullptr, nullptr) < 0 ||
-            avfilter_graph_config(graph, nullptr) < 0) {
-            avfilter_graph_free(&graph);
+        graph = lz_avfilter_graph_alloc();
+        if (!graph || lz_avfilter_graph_parse_ptr(graph, desc, nullptr, nullptr, nullptr) < 0 ||
+            lz_avfilter_graph_config(graph, nullptr) < 0) {
+            lz_avfilter_graph_free(&graph);
             return false;
         }
         for (unsigned i = 0; i < graph->nb_filters; i++) {
@@ -712,8 +736,8 @@ struct Player::State {
                     drop = true;
 #ifdef GH0ST_PLAYER_EXTRAS
                 if (!drop && graph) {
-                    if (av_buffersrc_add_frame_flags(asrc, f, AV_BUFFERSRC_FLAG_KEEP_REF) >= 0)
-                        while (av_buffersink_get_frame(asink, g) >= 0) {
+                    if (lz_av_buffersrc_add_frame_flags(asrc, f, AV_BUFFERSRC_FLAG_KEEP_REF) >= 0)
+                        while (lz_av_buffersink_get_frame(asink, g) >= 0) {
                             out.write(reinterpret_cast<const int16_t *>(g->data[0]), g->nb_samples);
                             av_frame_unref(g);
                         }
@@ -742,7 +766,8 @@ struct Player::State {
             }
         }
 #ifdef GH0ST_PLAYER_EXTRAS
-        avfilter_graph_free(&graph);
+        if (graph)
+            lz_avfilter_graph_free(&graph);
 #endif
         av_frame_free(&f);
         av_frame_free(&g);
@@ -822,18 +847,18 @@ struct Player::State {
         int embedded = 0;
         for (unsigned i = 0; i < fmt->nb_streams; i++)
             embedded += fmt->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE;
-        if (opt.subs < 0)
+        if (opt.subs < 0 || !gh0st::lazy::open(gh0st::lazy::ASS))
             return;
-        assLib = ass_library_init();
+        assLib = lz_ass_library_init();
         if (!assLib)
             return;
-        assR = ass_renderer_init(assLib);
-        assT = ass_new_track(assLib);
+        assR = lz_ass_renderer_init(assLib);
+        assT = lz_ass_new_track(assLib);
         if (!assR || !assT)
             return;
-        ass_set_frame_size(assR, w, h);
-        ass_set_font_scale(assR, SUB_SCALE);
-        ass_set_fonts(assR, nullptr, "sans-serif", ASS_FONTPROVIDER_AUTODETECT, nullptr, 1);
+        lz_ass_set_frame_size(assR, w, h);
+        lz_ass_set_font_scale(assR, SUB_SCALE);
+        lz_ass_set_fonts(assR, nullptr, "sans-serif", ASS_FONTPROVIDER_AUTODETECT, nullptr, 1);
         subW = vdec ? vdec->width : w;
         subH = vdec ? vdec->height : h;
         if (opt.subs < embedded) {
@@ -851,7 +876,7 @@ struct Player::State {
                 return;
             }
             if (sdec->subtitle_header)
-                ass_process_codec_private(assT, reinterpret_cast<char *>(sdec->subtitle_header),
+                lz_ass_process_codec_private(assT, reinterpret_cast<char *>(sdec->subtitle_header),
                                           sdec->subtitle_header_size);
             if (sdec->width > 0 && sdec->height > 0) {
                 subW = sdec->width;
@@ -871,7 +896,7 @@ struct Player::State {
             if (d && avcodec_parameters_to_context(d, st->codecpar) >= 0 &&
                 avcodec_open2(d, c, nullptr) >= 0) {
                 if (d->subtitle_header)
-                    ass_process_codec_private(assT, reinterpret_cast<char *>(d->subtitle_header),
+                    lz_ass_process_codec_private(assT, reinterpret_cast<char *>(d->subtitle_header),
                                               d->subtitle_header_size);
                 AVPacket *p = av_packet_alloc();
                 while (av_read_frame(sf, p) >= 0) {
@@ -910,13 +935,14 @@ struct Player::State {
         swr_free(&swr);
         avformat_close_input(&fmt);
 #ifdef GH0ST_PLAYER_EXTRAS
-        avfilter_graph_free(&graph);
+        if (graph)
+            lz_avfilter_graph_free(&graph);
         if (assT)
-            ass_free_track(assT);
+            lz_ass_free_track(assT);
         if (assR)
-            ass_renderer_done(assR);
+            lz_ass_renderer_done(assR);
         if (assLib)
-            ass_library_done(assLib);
+            lz_ass_library_done(assLib);
 #endif
         assT = nullptr;
         assR = nullptr;

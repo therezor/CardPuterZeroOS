@@ -14,14 +14,15 @@ CXX ?= c++
 CXXFLAGS ?= -O2
 # Speed and subtitles in the shared player (native/av/player.cpp).
 CXXFLAGS += -std=c++17 -Wall -Wextra -MMD -MP -I. -I$(NATIVE) -DGH0ST_PLAYER_EXTRAS
-LIBS := libjpeg libavformat libavcodec libavfilter libswscale libswresample libavutil \
-	libheif libraw libwebpdemux libwebp libass
-DEP_CFLAGS ?= $(shell pkg-config --cflags $(LIBS) 2>/dev/null)
-DEP_LIBS ?= $(shell pkg-config --libs $(LIBS) 2>/dev/null)
+LIBS := libjpeg libavformat libavcodec libswscale libswresample libavutil libwebpdemux libwebp
+# Loaded when a file needs them (native/av/lazy.h): their headers only.
+LAZY := libavfilter libheif libraw libass
+DEP_CFLAGS ?= $(shell pkg-config --cflags $(LIBS) $(LAZY) 2>/dev/null)
+DEP_LIBS ?= $(shell pkg-config --libs $(LIBS) 2>/dev/null) -ldl
 PULSE_CFLAGS ?= $(shell pkg-config --cflags libpulse-simple 2>/dev/null)
 PULSE_LIBS ?= $(shell pkg-config --libs libpulse-simple libpulse 2>/dev/null)
 
-common := main link ring decode stills cache player anim
+common := main link ring decode stills cache player anim lazy
 
 all: $(O)/gh0st-mediad
 
@@ -32,7 +33,7 @@ check: $(O)/media_check $(O)/decode_check
 	$(O)/decode_check
 	$(O)/media_check $(CORPUS)
 
-$(O)/media_check: $(addprefix $(O)/,$(addsuffix .o,media_check stills decode cache))
+$(O)/media_check: $(addprefix $(O)/,$(addsuffix .o,media_check stills decode cache lazy))
 	$(CXX) -o $@ $^ $(DEP_LIBS) -pthread
 
 $(O)/decode_check: $(O)/decode_check.o
@@ -40,7 +41,7 @@ $(O)/decode_check: $(O)/decode_check.o
 
 playcheck: $(O)/playcheck
 
-$(O)/playcheck: $(addprefix $(O)/,$(addsuffix .o,playcheck player pulse_stub decode))
+$(O)/playcheck: $(addprefix $(O)/,$(addsuffix .o,playcheck player pulse_stub decode lazy))
 	$(CXX) -o $@ $^ $(DEP_LIBS) -pthread
 
 $(O)/%.o: %.cpp | $(O)

@@ -59,6 +59,15 @@ Why the three extra libraries:
   LibRaw finds the JPEG preview every RAW carries, which shows at once.
 - **libwebpdemux.** FFmpeg 7.1 skips the frames of an animated WebP.
 
+libheif, LibRaw, libass and libavfilter load the first time a file needs
+them (`native/av/lazy.h`): a HEIC, a RAW, subtitles, a speed other than
+1x. Linked, Debian's libavfilter alone maps speech voices and libplacebo
+into the helper. A picture or a video at normal speed costs none of it.
+
+Opened from another app (Files, `gh0st open`), the file shows on the
+whole screen, and Esc goes back to that app. Browsed to here, Esc goes
+back to the folder.
+
 ## The helper
 
 `crates/gh0st-media/mediad` is C++17 with a plain Makefile. It shares the

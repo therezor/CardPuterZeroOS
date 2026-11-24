@@ -60,3 +60,26 @@ fn a_missing_helper_says_so_and_the_places_still_list() {
     d.frame();
     assert!(!d.quit());
 }
+
+#[test]
+fn esc_on_a_file_another_app_opened_goes_back_to_that_app() {
+    let h = home("back");
+    let mut d = Driver::new(Media::with(
+        Source::Fake,
+        h.clone(),
+        Some(h.join("Pictures/a.jpg")),
+    ));
+    d.pump(300);
+    d.keys("esc");
+    assert!(d.quit(), "Esc leaves for the app that opened the file");
+
+    // Browsed to by hand, the same picture goes back to its folder.
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.keys("x\nenter");
+    d.pump(300);
+    d.keys("enter");
+    d.pump(300);
+    d.keys("esc");
+    assert!(!d.quit());
+}

@@ -150,6 +150,9 @@ pub struct Media {
     queue_list: List,
     opened: Option<PathBuf>,
     quitting: bool,
+    /// The file on screen is one another app opened here: Esc goes back
+    /// to that app, not to this one's folder.
+    given: bool,
 }
 
 impl Media {
@@ -200,6 +203,7 @@ impl Media {
             queue_list: List::stopping(),
             opened: file,
             quitting: false,
+            given: false,
         }
     }
 
@@ -826,6 +830,7 @@ impl Media {
         if let Some(i) = self.entries.iter().position(|e| e.path == path) {
             self.tiles.select(i);
             self.open(cx);
+            self.given = true;
         } else {
             cx.toast("That file isn't here any more");
         }
@@ -928,6 +933,18 @@ impl Media {
                     icon::draw(
                         c,
                         "folder",
+                        IconSize::Medium,
+                        r.x + (r.w - sz) / 2,
+                        r.y + (r.h - sz) / 2,
+                        t.c.muted,
+                    );
+                }
+                // A song with no cover: a note, not a fault.
+                Some(_) if e.look == Look::Sound => {
+                    let sz = IconSize::Medium as i32;
+                    icon::draw(
+                        c,
+                        "music",
                         IconSize::Medium,
                         r.x + (r.w - sz) / 2,
                         r.y + (r.h - sz) / 2,
@@ -1373,6 +1390,11 @@ impl Page for Media {
                 // Music stops when its page closes; it plays on behind other
                 // apps, not behind the grid.
                 self.stop_play();
+                // Another app opened this file here: Esc goes back to it.
+                if std::mem::take(&mut self.given) {
+                    cx.quit();
+                    return false;
+                }
                 if let Some(t) = self.slides.take() {
                     cx.cancel(t);
                 }
