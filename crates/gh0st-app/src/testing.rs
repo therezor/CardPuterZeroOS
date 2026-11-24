@@ -256,6 +256,16 @@ impl Driver {
         self.rt.toast_text()
     }
 
+    /// The top page's title, as the top bar shows it.
+    pub fn title(&self) -> String {
+        self.rt.top_title()
+    }
+
+    /// The word the top page puts in the top bar's status, as "Playing".
+    pub fn status(&self) -> Option<String> {
+        self.rt.top_status()
+    }
+
     /// The open dialog's title, and what is wrong under its field.
     pub fn dialog(&self) -> Option<(&str, Option<&str>)> {
         self.rt.dialog_text()

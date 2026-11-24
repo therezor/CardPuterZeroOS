@@ -301,11 +301,18 @@ impl Fake {
             Ok(i) => i,
             Err(why) => return self.say(Event::Fail { id, why }),
         };
+        let cover = info.kind == Kind::Audio;
+        // A song with no picture of its own, as the real helper says.
+        if cover && name_has(path, "nocover") {
+            return self.say(Event::Fail {
+                id,
+                why: Fail::Unsupported,
+            });
+        }
         let big = (info.w.max(1) as f64, info.h.max(1) as f64);
         let (fx, fy, fw, fh, ow, oh) = frame_for(big, screen, zoom, centre, thumb);
         let seq = self.next_seq();
         let seed = seed_of(path);
-        let cover = info.kind == Kind::Audio;
         self.ring.write(ASK_SLOT, seq, ow, oh, |px| {
             paint(px, big, (fx, fy, fw, fh), ow, oh, seed, cover, 0.0)
         });

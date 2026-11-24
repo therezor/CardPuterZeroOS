@@ -98,3 +98,86 @@ fn leaving_a_song_another_app_opened_keeps_it_playing() {
     d.keys("esc");
     assert!(d.left(), "steps back to the opener instead of closing");
 }
+
+fn songs(name: &str) -> PathBuf {
+    let h = home(name);
+    for d in [
+        "Music/Album",
+        "Music/Other",
+        "Pictures/DCIM/Camera",
+        "Videos",
+    ] {
+        std::fs::create_dir_all(h.join(d)).unwrap();
+    }
+    for f in [
+        "Music/Album/1.mp3",
+        "Music/Album/2.mp3",
+        "Music/Other/x.mp3",
+    ] {
+        std::fs::write(h.join(f), b"x").unwrap();
+    }
+    h
+}
+
+/// Each key, then time and a frame, as on the device: a list learns its
+/// rows when drawn.
+fn step(d: &mut Driver, keys: &str) {
+    for k in keys.lines() {
+        d.keys(k);
+        d.pump(300);
+        d.frame();
+    }
+}
+
+#[test]
+fn music_plays_on_through_other_folders() {
+    let h = songs("folders");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    // Music place, Album, the first song.
+    step(&mut d, "x\nx\nx\nenter\nenter\nenter");
+    assert_eq!(d.status(), None, "on its own page, no word");
+    step(&mut d, "esc");
+    assert_eq!(d.status().as_deref(), Some("Playing"), "behind the grid");
+    step(&mut d, "esc");
+    assert_eq!(d.status().as_deref(), Some("Playing"), "in another folder");
+}
+
+#[test]
+fn the_chooser_opens_a_folder_or_a_file_and_nothing_picked_changes_nothing() {
+    let h = songs("pick");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    // The start page's last row: Other folder.
+    step(&mut d, "x\nx\nx\nx\nx\nenter");
+    let asked = d.picks();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].mode, gh0st_app::PickMode::Folder);
+    d.answer_pick(Some(vec![h.join("Music/Album")]));
+    d.frame();
+    assert_eq!(d.title(), "Album");
+
+    // The menu's Open file, from the grid: several types, several files.
+    step(&mut d, "o");
+    let asked = d.picks();
+    assert_eq!(asked[0].mode, gh0st_app::PickMode::Open);
+    assert!(asked[0].multiple);
+    assert_eq!(asked[0].filters.len(), 4);
+    assert_eq!(
+        asked[0].folder.as_deref(),
+        Some(h.join("Music/Album").as_path())
+    );
+    d.answer_pick(None);
+    assert_eq!(d.title(), "Album", "nothing picked, nothing changes");
+    step(&mut d, "o");
+    d.answer_pick(Some(vec![h.join("Pictures/b.png")]));
+    d.pump(300);
+    step(&mut d, "esc");
+    assert!(
+        !d.quit() && !d.left(),
+        "picked here: Esc goes back to the folder"
+    );
+    assert_eq!(d.title(), "Pictures");
+}

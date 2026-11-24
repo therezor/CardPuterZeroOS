@@ -66,6 +66,8 @@ fn home(name: &str) -> PathBuf {
     }
     file(h.join("Music/Field Notes/01 Morning.mp3"), 7_000_000);
     file(h.join("Music/Field Notes/cover.jpg"), 90_000);
+    file(h.join("Music/Loose/tape nocover.mp3"), 4_000_000);
+    file(h.join("Music/Loose/voice memo nocover.m4a"), 900_000);
     h
 }
 
@@ -131,6 +133,26 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
     d.frame();
     d.keys("x").pump(50);
     each("15-music-queue", &mut d);
+
+    // The menu over the grid: the file chooser's two ways in.
+    let mut d = media("menu", Source::Fake);
+    d.keys("x\nenter").pump(400);
+    d.keys("8").pump(100);
+    d.frame();
+    d.keys("x\nx\nx\nx\nx\nx").pump(100);
+    each("17-menu", &mut d);
+
+    // Songs with no cover of their own: a note on the tile.
+    let mut d = media("nocover", Source::Fake);
+    d.keys("x\nx\nx\nenter").pump(400);
+    d.frame();
+    d.keys("c\nenter").pump(400);
+    each("18-grid-songs-no-cover", &mut d);
+
+    // The start page's last row asks the file chooser for any folder.
+    let mut d = media("other", Source::Fake);
+    d.keys("x\nx\nx\nx\nx").pump(100);
+    each("19-start-other-folder", &mut d);
 
     let mut d = media("missing", Source::Missing);
     d.keys("x\nenter").pump(100);

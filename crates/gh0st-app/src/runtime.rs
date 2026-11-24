@@ -355,6 +355,19 @@ impl Runtime {
         self.s.settings.config().clock_24h()
     }
 
+    /// The top page's title, for tests.
+    pub(crate) fn top_title(&self) -> String {
+        self.stack
+            .last()
+            .map(|p| p.title().to_string())
+            .unwrap_or_default()
+    }
+
+    /// The top page's status word, for tests.
+    pub(crate) fn top_status(&self) -> Option<String> {
+        self.stack.last()?.status().map(|(s, _)| s.to_string())
+    }
+
     pub fn depth(&self) -> usize {
         self.stack.len()
     }

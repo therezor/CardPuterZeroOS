@@ -19,6 +19,7 @@ use gh0st_app::gfx::theme::{CARDPUTER, Metrics, ON_PICTURE, PANEL_OFF};
 use gh0st_app::gfx::{Canvas, Rect, Theme, widgets};
 use gh0st_app::media::{AskQueue, Picture, PictureView, SeekBar, plate, plate_text};
 use gh0st_app::prelude::*;
+use gh0st_app::{Pick, PickSpec};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -57,6 +58,8 @@ const SHUFFLE: u32 = 23;
 const REPEAT: u32 = 24;
 const QUEUE: u32 = 25;
 const SLIDES: u32 = 26;
+const OPEN_FILE: u32 = 27;
+const CHOOSE_FOLDER: u32 = 28;
 
 /// How far the arrows and 5 and 7 move a video.
 const SEEK_MS: u64 = 10_000;
@@ -94,6 +97,13 @@ struct Ask {
     id: u32,
     what: For,
     cmd: Cmd,
+}
+
+/// What the file chooser was asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Asked {
+    File,
+    Folder,
 }
 
 /// What plays.
@@ -144,7 +154,9 @@ pub struct Media {
     tags: Option<Tags>,
     cover: Picture,
     /// Music: entries in play order, and which plays.
-    queue: Vec<usize>,
+    /// The songs to play, kept apart from the folder on screen: music plays
+    /// on while the grid shows another.
+    queue: Vec<Entry>,
     qpos: usize,
     /// The id the next track will play under, once asked ahead.
     next_track: Option<(u32, usize)>,
@@ -157,6 +169,8 @@ pub struct Media {
     /// The file on screen is one another app opened here: Esc goes back
     /// to that app, not to this one's folder.
     given: bool,
+    /// What the file chooser was asked: a file to show, or a folder.
+    asked: Option<(Pick, Asked)>,
     /// The music on the session bus, while it plays.
     mpris: Option<(mpris::Mpris, Watch)>,
     /// What plays is the music queue: it plays on behind the grid, behind
@@ -213,6 +227,7 @@ impl Media {
             opened: file,
             quitting: false,
             given: false,
+            asked: None,
             mpris: None,
             music: false,
         }
@@ -319,7 +334,10 @@ impl Media {
     // ---- folders
 
     fn open_dir(&mut self, dir: PathBuf, select: usize) {
-        self.stop_play();
+        // Music plays on in any folder; a video or a moving picture stops.
+        if !self.music {
+            self.stop_play();
+        }
         self.dir = dir;
         self.dir_title = self.title_of_dir();
         self.entries = files::list(&self.dir, self.sort);
@@ -408,7 +426,9 @@ impl Media {
             }
             Look::Picture | Look::Video => self.show(cx),
             // The song playing: back to its page, not from the start.
-            Look::Sound if self.music && self.queue.get(self.qpos) == Some(&self.tiles.at()) => {
+            Look::Sound
+                if self.music && self.queue.get(self.qpos).map(|q| &q.path) == Some(&e.path) =>
+            {
                 self.view = View::Music;
                 cx.redraw();
             }
@@ -526,11 +546,7 @@ impl Media {
     /// The file on screen or playing.
     fn current(&self) -> Option<PathBuf> {
         match self.view {
-            View::Music => self
-                .queue
-                .get(self.qpos)
-                .and_then(|&i| self.entries.get(i))
-                .map(|e| e.path.clone()),
+            View::Music => self.track_path(),
             _ => self.entry().map(|e| e.path.clone()),
         }
     }
@@ -566,7 +582,7 @@ impl Media {
             shuffle_from(&mut q, at, self.entries.len() as u64);
         }
         self.qpos = q.iter().position(|&i| i == at).unwrap_or(0);
-        self.queue = q;
+        self.queue = q.into_iter().map(|i| self.entries[i].clone()).collect();
         self.view = View::Music;
         self.track(cx);
     }
@@ -589,10 +605,7 @@ impl Media {
 
     /// The queue's track, whatever is on screen.
     fn track_path(&self) -> Option<PathBuf> {
-        self.queue
-            .get(self.qpos)
-            .and_then(|&i| self.entries.get(i))
-            .map(|e| e.path.clone())
+        self.queue.get(self.qpos).map(|e| e.path.clone())
     }
 
     /// What MPRIS clients are told.
@@ -702,12 +715,7 @@ impl Media {
             self.next_track = None;
             return;
         };
-        let Some(path) = self
-            .queue
-            .get(i)
-            .and_then(|&e| self.entries.get(e))
-            .map(|e| e.path.clone())
-        else {
+        let Some(path) = self.queue.get(i).map(|e| e.path.clone()) else {
             return;
         };
         let id = self.id();
@@ -950,6 +958,29 @@ impl Media {
         self.repeat_all = s.get_bool(key::REPEAT).unwrap_or(false);
     }
 
+    /// Asks the file chooser for pictures, videos or songs to show.
+    fn open_file(&mut self, cx: &mut Cx) {
+        let mut spec = PickSpec::open()
+            .multiple()
+            .filter("Pictures", &["image/*"])
+            .filter("Video", &["video/*"])
+            .filter("Music", &["audio/*"])
+            .filter("All files", &["*"]);
+        if self.view != View::Start && self.dir.is_dir() {
+            spec = spec.starting_in(&self.dir);
+        }
+        self.asked = Some((cx.pick(spec), Asked::File));
+    }
+
+    /// Asks the file chooser for a folder to show in the grid.
+    fn choose_folder(&mut self, cx: &mut Cx) {
+        let mut spec = PickSpec::folder();
+        if self.view != View::Start && self.dir.is_dir() {
+            spec = spec.starting_in(&self.dir);
+        }
+        self.asked = Some((cx.pick(spec), Asked::Folder));
+    }
+
     /// Opens the file the app was started for, in its folder.
     fn open_given(&mut self, path: PathBuf, cx: &mut Cx) {
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -1028,6 +1059,8 @@ impl Media {
                 }
             })
             .collect();
+        let mut rows = rows;
+        rows.push(Row::link("Other folder").icon("folder-open"));
         ui.list(&self.start, &rows);
     }
 
@@ -1091,9 +1124,15 @@ impl Media {
                 }
                 _ => {}
             }
+            // A song with no cover already shows a note: no badge on it.
+            let bare = face
+                .as_ref()
+                .and_then(|f| self.faces.get(f))
+                .is_some_and(|p| p.is_empty());
             let badge = match e.look {
                 Look::Folder => Some("folder"),
                 Look::Video => Some("video"),
+                Look::Sound if bare => None,
                 Look::Sound => Some("music"),
                 Look::Picture => None,
             };
@@ -1223,7 +1262,6 @@ impl Media {
             let names: Vec<String> = self
                 .queue
                 .iter()
-                .filter_map(|&i| self.entries.get(i))
                 .map(|e| {
                     Path::new(&e.name)
                         .file_stem()
@@ -1435,6 +1473,34 @@ impl Page for Media {
         (self.music && self.view != View::Music).then_some(("Playing", Tone::Info))
     }
 
+    /// The chooser's answer: the first file picked, with its folder's
+    /// others, or the folder. Nothing picked changes nothing.
+    fn picked(&mut self, pick: Pick, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {
+        let Some((asked, what)) = self.asked else {
+            return;
+        };
+        if asked != pick {
+            return;
+        }
+        self.asked = None;
+        let Some(first) = paths.and_then(|p| p.into_iter().next()) else {
+            return;
+        };
+        match what {
+            Asked::File => {
+                self.trail.clear();
+                self.open_given(first, cx);
+                // Picked here: Esc goes back to its folder, not away.
+                self.given = false;
+            }
+            Asked::Folder => {
+                self.trail.clear();
+                self.open_dir(first, 0);
+            }
+        }
+        cx.redraw();
+    }
+
     fn stop(&mut self, cx: &mut Cx) {
         cx.unpost(NOW_PLAYING);
         self.quitting = true;
@@ -1589,12 +1655,15 @@ impl Page for Media {
     fn key(&mut self, key: Key, cx: &mut Cx) {
         if self.view == View::Start {
             if let Some(Action::Open(i)) = self.start.key(key) {
-                if let Some(p) = self.places.get(i).cloned() {
-                    self.trail.clear();
-                    self.open_dir(p.path, 0);
+                match self.places.get(i).cloned() {
+                    Some(p) => {
+                        self.trail.clear();
+                        self.open_dir(p.path, 0);
+                    }
+                    // The last row: any folder, through the file chooser.
+                    None => self.choose_folder(cx),
                 }
             }
-            let _ = cx;
             return;
         }
         if self.view == View::Music && self.showing_queue {
@@ -1672,6 +1741,7 @@ impl Page for Media {
             }
             View::Music => {
                 c.add(Command::action(PLAY, "Play or pause").keys("Enter Space"));
+                c.add(Command::action(OPEN_FILE, "Open file").keys("o").opens());
                 c.add(Command::action(PREV, "Previous").keys("z").repeats());
                 c.add(Command::action(NEXT, "Next").keys("c").repeats());
                 c.add(Command::action(BACK, "Back 10 s").keys("x").keys_only());
@@ -1682,11 +1752,22 @@ impl Page for Media {
                 self.play_commands(c);
             }
         }
+        c.group("Files");
+        if self.view != View::Music {
+            c.add(Command::action(OPEN_FILE, "Open file").keys("o").opens());
+        }
+        c.add(
+            Command::action(CHOOSE_FOLDER, "Choose folder")
+                .keys("g")
+                .opens(),
+        );
     }
 
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
         let fwd = !matches!(step, Step::Prev);
         match (self.view, id) {
+            (_, OPEN_FILE) => self.open_file(cx),
+            (_, CHOOSE_FOLDER) => self.choose_folder(cx),
             (View::Grid, LEFT | RIGHT | UP | DOWN) => {
                 let (dx, dy) = match id {
                     LEFT => (-1, 0),
