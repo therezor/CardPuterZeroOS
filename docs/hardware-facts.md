@@ -493,6 +493,21 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
   while recording 1080p: about 17 MB. Files decode clean in ffprobe: High
   profile, level 4.1, BT.709 limited range.
 
+## Files' tools (Debian trixie arm64 container, the image's packages)
+
+Checked in a container, not on a device. The versions match `packages.lock`.
+
+- curl 8.14.1 speaks `ftp ftps http https sftp scp smb smbs` and more. SMB
+  can fetch and send a file but not list a folder.
+- OpenSSH 10.0p2 with `SSH_ASKPASS_REQUIRE=force`, no tty and no `DISPLAY`
+  (`setsid`, stdin from `/dev/null`): the new-host question, fingerprint
+  included, and then the password both go to the askpass program, one call
+  each. `StrictHostKeyChecking=ask` writes the key to `UserKnownHostsFile`.
+- `/usr/lib/openssh/sftp-server` is on the image (openssh-sftp-server).
+- bsdtar 3.7.4 (libarchive-tools) reads zip, tar with gzip, xz, bzip2, lz4
+  and zstd, 7z, rar and iso. It adds two packages, `libarchive-tools` and
+  `libarchive13t64`. Its other libraries are on the image already.
+
 ## Still to check
 
 
