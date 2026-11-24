@@ -107,9 +107,12 @@ Measured on the device unless marked.
   (`50-gh0st.conf`) so the lease survives a replug.
 - The keyring on the device (gh0st 11d399c): its daemon and `gh0st session`
   are one thread and about 490 kB PSS each, and woke 0 times in 20 s idle.
-  From Enter on a prompt to the app holding its secret, through
-  `unix_chkpwd` and Argon2id m=64 MiB t=3: about 2.1 s. Creating the vault
-  takes about as long.
+  `unix_chkpwd` takes 0.30 s. Argon2id (`examples/argon_bench`): 64 MiB
+  three passes 1.50 s, two 1.03 s; 32 MiB two passes 0.51 s; 19 MiB two
+  passes 0.30 s. opt-level 3 changes nothing: it is memory bound. With 32
+  MiB, two passes, run beside `unix_chkpwd`: about 0.8 s from Enter on a
+  prompt to the app holding its secret (0.95 s measured, less 0.12 s for
+  the test's own key sender).
 - Checked by hand there: open at start with the lock password off, an app
   storing and reading its own secret, a second app approved (always) and
   a third denied, a question lighting a dark screen, Show in the Keyring

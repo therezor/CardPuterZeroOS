@@ -35,16 +35,22 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
   header.
 - Every write replaces the file whole: a temp file, fsync, rename, fsync of
   the folder.
-- Argon2id costs are in the header. A file asking for more than 256 MiB or
-  16 passes is refused before any work.
+- Argon2id costs are in the header: 32 MiB and two passes, 0.5 s on the
+  device. Anyone with the card can guess the same password against
+  `/etc/shadow` at about 0.3 s a try, so more would only slow the user. A
+  vault under other costs is wrapped again under these when it opens. A
+  file asking for more than 256 MiB or 16 passes is refused before any
+  work.
 - The crypto is RustCrypto's `argon2` and `chacha20poly1305`, with `zeroize`.
 
 ## Unlock and lock
 
 - The lock screen runs `unix_chkpwd`. When it says the password is right,
   the shell sends it to the keyring over its socket pair, never a bus.
-- The vault opens on its own tag. A password the system didn't check never
-  reaches it, and only a checked one can make a new vault.
+- The vault opens on its own tag. The shell hands it the password as
+  `unix_chkpwd` starts, so both run side by side; that early try opens an
+  existing vault only. Only a checked password can make a new vault, and
+  one the system refuses at the lock screen locks it again.
 - A device lock closes the vault: the data key and every secret go, except
   NetworkManager's Wi-Fi passwords.
 - Attributes and labels stay in memory after the first unlock. A search
