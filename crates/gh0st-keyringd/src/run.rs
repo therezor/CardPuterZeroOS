@@ -124,12 +124,18 @@ pub fn main(args: &[String]) -> i32 {
         bus,
         link,
         callers: HashMap::new(),
-        test_pw: std::env::var("GH0ST_KEYRING_TEST_PASSWORD")
-            .ok()
+        // Only a debug build takes --test, and only --test reads these.
+        test_pw: opts
+            .test
+            .then(|| std::env::var("GH0ST_KEYRING_TEST_PASSWORD").ok())
+            .flatten()
             .map(String::into_bytes),
-        test_answer: match std::env::var("GH0ST_KEYRING_TEST_ANSWER").as_deref() {
-            Ok("once") => Answer::Once,
-            Ok("deny") => Answer::Deny,
+        test_answer: match opts
+            .test
+            .then(|| std::env::var("GH0ST_KEYRING_TEST_ANSWER").ok())
+        {
+            Some(Some(a)) if a == "once" => Answer::Once,
+            Some(Some(a)) if a == "deny" => Answer::Deny,
             _ => Answer::Always,
         },
         clients: Vec::new(),

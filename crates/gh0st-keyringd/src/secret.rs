@@ -139,6 +139,8 @@ pub struct Service {
     /// Prompt passwords come checked by `unix_chkpwd` (the shell's); off in
     /// tests that type wrong ones on purpose.
     pub verified_prompts: bool,
+    /// The new password between prepare and commit.
+    prepared: Option<Locked>,
 }
 
 fn now() -> u64 {
@@ -191,6 +193,7 @@ impl Service {
             out: Vec::new(),
             stale: None,
             verified_prompts: true,
+            prepared: None,
         }
     }
 
@@ -365,21 +368,24 @@ impl Service {
         if v.wrap(new, self.cost).is_err() {
             return false;
         }
+        self.prepared = Some(Locked::new(new));
         vault::write_atomic(&self.path.with_extension("next"), &v.seal(&db)).is_ok()
     }
 
     pub fn commit(&mut self, ok: bool) -> bool {
         let next = self.path.with_extension("next");
+        let new = self.prepared.take();
         if !ok {
             return std::fs::remove_file(next).is_ok();
         }
-        if std::fs::rename(&next, &self.path).is_err() {
-            return false;
+        // Open: wrap the live vault for the new password, so nothing
+        // written since prepare is lost and the user stays unlocked.
+        if let (Some(new), true) = (new, self.unlocked()) {
+            let done = self.change_password(new.bytes()) == Unlock::Opened;
+            let _ = std::fs::remove_file(next);
+            return done;
         }
-        // The open vault holds the old wrap: lock, so the next unlock
-        // reads the new file.
-        self.lock();
-        true
+        std::fs::rename(&next, &self.path).is_ok()
     }
 
     /// Writes the vault. Unlocked only.
@@ -506,6 +512,17 @@ impl Service {
         }
         if iface == bus::PROPERTIES {
             return self.properties(m, c, path, member);
+        }
+        // A vault on disk we haven't opened: "not found" would make an app
+        // store a fresh secret beside the one it couldn't see.
+        if self.db.is_none()
+            && self.path.exists()
+            && matches!(
+                member,
+                "SearchItems" | "ReadAlias" | "CreateCollection" | "GetSecrets" | "CreateItem"
+            )
+        {
+            return Message::error(m, IS_LOCKED, "the keyring hasn't been opened since start");
         }
         let r = if path == ROOT {
             self.service_call(m, c, member)

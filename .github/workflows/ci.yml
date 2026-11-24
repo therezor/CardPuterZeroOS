@@ -80,3 +80,7 @@ jobs:
         run: GH0ST=target/debug/gh0st dbus-run-session -- crates/gh0st-keyringd/tests/compat.sh
       - name: Session
         run: GH0ST=target/debug/gh0st dbus-run-session -- crates/gh0st-session/tests/compat.sh
+      # The shell under --sim with both daemons: unlock, approve, deny, an
+      # app in front parked and brought back.
+      - name: Shell and keyring
+        run: GH0ST=target/debug/gh0st dbus-run-session -- crates/gh0st/tests/keyring_sim.sh

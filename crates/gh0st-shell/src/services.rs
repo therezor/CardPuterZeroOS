@@ -49,6 +49,7 @@ struct Daemon {
 }
 
 pub struct Services {
+    sim: bool,
     exe: PathBuf,
     running: Vec<Daemon>,
     starts: Vec<(Which, u64)>,
@@ -63,13 +64,17 @@ pub enum Said {
 
 impl Services {
     /// Starts both, from the binary the shell runs from.
-    pub fn start(now: u64) -> Services {
-        // Tests point this at a build of gh0st; the shell runs as gh0st.
-        let exe = std::env::var_os("GH0ST_SERVICES_EXE")
-            .map(PathBuf::from)
+    /// Starts both. `sim`: a test may name another binary and a scratch
+    /// vault; on a device nothing outside the shell picks what gets the
+    /// login password.
+    pub fn start(now: u64, sim: bool) -> Services {
+        let exe = sim
+            .then(|| std::env::var_os("GH0ST_SERVICES_EXE").map(PathBuf::from))
+            .flatten()
             .or_else(|| std::env::current_exe().ok())
             .unwrap_or_else(|| PathBuf::from("/usr/bin/gh0st"));
         let mut s = Services {
+            sim,
             exe,
             running: Vec::new(),
             starts: Vec::new(),
@@ -84,6 +89,7 @@ impl Services {
     /// No daemons: `--sim` on a host, where there is no bus.
     pub fn none() -> Services {
         Services {
+            sim: true,
             exe: PathBuf::new(),
             running: Vec::new(),
             starts: Vec::new(),
@@ -118,7 +124,7 @@ impl Services {
         cmd.arg(which.program())
             .stdin(Stdio::null())
             .env(which.env(), child_fd.to_string());
-        if which == Which::Keyring {
+        if which == Which::Keyring && self.sim {
             if let Some(v) = std::env::var_os("GH0ST_KEYRING_VAULT") {
                 cmd.arg("--vault").arg(v);
             }
@@ -151,14 +157,13 @@ impl Services {
         }
     }
 
-    /// A child exited. True if it was one of ours; it starts again.
-    pub fn exited(&mut self, pid: i32, now: u64) -> Option<Which> {
+    /// A child exited. Some if it was one of ours: it starts again, and
+    /// the flag says it has died too often and won't.
+    pub fn exited(&mut self, pid: i32, now: u64) -> Option<(Which, bool)> {
         let i = self.running.iter().position(|d| d.pid == pid)?;
         let which = self.running.swap_remove(i).which;
-        if !self.given_up.contains(&which) {
-            self.spawn(which, now);
-        }
-        Some(which)
+        let started = !self.given_up.contains(&which) && self.spawn(which, now);
+        Some((which, !started && self.given_up.contains(&which)))
     }
 
     pub fn fds(&self) -> Vec<RawFd> {

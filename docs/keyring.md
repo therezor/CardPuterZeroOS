@@ -51,13 +51,17 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
   while locked still finds the right items, reported locked, and the client
   asks to unlock them.
 - With the lock password off, the shell asks for the password once after
-  the unlock.
+  the unlock. Until something opens the vault, a search or lookup answers
+  `IsLocked`, never "not found", so no app stores a second copy.
+- After Lock after in the dark, the vault closes then, not at the key that
+  wakes the lock screen.
 
 ## Who is asking
 
-- The shell runs each app in a cgroup `app-<desktop stem>` right under
-  `gh0st.service`. That name is the app. Any other process is its
-  executable's path.
+- A process in a cgroup `app-<desktop stem>` right under `gh0st.service` is
+  that app. The shell puts apps there once isolation is on
+  (`docs/isolation.md`); until then every caller is its executable's path,
+  and a ScreenSaver inhibit, which needs the app, does nothing.
 - The pid comes from the bus, with a pidfd where dbus-daemon gives one, so a
   reused pid can't pass for another program.
 - An item belongs to the app that stored it. To any other app it looks
@@ -66,7 +70,10 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
   - Enter allows once, for this connection.
   - 6 allows always; the vault keeps it.
   - Esc says no.
-- The Keyring app shows and revokes approvals.
+- A new question takes no answer for its first 600 ms, and Enter answers
+  nothing: a key meant for the app can't approve what the app asked for.
+- Labels and attributes are not secret: once the vault has opened, any app
+  can list them, as with gnome-keyring. Only the secret is guarded.
 
 ## Prompts
 
@@ -123,6 +130,9 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
   anywhere, a cut file, hostile costs, rewrap), the body codec under
   mutation, and the service's flows: approval, lock and unlock, a stale
   password, and password changes.
+- **`crates/gh0st/tests/keyring_sim.sh`** runs the real shell under
+  `--sim` with both daemons: unlock from the lock screen, approve once, a
+  key too soon, deny, and an app in front parked and brought back.
 - **`crates/gh0st-keyringd/tests/compat.sh`** and
   **`crates/gh0st-session/tests/compat.sh`** run real clients under
   `dbus-run-session` in CI: `secret-tool`, `gdbus`, python `keyring` and

@@ -14,6 +14,9 @@ use gh0st_ui::widgets::{self, Chip, Hint, Look, Status};
 
 /// As the lock screen takes it.
 const MAX_PASSWORD: usize = 512;
+/// A new question takes no answer this soon: a key meant for the app
+/// before it can't approve what the app asked for.
+pub const ARM_MS: u64 = 600;
 
 /// Who wants the answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +63,8 @@ pub struct Prompts {
     pub checking: bool,
     /// The last check said no.
     pub wrong: bool,
+    /// The front question, and when it was first drawn.
+    seen: Option<(Origin, u64)>,
 }
 
 impl Prompts {
@@ -131,11 +136,21 @@ impl Prompts {
         self.wrong = true;
     }
 
+    /// The screen drew the front question at `now`.
+    pub fn seen(&mut self, now: u64) {
+        let Some(front) = self.queue.front() else {
+            return;
+        };
+        if self.seen.as_ref().is_none_or(|(o, _)| *o != front.origin) {
+            self.seen = Some((front.origin.clone(), now));
+        }
+    }
+
     pub fn typed(&self) -> usize {
         std::str::from_utf8(&self.buf).map_or(self.buf.len(), |s| s.chars().count())
     }
 
-    pub fn key(&mut self, k: &Key) -> Action {
+    pub fn key(&mut self, k: &Key, now: u64) -> Action {
         let Some(a) = self.queue.front() else {
             return Action::None;
         };
@@ -146,6 +161,14 @@ impl Prompts {
             let o = a.origin.clone();
             return Action::Dismiss(o);
         }
+        // Not drawn yet, or only just: only Esc counts.
+        let armed = self
+            .seen
+            .as_ref()
+            .is_some_and(|(o, t)| *o == a.origin && now >= t + ARM_MS);
+        if !armed {
+            return Action::None;
+        }
         match &a.kind {
             Kind::Approve { .. } => {
                 if k.state != State::Press {
@@ -154,12 +177,12 @@ impl Prompts {
                 let Origin::Daemon(id) = a.origin else {
                     return Action::None;
                 };
-                if k.is(code::ENTER) {
-                    Action::Answer(id, Answer::Once)
-                } else if k.ch == Some('6') {
-                    Action::Answer(id, Answer::Always)
-                } else {
-                    Action::None
+                // On chips, not Enter: Enter is the key a typing user hits
+                // without looking.
+                match k.ch {
+                    Some('5') => Action::Answer(id, Answer::Once),
+                    Some('7') => Action::Answer(id, Answer::Always),
+                    _ => Action::None,
                 }
             }
             Kind::Password { .. } => {
@@ -363,24 +386,23 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
         widgets::hint_bar(c, t, &hints, None);
     } else {
         let ky = body.bottom() - t.m.pill_h;
-        let hints = [
-            Hint {
-                key: "Esc",
-                label: "deny",
-            },
-            Hint {
-                key: "Enter",
-                label: "allow once",
-            },
-        ];
+        let hints = [Hint {
+            key: "Esc",
+            label: "deny",
+        }];
         widgets::key_row(c, t, body.x, ky, &hints);
         let none = Chip::default();
+        let once = Chip {
+            icon: "check",
+            word: "Once",
+            look: Look::Normal,
+        };
         let always = Chip {
             icon: "check-check",
             word: "Always",
             look: Look::Normal,
         };
-        widgets::action_bar(c, t, &[none, none, always, none, none]);
+        widgets::action_bar(c, t, &[none, once, none, always, none]);
     }
 }
 
@@ -412,23 +434,37 @@ mod tests {
         }
     }
 
+    fn approve(id: u64) -> Ask {
+        Ask {
+            origin: Origin::Daemon(id),
+            kind: Kind::Approve {
+                app: "Chromium".into(),
+                what: "read \u{201c}github\u{201d}".into(),
+            },
+        }
+    }
+
+    const T: u64 = 1000 + ARM_MS;
+
     #[test]
     fn a_password_is_typed_then_checked() {
         let mut p = Prompts::default();
         p.push(pw(Origin::Daemon(3)));
-        assert_eq!(p.key(&key(code::ENTER, None)), Action::None, "empty");
-        p.key(&key(30, Some('a')));
-        p.key(&key(48, Some('b')));
-        p.key(&key(code::BACKSPACE, None));
-        p.key(&key(46, Some('c')));
+        p.seen(1000);
+        assert_eq!(p.key(&key(code::ENTER, None), T), Action::None, "empty");
+        for (c, ch) in [(30, 'a'), (48, 'b')] {
+            p.key(&key(c, Some(ch)), T);
+        }
+        p.key(&key(code::BACKSPACE, None), T);
+        p.key(&key(46, Some('c')), T);
         assert_eq!(p.typed(), 2);
         assert_eq!(
-            p.key(&key(code::ENTER, None)),
+            p.key(&key(code::ENTER, None), T),
             Action::Check(b"ac".to_vec())
         );
         assert!(p.checking);
         assert_eq!(
-            p.key(&key(30, Some('x'))),
+            p.key(&key(30, Some('x')), T),
             Action::None,
             "no keys while checking"
         );
@@ -440,30 +476,54 @@ mod tests {
     fn the_old_password_skips_the_check() {
         let mut p = Prompts::default();
         p.push(pw(Origin::Stale));
-        p.key(&key(30, Some('o')));
-        assert_eq!(p.key(&key(code::ENTER, None)), Action::Old(b"o".to_vec()));
+        p.seen(1000);
+        p.key(&key(30, Some('o')), T);
+        assert_eq!(
+            p.key(&key(code::ENTER, None), T),
+            Action::Old(b"o".to_vec())
+        );
     }
 
     #[test]
-    fn approval_keys() {
+    fn approval_is_on_chips_and_waits_to_arm() {
         let mut p = Prompts::default();
-        p.push(Ask {
-            origin: Origin::Daemon(9),
-            kind: Kind::Approve {
-                app: "Chromium".into(),
-                what: "read \u{201c}github\u{201d}".into(),
-            },
-        });
+        p.push(approve(9));
+        assert_eq!(p.key(&key(6, Some('5')), T), Action::None, "not drawn yet");
+        p.seen(1000);
+        assert_eq!(p.key(&key(6, Some('5')), 1100), Action::None, "too soon");
         assert_eq!(
-            p.key(&key(code::ENTER, None)),
-            Action::Answer(9, Answer::Once)
-        );
-        assert_eq!(p.key(&key(7, Some('6'))), Action::Answer(9, Answer::Always));
-        assert_eq!(
-            p.key(&key(code::ESC, None)),
+            p.key(&key(code::ESC, None), 1100),
             Action::Dismiss(Origin::Daemon(9))
         );
-        assert_eq!(p.key(&key(30, Some('a'))), Action::None);
+        assert_eq!(
+            p.key(&key(code::ENTER, None), T),
+            Action::None,
+            "Enter approves nothing"
+        );
+        assert_eq!(
+            p.key(&key(6, Some('5')), T),
+            Action::Answer(9, Answer::Once)
+        );
+        assert_eq!(
+            p.key(&key(8, Some('7')), T),
+            Action::Answer(9, Answer::Always)
+        );
+        assert_eq!(p.key(&key(30, Some('a')), T), Action::None);
+    }
+
+    #[test]
+    fn a_new_front_question_arms_again() {
+        let mut p = Prompts::default();
+        p.push(approve(1));
+        p.push(approve(2));
+        p.seen(1000);
+        p.done();
+        p.seen(T);
+        assert_eq!(p.key(&key(6, Some('5')), T + 1), Action::None);
+        assert_eq!(
+            p.key(&key(6, Some('5')), T + ARM_MS),
+            Action::Answer(2, Answer::Once)
+        );
     }
 
     #[test]
@@ -471,7 +531,8 @@ mod tests {
         let mut p = Prompts::default();
         p.push(pw(Origin::Daemon(1)));
         p.push(pw(Origin::Daemon(2)));
-        p.key(&key(30, Some('a')));
+        p.seen(1000);
+        p.key(&key(30, Some('a')), T);
         // A retry of the front one: same place, field cleared, marked wrong.
         p.push(Ask {
             origin: Origin::Daemon(1),

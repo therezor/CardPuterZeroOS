@@ -128,8 +128,6 @@ enum Pending {
     /// The app in front asked for another over the link: pause it, then
     /// bring this one up.
     Open(String),
-    /// The keyring has a question: park the app in front, then ask.
-    Prompt,
 }
 
 /// What a watched fd says changed. Only Linux has the watches.
@@ -361,6 +359,8 @@ struct Shell {
     keyring_open: bool,
     /// This unlock sent the keyring a password.
     unlock_sent: bool,
+    /// Asked to open the keyring this boot already.
+    open_asked: bool,
     /// Where the prompt goes back to: the screen, and the app it parked.
     prompt_from: Screen,
     prompt_app: Option<String>,
@@ -515,14 +515,15 @@ impl Shell {
             paced: false,
             first_frame: true,
             // No bus on a host sim, unless a test brings its own.
-            services: if sim.is_some() && std::env::var_os("GH0ST_SERVICES").is_none() {
-                Services::none()
-            } else {
-                Services::start(rt::now_ms())
+            services: match (&sim, std::env::var_os("GH0ST_SERVICES")) {
+                (Some(_), None) => Services::none(),
+                // Test overrides (another binary, a scratch vault) only in a sim.
+                _ => Services::start(rt::now_ms(), sim.is_some()),
             },
             prompts: Prompts::default(),
             keyring_open: false,
             unlock_sent: false,
+            open_asked: false,
             prompt_from: Screen::Home,
             prompt_app: None,
             prompt_input: None,
@@ -739,8 +740,26 @@ impl Shell {
         }
     }
 
+    /// A daemon kept dying: say so, as a notice that stays.
+    fn daemon_gave_up(&mut self, w: Which) {
+        let (tag, title) = match w {
+            Which::Keyring => ("keyring", "The keyring stopped"),
+            Which::Session => ("session", "Notifications stopped"),
+        };
+        let n = Notice {
+            app: "gh0st".into(),
+            tag: tag.into(),
+            title: title.into(),
+            body: "It kept failing to start. Restart the device.".into(),
+            tone: notify::Tone::Critical,
+            time: notify::now_secs(),
+            ..Notice::default()
+        };
+        let _ = notify::post(&notify::user_dir(), &n);
+    }
+
     /// Shows the next question when nothing else is in the way.
-    fn maybe_prompt(&mut self) {
+    fn maybe_prompt(&mut self, now: u64) {
         if self.screen == Screen::Prompt {
             if self.prompts.is_empty() && self.pending.is_none() {
                 self.prompt_leave();
@@ -754,8 +773,10 @@ impl Shell {
         {
             return;
         }
+        // Every key is up (checked above): park the app now. A pending
+        // handover would wait for a key that may never come.
         if self.app_front() {
-            self.pending = Some(Pending::Prompt);
+            self.prompt_over_front(now);
             return;
         }
         self.prompt_from = self.screen;
@@ -831,14 +852,14 @@ impl Shell {
         }
     }
 
-    fn prompt_key(&mut self, k: &Key) {
-        match self.prompts.key(k) {
+    fn prompt_key(&mut self, k: &Key, now: u64) {
+        match self.prompts.key(k, now) {
             prompt::Action::None => {}
             prompt::Action::Redraw => self.dirty = true,
             prompt::Action::Check(mut pw) => {
                 if self.tries.wait(password::boottime()) > 0 {
                     password::wipe(&mut pw);
-                    self.prompts.checked_wrong();
+                    self.prompts.checking = false;
                     self.toast("Too many tries: wait a little");
                 } else {
                     self.tries.fails += 1;
@@ -1172,6 +1193,7 @@ impl Shell {
                     .flatten(),
                 (shell && self.lock_waiting()).then_some(now + 1000),
                 self.wifi_off_at(),
+                self.keyring_lock_at(),
                 (self.low.warning() == Warning::Countdown).then_some(now + 1000),
                 self.input.next_at(),
                 shell
@@ -1292,19 +1314,21 @@ impl Shell {
                     Some(Pending::Pause) => self.pause_front(now),
                     Some(Pending::Resume(id)) => self.resume(&id, now),
                     Some(Pending::Open(id)) => self.open_over_front(&id, now),
-                    Some(Pending::Prompt) => self.prompt_over_front(now),
                     None => {}
                 }
             }
-            self.maybe_prompt();
+            self.maybe_prompt(now);
         }
     }
 
     /// Routes every exited child: an app's leader, or a job.
     fn reap(&mut self) {
         for (pid, status) in child::reap() {
-            if let Some(w) = self.services.exited(pid, rt::now_ms()) {
+            if let Some((w, gave_up)) = self.services.exited(pid, rt::now_ms()) {
                 self.daemon_died(w);
+                if gave_up {
+                    self.daemon_gave_up(w);
+                }
                 continue;
             }
             self.tasks.exited(pid);
@@ -1385,6 +1409,11 @@ impl Shell {
         }
         if self.wifi_off_at().is_some_and(|t| now >= t) {
             self.wifi_sleep();
+        }
+        if self.keyring_lock_at().is_some_and(|t| now >= t) {
+            self.services.tell(&ToDaemon::Lock);
+            self.keyring_open = false;
+            self.unlock_sent = false;
         }
         if self.dark_at().is_some_and(|t| now >= t) {
             if self.app_front() {
@@ -1680,6 +1709,15 @@ impl Shell {
     }
 
     /// When Wi-Fi goes off in this dark, if the user asked for that.
+    /// The dark has lasted Lock after: the keyring closes now, not at the
+    /// key that wakes the lock screen.
+    fn keyring_lock_at(&self) -> Option<u64> {
+        if !self.keyring_open || self.screen != Screen::Off {
+            return None;
+        }
+        Some(self.dark_since? + self.lock_after_ms?)
+    }
+
     fn wifi_off_at(&self) -> Option<u64> {
         let dark = self.screen == Screen::Off && !self.app_front();
         (dark && !self.wifi_done)
@@ -1818,9 +1856,11 @@ impl Shell {
         // nothing opened the keyring: ask once.
         if !self.unlock_sent
             && !self.keyring_open
+            && !self.open_asked
             && self.services.running(Which::Keyring)
             && self.account == Some(Account::Password)
         {
+            self.open_asked = true;
             self.prompts.push(Ask {
                 origin: Origin::Open,
                 kind: Kind::Password {
@@ -2341,7 +2381,7 @@ impl Shell {
             return;
         }
         if self.screen == Screen::Prompt {
-            self.prompt_key(&k);
+            self.prompt_key(&k, now);
             return;
         }
         if self.screen == Screen::Locked {
@@ -3166,8 +3206,10 @@ impl Shell {
         status.notices = self.notices.len().min(u8::MAX as usize) as u8;
         match self.screen {
             Screen::Locked => self.draw_lock(&clock),
-            Screen::Prompt => match self.prompts.current() {
+            Screen::Prompt => match self.prompts.current().cloned() {
                 Some(ask) => {
+                    self.prompts.seen(now);
+                    let ask = &ask;
                     let status = Status {
                         dock: &[],
                         front: None,
@@ -3208,7 +3250,7 @@ impl Shell {
         drop(cards);
         if matches!(
             self.screen,
-            Screen::Home | Screen::Switcher | Screen::Notices | Screen::Locked
+            Screen::Home | Screen::Switcher | Screen::Notices | Screen::Locked | Screen::Prompt
         ) {
             self.draw_low_battery();
             if let Some((icon, label, pct)) = self.level {
