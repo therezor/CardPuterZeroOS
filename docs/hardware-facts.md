@@ -41,6 +41,13 @@ Measured on the device unless marked.
 - Fn+Q, W and E send 164 (play or pause), 165 (previous) and 163 (next).
   Nothing on the device acts on them.
 - The only side button is power/boot. It sends no key event.
+- The side switch to Slave drops the hub (Ethernet, USB-A, the other USB-C);
+  back on Host the hub and the Ethernet chip come back in about 2 s. The
+  chip (CoreChips `0fe6:9900`) has no address of its own and takes a random
+  one at every plug. Its `enx` name followed it, and NetworkManager's stable
+  wired address mixes in the name, so every plug got a new IP. The image
+  names it `lan0` (`50-gh0st-lan.link`): the address and the lease now stay
+  the same across plugs and boots.
 - First boot of the Gh0st OS image (kernel `6.18.60+rpt-rpi-v8`, stock
   firmware), read off the card: userspace in 6.5 s, 9.3 s in all.
   vc4 takes DRM minor 0, the panel minor 1 at 8.5 s; `fb_load` waits for
