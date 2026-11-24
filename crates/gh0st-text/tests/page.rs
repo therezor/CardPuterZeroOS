@@ -289,3 +289,52 @@ fn four_files_open_switch_and_close_one_at_a_time() {
     d.keys("ctrl+w");
     assert!(d.quit(), "the last file closed the app");
 }
+
+fn fresh(dir: &Path) -> Driver {
+    let opts = Options {
+        keys: Some(KeyModel::Modeless),
+        data: Some(dir.to_path_buf()),
+        ..Options::default()
+    };
+    let mut d = Driver::new(Editor::open(None, opts));
+    d.wait(100);
+    d
+}
+
+#[test]
+fn with_no_file_open_asks_the_chooser_and_opens_what_it_picks() {
+    let dir = std::env::temp_dir().join(format!("gh0st-text-start-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = temp("picked.txt", b"picked\n");
+    let mut d = fresh(&dir);
+    d.keys("enter");
+    assert_eq!(d.picks().len(), 1, "Open asks the chooser");
+    d.answer_pick(Some(vec![f.clone()]));
+    d.keys("type X\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&f).unwrap(), b"Xpicked\n");
+    // Next time, it is the first recent file, under Open and New.
+    let mut d = fresh(&dir);
+    d.keys("x\nx\nenter\ntype Y\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&f).unwrap(), b"YXpicked\n");
+}
+
+#[test]
+fn a_new_file_saves_where_the_chooser_says() {
+    let dir = std::env::temp_dir().join(format!("gh0st-text-new-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("made.txt");
+    let _ = std::fs::remove_file(&target);
+    let mut d = fresh(&dir);
+    d.keys("x\nenter\ntype hello\nctrl+s");
+    assert_eq!(d.picks().len(), 1, "a new file asks where");
+    d.answer_pick(Some(vec![target.clone()]));
+    d.wait(200);
+    assert_eq!(std::fs::read(&target).unwrap(), b"hello");
+    // Saved, it is that file now: another save writes there with no ask.
+    d.keys("type !\nctrl+s");
+    d.wait(100);
+    assert!(d.picks().is_empty());
+    assert_eq!(std::fs::read(&target).unwrap(), b"hello!");
+}

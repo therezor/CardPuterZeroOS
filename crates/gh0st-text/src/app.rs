@@ -15,12 +15,12 @@ use crate::recent::Recent;
 use crate::view::{self, Glyph};
 use crate::warm;
 use crate::watch::{Change, FileWatch};
-use gh0st_app::RawKey;
 use gh0st_app::gfx::color::mix;
 use gh0st_app::gfx::font::Font;
 use gh0st_app::gfx::theme::{self, TermFace};
 use gh0st_app::gfx::{Rect, Theme};
 use gh0st_app::prelude::*;
+use gh0st_app::{Pick, PickSpec, RawKey};
 use gh0st_core::keys::{Nav, State, code};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -63,6 +63,8 @@ mod cmd {
     pub const WRAP: u32 = 25;
     pub const NEXT_FILE: u32 = 26;
     pub const CLOSE_FILE: u32 = 27;
+    pub const OPEN: u32 = 28;
+    pub const SAVE_AS: u32 = 29;
     /// FILE + n switches to open file n.
     pub const FILE: u32 = 40;
 }
@@ -224,6 +226,16 @@ pub struct Editor {
     files: Vec<Option<Parked>>,
     /// The slot on screen.
     at: usize,
+    /// A question to the file chooser, and what its answer is for.
+    picking: Option<(Pick, Purpose)>,
+    /// With no file: the start page's list, recent files under Open.
+    start: Option<List>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    Open,
+    SaveAs,
 }
 
 impl Editor {
@@ -292,6 +304,79 @@ impl Editor {
             recent: Recent::default(),
             files: vec![None],
             at: 0,
+            picking: None,
+            start: None,
+        }
+    }
+
+    /// Asks the file chooser for files to open.
+    fn ask_open(&mut self, cx: &mut Cx) {
+        let mut spec = text_types(PickSpec::open().multiple());
+        if let Some(dir) = self.path.as_ref().and_then(|p| p.parent()) {
+            spec = spec.starting_in(dir);
+        }
+        self.picking = Some((cx.pick(spec), Purpose::Open));
+    }
+
+    /// Asks the file chooser where to save the file on screen.
+    fn ask_save_as(&mut self, cx: &mut Cx) {
+        let name = if self.path.is_some() {
+            self.title.clone()
+        } else {
+            "untitled.txt".to_string()
+        };
+        let mut spec = text_types(PickSpec::save(&name));
+        if let Some(dir) = self.path.as_ref().and_then(|p| p.parent()) {
+            spec = spec.starting_in(dir);
+        }
+        self.picking = Some((cx.pick(spec), Purpose::SaveAs));
+    }
+
+    /// Saves the file on screen to `path`, which it is called from now on.
+    fn save_as(&mut self, path: PathBuf, cx: &mut Cx) {
+        if let Some((_, w)) = self.watch.take() {
+            cx.unwatch(w);
+        }
+        self.title = path
+            .file_name()
+            .map_or("Text".into(), |n| n.to_string_lossy().into_owned());
+        let first = {
+            let mut d = self.doc.borrow_mut();
+            let end = d.buf.line_end(0).unwrap_or(0).min(256);
+            d.buf.bytes(0..end).unwrap_or_default()
+        };
+        let lang = lex::detect(&path, &first);
+        self.doc.borrow_mut().cache.clear(lang);
+        self.read_only = false;
+        self.path = Some(path.clone());
+        let w = FileWatch::new(&path);
+        if let Some(fd) = w.fd() {
+            let id = cx.watch(fd);
+            self.watch = Some((w, id));
+        }
+        self.recent.add(&path);
+        self.save(cx);
+    }
+
+    fn start_pick(&mut self, i: usize, cx: &mut Cx) {
+        match i {
+            0 => self.ask_open(cx),
+            1 => {
+                self.start = None;
+                self.set_mode(Mode::Edit);
+            }
+            _ => {
+                let Some(p) = self.recent.list().get(i - 2).cloned() else {
+                    return;
+                };
+                if !p.exists() {
+                    self.recent.remove(&p);
+                    cx.toast("That file is gone");
+                    return;
+                }
+                self.start = None;
+                self.open_file(&p, cx);
+            }
         }
     }
 
@@ -1148,7 +1233,7 @@ impl Editor {
 
     fn save(&mut self, cx: &mut Cx) {
         let Some(path) = self.path.clone() else {
-            cx.toast("Save as comes with the file picker");
+            self.ask_save_as(cx);
             return;
         };
         if self.read_only {
@@ -1504,6 +1589,8 @@ impl Editor {
             }
             cmd::UP_DOWN | cmd::LEFT_RIGHT | cmd::PAGE => self.view_move(id, step),
             cmd::DISCARD => self.close_file(cx),
+            cmd::OPEN => self.ask_open(cx),
+            cmd::SAVE_AS => self.ask_save_as(cx),
             cmd::NEXT_FILE => {
                 let n = self.files.len();
                 self.switch(
@@ -1602,6 +1689,9 @@ impl Page for Editor {
     }
 
     fn bars(&self) -> Bars {
+        if self.start.is_some() {
+            return Bars::top();
+        }
         match (self.model, self.mode) {
             (_, Mode::Find | Mode::Goto) => Bars::top().search(&self.search),
             (KeyModel::Modeless, _) => Bars::top_only(),
@@ -1612,9 +1702,44 @@ impl Page for Editor {
         }
     }
 
+    /// The file chooser's answer.
+    fn picked(&mut self, pick: Pick, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {
+        let Some((asked, why)) = self.picking.take() else {
+            return;
+        };
+        if asked != pick {
+            self.picking = Some((asked, why));
+            return;
+        }
+        let paths = paths.unwrap_or_default();
+        match why {
+            Purpose::Open => {
+                if !paths.is_empty() {
+                    self.start = None;
+                }
+                for p in &paths {
+                    if !self.open_file(p, cx) {
+                        break;
+                    }
+                }
+            }
+            Purpose::SaveAs => {
+                if let Some(p) = paths.into_iter().next() {
+                    self.start = None;
+                    self.save_as(p, cx);
+                }
+            }
+        }
+        self.settle(cx);
+        cx.redraw();
+    }
+
     /// Files another app opened here, or the one the app started with:
     /// each in a slot of its own, shown if it is open already.
     fn opened(&mut self, paths: &[PathBuf], cx: &mut Cx) {
+        if !paths.is_empty() {
+            self.start = None;
+        }
         for p in paths {
             if !self.open_file(p, cx) {
                 break;
@@ -1661,6 +1786,9 @@ impl Page for Editor {
         self.recent = Recent::load(&data);
         if let Some(p) = self.path.clone().filter(|p| p.exists()) {
             self.recent.add(&p);
+        }
+        if self.path.is_none() {
+            self.start = Some(List::new());
         }
         self.mode = if self.model == KeyModel::Modal {
             Mode::View
@@ -1753,10 +1881,23 @@ impl Page for Editor {
     /// Raw while typing. View takes keys as a list does, so its chips and
     /// the menu on 8 work.
     fn raw_keys(&self) -> bool {
-        self.mode != Mode::View
+        self.mode != Mode::View && self.start.is_none()
     }
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
+        if let Some(list) = &mut self.start {
+            // View's bare keys move here too.
+            let key = match key {
+                Key::Char('f') => Key::Up,
+                Key::Char('x') => Key::Down,
+                k => k,
+            };
+            if let Some(Action::Open(i)) = list.key(key) {
+                self.start_pick(i, cx);
+            }
+            self.settle(cx);
+            return;
+        }
         if key == Key::Enter && !self.read_only {
             self.set_mode(Mode::Edit);
         }
@@ -1845,6 +1986,12 @@ impl Page for Editor {
         let mode = if view { VIEWING } else { EDITING };
         let here = |c: Command| c.mode(mode, view || edit);
         c.group("File");
+        c.add(Command::action(cmd::OPEN, "Open").keys("Ctrl+o").opens());
+        c.add(
+            Command::action(cmd::SAVE_AS, "Save as")
+                .opens()
+                .enabled(!self.binary),
+        );
         c.add(here(
             Command::action(cmd::SAVE, "Save")
                 .keys("Ctrl+s")
@@ -1979,6 +2126,33 @@ impl Page for Editor {
     }
 
     fn draw(&self, ui: &mut Ui) {
+        if let Some(list) = &self.start {
+            let names: Vec<(String, String)> = self
+                .recent
+                .list()
+                .iter()
+                .map(|p| {
+                    let name = p
+                        .file_name()
+                        .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+                    let dir = p
+                        .parent()
+                        .map_or(String::new(), |d| d.to_string_lossy().into_owned());
+                    (name, dir)
+                })
+                .collect();
+            let mut rows = vec![
+                Row::link("Open a file").icon("folder-open"),
+                Row::text("New file").icon("file"),
+            ];
+            rows.extend(
+                names
+                    .iter()
+                    .map(|(n, dir)| Row::link(n).value(dir).icon("file-text")),
+            );
+            ui.list(list, &rows);
+            return;
+        }
         let t: Theme = *ui.theme();
         let area = ui.area();
         let look = self.look();
@@ -2226,6 +2400,20 @@ fn draw_hex(ui: &mut Ui, t: &Theme, area: Rect, look: Look, b: &mut Buffer, top:
             look.font.draw(c, ax, y, &ch.to_string(), ink);
         }
     }
+}
+
+/// The chooser's filters for text: text first, then everything.
+fn text_types(spec: PickSpec) -> PickSpec {
+    spec.filter(
+        "Text",
+        &[
+            "text/plain",
+            "application/json",
+            "application/xml",
+            "application/x-shellscript",
+        ],
+    )
+    .filter("All files", &["*"])
 }
 
 #[cfg(test)]
