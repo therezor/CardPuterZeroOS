@@ -130,9 +130,12 @@ impl Tasks {
         }
     }
 
-    /// Asks an app to exit.
+    /// Asks an app to exit. Asking again doesn't move its kill later.
     pub fn close(&mut self, id: &str, now: u64) {
         if let Some(t) = self.get_mut(id) {
+            if matches!(t.state, State::Closing { .. }) {
+                return;
+            }
             child::terminate(t.pgid);
             t.state = State::Closing {
                 since: now,
@@ -281,5 +284,15 @@ mod tests {
             }
         );
         assert_eq!(t.next_at(5000), None);
+    }
+
+    #[test]
+    fn closing_again_keeps_the_kill_time() {
+        let mut t = Tasks::default();
+        t.add(task("a", 999_994, 0));
+        t.close("a", 1000);
+        t.close("a", 2000);
+        t.close_all(2500);
+        assert_eq!(t.next_at(2500), Some(1000 + KILL_GRACE_MS));
     }
 }
