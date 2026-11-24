@@ -249,6 +249,7 @@ impl<'a> Ui<'a> {
             };
             match row.note {
                 Some(note) => widgets::note_row(self.c, t, r, &w_row, note, selected),
+                None if row.plain => widgets::plain_row(self.c, t, r, &w_row, selected),
                 None => widgets::list_row(self.c, t, r, &w_row, selected),
             }
         }

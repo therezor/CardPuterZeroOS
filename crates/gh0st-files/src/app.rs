@@ -32,6 +32,8 @@ const CMD_EMPTY: u32 = 15;
 const CMD_ADD: u32 = 16;
 const CMD_COPY: u32 = 17;
 const CMD_MOVE: u32 = 18;
+const CMD_PGUP: u32 = 19;
+const CMD_PGDN: u32 = 20;
 
 // Dialogs.
 const ASK_COPY: u32 = 1;
@@ -1821,6 +1823,20 @@ impl Page for Files {
                 .enabled(browse)
                 .mode("Folder", browse && !s.search.active()),
         );
+        c.add(
+            Command::action(CMD_PGUP, "A screen up")
+                .keys("pgup")
+                .keys_only()
+                .repeats()
+                .mode("Folder", browse && !s.search.active()),
+        );
+        c.add(
+            Command::action(CMD_PGDN, "A screen down")
+                .keys("pgdn")
+                .keys_only()
+                .repeats()
+                .mode("Folder", browse && !s.search.active()),
+        );
         c.add(Command::action(CMD_COPY, "Copy to the other side").enabled(folder));
         c.add(Command::action(CMD_MOVE, "Move to the other side").enabled(writable));
         c.add(
@@ -1878,6 +1894,14 @@ impl Page for Files {
                 self.side_mut().list.select(0);
             }
             CMD_SIDE => self.flip(),
+            CMD_PGUP | CMD_PGDN => {
+                let code = if id == CMD_PGUP {
+                    gh0st_app::codes::PAGEUP
+                } else {
+                    gh0st_app::codes::PAGEDOWN
+                };
+                self.side_mut().list.key(Key::Other(code));
+            }
             CMD_COPY => self.copy(false, cx),
             CMD_MOVE => self.copy(true, cx),
             CMD_RENAME => self.rename(cx),
@@ -2070,13 +2094,17 @@ impl Files {
                         Row::link(label).value(value)
                     };
                     match p {
-                        Place::Server(i) if self.servers[*i].proto.plain() => {
-                            Row::tag(label, self.servers[*i].proto.word(), Tone::Warning).icon(icon)
-                        }
                         Place::Server(_) if self.armed && self.place_here() == Some(p.clone()) => {
-                            Row::tag(label, "Press again", Tone::Warning).icon(icon)
+                            Row::tag(label, "Press again", Tone::Warning)
+                                .icon(icon)
+                                .plain()
                         }
-                        _ => row.icon(icon),
+                        Place::Server(i) if self.servers[*i].proto.plain() => {
+                            Row::tag(label, self.servers[*i].proto.word(), Tone::Warning)
+                                .icon(icon)
+                                .plain()
+                        }
+                        _ => row.icon(icon).plain(),
                     }
                 })
                 .collect();
@@ -2145,11 +2173,16 @@ impl Files {
                 } else {
                     Row::info(&e.name, size)
                 };
-                row.icon(icon).marked(marked)
+                row.icon(icon).marked(marked).plain()
             })
             .collect();
         if s.more && !s.search.active() {
-            rows.push(Row::text("The rest is not shown").icon("info").dim());
+            rows.push(
+                Row::text("The rest is not shown")
+                    .icon("info")
+                    .dim()
+                    .plain(),
+            );
         }
         ui.list(&s.list, &rows);
     }

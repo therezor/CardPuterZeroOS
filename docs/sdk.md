@@ -443,7 +443,8 @@ scrolls to keep the selection in view.
 | `Row::signal(label, level, secure)` | Signal bars and a lock, for a network |
 | `Row::text(label)` | Nothing |
 
-`.icon(name)` adds an icon on the left. `.dim()` greys the icon of a row that
+`.icon(name)` adds an icon on the left, on a tile of its tint; `.plain()`
+drops the tile, for long lists of files. `.dim()` greys the icon of a row that
 isn't available yet. `.disabled("needs a cable")` draws a row that can't be
 used now, faint, with why on its right. A long list fills the rest of the page; a short one
 leaves room for more below it.

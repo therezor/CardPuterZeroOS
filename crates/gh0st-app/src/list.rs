@@ -251,6 +251,8 @@ pub struct Row<'a> {
     pub(crate) note: Option<&'a str>,
     /// Picked for an action on many rows: a check in place of the icon.
     pub(crate) marked: bool,
+    /// The icon alone, no tile.
+    pub(crate) plain: bool,
 }
 
 impl<'a> Row<'a> {
@@ -263,6 +265,7 @@ impl<'a> Row<'a> {
             off: None,
             note: None,
             marked: false,
+            plain: false,
         }
     }
 
@@ -343,6 +346,13 @@ impl<'a> Row<'a> {
     /// and a check in place of the icon.
     pub fn marked(mut self, on: bool) -> Row<'a> {
         self.marked = on;
+        self
+    }
+
+    /// The icon alone in its tint, with no tile behind it: for long lists
+    /// of files and places, where a tile on every row is noise.
+    pub fn plain(mut self) -> Row<'a> {
+        self.plain = true;
         self
     }
 

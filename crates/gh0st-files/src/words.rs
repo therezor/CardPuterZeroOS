@@ -1,10 +1,9 @@
 //! What Files says, in one place.
 
 /// Help's About section.
-pub const ABOUT: &str = "Two sides, A and B: Tab flips between them, and \
-Copy and Move send what is marked to the other side. Esc goes up a folder. \
-Server passwords stay in the keyring, never in a file. Deleted files wait in \
-the Trash until you empty it.";
+pub const ABOUT: &str = "Tab flips between sides A and B. Copy and Move send \
+what is marked to the other side. Server passwords stay in the keyring. \
+Deleted files wait in the Trash.";
 
 /// "1 item", "3 items".
 pub fn items(n: usize) -> String {

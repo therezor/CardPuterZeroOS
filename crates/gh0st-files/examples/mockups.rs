@@ -252,6 +252,11 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
         scene("26-mark-all", "x\nx\nenter\na"),
         scene("27-rename", "x\nx\nenter\nx\nx\nr"),
         scene("28-places-a", "esc"),
+        scene("29-help", "help"),
+        scene("30-help-down", "help\nx\nx\nx\nx\nx\nx"),
+        scene("31-help-more", "help\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx"),
+        scene("32-menu-end", "8\nf"),
+        scene("33-help-places", "tab\nhelp"),
     ];
     for s in scenes {
         let dir = base.join(s.name);

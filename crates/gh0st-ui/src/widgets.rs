@@ -1110,6 +1110,26 @@ pub fn list_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool) {
     row_body(c, t, r, row, selected, false, true);
 }
 
+/// A row whose icon stands alone in its tint, with no tile behind it: for
+/// long lists of files, where a tile on every row is noise.
+pub fn plain_row(c: &mut Canvas, t: &Theme, r: Rect, row: &Row, selected: bool) {
+    if selected {
+        row_selection(c, t, r);
+    }
+    // In the tile's column, so labels line up with tiled rows.
+    if let Some(name) = row.icon.filter(|n| !n.is_empty()) {
+        let s = IconSize::Bar as i32;
+        let col = Rect::new(r.x + 4, r.y, t.m.row_icon, r.h);
+        let (ix, iy) = col.centre(s, s);
+        icon::draw(c, name, IconSize::Bar, ix, iy, row.tint);
+    }
+    let body = Row {
+        icon: row.icon.map(|_| ""),
+        ..*row
+    };
+    row_body(c, t, r, &body, selected, false, true);
+}
+
 /// A selected row: `surface` standing on a 1 px foot.
 fn row_selection(c: &mut Canvas, t: &Theme, r: Rect) {
     let under = Rect::new(r.x, r.y + t.m.chip_lift, r.w, r.h);
