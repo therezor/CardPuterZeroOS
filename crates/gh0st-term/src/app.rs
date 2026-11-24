@@ -191,6 +191,8 @@ pub struct Term {
     waiting: bool,
     /// When the last notification went out.
     noticed: Option<std::time::Instant>,
+    /// The clock for each tab's reply budget.
+    epoch: std::time::Instant,
     /// Output came in: draw when this fires, so a program's repaint lands
     /// whole rather than half done.
     settle: Option<Timer>,
@@ -230,6 +232,7 @@ impl Term {
             clipboard: String::new(),
             waiting: false,
             noticed: None,
+            epoch: std::time::Instant::now(),
             settle: None,
             hint_h: 18,
             told_keys: false,
@@ -446,6 +449,10 @@ impl Term {
         };
         let mut total = 0;
         let mut hup = false;
+        tab.vt
+            .t
+            .budget
+            .refill(self.epoch.elapsed().as_millis() as u64);
         while total < READ_MAX {
             match pty.read(&mut self.buf) {
                 Ok(0) => {

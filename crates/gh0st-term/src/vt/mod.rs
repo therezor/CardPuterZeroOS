@@ -299,6 +299,8 @@ pub struct Terminal {
     pub clusters: Clusters,
     /// Bytes for the PTY: answers to device queries.
     pub replies: Vec<u8>,
+    /// What answers may still go out; [`ReplyBudget::refill`] by the app.
+    pub budget: ReplyBudget,
     pub shape: CursorShape,
     /// The shape a program gets back with DECSCUSR 0: the user's choice.
     pub default_shape: CursorShape,
@@ -309,6 +311,45 @@ pub struct Terminal {
     last: Option<char>,
     /// A sixel image under way, between DCS q and ST.
     sixel: Option<Box<sixel::Decoder>>,
+}
+
+/// Bytes of answers a program may get: a burst, then a trickle. A real
+/// program asks a few questions and waits.
+#[derive(Clone, Copy, Debug)]
+pub struct ReplyBudget {
+    room: usize,
+    at_ms: u64,
+}
+
+pub const REPLY_BURST: usize = 4096;
+pub const REPLY_PER_S: usize = 1024;
+
+impl Default for ReplyBudget {
+    fn default() -> ReplyBudget {
+        ReplyBudget {
+            room: REPLY_BURST,
+            at_ms: 0,
+        }
+    }
+}
+
+impl ReplyBudget {
+    /// Adds what the time since the last refill earned, up to the burst.
+    pub fn refill(&mut self, now_ms: u64) {
+        let earned = now_ms.saturating_sub(self.at_ms) as usize * REPLY_PER_S / 1000;
+        if earned > 0 {
+            self.room = (self.room + earned).min(REPLY_BURST);
+            self.at_ms = now_ms;
+        }
+    }
+
+    fn take(&mut self, n: usize) -> bool {
+        let ok = n <= self.room;
+        if ok {
+            self.room -= n;
+        }
+        ok
+    }
 }
 
 fn tab_stops(cols: usize) -> Vec<bool> {
@@ -340,6 +381,7 @@ impl Terminal {
             history: History::new(history),
             clusters: Clusters::default(),
             replies: Vec::new(),
+            budget: ReplyBudget::default(),
             shape: CursorShape::default(),
             default_shape: CursorShape::default(),
             events: 0,
@@ -809,8 +851,12 @@ impl Terminal {
         self.grid_mut().add_image(img, max);
     }
 
+    /// An answer goes whole or not at all: a program that floods queries
+    /// and never reads the answers gets a few, as in xterm.
     fn reply(&mut self, s: &str) {
-        self.replies.extend_from_slice(s.as_bytes());
+        if self.budget.take(s.len()) {
+            self.replies.extend_from_slice(s.as_bytes());
+        }
     }
 
     fn sgr(&mut self, params: &Params) {

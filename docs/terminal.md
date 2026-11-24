@@ -123,6 +123,10 @@ SGR with 256 colours and truecolor, the alternate screen, wide chars and
 combining marks, line drawing, tab stops, bracketed paste, cursor shapes,
 focus reports, synchronized output (mode 2026), DSR, DA and DECRQM.
 
+Answers to DSR, DA and DECRQM come from a budget: 4 KB at once, then 1 KB
+a second. A program that floods queries and never reads the answers, such
+as `cat` of a file full of them, gets a few, as in xterm.
+
 - OSC 0 and 2 set the title. OSC 7 tells the terminal the working directory;
   a new tab starts there.
 - OSC 52 copies to the terminal's clipboard. It never answers a read, so a

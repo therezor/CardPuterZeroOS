@@ -401,3 +401,19 @@ fn a_huge_sixel_is_cut_to_the_screen() {
     let (cw, ch) = cell_px();
     assert!(img.pixels.w <= 4 * cw && img.pixels.h <= 2 * ch);
 }
+
+#[test]
+fn a_query_flood_gets_a_burst_of_answers_then_a_trickle() {
+    let mut v = vt(80, 24);
+    let flood = "\x1b[c".repeat(100_000);
+    feed(&mut v, &flood);
+    let first = v.t.replies.len();
+    assert!(first > 0 && first <= REPLY_BURST, "{first}");
+    v.t.replies.clear();
+    // Two seconds on: about 2 KB more, and never half an answer.
+    v.t.budget.refill(2000);
+    feed(&mut v, &flood);
+    let more = v.t.replies.len();
+    assert!(more > 0 && more <= 2 * REPLY_PER_S, "{more}");
+    assert_eq!(more % "\x1b[?62;4;22c".len(), 0);
+}
