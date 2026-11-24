@@ -4,3 +4,5 @@
 
 // Release builds abort on a panic, and here a panic loses the user's edits.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
+pub mod buf;
