@@ -15,6 +15,7 @@ mod page;
 mod run;
 mod runtime;
 mod search;
+pub mod secret;
 mod steps;
 pub mod system;
 mod tiles;

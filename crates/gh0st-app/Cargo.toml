@@ -8,5 +8,10 @@ description = "The gh0st app SDK: pages, OS bars, soft keys, widgets and system 
 
 [dependencies]
 gh0st-core.workspace = true
+gh0st-dbus.workspace = true
 gh0st-ui.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+# The real Secret Service behind `secret` in tests, with no bus.
+gh0st-keyringd.workspace = true

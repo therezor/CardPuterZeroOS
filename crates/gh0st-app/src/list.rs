@@ -1,6 +1,6 @@
 //! A list of rows with a selection: the shape of most settings pages.
 
-use crate::key::Key;
+use crate::key::{Key, codes};
 use gh0st_ui::theme::Tone;
 use std::cell::Cell;
 
@@ -29,11 +29,25 @@ pub struct List {
     selected: Cell<usize>,
     first: Cell<usize>,
     len: Cell<usize>,
+    /// Rows on screen at the last draw: a page for PgUp and PgDn.
+    visible: Cell<usize>,
+    /// Up and Down stop at the ends instead of wrapping.
+    stops: bool,
 }
 
 impl List {
     pub fn new() -> List {
         List::default()
+    }
+
+    /// A list whose Up and Down stop at its ends, for long lists such as a
+    /// folder's, where wrapping from the last row to the first loses the
+    /// reader.
+    pub fn stopping() -> List {
+        List {
+            stops: true,
+            ..List::default()
+        }
     }
 
     pub fn selected(&self) -> usize {
@@ -44,17 +58,24 @@ impl List {
         self.selected.set(i);
     }
 
-    /// Moves on Up and Down, wrapping. Returns what Enter, Left or Right
-    /// asked of the selected row.
+    /// Moves on Up and Down, wrapping unless [`List::stopping`], and a
+    /// screen at a time on PgUp and PgDn (Fn+L and Fn+M). End goes to the
+    /// last row. Returns what Enter, Left or Right asked of the selected row.
     pub fn key(&mut self, key: Key) -> Option<Action> {
         let len = self.len.get();
         if len == 0 {
             return None;
         }
         let i = self.selected.get().min(len - 1);
+        let page = self.visible.get().max(1);
         match key {
+            Key::Up if self.stops => self.selected.set(i.saturating_sub(1)),
+            Key::Down if self.stops => self.selected.set((i + 1).min(len - 1)),
             Key::Up => self.selected.set((i + len - 1) % len),
             Key::Down => self.selected.set((i + 1) % len),
+            Key::Other(codes::PAGEUP) => self.selected.set(i.saturating_sub(page)),
+            Key::Other(codes::PAGEDOWN) => self.selected.set((i + page).min(len - 1)),
+            Key::Other(codes::END) => self.selected.set(len - 1),
             Key::Enter => return Some(Action::Open(i)),
             Key::Left => return Some(Action::Change(i, -1)),
             Key::Right => return Some(Action::Change(i, 1)),
@@ -67,6 +88,7 @@ impl List {
     /// shows. Returns the first visible row.
     pub(crate) fn layout(&self, len: usize, visible: usize) -> usize {
         self.len.set(len);
+        self.visible.set(visible);
         let sel = self.selected.get().min(len.saturating_sub(1));
         self.selected.set(sel);
         let mut first = self.first.get();
@@ -227,6 +249,8 @@ pub struct Row<'a> {
     pub(crate) off: Option<&'a str>,
     /// A second line in Caption under the label.
     pub(crate) note: Option<&'a str>,
+    /// Picked for an action on many rows: a check in place of the icon.
+    pub(crate) marked: bool,
 }
 
 impl<'a> Row<'a> {
@@ -238,6 +262,7 @@ impl<'a> Row<'a> {
             dim: false,
             off: None,
             note: None,
+            marked: false,
         }
     }
 
@@ -314,6 +339,13 @@ impl<'a> Row<'a> {
         self
     }
 
+    /// Picked for an action on many rows, as files to copy: an accent wash
+    /// and a check in place of the icon.
+    pub fn marked(mut self, on: bool) -> Row<'a> {
+        self.marked = on;
+        self
+    }
+
     /// A grey icon, for a row that is shown but not available yet.
     pub fn dim(mut self) -> Row<'a> {
         self.dim = true;
@@ -359,6 +391,26 @@ mod tests {
         assert_eq!(l.key(Key::Enter), Some(Action::Open(2)));
         assert_eq!(l.key(Key::Down), None);
         assert_eq!(l.key(Key::Right), Some(Action::Change(0, 1)));
+    }
+
+    #[test]
+    fn a_stopping_list_pages_and_stops_at_its_ends() {
+        let mut l = List::stopping();
+        l.layout(12, 5);
+        l.key(Key::Up);
+        assert_eq!(l.selected(), 0, "no wrap to the end");
+        l.key(Key::Other(codes::PAGEDOWN));
+        assert_eq!(l.selected(), 5);
+        l.key(Key::Other(codes::PAGEDOWN));
+        l.key(Key::Other(codes::PAGEDOWN));
+        assert_eq!(l.selected(), 11, "a page down stops on the last row");
+        l.key(Key::Down);
+        assert_eq!(l.selected(), 11);
+        l.key(Key::Other(codes::PAGEUP));
+        assert_eq!(l.selected(), 6);
+        l.select(0);
+        l.key(Key::Other(codes::END));
+        assert_eq!(l.selected(), 11);
     }
 
     #[test]

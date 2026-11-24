@@ -214,10 +214,16 @@ impl<'a> Ui<'a> {
         };
         for (i, row) in rows.iter().enumerate().skip(first).take(visible) {
             let r = Rect::new(x, top + (i - first) as i32 * row_h, w, row_h);
-            let tint = if row.dim {
-                t.c.muted
+            let selected = i == list.selected();
+            let (icon, tint) = if row.marked {
+                if !selected {
+                    widgets::marked_row(self.c, t, r);
+                }
+                ("check", t.c.accent)
+            } else if row.dim {
+                (row.icon, t.c.muted)
             } else {
-                t.c.icon_tint(row.icon)
+                (row.icon, t.c.icon_tint(row.icon))
             };
             if let Some(why) = row.off {
                 widgets::disabled_row(self.c, t, r, row.icon, row.label, why);
@@ -236,14 +242,14 @@ impl<'a> Ui<'a> {
                 Trail::Signal(level, secure) => Trailing::Signal { level, secure },
             };
             let w_row = widgets::Row {
-                icon: (!row.icon.is_empty()).then_some(row.icon),
+                icon: (!icon.is_empty()).then_some(icon),
                 tint,
                 label: row.label,
                 trailing,
             };
             match row.note {
-                Some(note) => widgets::note_row(self.c, t, r, &w_row, note, i == list.selected()),
-                None => widgets::list_row(self.c, t, r, &w_row, i == list.selected()),
+                Some(note) => widgets::note_row(self.c, t, r, &w_row, note, selected),
+                None => widgets::list_row(self.c, t, r, &w_row, selected),
             }
         }
         let track = Rect::new(x, top, w, visible as i32 * row_h);

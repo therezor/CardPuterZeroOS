@@ -1103,6 +1103,12 @@ fn row_selection(c: &mut Canvas, t: &Theme, r: Rect) {
     c.round_rect(r, t.m.radius, t.c.surface);
 }
 
+/// A row picked for an action on many: a pale accent wash. Drawn before the
+/// row, under the selection when it is also selected.
+pub fn marked_row(c: &mut Canvas, t: &Theme, r: Rect) {
+    c.round_rect(r, t.m.radius, mix(t.c.bg, t.c.accent, 48));
+}
+
 /// A selected menu row: an accent wash, as the menu is itself a surface.
 fn menu_selection(c: &mut Canvas, t: &Theme, r: Rect) {
     c.round_rect(r, t.m.radius, mix(t.c.surface, t.c.accent, 70));
@@ -1467,12 +1473,28 @@ pub fn text_field(
             x += 8;
         }
         x
+    } else if cursor && f.measure(text) > inner.w {
+        // Typing goes on at the end, so a long text shows its tail.
+        let tail = tail_fit(f, text, inner.w - f.measure("\u{2026}"));
+        text_in(c, f, inner, &format!("\u{2026}{tail}"), t.c.fg)
     } else {
         text_in(c, f, inner, text, t.c.fg)
     };
     if cursor {
         c.fill(Rect::new(end + 1, r.y + 5, 1, r.h - 10), t.c.accent);
     }
+}
+
+/// The longest end of `s` that fits in `w`.
+pub fn tail_fit(f: Font, s: &str, w: i32) -> &str {
+    let mut start = s.len();
+    for (i, _) in s.char_indices().rev() {
+        if f.measure(&s[i..]) > w {
+            break;
+        }
+        start = i;
+    }
+    &s[start..]
 }
 
 /// A form field as [`form_field`] draws it.

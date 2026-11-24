@@ -448,6 +448,12 @@ isn't available yet. `.disabled("needs a cable")` draws a row that can't be
 used now, faint, with why on its right. A long list fills the rest of the page; a short one
 leaves room for more below it.
 
+A long list, such as a folder's, wants `List::stopping()`: Up and Down stop
+at its ends instead of wrapping. Every list moves a screen at a time on PgUp
+and PgDn (Fn+L and Fn+M), and End goes to its last row. `.marked(true)` picks
+a row for an action on many, as files to copy: an accent wash, and a check in
+place of its icon. The page keeps which rows are marked.
+
 ## Text input
 
 A page with a text field returns true from `typing` while the field has focus.
@@ -543,6 +549,60 @@ let page = Account {
 ```
 
 A form zeroes its fields when dropped, and its `Debug` shows labels only.
+
+### Dialogs
+
+A question or one line of text that shouldn't take a page is a dialog: a
+card over the page that takes every key until it closes. `cx.ask(id,
+dialog)` opens it, and `Page::answer(id, answer)` hears how it ended:
+`Answer::Yes(text)` on Enter, `Answer::No` on Esc.
+
+```rust
+use gh0st_app::prelude::*;
+
+const RENAME: u32 = 1;
+
+struct File {
+    name: String,
+}
+
+impl Page for File {
+    fn title(&self) -> &str {
+        "File"
+    }
+
+    fn key(&mut self, key: Key, cx: &mut Cx) {
+        if key == Key::Char('r') {
+            cx.ask(RENAME, Dialog::text("Rename", "name").value(&self.name).yes("rename"));
+        }
+    }
+
+    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
+        match (id, answer) {
+            (RENAME, Answer::Yes(name)) if name.contains('/') => {
+                cx.ask(RENAME, Dialog::text("Rename", "name").value(&name).error("No / in a name"));
+            }
+            (RENAME, Answer::Yes(name)) => self.name = name,
+            _ => {}
+        }
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        ui.heading(&self.name);
+    }
+}
+```
+
+| Dialog | Asks |
+|---|---|
+| `Dialog::text(title, placeholder)` | One line, up to 255 bytes. A long one shows its end while typing |
+| `Dialog::password(title)` | A password: dots, and Tab shows it |
+| `Dialog::confirm(title, line)` | A question to read before deciding |
+
+`.value(text)` fills the field, `.line(text)` adds a line under it,
+`.yes(word)` and `.no(word)` name the keys, and `.error(why)` reopens it with
+what was wrong. A dialog that loses data adds `.danger().hold()`: Enter does
+nothing, and yes is a red chip on 7 held 0.7 s.
 
 ### Search
 
@@ -888,10 +948,29 @@ screen's brightness and timeout.
 `cx.data_dir()` is a directory for the app's own files,
 `~/.local/share/<app id>`.
 
-Passwords and tokens go in the keyring, never in a file. Use the standard
-Secret Service API (libsecret, python `keyring`, or `gh0st_dbus` from Rust):
-the keyring encrypts them, and only your app reads its own without asking
-the user (`docs/keyring.md`). Notifications go through
+Passwords and tokens go in the keyring, never in a file. From Rust, use
+`gh0st_app::secret`; other languages use the standard Secret Service API
+(libsecret, python `keyring`). The keyring encrypts them, and only your app
+reads its own without asking the user (`docs/keyring.md`).
+
+```rust,no_run
+use gh0st_app::secret::{Keyring, Lookup};
+
+let mut kr = Keyring::connect();
+let who = [("server", "nas.local"), ("user", "me")];
+kr.store("nas.local", &who, b"hunter2", true).ok();
+match kr.lookup(&who) {
+    Lookup::Found(pw) => { let _ = pw.as_bytes(); }
+    // Locked, or another app's: the shell asks the user. Watch `kr.fd()`
+    // and look again once `kr.ended(&prompt)` says it went through.
+    Lookup::Locked(items) => { let _prompt = kr.unlock(&items); }
+    Lookup::Missing | Lookup::Absent => {}
+}
+```
+
+`store` with `replace` gives an item of yours with the same attributes the
+new secret. A `Secret` zeroes its bytes when it drops. `delete(item)`
+returns a prompt: the keyring confirms with the user first. Notifications go through
 `org.freedesktop.Notifications` or a notice file (`docs/apps.md`).
 
 ## The device

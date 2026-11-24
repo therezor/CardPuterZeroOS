@@ -6,8 +6,8 @@ use gh0st_ui::font::Font;
 use gh0st_ui::widgets::{self, Hint};
 use gh0st_ui::{Canvas, Rect, Theme};
 
-/// Longest text a dialog's field takes.
-const MAX: usize = 64;
+/// Longest text a dialog's field takes, in bytes: a file name's limit.
+const MAX: usize = 255;
 
 /// What the card asks. Enter says yes and Esc says no, named in key pills;
 /// a dialog that loses data says yes only to its chip held on 7.
@@ -106,7 +106,11 @@ impl Dialog {
     /// The text the field starts with.
     pub fn value(mut self, text: &str) -> Dialog {
         if let Some(f) = self.field.as_mut() {
-            f.text = text.chars().take(MAX).collect();
+            let mut end = text.len().min(MAX);
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            f.text = text[..end].to_string();
         }
         self
     }
@@ -205,7 +209,7 @@ impl Dialog {
             }
             _ => {
                 if let Some(c) = k.ch.filter(|c| !c.is_control() && !k.ctrl && !k.alt) {
-                    if f.text.chars().count() < MAX {
+                    if f.text.len() + c.len_utf8() <= MAX {
                         f.text.push(c);
                         self.error = None;
                     }

@@ -311,7 +311,11 @@ page (`Palette::icon_tint`). What a row shows on its right says what it is:
 | "Press again" in `warning` | armed: press once more to do it |
 
 A row that can't be used now is drawn in `disabled` and says why on its
-right. A row may have a second line in Caption. Sections start with a heading
+right. A row may have a second line in Caption. A row marked for an action
+on many, as files to copy, has a pale `accent` wash and an `accent` check in
+place of its icon.
+
+Long lists stop at their ends; short ones wrap. PgUp and PgDn move a screen. Sections start with a heading
 in Label style, in `accent`.
 
 Fields have a label above in Caption. The focused one has an `accent` edge.
@@ -379,6 +383,7 @@ size.
 A card over the page. The content behind it dims; the bars do not. It has a
 title in Body strong and a body. Esc and Enter are named in key pills, inside
 the card or in the hint bar while a field has focus. Other actions are chips.
+A field too long for the card shows its end, where typing goes on.
 
 ![A dialog that loses data](design/19-dialog-danger.png)
 
@@ -538,8 +543,6 @@ Two more savers, each its own setting:
   hint bar (screen 35) is still to come.
 - The terminal's scroll and find modes keep their own hint bar: it takes
   every key raw, so the SDK's chips don't run there yet.
-- Two-line rows are in gh0st-ui (`note_row`) but not yet in the SDK's
-  `Ui::list`, which keeps one row height.
 - Some sizes still sit in widgets as literals: the card's padding, the
   toast's insets, the dialog's layout. They belong in `Metrics`.
 
