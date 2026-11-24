@@ -199,6 +199,8 @@ pub struct Handler {
     /// Its desktop file stem, for [`Cx::open_with`].
     pub id: String,
     pub name: String,
+    /// Its symbol, or a plain app symbol when it draws its own picture.
+    pub icon: &'static str,
     /// Enter opens the file with this one.
     pub default: bool,
 }
@@ -590,6 +592,13 @@ impl Cx<'_> {
             .map(|(i, a)| Handler {
                 id: a.id().to_string(),
                 name: a.entry.name.clone(),
+                icon: a
+                    .entry
+                    .icon
+                    .strip_prefix("gh0st:")
+                    .and_then(|n| gh0st_ui::icon::ICON_NAMES.iter().find(|i| **i == n))
+                    .copied()
+                    .unwrap_or("layout-grid"),
                 default: i == 0,
             })
             .collect()

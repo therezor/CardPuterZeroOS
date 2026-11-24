@@ -4,8 +4,10 @@
 
 use crate::engine::{Ask, Engine, Event, Id, Request};
 use crate::model::{self, Entry, Kind, Loc, Sort, Type};
+use crate::pick::{Mode, Spec};
 use crate::servers::{self, Proto, Server};
 use crate::words;
+use gh0st_app::Handler;
 use gh0st_app::prelude::*;
 use gh0st_app::secret::{Keyring, Lookup};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -37,6 +39,8 @@ const CMD_PGDN: u32 = 20;
 const CMD_KEY: u32 = 21;
 const CMD_PASTE: u32 = 22;
 const CMD_CLEAR: u32 = 23;
+const CMD_OPEN_WITH: u32 = 24;
+const CMD_TYPE: u32 = 25;
 
 // Dialogs.
 const ASK_DELETE: u32 = 3;
@@ -51,6 +55,8 @@ const ASK_SECRET: u32 = 12;
 const ASK_FOLDER: u32 = 13;
 const ASK_NAME: u32 = 14;
 const ASK_COMPRESS: u32 = 15;
+const ASK_SAVE: u32 = 16;
+const ASK_REPLACE: u32 = 17;
 
 const KEY_SORT: &str = "files.sort";
 const KEY_HIDDEN: &str = "files.hidden";
@@ -62,6 +68,15 @@ pub struct Options {
     pub data: Option<PathBuf>,
     pub engine: Box<dyn Engine>,
     pub keyring: Keyring,
+    /// Files runs as another app's file chooser.
+    pub pick: Option<Picker>,
+}
+
+/// The file chooser's question and where its answer goes: the paths
+/// picked, or None when the user gave up.
+pub struct Picker {
+    pub spec: Spec,
+    pub done: Box<dyn FnMut(Option<Vec<PathBuf>>)>,
 }
 
 impl Options {
@@ -73,6 +88,7 @@ impl Options {
             data: None,
             engine: Box::new(crate::child::Child::new()),
             keyring: Keyring::connect(),
+            pick: None,
         }
     }
 }
@@ -114,6 +130,8 @@ struct Side {
     all: Vec<Entry>,
     /// The row to put the cursor on once a listing under way arrives.
     want: Option<String>,
+    /// As a file chooser: which files show.
+    spec: Option<Spec>,
 }
 
 impl Side {
@@ -130,6 +148,7 @@ impl Side {
             archive: None,
             all: Vec::new(),
             want: None,
+            spec: None,
         }
     }
 
@@ -181,6 +200,10 @@ impl Side {
     /// still there.
     fn reshape(&mut self, sort: Sort, hidden: bool) {
         self.entries = shape(self.all.clone(), sort, hidden);
+        if let Some(spec) = &self.spec {
+            self.entries
+                .retain(|e| spec.shows(&e.name, e.kind.is_dir()));
+        }
         let names: HashSet<&str> = self.entries.iter().map(|e| e.name.as_str()).collect();
         self.marks.retain(|m| names.contains(m.as_str()));
     }
@@ -284,6 +307,16 @@ enum View {
         all: bool,
         list: List,
     },
+    /// The apps that open a file, the default first.
+    OpenWith {
+        path: PathBuf,
+        handlers: Vec<Handler>,
+        list: List,
+    },
+    /// The chooser's file types.
+    Filters {
+        list: List,
+    },
 }
 
 /// A question the worker is waiting on, and where its answer comes from.
@@ -337,6 +370,9 @@ pub struct Files {
     /// What an open Delete, Rename or Compress dialog is about: the side,
     /// its folder, the names.
     target: Option<(usize, Loc, Vec<String>)>,
+    pick: Option<Picker>,
+    /// The file a save would replace, once asked.
+    replacing: Option<PathBuf>,
 }
 
 impl Files {
@@ -375,9 +411,220 @@ impl Files {
             clip: None,
             status_tone: Tone::Info,
             target: None,
+            pick: o.pick,
+            replacing: None,
         };
+        let spec = f.pick.as_ref().map(|p| p.spec.clone());
+        for side in &mut f.sides {
+            side.spec = spec.clone();
+        }
         f.retitle();
         f
+    }
+
+    fn spec(&self) -> Option<&Spec> {
+        self.pick.as_ref().map(|p| &p.spec)
+    }
+
+    /// The chooser's answer: hand it over and close.
+    fn finish(&mut self, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {
+        if let Some(p) = &mut self.pick {
+            (p.done)(paths);
+        }
+        cx.quit();
+    }
+
+    /// The local folder the side shows.
+    fn here(&self) -> Option<PathBuf> {
+        match &self.side().loc {
+            Loc::Local(p) => Some(p.clone()),
+            _ => None,
+        }
+    }
+
+    /// As a chooser, Enter on a file.
+    fn pick_file(&mut self, e: &Entry, cx: &mut Cx) {
+        let Some(dir) = self.here() else {
+            return;
+        };
+        let Some(spec) = self.spec().cloned() else {
+            return;
+        };
+        match spec.mode {
+            Mode::Open => {
+                let names = if spec.multiple {
+                    self.side().picked()
+                } else {
+                    vec![e.name.clone()]
+                };
+                self.finish(Some(names.iter().map(|n| dir.join(n)).collect()), cx);
+            }
+            Mode::Save => self.ask_replace(dir.join(&e.name), cx),
+            Mode::Folder => {}
+        }
+    }
+
+    fn ask_replace(&mut self, path: PathBuf, cx: &mut Cx) {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        self.replacing = Some(path);
+        cx.ask(
+            ASK_REPLACE,
+            Dialog::confirm(
+                &format!("Replace {}?", name.unwrap_or_default()),
+                "The file there now is lost.",
+            )
+            .yes("replace")
+            .danger(),
+        );
+    }
+
+    fn ask_save(&mut self, name: &str, cx: &mut Cx) {
+        let d = Dialog::text("Save as", "name").value(name).yes("save");
+        cx.ask(ASK_SAVE, d);
+    }
+
+    /// The chooser's chip `n`.
+    fn pick_soft(&mut self, n: u8, cx: &mut Cx) {
+        let Some(spec) = self.spec().cloned() else {
+            return;
+        };
+        let filters = spec.filters.len() > 1;
+        let (type_key, main_key) = match spec.mode {
+            Mode::Open => (6, 0),
+            Mode::Save if filters => (5, 7),
+            Mode::Save | Mode::Folder => (0, 6),
+        };
+        if n == 4 && spec.multiple && spec.mode == Mode::Open {
+            self.mark();
+        } else if n == type_key && filters && self.in_folder() {
+            self.show_filters();
+        } else if n == main_key && self.in_folder() {
+            let Some(dir) = self.here() else {
+                return;
+            };
+            match spec.mode {
+                Mode::Save => self.ask_save(&spec.name, cx),
+                Mode::Folder => self.finish(Some(vec![dir]), cx),
+                Mode::Open => {}
+            }
+        }
+    }
+
+    fn show_filters(&mut self) {
+        let mut list = List::stopping();
+        list.select(self.spec().and_then(|s| s.filter).unwrap_or(0));
+        self.view = View::Filters { list };
+    }
+
+    fn set_filter(&mut self, i: usize) {
+        if let Some(p) = &mut self.pick {
+            p.spec.filter = Some(i);
+        }
+        let spec = self.spec().cloned();
+        let (sort, hidden) = (self.sort, self.hidden);
+        for side in &mut self.sides {
+            side.spec = spec.clone();
+            side.reshape(sort, hidden);
+            side.settle();
+        }
+    }
+
+    fn pick_bars(&self) -> Bars {
+        let Some(spec) = self.spec() else {
+            return Bars::top();
+        };
+        let s = self.side();
+        if s.search.active() {
+            return Bars::top().search(&s.search);
+        }
+        if !self.in_folder() {
+            return Bars::top();
+        }
+        let filters = spec.filters.len() > 1;
+        let ty = Chip::new("file", "Type");
+        let main = Chip::new("check", spec.verb()).main();
+        match spec.mode {
+            Mode::Open => {
+                let mut b = Bars::top();
+                if spec.multiple {
+                    let marked = s.current().is_some_and(|e| s.marks.contains(&e.name));
+                    b = b.chip(4, Chip::new("check", "Mark").on(marked));
+                }
+                if filters { b.chip(6, ty) } else { b }
+            }
+            Mode::Save if filters => Bars::top().chip(5, ty).chip(7, main),
+            Mode::Save | Mode::Folder => Bars::top().chip(6, main),
+        }
+    }
+
+    fn pick_commands(&self, spec: &Spec, browse: bool, c: &mut Commands) {
+        let s = self.side();
+        let folder = browse && self.in_folder();
+        let free = folder && !s.search.active();
+        c.group("Files");
+        if spec.mode == Mode::Open && spec.multiple {
+            c.add(
+                Command::action(CMD_MARK, "Mark")
+                    .keys("space")
+                    .enabled(folder)
+                    .mode("Folder", free),
+            );
+            c.add(
+                Command::action(CMD_ALL, "Mark all")
+                    .keys("a")
+                    .enabled(folder)
+                    .mode("Folder", free),
+            );
+        }
+        c.add(
+            Command::action(CMD_FIND, "Find in folder")
+                .keys("n")
+                .enabled(folder)
+                .mode("Folder", free),
+        );
+        if spec.filters.len() > 1 {
+            c.add(
+                Command::action(CMD_TYPE, "File type")
+                    .opens()
+                    .enabled(folder),
+            );
+        }
+        if spec.mode != Mode::Open {
+            c.add(
+                Command::action(CMD_MKDIR, "New folder")
+                    .keys("k")
+                    .enabled(folder)
+                    .mode("Folder", free),
+            );
+        }
+        c.group("View");
+        c.add(Command::choice(CMD_SORT, "Sort by", self.sort.word()));
+        c.add(Command::toggle(CMD_HIDDEN, "Hidden files", self.hidden));
+    }
+
+    /// The Open-with list for the file under the cursor, local ones only.
+    fn open_with(&mut self, cx: &mut Cx) {
+        let Some(e) = self.side().current().cloned() else {
+            return;
+        };
+        let Loc::Local(dir) = &self.side().loc else {
+            cx.toast("Copy it to the card to open it");
+            return;
+        };
+        if e.kind.is_dir() {
+            return;
+        }
+        let path = dir.join(&e.name);
+        let handlers = cx.handlers(&path);
+        if handlers.is_empty() {
+            cx.toast("No app opens this file");
+            return;
+        }
+        self.view = View::OpenWith {
+            path,
+            handlers,
+            list: List::stopping(),
+        };
     }
 
     fn side(&self) -> &Side {
@@ -428,6 +675,12 @@ impl Files {
             }
             (None, None) => (String::new(), Tone::Info),
         };
+        // As a chooser, the asking app's name says who it is for.
+        if let Some(spec) = self.pick.as_ref().map(|p| &p.spec) {
+            if self.status.is_empty() {
+                self.status = spec.app.clone();
+            }
+        }
         // Room left beside the clock and the status.
         let room = if self.status.is_empty() {
             22
@@ -441,7 +694,11 @@ impl Files {
         } else {
             shown
         };
-        self.title = format!("{} \u{00b7} {shown}", Files::letter(self.cur));
+        self.title = match self.pick.as_ref().map(|p| &p.spec) {
+            Some(spec) if self.side().loc == Loc::Places => spec.verb().to_string(),
+            Some(spec) => format!("{} \u{00b7} {shown}", spec.verb()),
+            None => format!("{} \u{00b7} {shown}", Files::letter(self.cur)),
+        };
     }
 
     fn server(&self, name: &str) -> Option<&Server> {
@@ -471,6 +728,10 @@ impl Files {
         let mut v = vec![Place::Home, Place::Card];
         if self.has_downloads {
             v.push(Place::Downloads);
+        }
+        // A chooser picks on the card only.
+        if self.pick.is_some() {
+            return v;
         }
         v.push(Place::Trash);
         v.extend((0..self.servers.len()).map(Place::Server));
@@ -604,6 +865,21 @@ impl Files {
         if e.kind.is_dir() {
             self.go(loc, cx);
             return;
+        }
+        if self.pick.is_some() {
+            self.pick_file(&e, cx);
+            return;
+        }
+        // A local file opens in its app; without one, as before.
+        let local = match &loc {
+            Loc::Local(p) if e.sort() != Type::Archive => Some(p.clone()),
+            _ => None,
+        };
+        if let Some(path) = local {
+            if e.kind == Kind::File && !cx.handlers(&path).is_empty() {
+                cx.open_file(&path);
+                return;
+            }
         }
         match e.sort() {
             Type::Archive if !self.side().loc.is_archive() => {
@@ -1195,8 +1471,14 @@ impl Files {
         if !self.in_folder() {
             return;
         }
+        let picking = self.pick.is_some();
         let s = self.side_mut();
-        let Some(name) = s.current().map(|e| e.name.clone()) else {
+        // A chooser picks files: a folder is for going into.
+        let Some(name) = s
+            .current()
+            .filter(|e| !(picking && e.kind.is_dir()))
+            .map(|e| e.name.clone())
+        else {
             return;
         };
         if !s.marks.remove(&name) {
@@ -1805,6 +2087,8 @@ impl Page for Files {
             View::Transfers => "Transfers",
             View::Key(_) => "SSH key",
             View::Conflict { .. } => "Already there",
+            View::OpenWith { .. } => "Open with",
+            View::Filters { .. } => "File type",
             View::Browse => &self.title,
         }
     }
@@ -1836,13 +2120,21 @@ impl Page for Files {
         let s = cx.settings();
         self.sort = Sort::parse(s.get_str(KEY_SORT).unwrap_or("name"));
         self.hidden = s.get_bool(KEY_HIDDEN).unwrap_or(false);
-        // Side A opens at home; B waits in Places.
-        self.sides[0].base = Loc::Local(self.home.clone());
-        self.go(Loc::Local(self.home.clone()), cx);
+        // Side A opens at home, or where the chooser was asked to start;
+        // B waits in Places.
+        let first = self
+            .spec()
+            .and_then(|s| s.folder.clone())
+            .filter(|f| f.is_dir())
+            .unwrap_or_else(|| self.home.clone());
+        self.sides[0].base = Loc::Local(first.clone());
+        self.go(Loc::Local(first), cx);
     }
 
     fn bars(&self) -> Bars {
         match &self.view {
+            View::Browse if self.pick.is_some() => self.pick_bars(),
+            View::OpenWith { .. } => Bars::top().chip(6, Chip::new("pin", "Always")),
             View::Browse => {
                 let s = self.side();
                 if s.search.active() {
@@ -1909,7 +2201,40 @@ impl Page for Files {
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
         match &mut self.view {
+            View::Browse if self.pick.is_some() && matches!(key, Key::Soft(_) | Key::Tab) => {
+                if let Key::Soft(n) = key {
+                    self.pick_soft(n, cx);
+                }
+            }
             View::Browse => self.browse_key(key, cx),
+            View::OpenWith {
+                path,
+                handlers,
+                list,
+            } => {
+                let always = key == Key::Soft(6);
+                let at = match list.key(key) {
+                    Some(Action::Open(i)) => Some(i),
+                    _ if always => Some(list.selected()),
+                    _ => None,
+                };
+                if let Some(h) = at.and_then(|i| handlers.get(i)).cloned() {
+                    let path = path.clone();
+                    if always {
+                        if let Err(e) = cx.always_open_with(&path, &h.id) {
+                            cx.toast_tone(Tone::Critical, &io_words(&e));
+                        }
+                    }
+                    self.view = View::Browse;
+                    cx.open_with(&h.id, &path);
+                }
+            }
+            View::Filters { list } => {
+                if let Some(Action::Open(i)) = list.key(key) {
+                    self.view = View::Browse;
+                    self.set_filter(i);
+                }
+            }
             View::Key(None) if key == Key::Soft(6) => self.make_key(cx),
             View::Key(_) => {}
             View::Viewer { scroll, .. } => {
@@ -2045,7 +2370,21 @@ impl Page for Files {
         let s = self.side();
         let writable = folder && !s.loc.is_archive();
         let archive_row = s.current().is_some_and(|e| e.sort() == Type::Archive);
+        if let Some(spec) = self.spec() {
+            self.pick_commands(spec, browse, c);
+            return;
+        }
+        let file_row = folder
+            && matches!(s.loc, Loc::Local(_))
+            && s.current().is_some_and(|e| e.kind == Kind::File);
         c.group("Files");
+        c.add(
+            Command::action(CMD_OPEN_WITH, "Open with")
+                .keys("o")
+                .opens()
+                .enabled(file_row)
+                .mode("Folder", file_row && !s.search.active()),
+        );
         c.add(
             Command::action(CMD_COPY, "Copy")
                 .keys("Ctrl+c")
@@ -2156,6 +2495,8 @@ impl Page for Files {
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
         self.armed = false;
         match id {
+            CMD_OPEN_WITH => self.open_with(cx),
+            CMD_TYPE => self.show_filters(),
             CMD_MARK => self.mark(),
             CMD_ALL => self.mark_all(),
             CMD_FIND => {
@@ -2237,6 +2578,38 @@ impl Page for Files {
     fn draw(&self, ui: &mut Ui) {
         match &self.view {
             View::Browse => self.draw_browse(ui),
+            View::OpenWith {
+                path,
+                handlers,
+                list,
+            } => {
+                let name = path.file_name().map(|n| n.to_string_lossy());
+                ui.note(&name.unwrap_or_default());
+                let rows: Vec<Row> = handlers
+                    .iter()
+                    .map(|h| {
+                        let r = if h.default {
+                            Row::info(&h.name, "default")
+                        } else {
+                            Row::text(&h.name)
+                        };
+                        r.icon(h.icon)
+                    })
+                    .collect();
+                ui.list(list, &rows);
+            }
+            View::Filters { list } => {
+                let spec = self.spec();
+                let at = spec.and_then(|s| s.filter);
+                let rows: Vec<Row> = spec
+                    .map(|s| s.filters.as_slice())
+                    .unwrap_or(&[])
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| Row::pick(&f.name, at == Some(i)))
+                    .collect();
+                ui.list(list, &rows);
+            }
             View::Viewer { text, scroll, .. } => ui.scroll_text(scroll, text),
             View::Info { rows, list } => {
                 // The name whole, wrapped, above the rest.
@@ -2354,6 +2727,28 @@ impl Files {
             self.target = None;
         }
         match (id, yes) {
+            (ASK_SAVE, Some(name)) => {
+                if let Err(why) = model::name_ok(&name) {
+                    let d = Dialog::text("Save as", "name").value(&name).error(why);
+                    cx.ask(ASK_SAVE, d.yes("save"));
+                    return;
+                }
+                let Some(dir) = self.here() else {
+                    return;
+                };
+                let path = dir.join(&name);
+                if std::fs::symlink_metadata(&path).is_ok() {
+                    self.ask_replace(path, cx);
+                } else {
+                    self.finish(Some(vec![path]), cx);
+                }
+            }
+            (ASK_REPLACE, Some(_)) => {
+                if let Some(path) = self.replacing.take() {
+                    self.finish(Some(vec![path]), cx);
+                }
+            }
+            (ASK_REPLACE, None) => self.replacing = None,
             (ASK_DELETE, Some(_)) => {
                 // The names the dialog said, not what the cursor is on now.
                 let Some((loc, names)) = self.take_target() else {

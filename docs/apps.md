@@ -10,8 +10,10 @@ use this page directly.
 - The shell reads `.desktop` files in `/usr/share/APPLaunch/applications`
   (stock and Store installs) and `/usr/share/gh0st/applications` (ours).
 - It reads these keys: `Name`, `Exec`, `Icon`, `Comment`, `TryExec`,
-  `Terminal`, `Sysplause`, `Hidden`, `NoDisplay`, `Type` (which must be
-  `Application`), and our own `X-Gh0st-Bars` (see Shell link).
+  `Terminal`, `Sysplause`, `Hidden`, `NoDisplay`, `MimeType`, `Type` (which
+  must be `Application`), and our own `X-Gh0st-Bars` (see Shell link).
+- `Hidden=true` drops the entry. `NoDisplay=true` keeps it off home and
+  Settings > Apps, but it may still open files.
 - `Exec` follows the stock rule. It contains no `| & ; < > $ \` or backtick,
   and it starts with an absolute path to an executable or with one of
   `bash python3 vim vi nano sh`.
@@ -26,12 +28,52 @@ use this page directly.
   the entry.
 - An app with `Terminal=true` shows only when a terminal is installed.
 
+## Opening files
+
+An app that opens files says which types in `MimeType=` and where the files
+go in `Exec`, with a field code:
+
+| Code | Gets |
+|---|---|
+| `%f` | One path |
+| `%F` | Every path |
+| `%u` | One `file://` URI |
+| `%U` | Every URI |
+
+```ini
+Exec=/usr/bin/gh0st-text %f
+MimeType=text/plain;
+```
+
+An entry without a field code opens no files.
+
+- **Types.** gh0st names a file's type as shared-mime-info does: a known file
+  name, then the extension, then the first bytes, then UTF-8 text with no
+  NUL. Every `text/*` type is a kind of `text/plain`, so an app that opens
+  `text/plain` opens code too. `image/*` covers every picture.
+- **Which app.** For the file's type, then each type it is a kind of: the
+  user's default in `~/.config/mimeapps.list`, then apps added there, then
+  apps that declare it, ours before the rest. The first is the default; all
+  of them make the Open-with list. Files' Open with, Always writes the
+  default.
+- **Our own apps** run with the files in place of the code. A third-party
+  `Exec` still runs through `sh -c`, with the code turned into `"$1"` or
+  `"$@"` and the files passed after it as `sh`'s arguments, so no name is
+  ever part of the shell line.
+- **A running app** that speaks link version 2 comes to the front and gets
+  `open` with the path. One that doesn't (a stock app) is left as it is, and
+  the shell says to close it first: nothing it holds is lost.
+- **The way back** is a stack. Files opens Text, Text opens the chooser: each
+  close brings back the one before.
+- From the terminal, `gh0st open <path>` does the same.
+
 ## Running
 
 - The app runs in its own process group, with cwd `/usr/share/APPLaunch`.
   Its stdin is `/dev/null`, and its stdout and stderr go to the journal.
 - The shell runs a third-party `Exec` as `/bin/sh -c "<Exec>"`, as stock
-  does. It runs ours from their argv, without a shell.
+  does. It runs ours from their argv, without a shell. Files to open go as
+  described in Opening files.
 - The app gets this environment:
 
   | Variable | Value |
@@ -56,7 +98,7 @@ use this page directly.
 ## Shell link
 
 The shell handles `hello`, `pause`, `paused`, `resume`, `redraw`, `toast`,
-`awake` and `open`. It does not draw the OS bars, and that is not planned:
+`awake`, `open`, `open-file` and `open-with`. It does not draw the OS bars, and that is not planned:
 `bars`, `title`, `softkeys`, `hints`, `softkey`, `content`, `theme` and
 `X-Gh0st-Bars` are not built. Apps draw their own bars, as the SDK does for
 Rust apps.
@@ -83,14 +125,20 @@ always did.
 
 ### Messages
 
-Each packet carries one message, in UTF-8, at most 512 bytes. Tabs separate
-the fields: `verb<TAB>arg<TAB>arg`. Both sides ignore verbs they don't know.
+Each packet carries one message, in UTF-8. Tabs separate the fields:
+`verb<TAB>arg<TAB>arg`. Both sides ignore verbs they don't know.
+
+- **Version 2** messages may be 8 KB. A version 1 peer reads 512 bytes, so
+  each side sends `open` and anything longer only once the other said
+  `hello 2`. A message too long is never cut: it is not sent.
+- **A path** is one field, with `%XX` for `%`, control bytes and bytes that
+  are not UTF-8, so tabs and newlines in a name survive.
 
 App to shell:
 
 | Message | Meaning |
 |---|---|
-| `hello` `1` | The app speaks the link. Without it the shell treats the app as stock |
+| `hello` `2` | The app speaks the link, version 2. Without it the shell treats the app as stock |
 | `paused` | The answer to `pause`: the app draws nothing and reads no keys now |
 | `bars` `top`, `bottom`, `both` or `none` | Which OS bars to draw |
 | `title` text | The top bar's title. The default is the app's `Name` |
@@ -101,6 +149,8 @@ App to shell:
 | `awake` `1` or `0` | Keep the screen on while the app is in front, for a player or a clock. `0` lets it go dark again |
 | `open` name | Bring up app `name` (its desktop file stem, or the program its `Exec` runs). Only the app in front may ask. It pauses, and comes back when `name` closes |
 | `sound` name | Play a system sound: `move`, `select`, `back`, `open`, `close`, `lock`, `unlock`, `error`, `notice`, `warn` or `boot`. Only the app in front may ask, and only while the user has sounds on (`gh0st.sounds`): the app checks the setting, so a change in Settings counts at once. The shell plays nothing while dark or muted |
+| `open-file` path | Open a file in the app its type opens with, as `open` does. The shell toasts if none does |
+| `open-with` name path | Open a file in app `name` |
 
 `icon` names a symbol built into gh0st, the Lucide set that `gh0st:<name>`
 uses.
@@ -109,7 +159,8 @@ Shell to app:
 
 | Message | Meaning |
 |---|---|
-| `hello` `1` | The protocol version, sent first |
+| `hello` `2` | The protocol version, sent first |
+| `open` path | Open this file: another app opened it here. The app is in front |
 | `content` x y w h | The rect the app may draw in, sent at start and after every `bars` change |
 | `theme` name | The palette changed. Redraw with it |
 | `redraw` | The shell drew over the content. Redraw all of it |

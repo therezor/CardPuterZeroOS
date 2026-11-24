@@ -37,8 +37,9 @@ the icon and what Enter does:
 |---|---|---|
 | Folder, link to a folder | folder | opens it |
 | zip, tar and its compressions, 7z, rar, iso | file-archive | opens it as a folder |
-| Text and code | file-text, file-code | the text viewer, first 256 KB |
-| Image, audio, video, other | file-image, file-music, file-video, file | Info |
+| Any other file on the card | file-text, file-code, file-image, file-music, file-video, file | opens it in its app (`apps.md`, Opening files) |
+| Text no app opens | file-text, file-code | the text viewer, first 256 KB |
+| Anything else | file | Info |
 
 A folder lists at most 20,000 entries, with a last row that says the rest is
 not shown.
@@ -47,7 +48,8 @@ not shown.
 
 | Key | Does |
 |---|---|
-| Enter, Right | Opens the row |
+| Enter, Right | Opens the row: a folder, an archive, or a file in its app |
+| `o` | Open with: the apps that open the file, the default first. 6 Always makes the pick the default |
 | Esc | Up a folder. Clears marks or a search first. At Places, held 0.7 s, exits |
 | Left | Up a folder |
 | Tab | The other side |
@@ -221,10 +223,29 @@ page (gh0st-files) ──socket pair──> worker (gh0st-files --worker)
 - **The mockups** are fixtures: every scene in every palette under the
   design lint.
 
+## The file chooser
+
+When an app asks for a file through the portal (`portal.md`), the shell
+runs Files as its chooser over that app: a page of its own, not the Files
+you may have open. The top bar says what it does and for whom: `Open ·
+~/Documents` and `Text`.
+
+- It shows the card only: Home, Card and Downloads. No servers, no Trash,
+  and archives are files.
+- The app's file types hide the rest; folders always show. With more than
+  one type, a Type chip picks which.
+- **Open:** Enter picks the file. When the app takes several, 4 or Space
+  marks them and Enter picks the marks.
+- **Save:** Save opens the name, filled with the app's. Enter on a file
+  saves over it. Saving over a file asks first.
+- **Folder:** only folders show. Choose picks the one you are in.
+- Esc held at Places, or Esc held 3 s anywhere, gives up: the app hears
+  that no file was picked.
+
 ## Limits
 
 - No SMB: curl can't list an SMB folder.
-- A text file on a server opens once copied to the card.
+- A file on a server or in an archive opens once copied to the card.
 - An archive with a password doesn't open.
-- No editor, and no "open with": an app can't be started with a file yet.
-- The viewer reads text. Images, audio and video show their info.
+- A file no app opens shows its info; text without an app opens in the
+  viewer.

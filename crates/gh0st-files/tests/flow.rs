@@ -65,6 +65,7 @@ fn drive(h: &Home, f: Fake, kr: Keyring) -> (Driver, Rc<RefCell<Vec<Request>>>) 
         data: Some(h.dir.join("data")),
         engine: Box::new(f),
         keyring: kr,
+        pick: None,
     });
     let mut d = Driver::new(page);
     d.frame();
@@ -454,6 +455,7 @@ fn the_real_worker_copies_and_pastes() {
         data: Some(h.dir.join("data")),
         engine: Box::new(engine),
         keyring: Keyring::over(None),
+        pick: None,
     });
     let mut d = Driver::new(page);
     d.frame();
@@ -586,6 +588,7 @@ fn a_question_waits_for_the_users_own_dialog() {
         data: Some(h.dir.join("data")),
         engine: Box::new(late),
         keyring: Keyring::over(None),
+        pick: None,
     });
     let mut d = Driver::new(page);
     d.frame();
@@ -614,6 +617,7 @@ fn delete_acts_on_the_names_the_dialog_showed() {
         data: Some(h.dir.join("data")),
         engine: Box::new(late),
         keyring: Keyring::over(None),
+        pick: None,
     });
     let mut d = Driver::new(page);
     d.frame();

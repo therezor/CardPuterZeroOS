@@ -103,8 +103,10 @@ battery in `/sys/class/power_supply`. Details and sources in
   and its tests.
 - `docs/keyring.md`: the keyring and session services, the vault, prompts,
   password changes and the limits.
-- `docs/files.md`: Files, its two sides, keys, servers, passwords, archives
-  and the worker.
+- `docs/files.md`: Files, its two sides, keys, servers, passwords, archives,
+  the worker and the file chooser.
+- `docs/portal.md`: the XDG portal `gh0st session` serves: FileChooser and
+  OpenURI, requests, who may ask.
 - `docs/keyboard.md`: Keyboard, its screens and modes, the keys, Bluetooth,
   the USB gadget and the helper's protocol.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times

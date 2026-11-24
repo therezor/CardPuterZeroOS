@@ -5,10 +5,11 @@
 
 use gh0st_app::secret::Keyring;
 use gh0st_app::testing::Driver;
-use gh0st_files::app::{Files, Options};
+use gh0st_files::app::{Files, Options, Picker};
 use gh0st_files::engine::Ask;
 use gh0st_files::fake::{CopyScript, Fake, arc_dir, arc_file, at};
 use gh0st_files::model::Entry;
+use gh0st_files::pick::{Filter, Mode, Pattern, Spec};
 use gh0st_files::servers::{self, Proto, Server};
 use std::path::{Path, PathBuf};
 
@@ -136,6 +137,7 @@ struct Scene {
     name: &'static str,
     copy: CopyScript,
     keys: &'static str,
+    pick: Option<Picker>,
 }
 
 fn scene(name: &'static str, keys: &'static str) -> Scene {
@@ -143,6 +145,97 @@ fn scene(name: &'static str, keys: &'static str) -> Scene {
         name,
         copy: CopyScript::default(),
         keys,
+        pick: None,
+    }
+}
+
+/// Files as the file chooser for `app`.
+fn picking(name: &'static str, keys: &'static str, spec: Spec) -> Scene {
+    Scene {
+        pick: Some(Picker {
+            spec,
+            done: Box::new(|_| {}),
+        }),
+        ..scene(name, keys)
+    }
+}
+
+fn filter(name: &str, patterns: &[Pattern]) -> Filter {
+    Filter {
+        name: name.into(),
+        patterns: patterns.to_vec(),
+    }
+}
+
+fn text_spec(mode: Mode) -> Spec {
+    let mut s = Spec::new(mode, "Text");
+    s.filters = vec![
+        filter("Text", &[Pattern::Mime("text/plain".into())]),
+        filter("Markdown", &[Pattern::Glob("*.md".into())]),
+        filter("All files", &[Pattern::Glob("*".into())]),
+    ];
+    s.filter = Some(0);
+    s.name = "notes.txt".into();
+    s
+}
+
+fn media_spec() -> Spec {
+    let mut s = Spec::new(Mode::Open, "Media");
+    s.multiple = true;
+    s.filters = vec![
+        filter("Sound", &[Pattern::Mime("audio/*".into())]),
+        filter("Pictures", &[Pattern::Mime("image/*".into())]),
+    ];
+    s.filter = Some(0);
+    s
+}
+
+/// Apps that open files, for the Open-with list: ours and one from the
+/// Store.
+fn apps(base: &Path) {
+    std::fs::create_dir_all(base.join("ours")).unwrap();
+    std::fs::create_dir_all(base.join("stock")).unwrap();
+    // One program each: the app list keeps one entry per Exec.
+    let entry = |dir: &str, file: &str, name: &str, types: &str, icon: &str| {
+        use std::os::unix::fs::PermissionsExt;
+        let exe = base.join(file.trim_end_matches(".desktop"));
+        std::fs::write(&exe, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(
+            base.join(dir).join(file),
+            format!(
+                "[Desktop Entry]\nType=Application\nName={name}\nExec={} %f\nMimeType={types}\nIcon={icon}\n",
+                exe.display()
+            ),
+        )
+        .unwrap();
+    };
+    entry(
+        "ours",
+        "text.desktop",
+        "Text",
+        "text/plain;",
+        "gh0st:file-code",
+    );
+    entry(
+        "ours",
+        "media.desktop",
+        "Media",
+        "image/*;video/*;audio/*;",
+        "gh0st:images",
+    );
+    entry(
+        "stock",
+        "notes.desktop",
+        "Quick Notes",
+        "text/markdown;",
+        "notes.png",
+    );
+    // SAFETY: set before any scene runs, on the one thread that reads it.
+    unsafe {
+        std::env::set_var("GH0ST_APPS_OURS", base.join("ours"));
+        std::env::set_var("GH0ST_APPS_STOCK", base.join("stock"));
+        std::env::set_var("XDG_CONFIG_HOME", base.join("config"));
     }
 }
 
@@ -202,16 +295,19 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             name: "08-pasting",
             copy: copying.clone(),
             keys: "x\nx\nenter\nx\nx\nx\nspace\nspace\n5\nesc\nesc\nx\nx\nx\nx\nenter\n6",
+            pick: None,
         },
         Scene {
             name: "09-transfers",
             copy: copying,
             keys: "x\nx\nenter\nx\nx\nx\nspace\nspace\n5\nesc\nesc\nx\nx\nx\nx\nenter\n6\nt",
+            pick: None,
         },
         Scene {
             name: "09-conflict",
             copy: conflict,
             keys: "x\nx\nenter\nx\nx\nx\nspace\nspace\n5\nesc\nesc\nx\nx\nx\nx\nenter\n6",
+            pick: None,
         },
         scene("09-cut", "x\nx\nenter\nx\nx\n7"),
         scene("10-delete-trash", "x\nx\nenter\nx\nx\nx\ndelete"),
@@ -252,7 +348,16 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
         scene("33-help-places", "tab\nhelp"),
         scene("34-ssh-key", "8\nf\nf\nf\nf\nenter"),
         scene("35-ssh-key-made", "8\nf\nf\nf\nf\nenter"),
+        scene("36-open-with", "enter\nx\no"),
+        picking("37-pick-open", "enter", text_spec(Mode::Open)),
+        picking("38-pick-many", "x\nx\nenter\nx\nspace\nspace", media_spec()),
+        picking("39-pick-folder", "", Spec::new(Mode::Folder, "Media")),
+        picking("40-pick-save", "enter\n7", text_spec(Mode::Save)),
+        picking("41-pick-replace", "enter\nx\nenter", text_spec(Mode::Save)),
+        picking("42-pick-type", "enter\n6", text_spec(Mode::Open)),
+        picking("43-pick-places", "esc", text_spec(Mode::Open)),
     ];
+    apps(&base.join("apps"));
     for s in scenes {
         let dir = base.join(s.name);
         let h = home(&dir);
@@ -268,6 +373,7 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             data: Some(data),
             engine: Box::new(fake(s.copy)),
             keyring: Keyring::over(None),
+            pick: s.pick,
         });
         let mut d = Driver::new(page);
         d.frame();
