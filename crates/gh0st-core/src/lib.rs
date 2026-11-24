@@ -14,6 +14,7 @@ pub mod desktop;
 pub mod esc;
 pub mod evdev;
 pub mod hotspot;
+pub mod ident;
 pub mod job;
 pub mod keyring;
 pub mod keys;

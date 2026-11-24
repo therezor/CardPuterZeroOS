@@ -249,6 +249,7 @@ version = "0.2.0"
 dependencies = [
  "gh0st-core",
  "gh0st-keyringd",
+ "gh0st-session",
  "gh0st-shell",
  "libc",
 ]
@@ -295,6 +296,15 @@ dependencies = [
  "gh0st-dbus",
  "libc",
  "zeroize",
+]
+
+[[package]]
+name = "gh0st-session"
+version = "0.2.0"
+dependencies = [
+ "gh0st-core",
+ "gh0st-dbus",
+ "libc",
 ]
 
 [[package]]

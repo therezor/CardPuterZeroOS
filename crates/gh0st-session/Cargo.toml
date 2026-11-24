@@ -1,0 +1,12 @@
+[package]
+name = "gh0st-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Session services: Notifications and ScreenSaver on gh0st's own"
+
+[dependencies]
+gh0st-core.workspace = true
+gh0st-dbus.workspace = true
+libc.workspace = true

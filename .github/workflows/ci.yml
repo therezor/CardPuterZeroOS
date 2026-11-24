@@ -49,8 +49,8 @@ jobs:
       - name: Device build
         run: cargo build --release --target aarch64-unknown-linux-musl
 
-  # Real Secret Service clients against the keyring on a private bus:
-  # libsecret, python keyring and secretstorage, git's libsecret helper.
+  # Real clients against our session services on a private bus: libsecret,
+  # python keyring and secretstorage, git's libsecret helper, notify-send.
   compat:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
@@ -70,7 +70,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends dbus dbus-bin libsecret-tools \
-            python3-keyring python3-secretstorage libglib2.0-bin libsecret-1-dev libglib2.0-dev pkg-config
+            python3-keyring python3-secretstorage libglib2.0-bin libnotify-bin libsecret-1-dev libglib2.0-dev pkg-config
           sudo gcc -O2 -o /usr/lib/git-core/git-credential-libsecret \
             /usr/share/doc/git/contrib/credential/libsecret/git-credential-libsecret.c \
             $(pkg-config --cflags --libs libsecret-1 glib-2.0)
@@ -78,3 +78,5 @@ jobs:
         run: cargo build -p gh0st
       - name: Keyring
         run: GH0ST=target/debug/gh0st dbus-run-session -- crates/gh0st-keyringd/tests/compat.sh
+      - name: Session
+        run: GH0ST=target/debug/gh0st dbus-run-session -- crates/gh0st-session/tests/compat.sh

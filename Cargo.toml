@@ -5,6 +5,7 @@ members = [
     "crates/gh0st-core",
     "crates/gh0st-dbus",
     "crates/gh0st-keyringd",
+    "crates/gh0st-session",
     "crates/gh0st-ui",
     "crates/gh0st-shell",
     "crates/gh0st-app",
@@ -31,6 +32,7 @@ gh0st-app = { path = "crates/gh0st-app" }
 gh0st-dbus = { path = "crates/gh0st-dbus" }
 libc = "0.2"
 gh0st-keyringd = { path = "crates/gh0st-keyringd" }
+gh0st-session = { path = "crates/gh0st-session" }
 # The keyring's crypto: audited RustCrypto crates, never our own.
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
