@@ -185,6 +185,21 @@ const SCENES: &[Scene] = &[
         },
     },
     Scene {
+        name: "09b-phone-waiting",
+        keys: "",
+        make: |d| {
+            let mut bt = bt_connected();
+            bt.disconnect(PIXEL);
+            bt.wanted = Some(Advert::Reconnect);
+            App::with(
+                Box::new(bt),
+                Box::new(FakeCable::new(UsbState::Off)),
+                dir_with(d, &hosts()),
+            )
+            .opening(Some(Target::Bt(addr(PIXEL))), Open::Session(TYPE))
+        },
+    },
+    Scene {
         name: "10-modes",
         keys: "fn+space\nx",
         make: |d| mac_session(d, TYPE),

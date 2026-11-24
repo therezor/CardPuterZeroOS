@@ -104,7 +104,9 @@ impl Session {
     }
 
     /// Why the host can't take keys now, as a message, or None when it can.
-    fn not_live(&self, s: &Shared) -> Option<(&'static str, String, &'static str)> {
+    /// Why the host can't take keys now: an icon, a line, a note, and
+    /// whether Enter tries again.
+    fn not_live(&self, s: &Shared) -> Option<(&'static str, String, String, bool)> {
         if s.live() {
             return None;
         }
@@ -114,17 +116,40 @@ impl Session {
                 UsbState::HostMode => (
                     "usb",
                     words::usb_note(UsbState::HostMode).into(),
-                    words::SLAVE_NOTE,
+                    words::SLAVE_NOTE.into(),
+                    false,
                 ),
-                UsbState::Asleep => ("usb", words::usb_note(UsbState::Asleep).into(), ""),
-                st => ("usb", words::usb_note(st).into(), words::CABLE_NOTE),
+                UsbState::Asleep => (
+                    "usb",
+                    words::usb_note(UsbState::Asleep).into(),
+                    String::new(),
+                    false,
+                ),
+                st => (
+                    "usb",
+                    words::usb_note(st).into(),
+                    words::CABLE_NOTE.into(),
+                    false,
+                ),
             },
             _ => {
                 let bt = s.bt.as_ref();
-                if bt.is_some_and(|b| b.wanted() == Advert::Reconnect) {
-                    ("bluetooth", words::waiting_for(name), words::WAKE_IT)
+                let me = bt.map(|b| b.name()).unwrap_or_default();
+                // A phone doesn't come back by itself: it waits for a tap.
+                let how = if s.system().handheld() {
+                    words::tap_on_phone(me)
                 } else {
-                    ("bluetooth", words::waiting_for(name), words::NOT_BACK)
+                    words::WAKE_IT.to_string()
+                };
+                if bt.is_some_and(|b| b.wanted() == Advert::Reconnect) {
+                    ("bluetooth", words::waiting_for(name), how, false)
+                } else {
+                    (
+                        "bluetooth",
+                        words::waiting_for(name),
+                        words::NOT_BACK.into(),
+                        true,
+                    )
                 }
             }
         })
@@ -374,13 +399,15 @@ impl Screen for Session {
         if let Some(at) = self.picker {
             return self.draw_picker(ui, at);
         }
-        if let Some((icon_name, line, note)) = self.not_live(s).filter(|_| self.mode != SNIPPETS) {
-            let keys: &[(&str, &str)] = if note == words::NOT_BACK {
+        if let Some((icon_name, line, note, retry)) =
+            self.not_live(s).filter(|_| self.mode != SNIPPETS)
+        {
+            let keys: &[(&str, &str)] = if retry {
                 &[("Enter", "try again")]
             } else {
                 &[]
             };
-            ui.notice(icon_name, None, &line, note, keys);
+            ui.notice(icon_name, None, &line, &note, keys);
         } else {
             match self.mode {
                 TYPE => self.draw_type(s, ui),

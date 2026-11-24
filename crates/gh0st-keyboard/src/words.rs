@@ -72,6 +72,9 @@ pub fn waiting_for(host: &str) -> String {
     format!("Waiting for {host}")
 }
 pub const WAKE_IT: &str = "Wake it and turn its Bluetooth on.";
+pub fn tap_on_phone(me: &str) -> String {
+    format!("On the phone: Settings, Bluetooth, tap {me}.")
+}
 pub const NOT_BACK: &str = "It didn't come back. Enter tries again.";
 pub const SLAVE_NOTE: &str = "Slave turns off USB-A, Ethernet and the other USB-C.";
 pub const CABLE_NOTE: &str = "Use the right-hand USB-C port.";
