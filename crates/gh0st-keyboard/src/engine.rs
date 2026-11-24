@@ -3,8 +3,8 @@
 //! sends what it returns.
 //!
 //! - Letters, digits and named keys go by place (`usage::by_code`), with the
-//!   modifiers held. The Sym layer's characters go through the host's layout,
-//!   with Shift and AltGr set to suit the character.
+//!   modifiers held. The Sym layer's characters go by their US place, with
+//!   Shift set to suit the character.
 //! - Alt sends Command to an Apple host. The latch key gives the host key
 //!   the keyboard lacks (Win, Super, Search, or Option on Apple) to the next
 //!   key; pressed twice it taps that key alone.
@@ -15,7 +15,7 @@
 use gh0st_app::{KeyState, RawKey};
 use gh0st_core::keys::{code, media_key, os_key};
 
-use crate::hid::layout::Layout;
+use crate::hid::layout;
 use crate::hid::report::{Mouse, Report};
 use crate::hid::usage::{self, key, mods};
 use crate::host::System;
@@ -32,7 +32,6 @@ pub enum LatchKey {
 #[derive(Clone, Copy)]
 pub struct Options {
     pub system: System,
-    pub layout: &'static Layout,
     pub latch: LatchKey,
     /// Send the media keys (Fn+Q, W, E) to the host. Off while the OS acts
     /// on them.
@@ -234,9 +233,9 @@ impl Engine {
         } else if let Some(u) = usage::by_code(c) {
             (u, 0, 0, name(u, k.text))
         } else if let Some(ch) = k.text
-            && let Some(s) = self.o.layout.stroke(ch)
+            && let Some(s) = layout::stroke(ch)
         {
-            (s.usage, s.mods, mods::SHIFT | mods::RALT, Named::Char(ch))
+            (s.usage, s.mods, mods::SHIFT, Named::Char(ch))
         } else {
             return None;
         };
@@ -328,21 +327,17 @@ impl Engine {
 }
 
 /// Text as key presses, for a snippet. Each character is a press and a
-/// release; a dead key gets a space after it. Returns how many characters
-/// the layout can't type: they are left out.
-pub fn text(layout: &Layout, s: &str, out: &mut Vec<Report>) -> usize {
+/// release. Returns how many characters a US keyboard can't type: they
+/// are left out.
+pub fn text(s: &str, out: &mut Vec<Report>) -> usize {
     let mut missing = 0;
     for ch in s.chars() {
-        let Some(st) = layout.stroke(ch) else {
+        let Some(st) = layout::stroke(ch) else {
             missing += 1;
             continue;
         };
         out.push(Report::Keyboard([st.mods, 0, st.usage, 0, 0, 0, 0, 0]));
         out.push(Report::Keyboard([0; 8]));
-        if st.dead {
-            out.push(Report::Keyboard([0, 0, key::SPACE, 0, 0, 0, 0, 0]));
-            out.push(Report::Keyboard([0; 8]));
-        }
     }
     missing
 }

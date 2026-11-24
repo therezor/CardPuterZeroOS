@@ -3,7 +3,6 @@
 use gh0st_app::{KeyState, RawKey};
 use gh0st_core::keys::code;
 use gh0st_keyboard::engine::{Echo, Engine, LatchKey, Named, Options};
-use gh0st_keyboard::hid::layout::US;
 use gh0st_keyboard::hid::report::{Mouse, Report};
 use gh0st_keyboard::hid::usage::{consumer, key, mods};
 use gh0st_keyboard::host::System;
@@ -16,7 +15,6 @@ const ONE: u16 = 2;
 fn engine(system: System) -> Engine {
     Engine::new(Options {
         system,
-        layout: &US,
         latch: LatchKey::FnAlt,
         media_keys: false,
     })
@@ -187,7 +185,6 @@ fn the_latch_twice_taps_the_host_key_alone() {
 fn fn_enter_latches_when_chosen() {
     let mut e = Engine::new(Options {
         system: System::Linux,
-        layout: &US,
         latch: LatchKey::FnEnter,
         media_keys: false,
     });
@@ -234,7 +231,6 @@ fn the_os_keys_send_nothing() {
 fn media_keys_go_to_the_host_when_on() {
     let mut e = Engine::new(Options {
         system: System::Android,
-        layout: &US,
         latch: LatchKey::FnAlt,
         media_keys: true,
     });
@@ -307,7 +303,7 @@ fn echoes_name_what_was_sent() {
 #[test]
 fn text_types_each_character_and_counts_the_rest() {
     let mut out = Vec::new();
-    let missing = gh0st_keyboard::engine::text(&US, "Hi!\né", &mut out);
+    let missing = gh0st_keyboard::engine::text("Hi!\né", &mut out);
     assert_eq!(missing, 1);
     assert_eq!(
         out,
