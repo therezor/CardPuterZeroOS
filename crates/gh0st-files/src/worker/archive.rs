@@ -160,7 +160,9 @@ fn extract_local(
             std::fs::create_dir_all(dir).map_err(|e| words(&e))?;
             dir.join(format!(".gh0st-extract-{}-{id}", std::process::id()))
         }
-        _ => b.stage().join(format!("extract-{id}")),
+        _ => b
+            .stage()
+            .join(format!("extract-{}-{id}", std::process::id())),
     };
     if let Some(free) = stage.parent().and_then(free_bytes) {
         if free < total {
@@ -191,7 +193,10 @@ fn extract_local(
             .arg("--no-same-owner")
             .arg("--strip-components")
             .arg(strip(entries).to_string());
-        cmd.args(entries.iter().map(|e| e.trim_end_matches('/')));
+        // After "--" a name is never an option, and its * ? [ are only
+        // characters.
+        cmd.arg("--");
+        cmd.args(entries.iter().map(|e| glob_escape(e.trim_end_matches('/'))));
         let mut rest = String::new();
         let (code, _, err) = run(p, &mut cmd, None, Some(id), &mut |p, piece| {
             // "x path" a file, on stderr, as each is written.
@@ -214,6 +219,18 @@ fn extract_local(
     })();
     let _ = std::fs::remove_dir_all(&stage);
     r
+}
+
+/// A name as bsdtar matches it literally.
+fn glob_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '*' | '?' | '[' | ']' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 pub fn compress(p: &mut Pump, id: Id, items: &[Loc], to: &Loc) -> Res<()> {
@@ -274,5 +291,11 @@ mod tests {
         assert_eq!(strip(&["a.txt".into(), "docs".into()]), 0);
         assert_eq!(strip(&[]), 0);
         assert_eq!(strip(&["x/y/z.txt".into(), "x/y/w".into()]), 2);
+    }
+
+    #[test]
+    fn names_match_as_written() {
+        assert_eq!(glob_escape("photo[1].jpg"), "photo\\[1\\].jpg");
+        assert_eq!(glob_escape("a*?"), "a\\*\\?");
     }
 }

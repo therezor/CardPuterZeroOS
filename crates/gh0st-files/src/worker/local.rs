@@ -66,7 +66,17 @@ pub fn copy_file(p: &mut Pump, from: &Path, to: &Path, prog: &mut Prog) -> Res<(
     let r = (|| {
         let mut src = std::fs::File::open(from).map_err(|e| words(&e))?;
         let mode = src.metadata().map(|m| m.mode() & 0o777).unwrap_or(0o644);
-        let mut dst = std::fs::File::create(to).map_err(|e| words(&e))?;
+        // A private file stays private while it copies.
+        let mut dst = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(mode)
+                .open(to)
+                .map_err(|e| words(&e))?
+        };
         let mut buf = vec![0u8; CHUNK];
         loop {
             let n = src.read(&mut buf).map_err(|e| words(&e))?;
@@ -88,7 +98,8 @@ pub fn copy_file(p: &mut Pump, from: &Path, to: &Path, prog: &mut Prog) -> Res<(
 
 impl Fs for Local {
     fn list(&mut self, _: &mut Pump, path: &str) -> Res<Vec<Entry>> {
-        model::list_local(Path::new(path))
+        // All of it: a copy, a move or a delete must not stop short.
+        model::list_local(Path::new(path), usize::MAX)
             .map(|(v, _)| v)
             .map_err(|e| words(&e))
     }

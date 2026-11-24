@@ -67,6 +67,11 @@ pub struct Pump {
     pub current: Option<(Id, String, u32)>,
     /// Answers every askpass prompt with this, as making a key does.
     pub auto: Option<String>,
+    /// The app's own SSH key: only a prompt naming it gets the passphrase.
+    pub key: Option<PathBuf>,
+    /// Set while a stopped request cleans up after itself, so the cleanup
+    /// isn't stopped too.
+    pub hold_cancel: bool,
     closed: bool,
 }
 
@@ -81,6 +86,8 @@ impl Pump {
             cancelled: HashSet::new(),
             current: None,
             auto: None,
+            key: None,
+            hold_cancel: false,
             closed: false,
         }
     }
@@ -95,7 +102,7 @@ impl Pump {
     }
 
     pub fn cancelled(&self, id: Id) -> bool {
-        self.closed || self.cancelled.contains(&id)
+        !self.hold_cancel && (self.closed || self.cancelled.contains(&id))
     }
 
     /// The askpass socket's path, for ssh's env.
@@ -186,7 +193,7 @@ impl Pump {
             askpass::answer(&mut stream, None);
             return;
         };
-        let ask = askpass::classify(&prompt, &server, asked > 0);
+        let ask = askpass::classify(&prompt, &server, asked > 0, self.key.as_deref());
         if matches!(ask, Ask::Password { .. }) {
             if let Some(c) = self.current.as_mut() {
                 c.2 += 1;
@@ -410,7 +417,15 @@ impl Backends {
                         if !alive {
                             self.sftp.remove(server);
                             let ssh = self.data.join("ssh");
-                            let x = sftp::Sftp::connect(p, &s, &ssh)?;
+                            // ssh's questions name the server it connects to,
+                            // whichever the request is about.
+                            let was = p.current.clone();
+                            if let Some(c) = p.current.as_mut() {
+                                *c = (c.0, server.clone(), 0);
+                            }
+                            let x = sftp::Sftp::connect(p, &s, &ssh);
+                            p.current = was;
+                            let x = x?;
                             self.sftp.insert(server.clone(), x);
                         }
                         self.sftp.get_mut(server).ok_or("no session")?
@@ -431,9 +446,13 @@ impl Backends {
         fs.stat(p, &path)
     }
 
+    /// A folder's entries. A name that could reach outside the folder
+    /// (empty, ".", "..", a slash, a NUL) is a server lying, and left out.
     pub fn list(&mut self, p: &mut Pump, l: &Loc) -> Res<Vec<Entry>> {
         let (fs, path) = self.fs(p, l)?;
-        fs.list(p, &path)
+        let mut v = fs.list(p, &path)?;
+        v.retain(|e| crate::model::safe_name(&e.name));
+        Ok(v)
     }
 }
 
@@ -499,7 +518,9 @@ impl Worker {
                     }
                     _ => at,
                 };
-                let entries = b.list(p, &at)?;
+                let mut entries = b.list(p, &at)?;
+                // The screen shows so many; a copy reads the rest itself.
+                entries.truncate(crate::model::MAX_ENTRIES);
                 for chunk in entries.chunks(256) {
                     p.send(&Event::Entries {
                         id,
@@ -520,7 +541,7 @@ impl Worker {
             }
             Request::Copy {
                 items, to, remove, ..
-            } => copy::copy(b, p, id, &items, &to, remove).map(|_| None),
+            } => copy::copy(b, p, id, &items, &to, remove, true).map(|_| None),
             Request::Delete { items, trash, .. } => {
                 for item in &items {
                     if p.cancelled(id) {
@@ -609,10 +630,13 @@ pub fn main() -> i32 {
     let data = std::env::var_os("GH0ST_FILES_DATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".local/share/gh0st-files"));
+    // What a killed worker left half done.
+    let _ = std::fs::remove_dir_all(data.join("stage"));
     let mut w = Worker {
         p: Pump::new(link),
-        b: Backends::new(home, data),
+        b: Backends::new(home, data.clone()),
     };
+    w.p.key = Some(data.join("ssh/id_ed25519"));
     loop {
         while let Some(r) = w.p.queue.pop_front() {
             w.run(r);

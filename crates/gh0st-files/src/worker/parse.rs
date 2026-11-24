@@ -73,6 +73,11 @@ pub fn ls_line(line: &str) -> Option<Entry> {
             Some((n, t)) => (Kind::Link, n, Some(t.to_string())),
             None => (Kind::Link, name, None),
         },
+        // bsdtar's hardlinks: "name link to other".
+        b'-' if name.contains(" link to ") => {
+            let n = name.split_once(" link to ").map_or(name, |(n, _)| n);
+            (Kind::File, n, None)
+        }
         b'-' => (Kind::File, name, None),
         _ => (Kind::Other, name, None),
     };
@@ -338,6 +343,8 @@ mod tests {
             ("docs/sub", Kind::Dir, 0)
         );
         assert!(ls_line("total 12").is_none());
+        let hl = ls_line("-rw-r--r--  0 0 0 0 Nov 24 13:43 d/b link to d/a").unwrap();
+        assert_eq!(hl.name, "d/b");
         let dm = ls_line("-rw-r--r--  0 501    0       2 24 Nov 13:43 d/a.txt").unwrap();
         assert_eq!((dm.name.as_str(), dm.size), ("d/a.txt", 2));
         assert!(ls_line("drwxr-xr-x 2 me me 4096 Nov 24 13:09 .").is_none());

@@ -15,6 +15,12 @@ pub struct Curl {
     password: Option<String>,
     /// The password was asked once this session: a refusal asks again.
     asked: bool,
+    /// FTP listings read during one request, for its name checks: a folder
+    /// copy would otherwise list its parent once a file.
+    seen: Option<(
+        crate::engine::Id,
+        std::collections::HashMap<String, Vec<Entry>>,
+    )>,
 }
 
 /// What a run of curl ended with.
@@ -32,6 +38,31 @@ impl Curl {
             s,
             password: None,
             asked: false,
+            seen: None,
+        }
+    }
+
+    /// The listings this request has read; another request starts afresh.
+    fn seen(&mut self, p: &Pump) -> &mut std::collections::HashMap<String, Vec<Entry>> {
+        let id = p.current.as_ref().map_or(0, |c| c.0);
+        if self.seen.as_ref().map(|s| s.0) != Some(id) {
+            self.seen = Some((id, Default::default()));
+        }
+        &mut self.seen.get_or_insert_with(|| (id, Default::default())).1
+    }
+
+    /// Our own change to `path`, kept in the listings read: Some is what
+    /// is there now, None that it is gone.
+    fn note(&mut self, p: &Pump, path: &str, now: Option<Entry>) {
+        let t = path.trim_end_matches('/');
+        let (dir, name) = t.rsplit_once('/').unwrap_or(("", t));
+        let dir = if dir.is_empty() { "/" } else { dir };
+        if let Some(v) = self.seen(p).get_mut(dir) {
+            v.retain(|e| e.name != name);
+            if let Some(mut e) = now {
+                e.name = name.into();
+                v.push(e);
+            }
         }
     }
 
@@ -60,7 +91,12 @@ impl Curl {
         } else {
             format!("/{path}")
         };
-        format!("{}{}", self.base(), pct(&path))
+        if self.dav() {
+            return format!("{}{}", self.base(), pct(&path));
+        }
+        // FTP: "%2F" first makes the path absolute, as the quoted commands
+        // (MKD, DELE, RNFR) take it, not under the login folder.
+        format!("{}/%2F{}", self.base(), pct(path.trim_start_matches('/')))
     }
 
     fn dir_url(&self, path: &str) -> String {
@@ -135,7 +171,8 @@ impl Curl {
         tick: &mut dyn FnMut(&mut Pump, &str) -> Res<()>,
     ) -> Res<Out> {
         let mut cmd = Command::new("curl");
-        cmd.args(["-K", "-", "--connect-timeout", "15", "-S"]);
+        // --globoff: a name with [ ] { } is a name, not a pattern.
+        cmd.args(["-K", "-", "--connect-timeout", "15", "-S", "--globoff"]);
         if self.dav() {
             cmd.args(["--anyauth", "-w", "\n%{http_code}"]);
         }
@@ -277,21 +314,26 @@ impl Fs for Curl {
             &["-X".into(), "MLSD".into(), url.clone()],
             &mut |_, _| Ok(()),
         )?;
-        if o.code == 0 {
-            return Ok(String::from_utf8_lossy(&o.body)
+        let v: Vec<Entry> = if o.code == 0 {
+            String::from_utf8_lossy(&o.body)
                 .lines()
                 .filter_map(parse::mlsd_line)
-                .collect());
-        }
-        // Servers without MLSD: the classic listing.
-        let o = self.go(p, &[url], &mut |_, _| Ok(()))?;
-        if o.code != 0 {
-            return Err(self.fail(&o));
-        }
-        Ok(String::from_utf8_lossy(&o.body)
-            .lines()
-            .filter_map(parse::ls_line)
-            .collect())
+                .collect()
+        } else {
+            // Servers without MLSD: the classic listing.
+            let o = self.go(p, &[url], &mut |_, _| Ok(()))?;
+            if o.code != 0 {
+                return Err(self.fail(&o));
+            }
+            String::from_utf8_lossy(&o.body)
+                .lines()
+                .filter_map(parse::ls_line)
+                .collect()
+        };
+        let dir = path.trim_end_matches('/');
+        let dir = if dir.is_empty() { "/" } else { dir };
+        self.seen(p).insert(dir.to_string(), v.clone());
+        Ok(v)
     }
 
     fn stat(&mut self, p: &mut Pump, path: &str) -> Res<Option<Entry>> {
@@ -307,6 +349,9 @@ impl Fs for Curl {
         }
         let (dir, name) = t.rsplit_once('/').unwrap_or(("", t));
         let dir = if dir.is_empty() { "/" } else { dir };
+        if let Some(v) = self.seen(p).get(dir) {
+            return Ok(v.iter().find(|e| e.name == name).cloned());
+        }
         match self.list(p, dir) {
             Ok(v) => Ok(v.into_iter().find(|e| e.name == name)),
             Err(e) if e == "It isn't there any more" => Ok(None),
@@ -380,6 +425,7 @@ impl Fs for Curl {
         if !self.ok(&o) {
             return Err(self.fail(&o));
         }
+        self.note(p, path, Some(Entry::file("", size)));
         if size > sent {
             prog.add(p, size - sent)?;
         }
@@ -396,7 +442,9 @@ impl Fs for Curl {
                 Err(self.fail(&o))
             };
         }
-        self.quote(p, &[format!("MKD {path}")])
+        self.quote(p, &[format!("MKD {path}")])?;
+        self.note(p, path, Some(Entry::dir("")));
+        Ok(())
     }
 
     fn remove(&mut self, p: &mut Pump, path: &str, dir: bool) -> Res<()> {
@@ -413,7 +461,9 @@ impl Fs for Curl {
                 Err(self.fail(&o))
             };
         }
-        self.quote(p, &[format!("{} {path}", if dir { "RMD" } else { "DELE" })])
+        self.quote(p, &[format!("{} {path}", if dir { "RMD" } else { "DELE" })])?;
+        self.note(p, path, None);
+        Ok(())
     }
 
     fn rename(&mut self, p: &mut Pump, from: &str, to: &str) -> Res<()> {
@@ -434,7 +484,16 @@ impl Fs for Curl {
                 Err(self.fail(&o))
             };
         }
-        self.quote(p, &[format!("RNFR {from}"), format!("RNTO {to}")])
+        self.quote(p, &[format!("RNFR {from}"), format!("RNTO {to}")])?;
+        let moved = self
+            .seen(p)
+            .values()
+            .flatten()
+            .find(|e| e.name == from.rsplit('/').next().unwrap_or(from))
+            .cloned();
+        self.note(p, from, None);
+        self.note(p, to, moved);
+        Ok(())
     }
 
     fn remove_tree(&mut self, p: &mut Pump, path: &str) -> Option<Res<()>> {

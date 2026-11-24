@@ -125,9 +125,9 @@ impl Type {
 }
 
 fn archive_ext(lower: &str) -> bool {
-    const EXTS: [&str; 16] = [
+    const EXTS: [&str; 17] = [
         ".zip", ".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz2", ".tar.zst",
-        ".7z", ".rar", ".iso", ".gz", ".xz", ".bz2", ".cpio",
+        ".tar.lz4", ".7z", ".rar", ".iso", ".gz", ".xz", ".bz2", ".cpio",
     ];
     EXTS.iter()
         .any(|e| lower.ends_with(e) && lower.len() > e.len())
@@ -364,15 +364,16 @@ pub fn natural(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// A local folder's entries, unsorted, hidden ones too, at most
-/// [`MAX_ENTRIES`]. The bool says whether more were left out.
-pub fn list_local(dir: &Path) -> std::io::Result<(Vec<Entry>, bool)> {
+/// A local folder's entries, unsorted, hidden ones too, at most `cap`
+/// ([`MAX_ENTRIES`] for the screen). The bool says whether more were left
+/// out.
+pub fn list_local(dir: &Path, cap: usize) -> std::io::Result<(Vec<Entry>, bool)> {
     use std::os::unix::fs::MetadataExt;
     let mut out = Vec::new();
     let mut more = false;
     for de in std::fs::read_dir(dir)? {
         let Ok(de) = de else { continue };
-        if out.len() == MAX_ENTRIES {
+        if out.len() == cap {
             more = true;
             break;
         }
@@ -457,6 +458,12 @@ pub fn time_text(secs: i64) -> String {
         tm.tm_hour,
         tm.tm_min
     )
+}
+
+/// A name a listing may hold: one part of a path, nothing that climbs or
+/// jumps out of the folder.
+pub fn safe_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\0'])
 }
 
 /// A name the user typed is one we can make: not empty, not "." or "..",
@@ -564,7 +571,7 @@ mod tests {
         std::fs::write(dir.join("a.txt"), b"hello").unwrap();
         std::os::unix::fs::symlink("sub", dir.join("to-sub")).unwrap();
         std::os::unix::fs::symlink("gone", dir.join("dangling")).unwrap();
-        let (mut v, more) = list_local(&dir).unwrap();
+        let (mut v, more) = list_local(&dir, MAX_ENTRIES).unwrap();
         assert!(!more);
         sort(&mut v, Sort::Name);
         let got: Vec<_> = v.iter().map(|e| (e.name.as_str(), e.kind)).collect();

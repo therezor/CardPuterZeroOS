@@ -248,8 +248,9 @@ impl Sftp {
         init.extend_from_slice(&3u32.to_be_bytes());
         x.send(&init).map_err(|_| ssh_words(&x.errs, s))?;
         match x.packet(p) {
-            Ok((VERSION, _)) => Ok(x),
+            Ok((VERSION, b)) if Rd(&b).u32().is_ok_and(|v| v >= 3) => Ok(x),
             Ok(_) => Err("The server doesn't speak SFTP 3".into()),
+            Err(e) if e == super::STOPPED => Err(e),
             Err(_) => {
                 let _ = x.child.kill();
                 let _ = x.child.wait();
@@ -385,10 +386,13 @@ impl Sftp {
         }
     }
 
+    /// Closes a handle; a stop doesn't cut this short.
     fn close(&mut self, p: &mut Pump, h: &[u8]) {
         let mut a = Vec::new();
         put_str(&mut a, h);
+        let held = std::mem::replace(&mut p.hold_cancel, true);
         let _ = self.ok(p, CLOSE, &a);
+        p.hold_cancel = held;
     }
 
     fn path_arg(path: &str) -> Vec<u8> {
@@ -459,27 +463,30 @@ impl Fs for Sftp {
                 Err(e) => break Err(e),
             };
             let mut r = Rd(&b);
-            match t {
-                NAME => {
-                    for _ in 0..r.u32()? {
-                        let name = r.string()?;
-                        let _long = r.bytes()?;
-                        let mut e = r.attrs()?;
-                        if name == "." || name == ".." {
-                            continue;
+            // A bad reply still closes the handle below.
+            let step = (|| -> Res<bool> {
+                match t {
+                    NAME => {
+                        for _ in 0..r.u32()? {
+                            let name = r.string()?;
+                            let _long = r.bytes()?;
+                            let mut e = r.attrs()?;
+                            e.name = name;
+                            out.push(e);
                         }
-                        e.name = name;
-                        out.push(e);
+                        Ok(false)
                     }
+                    STATUS => match r.u32()? {
+                        FX_EOF => Ok(true),
+                        c => Err(status_words(c, &r.string().unwrap_or_default())),
+                    },
+                    _ => Err("The server answered oddly".into()),
                 }
-                STATUS => match r.u32()? {
-                    FX_EOF => break Ok(()),
-                    c => break Err(status_words(c, &r.string().unwrap_or_default())),
-                },
-                _ => break Err("The server answered oddly".into()),
-            }
-            if out.len() > crate::model::MAX_ENTRIES {
-                break Ok(());
+            })();
+            match step {
+                Ok(true) => break Ok(()),
+                Ok(false) => {}
+                Err(e) => break Err(e),
             }
         };
         self.close(p, &h);

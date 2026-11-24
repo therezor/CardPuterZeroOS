@@ -668,3 +668,191 @@ fn the_ssh_key_is_sealed_with_the_passphrase_given() {
     );
     assert_eq!(r, Err("There is a key already".into()));
 }
+
+// ---- found in review: each lost data or escaped before ----
+
+#[test]
+fn a_move_keeps_what_was_skipped() {
+    let t = tmp("skipmove");
+    let mut w = W::new(&t, &[]);
+    // Two servers stand in for two drives, so the move copies.
+    let Some(srv) = sftp_server() else {
+        eprintln!("no sftp-server: skipped");
+        return;
+    };
+    let _ = srv;
+    let (a, b) = (t.0.join("a"), t.0.join("b"));
+    write(&a.join("dir/keep.txt"), "mine");
+    write(&a.join("dir/go.txt"), "go");
+    write(&b.join("dir/keep.txt"), "theirs");
+    let mut w2 = W::new(&t, &[("GH0ST_FILES_SFTP", sftp_server().unwrap())]);
+    let mut s = Server::new(Proto::Sftp);
+    s.name = "t".into();
+    s.host = "x".into();
+    w2.c.send(Request::Server(s));
+    let id = w2.id();
+    let (_, r) = w2.run(
+        Request::Copy {
+            id,
+            items: vec![local(&a.join("dir"))],
+            to: Loc::Remote {
+                server: "t".into(),
+                path: b.to_string_lossy().into_owned(),
+            },
+            remove: true,
+        },
+        &mut |q| match q {
+            Ask::Conflict { name } if name == "dir" => Some("replace".into()),
+            _ => Some("skip".into()),
+        },
+    );
+    r.unwrap();
+    assert_eq!(
+        read(&b.join("dir/keep.txt")),
+        "theirs",
+        "skipped: theirs stays"
+    );
+    assert_eq!(read(&b.join("dir/go.txt")), "go");
+    assert_eq!(
+        read(&a.join("dir/keep.txt")),
+        "mine",
+        "skipped: the source stays"
+    );
+    assert!(!a.join("dir/go.txt").exists(), "what moved left");
+    let _ = &mut w;
+}
+
+#[test]
+fn replace_never_deletes_what_it_copies() {
+    let t = tmp("ancestor");
+    // A file named like the folder that holds it: Replace would delete it.
+    write(&t.0.join("x/x"), "inner");
+    write(&t.0.join("x/other"), "o");
+    let mut w = W::new(&t, &[]);
+    let id = w.id();
+    let (_, r) = w.run(
+        Request::Copy {
+            id,
+            items: vec![local(&t.0.join("x/x"))],
+            to: local(&t.0),
+            remove: false,
+        },
+        &mut |_| Some("replace".into()),
+    );
+    assert!(r.is_err(), "refused");
+    assert_eq!(read(&t.0.join("x/x")), "inner");
+    assert_eq!(read(&t.0.join("x/other")), "o");
+    // A folder moved up onto its parent merges: nothing is lost.
+    write(&t.0.join("proj/proj/code.txt"), "code");
+    write(&t.0.join("proj/readme"), "r");
+    let id = w.id();
+    let (_, r) = w.run(
+        Request::Copy {
+            id,
+            items: vec![local(&t.0.join("proj/proj"))],
+            to: local(&t.0),
+            remove: true,
+        },
+        &mut |_| Some("replace".into()),
+    );
+    r.unwrap();
+    assert_eq!(read(&t.0.join("proj/code.txt")), "code");
+    assert_eq!(read(&t.0.join("proj/readme")), "r");
+}
+
+#[test]
+fn links_inside_a_folder_are_not_followed() {
+    let t = tmp("links");
+    let a = t.0.join("a");
+    write(&a.join("f.txt"), "f");
+    std::os::unix::fs::symlink(".", a.join("l1")).unwrap();
+    std::os::unix::fs::symlink(".", a.join("l2")).unwrap();
+    std::os::unix::fs::symlink("gone", a.join("dead")).unwrap();
+    std::fs::create_dir_all(t.0.join("b")).unwrap();
+    let mut w = W::new(&t, &[]);
+    let id = w.id();
+    w.ok(Request::Copy {
+        id,
+        items: vec![local(&a)],
+        to: local(&t.0.join("b")),
+        remove: false,
+    });
+    let b = t.0.join("b/a");
+    assert_eq!(read(&b.join("f.txt")), "f");
+    assert_eq!(std::fs::read_link(b.join("l1")).unwrap(), Path::new("."));
+    assert_eq!(
+        std::fs::read_link(b.join("dead")).unwrap(),
+        Path::new("gone")
+    );
+}
+
+#[test]
+fn a_big_folder_moves_whole() {
+    let t = tmp("big");
+    let a = t.0.join("a/many");
+    std::fs::create_dir_all(&a).unwrap();
+    for i in 0..20_050 {
+        std::fs::write(a.join(format!("{i}")), b"").unwrap();
+    }
+    let Some(srv) = sftp_server() else {
+        eprintln!("no sftp-server: skipped");
+        return;
+    };
+    let mut w = W::new(&t, &[("GH0ST_FILES_SFTP", srv)]);
+    let mut s = Server::new(Proto::Sftp);
+    s.name = "t".into();
+    s.host = "x".into();
+    w.c.send(Request::Server(s));
+    std::fs::create_dir_all(t.0.join("b")).unwrap();
+    let id = w.id();
+    w.ok(Request::Copy {
+        id,
+        items: vec![local(&a)],
+        to: Loc::Remote {
+            server: "t".into(),
+            path: t.0.join("b").to_string_lossy().into_owned(),
+        },
+        remove: true,
+    });
+    assert_eq!(
+        std::fs::read_dir(t.0.join("b/many")).unwrap().count(),
+        20_050
+    );
+    assert!(!a.exists());
+}
+
+#[test]
+fn archive_names_are_names_not_options_or_patterns() {
+    if !have("bsdtar") {
+        eprintln!("no bsdtar: skipped");
+        return;
+    }
+    let t = tmp("arcnames");
+    let src = t.0.join("src");
+    write(&src.join("photo[1].jpg"), "bracket");
+    write(&src.join("photo1.jpg"), "plain");
+    write(&src.join("-P"), "dash");
+    let zip = t.0.join("x.zip");
+    let ok = std::process::Command::new("bsdtar")
+        .arg("-a")
+        .arg("-cf")
+        .arg(&zip)
+        .arg("-C")
+        .arg(&src)
+        .args(["photo[1].jpg", "photo1.jpg", "./-P"])
+        .status()
+        .unwrap();
+    assert!(ok.success());
+    let out = t.0.join("out");
+    let mut w = W::new(&t, &[]);
+    let id = w.id();
+    w.ok(Request::Extract {
+        id,
+        archive: local(&zip),
+        entries: vec!["photo[1].jpg".into(), "-P".into()],
+        to: local(&out),
+    });
+    assert_eq!(read(&out.join("photo[1].jpg")), "bracket");
+    assert!(!out.join("photo1.jpg").exists(), "only the one named");
+    assert_eq!(read(&out.join("-P")), "dash");
+}

@@ -631,7 +631,7 @@ impl Files {
                 s.state = State::Ready;
             }
             Loc::Local(p) => {
-                let r = model::list_local(p);
+                let r = model::list_local(p, model::MAX_ENTRIES);
                 let (sort, hidden) = (self.sort, self.hidden);
                 let s = &mut self.sides[i];
                 match r {
@@ -691,7 +691,7 @@ impl Files {
         let (sort, hidden) = (self.sort, self.hidden);
         for s in &mut self.sides {
             if let Loc::Local(p) = &s.loc {
-                if let Ok((all, more)) = model::list_local(p) {
+                if let Ok((all, more)) = model::list_local(p, model::MAX_ENTRIES) {
                     s.entries = shape(all, sort, hidden);
                     s.more = more;
                 }
