@@ -464,12 +464,16 @@ fn frost_of(pic: &Picture, p: &Palette) -> Rc<Vec<Color>> {
     Rc::new(to565(&frost, pic.w))
 }
 
-/// A frozen screen to ask a question over: as it was, with scrims under
-/// the bars so they read, and a frost for the card.
+/// A frozen screen to ask a question over: as it was, the rows under the
+/// bars blank so the app's own bars never show through, and a frost for
+/// the card.
 pub fn frozen(c: &crate::canvas::Canvas, p: &Palette, bar: usize, foot: usize) -> Rc<Backdrop> {
     let pic = picture_of(c);
     let mut back = pic.px.clone();
-    scrims(&mut back, pic.w, pic.h, f3(p.bg), bar, foot, 0.0);
+    let bg = f3(p.bg);
+    for y in (0..bar.min(pic.h)).chain(pic.h.saturating_sub(foot)..pic.h) {
+        back[y * pic.w..(y + 1) * pic.w].fill(bg);
+    }
     Rc::new(Backdrop {
         back: to565(&back, pic.w),
         frost: frost_of(&pic, p),

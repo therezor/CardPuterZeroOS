@@ -898,14 +898,12 @@ impl Shell {
     /// An app asks for the user's name: the app in front, or a program
     /// it started, gets a yes or no. Anything else is refused.
     fn ask_account(&mut self, id: &str, pid: i32, app: &str) {
-        let front = self.tasks.front().map(|t| t.pgid);
-        let allowed = front.is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g));
-        match id.parse() {
-            Ok(n) if allowed => {
+        match (id.parse(), self.front_asker(pid, app)) {
+            (Ok(n), Some(app)) => {
                 self.prompts.push(Ask {
                     origin: Origin::Portal(n, "account"),
                     kind: Kind::Approve {
-                        app: app.into(),
+                        app,
                         what: "see your name".into(),
                     },
                 });
@@ -917,21 +915,33 @@ impl Shell {
         }
     }
 
+    /// Who asks, as the question names them, when `pid` belongs to the
+    /// app in front; None for anything else. A program run inside the app
+    /// (`/usr/bin/foo` in the terminal) reads "foo in Terminal".
+    fn front_asker(&self, pid: i32, app: &str) -> Option<String> {
+        let t = self.tasks.front()?;
+        if pid <= 0 || !gh0st_core::procfs::belongs_to(pid, t.pgid) {
+            return None;
+        }
+        Some(match app.rsplit_once('/') {
+            Some((_, exe)) => format!("{exe} in {}", t.name),
+            None => app.to_string(),
+        })
+    }
+
     /// An app wants `path`, already fitted to the screen, as the
     /// wallpaper. The question shows over the picture itself.
     fn ask_wallpaper(&mut self, id: &str, pid: i32, app: &str, path: &Path) {
-        let front = self.tasks.front().map(|t| t.pgid);
-        let allowed = front.is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g));
         let m = self.t.m;
         let pic = wallpaper::load(path, m.width as usize, m.height as usize);
-        match (id.parse::<u64>(), pic) {
-            (Ok(n), Some(pic)) if allowed => {
+        match (id.parse::<u64>(), pic, self.front_asker(pid, app)) {
+            (Ok(n), Some(pic), Some(app)) => {
                 let baked = wallpaper::bake(&pic, &self.t.c, m.bar_h as usize, m.hint_h as usize);
                 self.preview = Some((n, baked));
                 self.prompts.push(Ask {
                     origin: Origin::Portal(n, "wallpaper"),
                     kind: Kind::Approve {
-                        app: app.into(),
+                        app,
                         what: "make this your wallpaper".into(),
                     },
                 });
@@ -2965,15 +2975,13 @@ impl Shell {
     /// colour from the screen. The screen is frozen now, as the app left
     /// it, and the question shows over it.
     fn ask_screen(&mut self, verb: &'static str, id: &str, pid: i32, app: &str, quiet: bool) {
-        let front = self.tasks.front().map(|t| t.pgid);
-        let allowed = front.is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g));
         let Ok(n) = id.parse::<u64>() else {
             return;
         };
-        if !allowed {
+        let Some(app) = self.front_asker(pid, app) else {
             self.services.say_session(&[verb, id, "deny"]);
             return;
-        }
+        };
         let shot = self.grab();
         if quiet {
             self.shot = Some((n, shot));
@@ -3003,7 +3011,7 @@ impl Shell {
         let kind = match verb {
             "color" => Kind::PickColor,
             _ => Kind::Approve {
-                app: app.into(),
+                app,
                 what: String::new(),
             },
         };
