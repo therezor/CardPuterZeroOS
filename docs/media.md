@@ -68,6 +68,12 @@ Opened from another app (Files, `gh0st open`), the file shows on the
 whole screen, and Esc goes back to that app. Browsed to here, Esc goes
 back to the folder.
 
+Music plays on when its page closes: behind the grid, under a still
+picture, and behind other apps. The top bar says Playing; Enter on the
+song playing goes back to its page. Leaving for another app posts a Now
+playing notice, gone when Media is in front again. A video takes the
+player and stops it.
+
 ## The helper
 
 `crates/gh0st-media/mediad` is C++17 with a plain Makefile. It shares the

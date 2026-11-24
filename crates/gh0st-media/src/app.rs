@@ -27,6 +27,9 @@ pub mod key {
     pub const REPEAT: &str = "gh0st.media.repeat";
 }
 
+/// The notice music playing behind other apps leaves.
+const NOW_PLAYING: &str = "playing";
+
 const OPEN: u32 = 1;
 const LEFT: u32 = 2;
 const RIGHT: u32 = 3;
@@ -153,6 +156,9 @@ pub struct Media {
     /// The file on screen is one another app opened here: Esc goes back
     /// to that app, not to this one's folder.
     given: bool,
+    /// What plays is the music queue: it plays on behind the grid, behind
+    /// pictures and behind other apps.
+    music: bool,
 }
 
 impl Media {
@@ -204,6 +210,7 @@ impl Media {
             opened: file,
             quitting: false,
             given: false,
+            music: false,
         }
     }
 
@@ -396,6 +403,11 @@ impl Media {
                 self.open_dir(e.path, 0);
             }
             Look::Picture | Look::Video => self.show(cx),
+            // The song playing: back to its page, not from the start.
+            Look::Sound if self.music && self.queue.get(self.qpos) == Some(&self.tiles.at()) => {
+                self.view = View::Music;
+                cx.redraw();
+            }
             Look::Sound => self.music(cx),
         }
     }
@@ -405,7 +417,10 @@ impl Media {
         let Some(e) = self.entry().cloned() else {
             return;
         };
-        self.stop_play();
+        // Music plays on under a still picture; a video takes the player.
+        if !(self.music && e.look == Look::Picture) {
+            self.stop_play();
+        }
         self.full = Picture::default();
         self.show_info = false;
         self.pv.set_fill(false);
@@ -431,6 +446,7 @@ impl Media {
     }
 
     fn start_play(&mut self, cx: &mut Cx, path: PathBuf, flags: Flags) {
+        self.music = self.view == View::Music;
         let id = self.id();
         let m = &CARDPUTER;
         let audio = flags.audio;
@@ -461,6 +477,7 @@ impl Media {
             self.send(&Cmd::Stop);
         }
         self.next_track = None;
+        self.music = false;
     }
 
     fn play_pause(&mut self, cx: &mut Cx) {
@@ -1304,13 +1321,36 @@ impl Page for Media {
         }
     }
 
+    fn status(&self) -> Option<(&str, Tone)> {
+        (self.music && self.view != View::Music).then_some(("Playing", Tone::Info))
+    }
+
     fn stop(&mut self, cx: &mut Cx) {
+        cx.unpost(NOW_PLAYING);
         self.quitting = true;
         self.save(cx);
         self.send(&Cmd::Quit);
     }
 
     fn front(&mut self, front: bool, cx: &mut Cx) {
+        if self.music && self.play.is_some() {
+            if front {
+                cx.unpost(NOW_PLAYING);
+            } else {
+                let (title, artist) = match &self.tags {
+                    Some(t) => (t.title.clone(), t.artist.clone()),
+                    None => (String::new(), String::new()),
+                };
+                let title = if title.is_empty() {
+                    self.current()
+                        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+                        .unwrap_or_else(|| "Music".into())
+                } else {
+                    title
+                };
+                cx.post(NOW_PLAYING, &title, &artist);
+            }
+        }
         if front {
             // The folder may have changed meanwhile.
             if self.view == View::Grid {
@@ -1320,7 +1360,7 @@ impl Page for Media {
             return;
         }
         // Music plays on behind; a video and a slideshow stop.
-        if self.view != View::Music && self.play.is_some() {
+        if !self.music && self.play.is_some() {
             self.send(&Cmd::Pause);
             if let Some(p) = &mut self.play {
                 p.state = PlayState::Paused;
@@ -1386,13 +1426,28 @@ impl Page for Media {
                 self.showing_queue = false;
                 false
             }
-            View::Viewer | View::Player | View::Music => {
-                // Music stops when its page closes; it plays on behind other
-                // apps, not behind the grid.
-                self.stop_play();
+            // Music plays on: behind the grid, or behind the app that opened
+            // the song, while this one runs in the background.
+            View::Music => {
+                if std::mem::take(&mut self.given) {
+                    cx.leave();
+                    return false;
+                }
+                self.view = View::Grid;
+                self.want_tiles();
+                false
+            }
+            View::Viewer | View::Player => {
+                if !(self.music && self.view == View::Viewer) {
+                    self.stop_play();
+                }
                 // Another app opened this file here: Esc goes back to it.
                 if std::mem::take(&mut self.given) {
-                    cx.quit();
+                    if self.music {
+                        cx.leave();
+                    } else {
+                        cx.quit();
+                    }
                     return false;
                 }
                 if let Some(t) = self.slides.take() {

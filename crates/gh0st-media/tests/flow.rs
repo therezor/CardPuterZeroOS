@@ -83,3 +83,18 @@ fn esc_on_a_file_another_app_opened_goes_back_to_that_app() {
     d.keys("esc");
     assert!(!d.quit());
 }
+
+#[test]
+fn leaving_a_song_another_app_opened_keeps_it_playing() {
+    let h = home("song");
+    std::fs::create_dir_all(h.join("Music")).unwrap();
+    std::fs::write(h.join("Music/song.mp3"), b"x").unwrap();
+    let mut d = Driver::new(Media::with(
+        Source::Fake,
+        h.clone(),
+        Some(h.join("Music/song.mp3")),
+    ));
+    d.pump(300);
+    d.keys("esc");
+    assert!(d.left(), "steps back to the opener instead of closing");
+}
