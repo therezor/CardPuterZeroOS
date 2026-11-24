@@ -202,11 +202,16 @@ impl Link {
     /// Waits up to `ms` for the message `verb`. Others on the way are kept
     /// for `recv`: an app says `awake 0` as it pauses, only once.
     pub fn wait_for(&self, verb: &str, ms: u64) -> bool {
+        self.wait_msg(verb, ms).is_some()
+    }
+
+    /// As [`wait_for`](Link::wait_for), giving the message.
+    pub fn wait_msg(&self, verb: &str, ms: u64) -> Option<Vec<String>> {
         let end = crate::rt::now_ms() + ms;
         let mut passed = Vec::new();
         let found = loop {
             match self.recv() {
-                Some(m) if m.first().is_some_and(|v| v == verb) => break true,
+                Some(m) if m.first().is_some_and(|v| v == verb) => break Some(m),
                 Some(m) => {
                     if passed.len() < KEPT_MAX {
                         passed.push(m);
@@ -217,7 +222,7 @@ impl Link {
             }
             let now = crate::rt::now_ms();
             if now >= end || self.closed() {
-                break false;
+                break None;
             }
             let mut fds = [crate::rt::pollfd(self.fd())];
             let _ = crate::rt::wait(&mut fds, Some(end));

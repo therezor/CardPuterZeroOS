@@ -10,7 +10,7 @@ use gh0st_core::keys::Key as RawKey;
 use gh0st_ui::Theme;
 use gh0st_ui::theme::Tone;
 use std::os::fd::RawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// One screen of an app. An app is a stack of pages: the first one is the
 /// app, [`Cx::push`] opens another on top, and Esc closes the top one. When
@@ -103,6 +103,14 @@ pub trait Page {
         let _ = cx;
     }
 
+    /// Files to open: the ones the app was started with, right after
+    /// [`start`](Page::start), and each one the shell hands over later
+    /// while the app runs (another app opened it here). The page on top
+    /// hears it.
+    fn opened(&mut self, paths: &[PathBuf], cx: &mut Cx) {
+        let _ = (paths, cx);
+    }
+
     /// A timer from [`Cx::after`] or [`Cx::every`] fired.
     fn timer(&mut self, timer: Timer, cx: &mut Cx) {
         let _ = (timer, cx);
@@ -185,6 +193,16 @@ pub trait Page {
     }
 }
 
+/// An app that opens a file, from [`Cx::handlers`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Handler {
+    /// Its desktop file stem, for [`Cx::open_with`].
+    pub id: String,
+    pub name: String,
+    /// Enter opens the file with this one.
+    pub default: bool,
+}
+
 /// An fd watched by [`Cx::watch`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Watch(pub(crate) u64);
@@ -241,6 +259,11 @@ pub(crate) enum Request {
     KeepAwake(bool),
     Open(String),
     Sound(gh0st_core::sound::Sound),
+    /// Open a file in `app`, or in the app its type opens with.
+    OpenFile {
+        app: Option<String>,
+        path: PathBuf,
+    },
     ShowKeys,
     Ask(u32, Dialog),
 }
@@ -531,6 +554,56 @@ impl Cx<'_> {
     /// comes back when that one closes. Without a shell, nothing happens.
     pub fn open(&mut self, name: &str) {
         self.s.requests.push(Request::Open(name.to_string()));
+    }
+
+    /// Opens `path` in the app its type opens with. This app pauses and
+    /// comes back when that one closes, as with [`open`](Cx::open). The
+    /// shell says so if no app opens it.
+    pub fn open_file(&mut self, path: &Path) {
+        self.s.requests.push(Request::OpenFile {
+            app: None,
+            path: path.to_path_buf(),
+        });
+    }
+
+    /// Opens `path` in app `id`, one of [`handlers`](Cx::handlers).
+    pub fn open_with(&mut self, id: &str, path: &Path) {
+        self.s.requests.push(Request::OpenFile {
+            app: Some(id.to_string()),
+            path: path.to_path_buf(),
+        });
+    }
+
+    /// The apps that open `path`, the one Enter would use first.
+    pub fn handlers(&self, path: &Path) -> Vec<Handler> {
+        let Ok(mime) = gh0st_core::mime::of_path(path) else {
+            return Vec::new();
+        };
+        let apps = gh0st_core::apps::openers(
+            &gh0st_core::apps::Dirs::from_env(),
+            self.s.settings.config(),
+        );
+        let list = gh0st_core::handlers::MimeApps::load(&gh0st_core::handlers::list_path());
+        gh0st_core::handlers::all_for(&apps, &list, mime)
+            .into_iter()
+            .enumerate()
+            .map(|(i, a)| Handler {
+                id: a.id().to_string(),
+                name: a.entry.name.clone(),
+                default: i == 0,
+            })
+            .collect()
+    }
+
+    /// Opens files of `path`'s type with app `id` from now on: the user's
+    /// default in `~/.config/mimeapps.list`.
+    pub fn always_open_with(&self, path: &Path, id: &str) -> std::io::Result<()> {
+        let mime = gh0st_core::mime::of_path(path)?;
+        gh0st_core::handlers::set_default(
+            &gh0st_core::handlers::list_path(),
+            mime,
+            &format!("{id}.desktop"),
+        )
     }
 
     /// Posts a notice that stays until the user clears it or this app

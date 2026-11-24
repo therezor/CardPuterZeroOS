@@ -182,6 +182,21 @@ impl Driver {
         self
     }
 
+    /// The shell hands the app `files`, as when another app opens them
+    /// here, or as the app's argv at start.
+    pub fn open(&mut self, files: &[&Path]) -> &mut Driver {
+        let files = files.iter().map(|f| f.to_path_buf()).collect();
+        self.rt.opened(files, self.now);
+        self
+    }
+
+    /// Every file a page asked to open, and the app it named, oldest
+    /// first: [`Cx::open_file`](crate::Cx::open_file) and
+    /// [`Cx::open_with`](crate::Cx::open_with).
+    pub fn opened_requests(&self) -> &[(Option<String>, std::path::PathBuf)] {
+        &self.rt.open_log
+    }
+
     /// Shows the app in another palette, as when `gh0st.palette` changes.
     pub fn palette(&mut self, name: &str) -> &mut Driver {
         self.rt

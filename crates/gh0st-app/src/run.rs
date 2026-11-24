@@ -37,12 +37,9 @@ pub fn run(page: impl Page + 'static) -> ! {
 
 /// As [`run`], with [`Options`].
 pub fn run_with(page: impl Page + 'static, opts: Options) -> ! {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let sim = args
-        .iter()
-        .position(|a| a == "--sim")
-        .map(|i| PathBuf::from(args.get(i + 1).map(String::as_str).unwrap_or("frames")));
-    let code = match main_loop(Box::new(page), sim, opts) {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let (sim, files) = parse_args(&args);
+    let code = match main_loop(Box::new(page), sim, files, opts) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("gh0st app: {e}");
@@ -52,6 +49,38 @@ pub fn run_with(page: impl Page + 'static, opts: Options) -> ! {
     std::process::exit(code)
 }
 
+/// `--sim DIR`, and the files to open: what is left once `--sim DIR` is
+/// out, if none of it is a flag, or everything after `--`. An app that
+/// takes flags of its own (`-e` in the terminal) opens no files this way.
+fn parse_args(args: &[std::ffi::OsString]) -> (Option<PathBuf>, Vec<PathBuf>) {
+    let mut sim = None;
+    let mut rest = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--sim" {
+            sim = Some(PathBuf::from(
+                args.get(i + 1).cloned().unwrap_or("frames".into()),
+            ));
+            i += 2;
+            continue;
+        }
+        if args[i] == "--" {
+            return (sim, args[i + 1..].iter().map(PathBuf::from).collect());
+        }
+        rest.push(&args[i]);
+        i += 1;
+    }
+    let flag = rest
+        .iter()
+        .any(|a| a.as_encoded_bytes().first() == Some(&b'-'));
+    let files = if flag {
+        Vec::new()
+    } else {
+        rest.into_iter().map(PathBuf::from).collect()
+    };
+    (sim, files)
+}
+
 enum Input {
     /// The device, and its path to open it again after a pause. None while
     /// paused: the app reads no keys then.
@@ -59,9 +88,15 @@ enum Input {
     Script(Script),
 }
 
-fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result<(), String> {
+fn main_loop(
+    page: Box<dyn Page>,
+    sim: Option<PathBuf>,
+    files: Vec<PathBuf>,
+    opts: Options,
+) -> Result<(), String> {
     let mut rt_ = Runtime::new(page, None);
     rt_.s.closable = opts.closable;
+    rt_.files = files;
     if sim.is_some() {
         rt_.off_device();
     }
@@ -86,7 +121,12 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result
     // Under --sim too when a test hands one over.
     rt_.link = Link::from_env();
     if let Some(l) = &rt_.link {
-        l.send(&["hello", "1"]);
+        l.send(&["hello", &gh0st_core::link::VERSION.to_string()]);
+        // The shell says hello first, as it starts the app: know its
+        // version before a page can ask it for anything.
+        if let Some(m) = l.wait_msg("hello", 0) {
+            rt_.shell_v = m.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
+        }
     }
 
     rt_.start(rt::now_ms());
@@ -183,6 +223,16 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result
                         rt_.dirty = true;
                         full = true;
                     }
+                    Some("hello") => {
+                        rt_.shell_v = m.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
+                    }
+                    Some("open") => {
+                        let files: Vec<PathBuf> = m[1..]
+                            .iter()
+                            .map(|f| gh0st_core::link::path_of(f))
+                            .collect();
+                        rt_.opened(files, now);
+                    }
                     _ => {}
                 }
             }
@@ -241,4 +291,34 @@ fn main_loop(page: Box<dyn Page>, sim: Option<PathBuf>, opts: Options) -> Result
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(a: &[&str]) -> (Option<PathBuf>, Vec<PathBuf>) {
+        let a: Vec<std::ffi::OsString> = a.iter().map(Into::into).collect();
+        parse_args(&a)
+    }
+
+    #[test]
+    fn files_are_what_is_left_unless_a_flag_is_there() {
+        assert_eq!(
+            parse(&["/a.txt", "/b c.txt"]).1,
+            [PathBuf::from("/a.txt"), "/b c.txt".into()]
+        );
+        let (sim, files) = parse(&["--sim", "/tmp/f", "/a.txt"]);
+        assert_eq!(sim, Some("/tmp/f".into()));
+        assert_eq!(files, [PathBuf::from("/a.txt")]);
+        assert!(
+            parse(&["-e", "ls", "-la"]).1.is_empty(),
+            "the terminal's own flags"
+        );
+        assert!(parse(&["--setup"]).1.is_empty());
+        assert_eq!(
+            parse(&["--x", "--", "-odd name"]).1,
+            [PathBuf::from("-odd name")]
+        );
+    }
 }

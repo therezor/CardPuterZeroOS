@@ -25,6 +25,7 @@ mod tiles;
 pub use gh0st_core::notify;
 pub mod testing;
 mod ui;
+pub mod watch;
 
 pub use bars::{Bars, Chip};
 pub use command::{Command, Commands, Hit, Step};
@@ -39,7 +40,7 @@ pub use gh0st_core::sound::Sound;
 pub use gh0st_ui::theme::Tone;
 pub use key::{Key, codes};
 pub use list::{Action, Grid, List, Row, Scroll, cycle};
-pub use page::{Cx, Job, JobEvent, Page, Settings, Timer, Watch};
+pub use page::{Cx, Handler, Job, JobEvent, Page, Settings, Timer, Watch};
 pub use run::{Options, run, run_with};
 pub use search::Search;
 pub use steps::Steps;

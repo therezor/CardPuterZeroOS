@@ -988,6 +988,56 @@ new secret. A `Secret` zeroes its bytes when it drops. `delete(item)`
 returns a prompt: the keyring confirms with the user first. Notifications go through
 `org.freedesktop.Notifications` or a notice file (`docs/apps.md`).
 
+### Opening files
+
+An app that opens files says which in its `.desktop` file, with a field
+code in `Exec` (`docs/apps.md`, Opening files):
+
+```ini
+Exec=/usr/bin/my-viewer %f
+MimeType=text/plain;image/png;
+```
+
+The files it was started with come to `Page::opened` right after `start`.
+So does each file another app opens here while it runs: the shell brings
+it to the front and hands the file over. The page on top hears it.
+
+```rust
+use gh0st_app::prelude::*;
+use std::path::PathBuf;
+
+struct Viewer {
+    file: Option<PathBuf>,
+}
+
+impl Page for Viewer {
+    fn title(&self) -> &str {
+        "Viewer"
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        let _ = ui;
+    }
+
+    fn opened(&mut self, paths: &[PathBuf], cx: &mut Cx) {
+        self.file = paths.first().cloned();
+        cx.redraw();
+    }
+}
+```
+
+To open a file elsewhere, `cx.open_file(path)` uses the app its type opens
+with, and `cx.open_with(id, path)` a chosen one. This app pauses and comes
+back when that one closes. `cx.handlers(path)` lists the apps that open a
+file, the default first, for an Open-with list. `cx.always_open_with(path,
+id)` makes one the default for the file's type, in
+`~/.config/mimeapps.list`.
+
+`gh0st_app::watch::DirWatch` watches a folder with inotify: hand its `fd()`
+to `cx.watch` and read `changes()` in `ready`. A file's own changes show up
+as its name in its folder, so watch the folder to see an editor save by
+rename.
+
 ## The device
 
 `gh0st_app::system` reads the hardware from sysfs and procfs. None of it needs

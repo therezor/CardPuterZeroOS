@@ -194,6 +194,13 @@ pub(crate) struct Runtime {
     pub paused: bool,
     /// The shell link, when the shell started the app.
     pub link: Option<gh0st_core::link::Link>,
+    /// The link version the shell's `hello` gave; 0 before it says.
+    pub shell_v: u32,
+    /// Files the app was started with, for [`Page::opened`] after start.
+    pub files: Vec<PathBuf>,
+    /// Every file a page asked to open, and in which app: what a test
+    /// reads, since no shell is there to act on it.
+    pub open_log: Vec<(Option<String>, PathBuf)>,
     /// The app menu or Help, while one is open.
     overlay: Overlay,
     /// Keys whose press the menu or a command took: their repeats and
@@ -238,6 +245,9 @@ impl Runtime {
             last_frame: 0,
             paused: false,
             link: None,
+            shell_v: 0,
+            files: Vec::new(),
+            open_log: Vec::new(),
             overlay: Overlay::None,
             taken: Vec::new(),
             menu_last: None,
@@ -269,6 +279,16 @@ impl Runtime {
     pub fn start(&mut self, now: u64) {
         self.bar.refresh(self.h24(), now);
         self.call(0, now, |p, cx| p.start(cx));
+        let files = std::mem::take(&mut self.files);
+        if !files.is_empty() {
+            self.opened(files, now);
+        }
+    }
+
+    /// Hands `files` to the page on top.
+    pub fn opened(&mut self, files: Vec<PathBuf>, now: u64) {
+        let top = self.stack.len().saturating_sub(1);
+        self.call(top, now, |p, cx| p.opened(&files, cx));
     }
 
     /// The clock style the shell uses: `gh0st.clock` is `12h` or 24-hour.
@@ -407,6 +427,25 @@ impl Runtime {
                     }
                 }
                 Request::Sound(s) => self.sound(s),
+                Request::OpenFile { app, path } => {
+                    let field = gh0st_core::link::path_field(&path);
+                    match &self.link {
+                        Some(l) if self.shell_v >= 2 => {
+                            let sent = match &app {
+                                Some(a) => l.send(&["open-with", a, &field]),
+                                None => l.send(&["open-file", &field]),
+                            };
+                            if !sent {
+                                self.show_toast("Couldn't open that".into(), Tone::Warning, now);
+                            }
+                        }
+                        Some(_) => {
+                            self.show_toast("Update gh0st to open files".into(), Tone::Warning, now)
+                        }
+                        None => {}
+                    }
+                    self.open_log.push((app, path));
+                }
                 Request::Notify(text) => match &self.link {
                     Some(l) if self.paused => {
                         l.send(&["toast", &text]);
