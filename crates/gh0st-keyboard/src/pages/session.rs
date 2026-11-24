@@ -384,7 +384,7 @@ impl Screen for Session {
         } else {
             match self.mode {
                 TYPE => self.draw_type(s, ui),
-                MOUSE => self.mouse.draw(ui),
+                MOUSE => self.mouse.draw(ui, s.system() == crate::host::System::Ios),
                 MEDIA => media::draw(ui),
                 SLIDES => self.slides.draw(ui),
                 _ => self.snippets.draw(s, ui),

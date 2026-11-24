@@ -96,8 +96,10 @@ Shift moves slowly, Ctrl fast.
 Space or Enter clicks; hold Space to drag.
 Alt is the right button, Tab the middle one.
 R and V scroll.
-Fn Space picks a mode.";
+Fn Space picks a mode.
+An iPhone shows the pointer only with AssistiveTouch on: Settings, Accessibility, Touch.";
 
+pub const IPHONE_POINTER: &str = "iPhone: turn on AssistiveTouch for a pointer";
 pub const SHOW_TYPED: &str = "Show what I type";
 pub const UNLINK: &str = "Unlink";
 pub const MODES_LABEL: &str = "Modes";

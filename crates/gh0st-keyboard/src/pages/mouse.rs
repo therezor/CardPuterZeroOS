@@ -155,7 +155,9 @@ impl Mouse {
         }
     }
 
-    pub fn draw(&self, ui: &mut Ui) {
+    /// `iphone`: the host is an iPhone, which shows a pointer only with
+    /// AssistiveTouch on.
+    pub fn draw(&self, ui: &mut Ui, iphone: bool) {
         let a = ui.area();
         let t = *ui.theme();
         let c = ui.canvas();
@@ -209,6 +211,16 @@ impl Mouse {
             let r = Rect::new(end + t.m.gap * 2, y, a.right() - end, t.m.pill_h);
             widgets::text_in(c, t.f.small, r, what, t.c.muted);
             y += t.m.keys_line_h + t.m.gap;
+        }
+        if iphone {
+            let r = Rect::new(
+                a.x + t.m.pad,
+                a.bottom() - t.m.pill_h - t.m.margin_v,
+                a.w - 2 * t.m.pad,
+                t.m.pill_h,
+            );
+            widgets::text_in(c, t.f.small, r, crate::words::IPHONE_POINTER, t.c.warning);
+            return;
         }
         let hints = [
             Hint {
