@@ -4,6 +4,10 @@
 #   GH0ST_HOST=pi@cardputer.local scripts/measure.sh M5CardputerZero-APPLaunch
 #   GH0ST_HOST=pi@cardputer.local scripts/measure.sh gh0st
 #   GH0ST_HOST=pi@cardputer.local scripts/measure.sh system     # the whole OS
+#   GH0ST_HOST=pi@cardputer.local scripts/measure.sh "gh0st keyring"
+#   GH0ST_HOST=pi@cardputer.local scripts/measure.sh "gh0st session"
+# The keyring can't be traced or dumped, so its /proc files are root's: the
+# script reads them through sudo -n when it must.
 set -euo pipefail
 
 host=${GH0ST_HOST:?set GH0ST_HOST}
@@ -48,10 +52,11 @@ pid=$(pgrep -o -f "/$name( |$)" || pgrep -o -f "$name")
 ticks=$(getconf CLK_TCK)
 cpu() { awk '{print $14 + $15}' "/proc/$pid/stat"; }
 # Every thread's switches: /proc/PID/status counts the main thread only.
-switches() { cat /proc/"$pid"/task/*/status | awk '/ctxt_switches/ {s += $2} END {print s}'; }
+rd() { cat "$@" 2>/dev/null || sudo -n cat "$@"; }
+switches() { rd /proc/"$pid"/task/*/status | awk '/ctxt_switches/ {s += $2} END {print s}'; }
 threads() { awk '/^Threads/ {print $2}' "/proc/$pid/status"; }
 echo "process   $name (pid $pid, $(threads) threads)"
-grep -E '^(Rss|Pss|Private_Dirty)' "/proc/$pid/smaps_rollup" | sed 's/^/memory    /'
+rd "/proc/$pid/smaps_rollup" | grep -E '^(Rss|Pss|Private_Dirty)' | sed 's/^/memory    /'
 c0=$(cpu) s0=$(switches)
 sleep "$secs"
 c1=$(cpu) s1=$(switches)

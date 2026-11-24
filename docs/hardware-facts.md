@@ -488,6 +488,15 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 | `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |
 | Swap on the image | `zram-size` in `/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf` beats `50-gh0st.conf`; 0 leaves no zram0 | Advanced |
 | Swap compression and swappiness on the image | the same drop-ins work without rpi-swap | Advanced |
+| Session bus for apps | `DBUS_SESSION_BUS_ADDRESS` and `XDG_RUNTIME_DIR` reach the shell from `user@1000` and pass on to apps | keyring, session |
+| `ProcessFD` | dbus-daemon 1.16 gives it in `GetConnectionCredentials` | keyring caller identity |
+| Argon2id time and memory | m=64 MiB, t=3, p=1 unlocks in about 1 s; tune to that (`vault.rs`) | keyring unlock |
+| Keyring and session PSS, idle wakeups | zero wakeups at idle (`scripts/measure.sh "gh0st keyring"`) | memory budget |
+| `PR_SET_DUMPABLE 0` | blocks `ptrace` and `/proc/<pid>/mem` from UID 1000 with `ptrace_scope=1` | keyring memory |
+| NetworkManager secret agent | accepted from UID 1000 with linger and no logind session; `psk-flags 1` calls `SaveSecrets`; registering clears `NO_SECRETS` | Wi-Fi in the keyring |
+| User namespaces | `unshare -Ur` works as UID 1000; inside one, `/dev/fb_lcd`, evdev, audio and i2c open | app isolation |
+| Landlock | listed in `/sys/kernel/security/lsm` (`CONFIG_LSM` is empty, so maybe not) | declared app permissions |
+| cgroup delegation | `Delegate=yes` on `gh0st.service` gives the shell a writable subtree | app identity |
 
 ## Stock system baseline (`scripts/measure.sh system`)
 

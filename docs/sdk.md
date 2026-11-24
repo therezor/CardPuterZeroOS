@@ -888,6 +888,12 @@ screen's brightness and timeout.
 `cx.data_dir()` is a directory for the app's own files,
 `~/.local/share/<app id>`.
 
+Passwords and tokens go in the keyring, never in a file. Use the standard
+Secret Service API (libsecret, python `keyring`, or `gh0st_dbus` from Rust):
+the keyring encrypts them, and only your app reads its own without asking
+the user (`docs/keyring.md`). Notifications go through
+`org.freedesktop.Notifications` or a notice file (`docs/apps.md`).
+
 ## The device
 
 `gh0st_app::system` reads the hardware from sysfs and procfs. None of it needs

@@ -1,0 +1,4 @@
+# The keyring's vault (docs/keyring.md): outside the home folder, so no
+# sandboxed app can reach the file. The device user is always UID 1000.
+d /var/lib/gh0st/keyring 0755 root root -
+d /var/lib/gh0st/keyring/1000 0700 1000 1000 -

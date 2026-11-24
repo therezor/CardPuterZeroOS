@@ -34,3 +34,6 @@ install -D -m 755 "$up/90-gh0st-update" "$dest/usr/lib/NetworkManager/dispatcher
 st=$pk/systemd/store
 install -m 644 -t "$dest/usr/lib/systemd/system" "$st/gh0st-store.service"
 install -D -m 644 "$st/gh0st-store.tmpfiles" "$dest/usr/lib/tmpfiles.d/gh0st-store.conf"
+# The keyring's vault folder (docs/keyring.md).
+install -D -m 644 "$pk/systemd/keyring/gh0st-keyring.tmpfiles" \
+    "$dest/usr/lib/tmpfiles.d/gh0st-keyring.conf"

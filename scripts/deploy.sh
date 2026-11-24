@@ -87,6 +87,7 @@ scp -q "$root/packaging/polkit/50-gh0st.rules" "$root/packaging/polkit/org.gh0st
 # Installed, not enabled: the daily check is Settings' to turn on.
 scp -q -r "$root/packaging/systemd/update" "$host:/tmp/gh0st-update-units"
 scp -q -r "$root/packaging/systemd/store" "$host:/tmp/gh0st-store-units"
+scp -q "$root/packaging/systemd/keyring/gh0st-keyring.tmpfiles" "$host:/tmp/"
 scp -q -r "$root/packaging/palettes" "$host:/tmp/gh0st-palettes"
 remote 'set -e
     sudo install -m 755 /tmp/gh0st /usr/bin/gh0st
@@ -95,6 +96,9 @@ remote 'set -e
     sudo install -m 755 /tmp/gh0st-update /usr/bin/gh0st-update
     sudo install -m 755 /tmp/gh0st-store /usr/bin/gh0st-store
     sudo ln -sf gh0st /usr/bin/gh0st-shell
+    # The keyring vault folder, outside the home folder.
+    sudo install -m 644 /tmp/gh0st-keyring.tmpfiles /usr/lib/tmpfiles.d/gh0st-keyring.conf
+    sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/gh0st-keyring.conf
     # pkexec runs the helper by this path; a hard link, so it is the same
     # root-owned binary and not a symlink pkexec would refuse.
     sudo install -d /usr/libexec

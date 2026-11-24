@@ -35,6 +35,10 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/gh0st-dbus`: our D-Bus codec and connection. SASL EXTERNAL, the
   wire format with every spec limit checked, fd passing, one poll loop and
   no threads. `tests/fuzz.rs` mutates real messages.
+- `crates/gh0st-keyringd`: the keyring, `gh0st keyring`. The vault, the
+  Secret Service and the shell link. `docs/keyring.md` is its guide.
+- `crates/gh0st-session`: `gh0st session`, Notifications and ScreenSaver on
+  gh0st's notices and `awake`.
 - `crates/gh0st-app`: the app SDK. Pages, OS bars, soft keys, lists, jobs,
   a sim backend and a test driver. Apps depend on it alone. The guide is
   `docs/sdk.md`, which is also the crate's rustdoc, so its examples compile in
@@ -82,6 +86,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   and the milestones.
 - `docs/hotspot.md`: the Wi-Fi access point, why it takes wlan0, its security
   and its tests.
+- `docs/keyring.md`: the keyring and session services, the vault, prompts,
+  password changes and the limits.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
@@ -113,7 +119,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`,
   `qrcodegen` (the hotspot's QR code; no dependencies of its own), and in the
   terminal `vte` (the DEC parser, without std so its OSC buffer is bounded) and
-  `unicode-width` (wcwidth). Build only: `resvg`. The camera helper is C++
+  `unicode-width` (wcwidth). In the keyring: `argon2`, `chacha20poly1305`
+  and `zeroize`, RustCrypto's, because crypto is never ours to write. Build
+  only: `resvg`. The camera helper is C++
   because libcamera has no C API: it links libcamera and libjpeg-turbo, both
   on the stock image already.
 

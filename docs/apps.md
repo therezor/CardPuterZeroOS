@@ -174,6 +174,20 @@ Clearing an app's notice deletes its file; clearing a system one hides it
 until it is posted again with a new `time`. While locked, the lock screen
 says only how many there are.
 
+## Session services
+
+The shell runs these on the session bus before any app starts
+(`docs/keyring.md`):
+
+| Name | What it does |
+|---|---|
+| `org.freedesktop.secrets` | The keyring. An app reads its own secrets; another app's take the user's yes on a shell screen |
+| `org.freedesktop.Notifications` | Each notification becomes a notice, as above |
+| `org.freedesktop.ScreenSaver` | Inhibit keeps the app's screen on, as `awake 1` does |
+
+The keyring's questions show on a shell screen. The app in front is parked
+for it, as Fn+K parks it, and gets `pause` and `resume` on its link.
+
 ## Pausing
 
 - Fn+K (`KEY_HOME`) pauses the app in front and opens the switcher. On the
