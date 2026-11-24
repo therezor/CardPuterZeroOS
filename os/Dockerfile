@@ -9,7 +9,8 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 
 # Image tools, the kernel module toolchain (the rpt headers want gcc-14,
 # pahole and python3), cc for cargo build scripts, g++, libjpeg, ffmpeg's
-# libraries and libpulse for the camera helper, what fetch and the deb builder use, QEMU for the
+# libraries and libpulse for the camera and media helpers, libheif, LibRaw,
+# libwebp and libass for the media helper, what fetch and the deb builder use, QEMU for the
 # first-boot smoke test, and Pillow and sqv for the Store's catalog
 # (os/store).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,7 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         binutils pahole python3 libelf1t64 libssl3t64 \
         g++ pkg-config libjpeg62-turbo-dev \
         libavformat-dev libavcodec-dev libswscale-dev libswresample-dev libavutil-dev \
-        libpulse-dev \
+        libavfilter-dev libpulse-dev \
+        libheif-dev libraw-dev libwebp-dev libass-dev \
         qemu-system-arm \
         python3-pil sqv \
     && rm -rf /var/lib/apt/lists/*
