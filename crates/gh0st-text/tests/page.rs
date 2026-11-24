@@ -107,3 +107,39 @@ fn an_idle_editor_wakes_for_nothing() {
     let wakes = d.idle_wakes(600_000);
     assert!(wakes <= 11, "{wakes}: the clock's minute and nothing more");
 }
+
+#[test]
+fn a_file_opens_to_read_and_a_key_changes_nothing() {
+    let p = temp("read.txt", b"one\ntwo\n");
+    let mut d = Driver::new(Editor::open(Some(&p), Options::default()));
+    d.wait(100);
+    d.keys("type xyz");
+    d.keys("esc");
+    assert!(d.dialog().is_none(), "nothing to save");
+    assert_eq!(std::fs::read(&p).unwrap(), b"one\ntwo\n");
+}
+
+#[test]
+fn quitting_with_changes_saves_keeps_editing_or_discards_held() {
+    let p = temp("three.txt", b"one\n");
+    let mut d = open(&p, KeyModel::Modal);
+    let keys = |d: &mut Driver, script: &str| {
+        for k in script.lines() {
+            d.keys(k);
+            d.wait(50);
+        }
+    };
+    // Edit, type, back to reading, then Esc asks.
+    keys(&mut d, "enter\ntype x\nesc\nesc");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Save three.txt?"));
+    // Esc keeps editing.
+    keys(&mut d, "esc");
+    assert!(d.dialog().is_none() && !d.quit());
+    // A tap on 7 discards nothing; held, the changes go and the page closes.
+    keys(&mut d, "esc\n7");
+    assert!(!d.quit());
+    assert!(d.dialog().is_some(), "still asking");
+    d.keys("down 7").wait(900).keys("up 7");
+    assert!(d.quit());
+    assert_eq!(std::fs::read(&p).unwrap(), b"one\n");
+}

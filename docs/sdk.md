@@ -608,7 +608,10 @@ impl Page for File {
 `.value(text)` fills the field, `.line(text)` adds a line under it,
 `.yes(word)` and `.no(word)` name the keys, and `.error(why)` reopens it with
 what was wrong. A dialog that loses data adds `.danger().hold()`: Enter does
-nothing, and yes is a red chip on 7 held 0.7 s.
+nothing, and yes is a red chip on 7 held 0.7 s. A question with a second
+answer that loses data, as Save or discard, adds `.also("discard")`: Enter
+still says yes and Esc no, and the red chip on 7, held, comes back as
+`Answer::Also`.
 
 ### Search
 

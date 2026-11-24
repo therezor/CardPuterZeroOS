@@ -202,7 +202,7 @@ impl Editor {
             error,
             binary,
             read_only,
-            model: KeyModel::Modeless,
+            model: KeyModel::Modal,
             mode: Mode::Edit,
             cursor: 0,
             anchor: None,
@@ -1067,8 +1067,9 @@ impl Page for Editor {
         let s = cx.settings();
         self.model = match self.opts.keys {
             Some(m) => m,
-            None if s.get_str(key::KEYS) == Some("modal") => KeyModel::Modal,
-            None => KeyModel::Modeless,
+            // Opens to read: a key can't change a file by accident.
+            None if s.get_str(key::KEYS) == Some("modeless") => KeyModel::Modeless,
+            None => KeyModel::Modal,
         };
         self.size = self
             .opts
@@ -1200,9 +1201,11 @@ impl Page for Editor {
                 ask::QUIT,
                 Dialog::confirm(
                     &format!("Save {}?", self.title),
-                    "Esc keeps editing. To close without saving, use the menu.",
+                    "Your changes are not saved.",
                 )
-                .yes("save"),
+                .yes("save")
+                .no("keep editing")
+                .also("discard"),
             );
         } else {
             return true;
@@ -1213,6 +1216,8 @@ impl Page for Editor {
 
     fn answer(&mut self, id: u32, a: Answer, cx: &mut Cx) {
         match (id, a) {
+            // Held 7: close, the changes gone.
+            (ask::QUIT, Answer::Also) => cx.quit(),
             (ask::QUIT, Answer::Yes(_)) => {
                 self.save(cx);
                 if self.saving.is_some() {

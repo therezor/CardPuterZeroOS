@@ -38,15 +38,19 @@ cargo run --release -p gh0st-text --example bench -- FILE   # engine timings
 
 ## Keys
 
-Two key models; the menu's Keys row switches them.
-
-**Always type.** Every key types. No action bar: every row is text. Help
-(Fn and H), then 8, opens the menu.
+Two key models; the menu's Keys row switches them. View, then edit is the
+default, so a key pressed to look around never changes a file.
 
 **View, then edit.** A file opens in View. f, x, z and c move, held to
 repeat; Fn and L or M page. Chips find (5), go to a line (6) and save (7);
 8 opens the menu. Enter or `i` edits, and Esc goes back to View. While
 editing, the bar names Esc, Ctrl and S, and Fn and H.
+
+**Always type.** Every key types. No action bar: every row is text. Help
+(Fn and H), then 8, opens the menu.
+
+The text size starts at 6x12, the terminal's; Fn and R or T, or the menu,
+change it, and it is kept.
 
 | Keys | What |
 |---|---|
@@ -64,8 +68,8 @@ editing, the bar names Esc, Ctrl and S, and Fn and H.
 | Fn and R, T | text size |
 | Esc | leave find, drop the selection, go back to View, or close |
 
-Closing with changes asks to save first. Close without saving is in the
-menu, and asks twice.
+Closing with changes asks first: Enter saves, Esc keeps editing, and 7
+held discards them. Close without saving is in the menu too.
 
 ## Saving
 

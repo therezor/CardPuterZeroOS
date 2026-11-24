@@ -49,6 +49,14 @@ enum Held {
 }
 
 /// A key held to confirm. It exists only while the key is down.
+/// How a dialog closed: Enter, Esc, or its chip held on 7.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Answered {
+    Yes,
+    No,
+    Held,
+}
+
 struct Hold {
     code: u16,
     what: Held,
@@ -870,19 +878,26 @@ impl Runtime {
     }
 
     /// Closes the dialog and tells its page how.
-    fn answer(&mut self, yes: bool, now: u64) {
+    fn answer(&mut self, how: Answered, now: u64) {
         let Overlay::Dialog { id, owner, mut d } =
             std::mem::replace(&mut self.overlay, Overlay::None)
         else {
             return;
         };
         self.s.asking = false;
-        let answer = if yes {
-            Answer::Yes(d.take_text())
-        } else {
+        let answer = match how {
+            Answered::Yes => Answer::Yes(d.take_text()),
             // A half-typed password goes too, zeroed in place.
-            d.take_text().into_bytes().fill(0);
-            Answer::No
+            Answered::No | Answered::Held => {
+                d.take_text().into_bytes().fill(0);
+                if how == Answered::Held && d.also.is_some() {
+                    Answer::Also
+                } else if how == Answered::Held {
+                    Answer::Yes(String::new())
+                } else {
+                    Answer::No
+                }
+            }
         };
         self.dirty = true;
         self.call(owner, now, |p, cx| p.answer(id, answer, cx));
@@ -895,7 +910,7 @@ impl Runtime {
             return;
         };
         if let (Held::Dialog, Overlay::Dialog { d, .. }) = (h.what, &self.overlay) {
-            let say = format!("Hold to {}", d.yes);
+            let say = format!("Hold to {}", d.held_word().unwrap_or(&d.yes));
             self.show_toast(say, Tone::Info, now);
         }
         if let Held::Chip(n) = h.what {
@@ -1011,7 +1026,7 @@ impl Runtime {
             self.dirty = true;
         }
         if let Overlay::Dialog { d, .. } = &mut self.overlay {
-            if d.hold && raw.ch == Some('7') && raw.state == State::Press {
+            if d.held_word().is_some() && raw.ch == Some('7') && raw.state == State::Press {
                 self.pressed = Some((raw.code, 7));
                 self.hold = Some(Hold {
                     code: raw.code,
@@ -1026,11 +1041,11 @@ impl Runtime {
                 dialog::Out::Nothing => {}
                 dialog::Out::Yes => {
                     self.sound(Sound::Select);
-                    self.answer(true, now);
+                    self.answer(Answered::Yes, now);
                 }
                 dialog::Out::No => {
                     self.sound(Sound::Back);
-                    self.answer(false, now);
+                    self.answer(Answered::No, now);
                 }
             }
             return;
@@ -1360,7 +1375,7 @@ impl Runtime {
         self.dirty = true;
         match what {
             Held::Exit => self.quit_all(),
-            Held::Dialog => self.answer(true, now),
+            Held::Dialog => self.answer(Answered::Held, now),
             Held::Chip(n) => {
                 let top = self.stack.len().saturating_sub(1);
                 let bars = self.top_bars();
@@ -1458,11 +1473,11 @@ impl Runtime {
             Overlay::Dialog { d, .. } => {
                 let mut chips = [none; 5];
                 // A chip's word starts with a capital; a hint's doesn't.
-                let mut word = d.yes.clone();
+                let mut word = d.held_word().unwrap_or(&d.yes).to_string();
                 if let Some(f) = word.get_mut(..1) {
                     f.make_ascii_uppercase();
                 }
-                if d.hold {
+                if d.held_word().is_some() {
                     let look = match &self.hold {
                         Some(h) if h.what == Held::Dialog => Look::Hold(h.pc),
                         _ => Look::Hold(0),

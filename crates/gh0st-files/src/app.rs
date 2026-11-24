@@ -2762,7 +2762,7 @@ impl Files {
     fn answer_one(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
         let yes = match answer {
             Answer::Yes(t) => Some(t),
-            Answer::No => None,
+            Answer::No | Answer::Also => None,
         };
         if matches!(id, ASK_DELETE | ASK_RENAME | ASK_COMPRESS) && yes.is_none() {
             self.target = None;

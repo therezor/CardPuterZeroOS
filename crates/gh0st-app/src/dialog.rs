@@ -20,7 +20,10 @@ const MAX: usize = 255;
 /// let erase = Dialog::confirm("Erase everything?", "Apps, files and settings go.")
 ///     .yes("erase")
 ///     .hold();
-/// # let _ = (join, rename, erase);
+/// let quit = Dialog::confirm("Save notes.rs?", "Your changes are not saved.")
+///     .yes("save")
+///     .also("discard");
+/// # let _ = (join, rename, erase, quit);
 /// ```
 #[derive(Clone, Debug)]
 pub struct Dialog {
@@ -31,6 +34,8 @@ pub struct Dialog {
     pub(crate) no: String,
     pub(crate) danger: bool,
     pub(crate) hold: bool,
+    /// A second answer that loses data: a red chip on 7, held.
+    pub(crate) also: Option<String>,
     /// What was wrong with the last answer, under the field until a key
     /// changes it.
     pub(crate) error: Option<String>,
@@ -53,6 +58,8 @@ pub enum Answer {
     Yes(String),
     /// Esc.
     No,
+    /// The held chip of [`Dialog::also`].
+    Also,
 }
 
 impl Dialog {
@@ -65,6 +72,7 @@ impl Dialog {
             no: "cancel".into(),
             danger: false,
             hold: false,
+            also: None,
             error: None,
         }
     }
@@ -160,6 +168,24 @@ impl Dialog {
         self.danger = true;
         self.hold = true;
         self
+    }
+
+    /// A second answer, one that loses data: "discard". Enter still says
+    /// yes and Esc no; this one is a red chip on 7, held 0.7 s, and comes
+    /// back as [`Answer::Also`].
+    pub fn also(mut self, word: &str) -> Dialog {
+        self.also = Some(word.into());
+        self
+    }
+
+    /// What the held chip on 7 does, if anything: `also`, or yes when the
+    /// dialog is [`hold`](Dialog::hold).
+    pub(crate) fn held_word(&self) -> Option<&str> {
+        match (&self.also, self.hold) {
+            (Some(w), _) => Some(w),
+            (None, true) => Some(&self.yes),
+            (None, false) => None,
+        }
     }
 
     /// True when it has a field: the bar shows its hints, not chips.
@@ -294,8 +320,8 @@ impl Dialog {
                 });
             }
             widgets::key_row(c, t, body.x, y, &hints);
-            if self.hold {
-                let say = format!("hold 7 to {}", self.yes);
+            if let Some(word) = self.held_word() {
+                let say = format!("hold 7 to {word}");
                 let sw = t.f.small.measure(&say);
                 let sr = Rect::new(body.right() - sw, y, sw, t.m.pill_h);
                 widgets::text_in(c, t.f.small, sr, &say, t.c.muted);
