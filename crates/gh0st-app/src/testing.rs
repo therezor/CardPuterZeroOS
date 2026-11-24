@@ -191,6 +191,12 @@ impl Driver {
         self
     }
 
+    /// The notifications panel ran action `id` of notice `tag`.
+    pub fn notice_action(&mut self, tag: &str, id: &str) -> &mut Driver {
+        self.rt.notice_action(tag, id, self.now);
+        self
+    }
+
     /// A page asked to step back to the app that opened this one
     /// ([`Cx::leave`](crate::Cx::leave)).
     pub fn left(&self) -> bool {

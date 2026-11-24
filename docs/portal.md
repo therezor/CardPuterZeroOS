@@ -13,6 +13,7 @@ which the device has none of.
 |---|---|---|
 | `FileChooser` | 4 | `OpenFile`, `SaveFile`, `SaveFiles`, through Files as the chooser |
 | `OpenURI` | 5 | `OpenFile` and `OpenDirectory` by fd, `OpenURI` for `file://` |
+| `Notification` | 2 | `AddNotification` and `RemoveNotification`: a notice, its buttons as chips |
 
 ## Requests
 
@@ -62,6 +63,16 @@ travel the shell link.
   `OpenFile`; we take them anyway. Other schemes answer 2: there is no
   browser. `SchemeSupported` is true for `file` alone.
 - `gh0st open <path>` calls `OpenURI` from the terminal.
+
+## Notification
+
+`AddNotification(s id, a{sv})` posts a notice (`apps.md`, Notifications):
+`title`, `body` or `markup-body` (tags dropped), `priority` (`urgent` is
+critical, `high` a warning), `default-action` with its target for Enter,
+and up to three `buttons` (`label`, `action`, `target`) as chips. The same
+id again replaces it; `RemoveNotification(id)` takes it away. A picked
+button or Enter sends `ActionInvoked(id, action, [target])` to the app
+that posted it.
 
 ## Who may ask
 

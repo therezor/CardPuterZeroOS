@@ -46,7 +46,7 @@ pub use gh0st_core::sound::Sound;
 pub use gh0st_ui::theme::Tone;
 pub use key::{Key, codes};
 pub use list::{Action, Grid, List, Row, Scroll, cycle};
-pub use page::{Cx, Handler, Job, JobEvent, Page, Pick, Settings, Timer, Watch};
+pub use page::{Cx, Handler, Job, JobEvent, Page, Pick, Post, Settings, Timer, Watch};
 pub use portal::{PickMode, PickSpec};
 pub use run::{Options, run, run_with};
 pub use search::Search;

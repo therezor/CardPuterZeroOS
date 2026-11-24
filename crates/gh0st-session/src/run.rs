@@ -147,6 +147,7 @@ impl Session {
                         self.who.remove(name);
                         self.inhibit.gone(name);
                         self.portal.gone(name);
+                        self.notes.gone(name);
                     }
                 }
                 _ => {}
@@ -182,10 +183,16 @@ impl Session {
             // ask: read what it said first.
             self.shell_lines();
             self.portal.chooser_call(&m, pid)
+        } else if path == portal::PATH && m.interface.as_deref() == Some(notify::PORTAL_IFACE) {
+            let r = self.notes.portal_call(&m, &who, &sender);
+            self.test_press();
+            r
         } else if path.starts_with(portal::PATH) {
             self.portal.call(&m, &sender, pid, &who.label)
         } else if path == notify::PATH {
-            self.notes.call(&m, &who, &sender)
+            let r = self.notes.call(&m, &who, &sender);
+            self.test_press();
+            r
         } else if inhibit::PATHS.contains(&path) {
             self.inhibit.call(&m, &who, &sender)
         } else if m.is(bus::INTROSPECTABLE, "Introspect") {
@@ -212,6 +219,17 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Under `--test` there is no shell: `GH0ST_NOTIFY_PRESS` presses the
+    /// first chip of each new notice, as a user in the panel would.
+    fn test_press(&mut self) {
+        if self.link.is_some() || std::env::var_os("GH0ST_NOTIFY_PRESS").is_none() {
+            return;
+        }
+        if let Some((nid, chip)) = self.notes.last_chip() {
+            self.notes.shell_said(&["action".into(), nid, chip]);
+        }
     }
 
     /// Under `--test` there is no shell: `GH0ST_PORTAL_ANSWER` names the
@@ -267,7 +285,10 @@ impl Session {
         }
         let open = !l.closed();
         for m in lines {
-            self.portal.shell_said(&m);
+            match m.first().map(String::as_str) {
+                Some("action" | "closed") => self.notes.shell_said(&m),
+                _ => self.portal.shell_said(&m),
+            }
         }
         open
     }

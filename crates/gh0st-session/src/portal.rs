@@ -19,6 +19,8 @@ const REQUEST_ROOT: &str = "/org/freedesktop/portal/desktop/request";
 
 const CHOOSER_VERSION: u32 = 4;
 const OPEN_URI_VERSION: u32 = 5;
+const NOTIFICATION: &str = "org.freedesktop.portal.Notification";
+const NOTIFICATION_VERSION: u32 = 2;
 /// Requests a caller may have open at once.
 const PER_CALLER: usize = 4;
 /// Bounds on what a caller's options may hold.
@@ -566,6 +568,7 @@ fn properties(m: &Message) -> Message {
     let version = match iface {
         CHOOSER => CHOOSER_VERSION,
         OPEN_URI => OPEN_URI_VERSION,
+        NOTIFICATION => NOTIFICATION_VERSION,
         _ => return Message::error(m, bus::err::UNKNOWN_INTERFACE, "no such interface"),
     };
     if m.is(bus::PROPERTIES, "GetAll") {
@@ -580,7 +583,16 @@ fn properties(m: &Message) -> Message {
 fn introspect() -> String {
     const CHOOSER_XML: &str = r#"<interface name="org.freedesktop.portal.FileChooser"><method name="OpenFile"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SaveFile"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SaveFiles"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     const OPEN_URI_XML: &str = r#"<interface name="org.freedesktop.portal.OpenURI"><method name="OpenURI"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="OpenFile"><arg type="s" direction="in"/><arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="OpenDirectory"><arg type="s" direction="in"/><arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SchemeSupported"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="b" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
-    bus::introspect(&[CHOOSER_XML, OPEN_URI_XML, bus::PROPERTIES_XML], &[])
+    const NOTIFICATION_XML: &str = r#"<interface name="org.freedesktop.portal.Notification"><method name="AddNotification"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/></method><method name="RemoveNotification"><arg type="s" direction="in"/></method><signal name="ActionInvoked"><arg type="s"/><arg type="s"/><arg type="av"/></signal><property name="version" type="u" access="read"/></interface>"#;
+    bus::introspect(
+        &[
+            CHOOSER_XML,
+            OPEN_URI_XML,
+            NOTIFICATION_XML,
+            bus::PROPERTIES_XML,
+        ],
+        &[],
+    )
 }
 
 #[cfg(test)]

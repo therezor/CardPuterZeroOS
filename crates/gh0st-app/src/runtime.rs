@@ -332,6 +332,11 @@ impl Runtime {
         self.call(owner, now, |p, cx| p.picked(pick, paths, cx));
     }
 
+    /// A notice's action, for the first page: the app's own.
+    pub fn notice_action(&mut self, tag: &str, id: &str, now: u64) {
+        self.call_quiet(0, now, |p, cx| p.notice_action(tag, id, cx));
+    }
+
     /// Hands `files` to the page on top.
     pub fn opened(&mut self, files: Vec<PathBuf>, now: u64) {
         let top = self.stack.len().saturating_sub(1);

@@ -2319,9 +2319,7 @@ impl Shell {
             self.hand_files(&target.file, &[path]);
             return true;
         }
-        if front.is_some() {
-            self.pending = Some(Pending::Open(target.file.clone(), vec![path]));
-        }
+        self.pending = Some(Pending::Open(target.file.clone(), vec![path]));
         true
     }
 
@@ -2354,25 +2352,34 @@ impl Shell {
         let Some(app) = app else {
             return;
         };
-        match self.park_front(now) {
-            Ok(opener) => {
-                self.return_to.retain(|(opened, _)| opened != id);
-                self.return_to.push((app.file.clone(), opener));
-                match self.tasks.get(id).map(|t| t.state) {
-                    Some(tasks::State::Closing { .. }) => {
-                        self.return_to.pop();
-                        self.take_screen();
-                        self.toast(format!("{} is closing", app.entry.name));
-                    }
-                    Some(_) => {
-                        self.resume(id, now);
-                        self.hand_files(id, files);
-                    }
-                    None => self.launch(&app, files),
-                }
+        // From home or the notifications, nothing is parked and nothing
+        // comes back after.
+        let opener = if self.tasks.front().is_some() {
+            match self.park_front(now) {
+                Ok(o) => Some(o),
+                Err(Some(name)) => return self.toast(format!("{name} can't be paused")),
+                Err(None) => return,
             }
-            Err(Some(name)) => self.toast(format!("{name} can't be paused")),
-            Err(None) => {}
+        } else {
+            None
+        };
+        self.return_to.retain(|(opened, _)| opened != id);
+        if let Some(o) = &opener {
+            self.return_to.push((app.file.clone(), o.clone()));
+        }
+        match self.tasks.get(id).map(|t| t.state) {
+            Some(tasks::State::Closing { .. }) => {
+                if opener.is_some() {
+                    self.return_to.pop();
+                }
+                self.take_screen();
+                self.toast(format!("{} is closing", app.entry.name));
+            }
+            Some(_) => {
+                self.resume(id, now);
+                self.hand_files(id, files);
+            }
+            None => self.launch(&app, files),
         }
     }
 
@@ -2480,6 +2487,15 @@ impl Shell {
     /// Clears notice `n`: an app's file goes; a system notice is remembered
     /// as dismissed until it is posted anew.
     fn dismiss(&mut self, n: &Notice) {
+        // A poster on the bus hears that the user cleared it.
+        if n.via_bus {
+            self.services.say_session(&["closed", &n.id()]);
+        }
+        self.drop_notice(n);
+    }
+
+    /// Takes notice `n` off the list and its file away.
+    fn drop_notice(&mut self, n: &Notice) {
         if n.system {
             self.dismissed.add(n);
             if let Err(e) = self.dismissed.save(&notify::dismissed_path()) {
@@ -2493,16 +2509,50 @@ impl Shell {
         self.sync_notices();
     }
 
-    /// Enter on a notice: it is done with, and its app comes up.
+    /// Action `id` of notice `n`: to its poster on the bus, or to its app
+    /// over the link if it runs. Nothing comes to the front for it.
+    fn notice_action(&mut self, n: &Notice, id: &str) -> bool {
+        if n.via_bus {
+            return self.services.say_session(&["action", &n.id(), id]);
+        }
+        let task = self
+            .apps
+            .iter()
+            .chain(&self.openers)
+            .find(|a| a.answers_to(&n.app))
+            .map(|a| a.file.clone());
+        let Some(t) = task.and_then(|f| self.tasks.get(&f)) else {
+            return false;
+        };
+        t.link_v >= 2
+            && t.link
+                .as_ref()
+                .is_some_and(|l| l.send(&["action", &n.tag, id]))
+    }
+
+    /// Enter on a notice: its default action runs, then its file opens in
+    /// its app, or its app comes up.
     fn open_notice(&mut self) {
         let Some(n) = self.panel.selected().map(|r| r.notice.clone()) else {
             return;
         };
+        if !n.default.is_empty() {
+            self.notice_action(&n, &n.default.clone());
+        }
+        if let Some(f) = n.file.clone() {
+            self.drop_notice(&n);
+            self.open_file(None, f);
+            return;
+        }
         let Some(app) = self.apps.iter().find(|a| a.answers_to(n.target())).cloned() else {
-            self.toast("No app opens this");
+            if n.default.is_empty() {
+                self.toast("No app opens this");
+            } else {
+                self.drop_notice(&n);
+            }
             return;
         };
-        self.dismiss(&n);
+        self.drop_notice(&n);
         match self.tasks.get(&app.file).map(|t| t.state) {
             Some(tasks::State::Closing { .. }) => {
                 self.toast(format!("{} is closing", app.entry.name))
@@ -2582,6 +2632,21 @@ impl Shell {
                 }
             }
             None if k.ch == Some('4') => self.panel.hold_all(k.code, now),
+            None if matches!(k.ch, Some('5' | '6' | '7')) => {
+                let Some(n) = self.panel.selected().map(|r| r.notice.clone()) else {
+                    return;
+                };
+                let at = (k.ch.map_or(0, |c| c as u32) - '5' as u32) as usize;
+                let id = notices::action_keys(&n)[at].map(String::from);
+                if let Some(id) = id {
+                    let label = n.action(&id).unwrap_or_default().to_string();
+                    if self.notice_action(&n, &id) {
+                        self.toast(label);
+                    } else {
+                        self.toast("That app isn't running");
+                    }
+                }
+            }
             None => return,
         }
         self.dirty = true;

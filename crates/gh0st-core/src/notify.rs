@@ -17,12 +17,21 @@
 //! open=update
 //! count=12
 //! ```
+//!
+//! A notice may also name a file Enter opens in its app (`file=`, a path
+//! escaped as on the shell link), up to three actions the notifications
+//! panel shows as chips (`action.<id>=<label>`), and the action Enter runs
+//! (`default=<id>`). `via=bus` marks one posted through D-Bus: its actions
+//! go back to the poster as signals.
 
 use std::path::{Path, PathBuf};
 
 pub const SYSTEM_DIR: &str = "/var/lib/gh0st/notify";
 /// A larger file is not a notice.
-const MAX_FILE: u64 = 2048;
+const MAX_FILE: u64 = 8192;
+/// Actions a notice shows, as chips over 5, 6 and 7.
+pub const MAX_ACTIONS: usize = 3;
+const LABEL_MAX: usize = 12;
 /// The shell reads at most this many per folder, newest first.
 const MAX_NOTICES: usize = 32;
 const TITLE_MAX: usize = 60;
@@ -74,6 +83,14 @@ pub struct Notice {
     pub count: u32,
     /// Posted to the system folder.
     pub system: bool,
+    /// A file Enter opens in the app its type opens with.
+    pub file: Option<PathBuf>,
+    /// (id, label): chips the panel shows, at most [`MAX_ACTIONS`].
+    pub actions: Vec<(String, String)>,
+    /// The action Enter runs, by id.
+    pub default: String,
+    /// Posted through D-Bus: actions go back to the poster on the bus.
+    pub via_bus: bool,
 }
 
 impl Notice {
@@ -116,7 +133,20 @@ impl Notice {
                 "time" => n.time = v.parse().unwrap_or(0),
                 "open" if valid_name(v) => n.open = v.into(),
                 "count" => n.count = v.parse().unwrap_or(0),
-                _ => {}
+                "file" if v.starts_with('/') => n.file = Some(crate::link::path_of(v)),
+                "default" if valid_name(v) => n.default = v.into(),
+                "via" => n.via_bus = v == "bus",
+                k => {
+                    if let Some(id) = k.strip_prefix("action.") {
+                        if valid_name(id)
+                            && !v.is_empty()
+                            && n.actions.len() < MAX_ACTIONS
+                            && !n.actions.iter().any(|(i, _)| i == id)
+                        {
+                            n.actions.push((id.into(), clip(v, LABEL_MAX)));
+                        }
+                    }
+                }
             }
         }
         (!n.title.is_empty()).then_some(n)
@@ -137,7 +167,29 @@ impl Notice {
         if self.count > 0 {
             s.push_str(&format!("count={}\n", self.count));
         }
+        if let Some(f) = &self.file {
+            s.push_str(&format!("file={}\n", crate::link::path_field(f)));
+        }
+        for (id, label) in self.actions.iter().take(MAX_ACTIONS) {
+            if valid_name(id) {
+                s.push_str(&format!("action.{id}={}\n", one_line(label)));
+            }
+        }
+        if valid_name(&self.default) {
+            s.push_str(&format!("default={}\n", self.default));
+        }
+        if self.via_bus {
+            s.push_str("via=bus\n");
+        }
         s
+    }
+
+    /// The label of action `id`.
+    pub fn action(&self, id: &str) -> Option<&str> {
+        self.actions
+            .iter()
+            .find(|(i, _)| i == id)
+            .map(|(_, l)| l.as_str())
     }
 }
 
@@ -325,6 +377,7 @@ mod tests {
             open: "update".into(),
             count: 12,
             system: true,
+            ..Notice::default()
         };
         let back = Notice::parse(&n.id(), &n.text(), true).unwrap();
         assert_eq!(back.body, "Gh0st 0.5 and more");
@@ -421,5 +474,34 @@ mod tests {
         assert_eq!(age(0, 3 * 3600), "3 h");
         assert_eq!(age(0, 2 * 86400 + 5), "2 d");
         assert_eq!(age(10, 5), "now");
+    }
+
+    #[test]
+    fn files_actions_and_the_default_round_trip() {
+        let n = Notice {
+            app: "gh0st-media".into(),
+            tag: "playing".into(),
+            title: "Night Drive".into(),
+            file: Some(PathBuf::from("/home/u/Music/a\tb.mp3")),
+            actions: vec![
+                ("pause".into(), "Pause".into()),
+                ("next".into(), "Next".into()),
+            ],
+            default: "show".into(),
+            via_bus: true,
+            ..Notice::default()
+        };
+        let back = Notice::parse(&n.id(), &n.text(), false).unwrap();
+        assert_eq!(back.file, n.file);
+        assert_eq!(back.actions, n.actions);
+        assert_eq!(back.default, "show");
+        assert!(back.via_bus);
+        assert_eq!(back.action("next"), Some("Next"));
+        // Bad ids, a fourth action and an empty label are dropped.
+        let text =
+            "title=t\naction.ok=A\naction.Bad=B\naction.e=\naction.x=X\naction.y=Y\naction.z=Z\n";
+        let n = Notice::parse("a.b", text, false).unwrap();
+        assert_eq!(n.actions.len(), 3);
+        assert!(n.action("Bad").is_none());
     }
 }

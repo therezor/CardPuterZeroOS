@@ -1095,6 +1095,12 @@ impl Page for Editor {
 `filter`, `multiple` and `starting_in` refine it. In tests,
 `Driver::picks` lists what was asked and `Driver::answer_pick` answers.
 
+`cx.post_with(tag, title, body, Post { actions, default, file })` posts a
+notice with up to three chips, the action Enter runs, and a file Enter
+opens. A picked chip comes to `Page::notice_action(tag, id)`, even while
+the app runs behind: a player's Pause and Next work without it coming to
+the front.
+
 `gh0st_app::watch::DirWatch` watches a folder with inotify: hand its `fd()`
 to `cx.watch` and read `changes()` in `ready`. A file's own changes show up
 as its name in its folder, so watch the folder to see an editor save by

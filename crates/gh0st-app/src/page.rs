@@ -111,6 +111,13 @@ pub trait Page {
         let _ = (paths, cx);
     }
 
+    /// A chip of a notice this app posted ([`Cx::post_with`]) was picked
+    /// in the notifications, or Enter ran its default action. The app may
+    /// be behind another; it isn't brought to the front for a chip.
+    fn notice_action(&mut self, tag: &str, action: &str, cx: &mut Cx) {
+        let _ = (tag, action, cx);
+    }
+
     /// The answer to [`Cx::pick`]: the paths picked, or None when the user
     /// gave up or no chooser was there.
     fn picked(&mut self, pick: Pick, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {
@@ -197,6 +204,17 @@ pub trait Page {
     fn frame_ms(&self) -> u64 {
         0
     }
+}
+
+/// What [`Cx::post_with`] adds to a notice.
+#[derive(Clone, Debug, Default)]
+pub struct Post {
+    /// `(id, label)`: lowercase ids, short labels. At most three show.
+    pub actions: Vec<(&'static str, &'static str)>,
+    /// The action Enter runs.
+    pub default: Option<&'static str>,
+    /// A file Enter opens in its app.
+    pub file: Option<PathBuf>,
 }
 
 /// A question from [`Cx::pick`], to match its answer.
@@ -660,6 +678,31 @@ impl Cx<'_> {
             title: title.into(),
             body: body.into(),
             time: crate::notify::now_secs(),
+            ..Default::default()
+        };
+        if let Err(e) = crate::notify::post(&crate::notify::user_dir(), &n) {
+            eprintln!("gh0st app: notice {tag}: {e}");
+        }
+    }
+
+    /// As [`post`](Cx::post), with actions the notifications panel shows
+    /// as chips (at most three, each `(id, label)`), the one Enter runs, and
+    /// a file Enter opens in its app. Actions come to
+    /// [`Page::notice_action`].
+    pub fn post_with(&mut self, tag: &str, title: &str, body: &str, extra: Post) {
+        let n = crate::notify::Notice {
+            app: self.s.app_id.clone(),
+            tag: tag.into(),
+            title: title.into(),
+            body: body.into(),
+            time: crate::notify::now_secs(),
+            actions: extra
+                .actions
+                .into_iter()
+                .map(|(i, l)| (i.to_string(), l.to_string()))
+                .collect(),
+            default: extra.default.unwrap_or_default().to_string(),
+            file: extra.file,
             ..Default::default()
         };
         if let Err(e) = crate::notify::post(&crate::notify::user_dir(), &n) {

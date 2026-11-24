@@ -162,6 +162,7 @@ Shell to app:
 |---|---|
 | `hello` `2` | The protocol version, sent first |
 | `open` path | Open this file: another app opened it here. The app is in front |
+| `action` tag id | Action `id` of this app's notice `tag` was picked in the notifications |
 | `content` x y w h | The rect the app may draw in, sent at start and after every `bars` change |
 | `theme` name | The palette changed. Redraw with it |
 | `redraw` | The shell drew over the content. Redraw all of it |
@@ -219,6 +220,10 @@ of one. The body is `key=value` lines:
 | `time` | Seconds since the epoch. The newest shows first |
 | `open` | The app Enter opens, named as `app` is. Empty: the poster |
 | `count` | A number for the app's tile, such as how many updates |
+| `file` | A file Enter opens in its app; the path escaped as on the shell link |
+| `action.<id>` | A chip in the notifications, up to three: its label. Picked, the app hears `action <tag> <id>` on its link, and stays where it is |
+| `default` | The action Enter runs, before the file or the app opens |
+| `via` | `bus`: posted through D-Bus. Its actions go back to the poster as signals |
 
 The shell toasts a new notice over whatever is in front, keeps it in the
 notifications (5 in the switcher, or home's menu), lights a bell in its top
@@ -235,7 +240,7 @@ The shell runs these on the session bus before any app starts
 | Name | What it does |
 |---|---|
 | `org.freedesktop.secrets` | The keyring. An app reads its own secrets; another app's take the user's yes on a shell screen |
-| `org.freedesktop.Notifications` | Each notification becomes a notice, as above |
+| `org.freedesktop.Notifications` | Each notification becomes a notice, as above. Its actions are chips; `ActionInvoked` and `NotificationClosed` go back to the poster |
 | `org.freedesktop.ScreenSaver` | Inhibit keeps the app's screen on, as `awake 1` does |
 
 The keyring's questions show on a shell screen. The app in front is parked

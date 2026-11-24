@@ -91,6 +91,44 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.portal.OpenURI.SchemeSupported file '{}' | grep -q true || fail "SchemeSupported"
 
+echo "notifications: actions come back to the poster"
+kill $pid 2>/dev/null; wait $pid 2>/dev/null || true
+HOME=$work XDG_STATE_HOME=$work/.local/state GH0ST_NOTIFY_PRESS=1 \
+    "$GH0ST" session --test >"$work/out3" &
+pid=$!
+for _ in $(seq 100); do
+    gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+        --method org.freedesktop.DBus.NameHasOwner org.freedesktop.Notifications 2>/dev/null \
+        | grep -q true && break
+    sleep 0.05
+done
+gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications \
+    --method org.freedesktop.Notifications.GetCapabilities | grep -q actions || fail "actions capability"
+got=$(timeout 10 notify-send -A reply=Reply -A spam=Spam 'New mail' 'From Ana') || fail "notify-send -A: $got"
+[ "$got" = reply ] || fail "notify-send heard: $got"
+cat >"$work/note.py" <<'PY'
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+got = {}
+loop = GLib.MainLoop()
+def invoked(conn, sender, obj, iface, sig, params):
+    got["a"] = params.unpack()
+    loop.quit()
+bus.signal_subscribe(None, "org.freedesktop.portal.Notification", "ActionInvoked",
+                     "/org/freedesktop/portal/desktop", None, Gio.DBusSignalFlags.NONE, invoked)
+button = {"label": GLib.Variant("s", "Next"), "action": GLib.Variant("s", "app.next"),
+          "target": GLib.Variant("u", 7)}
+n = {"title": GLib.Variant("s", "Night Drive"), "buttons": GLib.Variant("aa{sv}", [button])}
+bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+              "org.freedesktop.portal.Notification", "AddNotification",
+              GLib.Variant("(sa{sv})", ("song", n)), None, Gio.DBusCallFlags.NONE, -1, None)
+GLib.timeout_add(5000, loop.quit)
+loop.run()
+print(got.get("a"))
+PY
+out=$(timeout 10 python3 "$work/note.py") || fail "portal notification: $out"
+echo "$out" | grep -q "('song', 'app.next', \[7\])" || fail "portal ActionInvoked: $out"
+
 if [ -n "${GH0ST_FILES:-}" ]; then
     echo "portal: the real chooser picks a file with keys"
     kill $pid 2>/dev/null; wait $pid 2>/dev/null || true

@@ -231,6 +231,11 @@ fn main_loop(
                     Some("hello") => {
                         rt_.shell_v = m.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
                     }
+                    Some("action") => {
+                        if let (Some(tag), Some(id)) = (m.get(1), m.get(2)) {
+                            rt_.notice_action(tag, id, now);
+                        }
+                    }
                     Some("open") => {
                         let files: Vec<PathBuf> = m[1..]
                             .iter()

@@ -314,3 +314,43 @@ fn leave_brings_back_the_opener_and_keeps_the_app() {
     let closed = shell.find("closed Beta").unwrap_or(usize::MAX);
     assert!(shell.find("resumed Alpha") < Some(closed), "{shell}");
 }
+
+#[test]
+fn a_notice_chip_reaches_its_running_app_and_enter_opens_its_file() {
+    let s = Sim::new("notice");
+    let notes = s.file("notes.txt", b"words\n");
+    // Alpha runs behind; its notice has two chips (5 and 7) and a file.
+    s.app(
+        "a",
+        "Alpha",
+        "",
+        "X-Gh0st-Background=true\n",
+        &["wait 9000".into()],
+    );
+    s.app(
+        "b",
+        "Beta",
+        "%f",
+        "MimeType=text/plain;\nNoDisplay=true\n",
+        &["wait 9000".into()],
+    );
+    let dir = s.dir.join("home/.local/state/gh0st/notify");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("a.song"),
+        format!(
+            "title=Night Drive\nbody=Signals\ntime=1795000000\naction.pause=Pause\naction.next=Next\nfile={}\n",
+            path_field(&notes)
+        ),
+    )
+    .unwrap();
+    // Alpha up; Fn+K to the switcher, 5 to the notifications; 7 is Next;
+    // Enter opens the file in Beta.
+    let (log, shell) = s.run(
+        "wait 600\nenter\nwait 800\nhome\nwait 400\n5\nwait 300\n7\nwait 300\nenter\nwait 1500\n",
+    );
+    in_order(&log, &["a argv\n", "a got action song next"]);
+    in_order(&shell, &["started Alpha", "toast Next", "started Beta"]);
+    let n = notes.display().to_string();
+    assert!(log.contains(&format!("b argv {n}")), "{log}");
+}

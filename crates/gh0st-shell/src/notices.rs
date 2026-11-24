@@ -149,7 +149,30 @@ impl Panel {
             word: "Clear",
             look: Look::Normal,
         };
-        widgets::action_bar(c, t, &[all, none, none, none, clear]);
+        let mut bar = [all, none, none, none, clear];
+        if let Some(row) = self.selected() {
+            for (k, id) in action_keys(&row.notice).iter().enumerate() {
+                if let Some(label) = id.and_then(|id| row.notice.action(id)) {
+                    bar[k + 1] = Chip {
+                        icon: "",
+                        word: label,
+                        look: Look::Normal,
+                    };
+                }
+            }
+        }
+        widgets::action_bar(c, t, &bar);
+    }
+}
+
+/// The action on keys 5, 6 and 7: one sits on 6, two on 5 and 7.
+pub fn action_keys(n: &Notice) -> [Option<&str>; 3] {
+    let ids: Vec<&str> = n.actions.iter().map(|(i, _)| i.as_str()).collect();
+    match ids.as_slice() {
+        [] => [None; 3],
+        [a] => [None, Some(a), None],
+        [a, b] => [Some(a), None, Some(b)],
+        [a, b, c, ..] => [Some(a), Some(b), Some(c)],
     }
 }
 
