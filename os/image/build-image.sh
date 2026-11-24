@@ -125,14 +125,22 @@ build_camd() {
     make -s -C "$SRC/crates/gh0st-camera/camd" O="$WORK/camd" SYSROOT="$sys"
 }
 
+# The media helper, against the image's ffmpeg and the libraries it loads.
+build_mediad() {
+    log "media helper"
+    make -s -C "$SRC/crates/gh0st-media/mediad" O="$WORK/mediad"
+}
+
 step_debs() {
     step_vendor
     install_kernel_headers
     log "cargo build"
     cargo build -q --release --frozen --target aarch64-unknown-linux-musl \
         --manifest-path "$SRC/Cargo.toml" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
-        -p gh0st-store -p gh0st-camera -p gh0st-keyring -p gh0st-keyboard
+        -p gh0st-store -p gh0st-camera -p gh0st-keyring -p gh0st-files -p gh0st-text -p gh0st-media \
+        -p gh0st-keyboard
     build_camd
+    build_mediad
     log "debs"
     rm -rf "$WORK/repo-ours"
     mkdir -p "$WORK/repo-ours"
@@ -262,6 +270,8 @@ case ${1:-} in
     debs) step_debs ;;
     # The helper alone, for scripts/deploy.sh camera.
     camd) build_camd && mkdir -p /out/camd && cp "$WORK/camd/gh0st-camd" /out/camd/ ;;
+    # And the media helper, for scripts/deploy.sh media.
+    mediad) build_mediad && mkdir -p /out/mediad && cp "$WORK/mediad/gh0st-mediad" /out/mediad/ ;;
     image) step_image "${2:-}" ;;
     check) "$OS/image/checks/run.sh" "${2:?variant}" ;;
     smoke) "$OS/image/checks/smoke.sh" ;;
@@ -279,5 +289,5 @@ case ${1:-} in
             --keyring "${STORE_KEYRING:-$OS/repo/gh0st-archive-keyring.pgp}" \
             ${STORE_ONLY:+--only "$STORE_ONLY"} ;;
     shell) exec bash ;;
-    *) die "usage: build-image.sh fetch|debs|camd|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|store|shell" ;;
+    *) die "usage: build-image.sh fetch|debs|camd|mediad|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|store|shell" ;;
 esac

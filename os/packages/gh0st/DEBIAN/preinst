@@ -1,0 +1,8 @@
+#!/bin/sh
+# gh0st ships /usr/bin/xdg-open (gh0st open). xdg-utils, if a Store app
+# brings it, puts its own aside as xdg-open.xdg-utils instead of clashing.
+set -e
+if [ "$1" = install ] || [ "$1" = upgrade ]; then
+    dpkg-divert --package gh0st --add --rename \
+        --divert /usr/bin/xdg-open.xdg-utils /usr/bin/xdg-open >/dev/null
+fi

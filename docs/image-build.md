@@ -104,11 +104,12 @@ source. Old libcamera and kernel builds are fetched from the pool by URL:
 the live index has moved on (libcamera-ipa 0.8, kernel 6.18.60), so a build
 from it would not resolve.
 
-**Base apps.** gh0st, Settings, Updates, the Store, the terminal and
-Camera, which are ours, and the stock Files, Music and Recorder at the
-versions the dev device runs. M5's AppStore and Camera are not in the
-image: migration `0002-store` removes the AppStore from older devices, and
-`0003-camera` swaps M5's Camera for ours.
+**Base apps.** gh0st, Settings, Updates, the Store, the terminal, Files,
+Text, Media and Camera, which are ours, and the stock Recorder at the
+version the dev device runs. M5's AppStore, Camera, Files and Music are not
+in the image: migration `0002-store` removes the AppStore from older
+devices, `0003-camera` swaps M5's Camera for ours, and `0004-files-media`
+swaps M5's Files and Music for Files and Media, keeping ffmpeg.
 
 **Command-line tools.** What a Linux user reaches for in the terminal:
 curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,

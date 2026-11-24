@@ -4,6 +4,6 @@ Architecture: arm64
 Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: x11
 Priority: optional
-Depends: gh0st
+Depends: gh0st (>= @GH0ST_VERSION@)
 Description: the Gh0st OS terminal
  A terminal app for the CardputerZero: tabs, history, bitmap fonts.

@@ -1,0 +1,16 @@
+Package: gh0st-media
+Version: @GH0ST_VERSION@
+Architecture: arm64
+Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
+Section: graphics
+Priority: optional
+Depends: gh0st (>= @GH0ST_VERSION@), libstdc++6, libjpeg62-turbo,
+ libavformat61, libavcodec61, libavutil59, libswscale8, libswresample5, libpulse0,
+ libwebp7, libwebpdemux2, libavfilter10, libass9, libheif1, libheif-plugin-ffmpegdec,
+ libraw23
+Description: the Gh0st OS pictures, video and music app
+ Media shows pictures, plays video and music, and browses them as a
+ gallery. gh0st-mediad, its helper, decodes: ffmpeg's libraries for most
+ formats, libheif for phone photos, LibRaw for camera RAW, libwebpdemux for
+ animated WebP and libass for subtitles. libavfilter, libass, libheif and
+ LibRaw load only when a file needs them.

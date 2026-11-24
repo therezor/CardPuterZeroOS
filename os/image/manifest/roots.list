@@ -59,6 +59,6 @@ pulseaudio-utils        pactl, which Music and Recorder run
 gh0st                   the shell and Settings
 gh0st-term              the terminal
 gh0st-camera            the Camera app and its libcamera helper
-m5cardputerzero-files   stock Files app
-m5cardputerzero-music   stock Music app
+gh0st-media             pictures, video and music, and their helper
+ffmpeg                  ffmpeg and ffprobe, for the terminal and Store apps
 m5cardputerzero-recorder stock Recorder app

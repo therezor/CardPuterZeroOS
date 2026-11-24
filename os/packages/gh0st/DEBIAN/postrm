@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    dpkg-divert --package gh0st --remove --rename \
+        --divert /usr/bin/xdg-open.xdg-utils /usr/bin/xdg-open >/dev/null || true
+fi

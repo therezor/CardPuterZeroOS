@@ -1,0 +1,4 @@
+# Our Files, Text and Media replace M5's Files and Music (docs/files.md,
+# docs/media.md). ffmpeg came with M5's Files: kept, now by hand.
+install gh0st-media ffmpeg libarchive-tools
+remove m5cardputerzero-files m5cardputerzero-music

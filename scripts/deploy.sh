@@ -4,6 +4,7 @@
 #   GH0ST_HOST=pi@cardputer.local scripts/deploy.sh            # install and restart
 #   GH0ST_HOST=pi@cardputer.local scripts/deploy.sh rollback   # back to stock
 #   GH0ST_HOST=pi@cardputer.local scripts/deploy.sh camera     # the camera app alone
+#   GH0ST_HOST=pi@cardputer.local scripts/deploy.sh media      # the media app alone
 # The camera's helper is C++ against the device's libcamera, so it builds in
 # the image container (os/build.sh camd): Docker must be running.
 set -euo pipefail
@@ -72,15 +73,32 @@ if [ "${1:-}" = camera ]; then
     exit 0
 fi
 
+if [ "${1:-}" = media ]; then
+    "$root/os/build.sh" mediad
+    cargo build --release --target "$target" -p gh0st-media --manifest-path "$root/Cargo.toml"
+    scp -q "$root/target/$target/release/gh0st-media" "$root/os/out/mediad/gh0st-mediad" \
+        "$root/packaging/applications/media.desktop" "$host:/tmp/"
+    remote 'set -e
+        sudo apt-get install -y --no-install-recommends libheif1 libheif-plugin-ffmpegdec libraw23 \
+            libwebpdemux2 libass9 libavfilter10
+        sudo install -m 755 /tmp/gh0st-media /usr/bin/gh0st-media
+        sudo install -D -m 755 /tmp/gh0st-mediad /usr/libexec/gh0st-mediad
+        sudo install -D -m 644 /tmp/media.desktop /usr/share/gh0st/applications/media.desktop
+        rm -f /tmp/gh0st-media /tmp/gh0st-mediad /tmp/media.desktop'
+    echo "media installed on $host"
+    exit 0
+fi
+
 cargo build --release --target "$target" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
-    -p gh0st-store -p gh0st-keyring -p gh0st-files -p gh0st-keyboard --manifest-path "$root/Cargo.toml"
+    -p gh0st-store -p gh0st-keyring -p gh0st-files -p gh0st-text -p gh0st-keyboard \
+    --manifest-path "$root/Cargo.toml"
 out="$root/target/$target/release"
 
 scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" "$out/gh0st-update" "$out/gh0st-store" \
-    "$out/gh0st-keyring" "$out/gh0st-files" "$out/gh0st-keyboard" \
+    "$out/gh0st-keyring" "$out/gh0st-files" "$out/gh0st-text" "$out/gh0st-keyboard" \
     "$root/packaging/applications/keyring.desktop" \
     "$root/packaging/applications/keyboard.desktop" \
-    "$root/packaging/applications/files.desktop" \
+    "$root/packaging/applications/files.desktop" "$root/packaging/applications/text.desktop" \
     "$root/packaging/applications/store.desktop" \
     "$root/packaging/applications/settings.desktop" \
     "$root/packaging/applications/terminal.desktop" \
@@ -105,6 +123,8 @@ remote 'set -e
     sudo install -m 755 /tmp/gh0st-store /usr/bin/gh0st-store
     sudo install -m 755 /tmp/gh0st-keyring /usr/bin/gh0st-keyring
     sudo install -m 755 /tmp/gh0st-files /usr/bin/gh0st-files
+    sudo install -m 755 /tmp/gh0st-text /usr/bin/gh0st-text
+    sudo ln -sf gh0st /usr/bin/xdg-open
     sudo install -m 755 /tmp/gh0st-keyboard /usr/bin/gh0st-keyboard
     sudo ln -sf gh0st /usr/bin/gh0st-shell
     # The keyring vault folder, outside the home folder.
@@ -116,7 +136,8 @@ remote 'set -e
     sudo ln -f /usr/bin/gh0st /usr/libexec/gh0st-helper
     sudo install -d /usr/share/gh0st/applications /etc/systemd/user/APPLaunch.service.d
     sudo install -m 644 /tmp/store.desktop /tmp/settings.desktop /tmp/terminal.desktop \
-        /tmp/update.desktop /tmp/keyring.desktop /tmp/files.desktop /tmp/keyboard.desktop \
+        /tmp/update.desktop /tmp/keyring.desktop /tmp/files.desktop /tmp/text.desktop \
+        /tmp/keyboard.desktop \
         /usr/share/gh0st/applications/
     cd /tmp/gh0st-update-units
     sudo install -m 644 -t /usr/lib/systemd/system gh0st-update-check.service \
