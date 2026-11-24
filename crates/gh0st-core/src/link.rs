@@ -1,14 +1,66 @@
 //! The shell link: one socket pair per app, one message per packet, UTF-8
-//! fields split by tabs (`docs/apps.md`, Shell link). Built so far: `hello`
-//! both ways, `pause` and `paused`, `resume`, `redraw`, `toast`.
+//! fields split by tabs (`docs/apps.md`, Shell link). A path in a field is
+//! escaped with [`path_field`], so tabs, newlines and any byte survive.
 
+use std::ffi::OsStr;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 
 /// Where an app finds its end: the fd number, in its env.
 pub const ENV: &str = "GH0ST_SHELL_FD";
-/// The longest message either side sends.
-pub const MAX: usize = 512;
+/// The link's version, sent in `hello`. Version 1 peers read at most
+/// [`LEGACY_MAX`] bytes a message.
+pub const VERSION: u32 = 2;
+/// The longest message a version 1 peer reads.
+pub const LEGACY_MAX: usize = 512;
+/// The longest message either side sends: a path and its verb fit. macOS
+/// caps a datagram at 2048 bytes, so host runs carry less.
+#[cfg(target_os = "linux")]
+pub const MAX: usize = 8192;
+#[cfg(not(target_os = "linux"))]
+pub const MAX: usize = 2048;
+
+/// A path as one field: `%XX` for `%`, control bytes and bytes that are not
+/// UTF-8. [`path_of`] reverses it.
+pub fn path_field(p: &Path) -> String {
+    let bytes = p.as_os_str().as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if c == '%' || (c as u32) < 0x20 || c == '\u{7f}' {
+                out.push_str(&format!("%{:02X}", c as u32));
+            } else {
+                out.push(c);
+            }
+        }
+        for b in chunk.invalid() {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The path a [`path_field`] names. A broken escape is kept as it is.
+pub fn path_of(field: &str) -> PathBuf {
+    let b = field.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push(h << 4 | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    PathBuf::from(OsStr::from_bytes(&out))
+}
 
 /// Messages `wait_for` keeps at most; an app says a few as it pauses.
 const KEPT_MAX: usize = 32;
@@ -94,10 +146,14 @@ impl Link {
     }
 
     /// Sends one message, never blocking and never raising SIGPIPE. False
-    /// if it didn't go: the other side is gone or not reading.
+    /// if it didn't go: the other side is gone or not reading, or the
+    /// message is longer than [`MAX`]. A long message is never cut.
     pub fn send(&self, fields: &[&str]) -> bool {
         let msg = fields.join("\t");
-        let bytes = &msg.as_bytes()[..msg.len().min(MAX)];
+        if msg.len() > MAX {
+            return false;
+        }
+        let bytes = msg.as_bytes();
         #[cfg(target_os = "linux")]
         let flags = libc::MSG_NOSIGNAL | libc::MSG_DONTWAIT;
         #[cfg(not(target_os = "linux"))]
@@ -113,15 +169,20 @@ impl Link {
             return Some(m);
         }
         let mut buf = [0u8; MAX];
-        // SAFETY: receives into a stack buffer of its own length.
-        let n = unsafe {
-            libc::recv(
-                self.fd(),
-                buf.as_mut_ptr().cast(),
-                buf.len(),
-                libc::MSG_DONTWAIT,
-            )
+        let mut iov = libc::iovec {
+            iov_base: buf.as_mut_ptr().cast(),
+            iov_len: buf.len(),
         };
+        // SAFETY: an all-zero msghdr is valid; it points at one iovec.
+        let mut hdr: libc::msghdr = unsafe { std::mem::zeroed() };
+        hdr.msg_iov = &mut iov;
+        hdr.msg_iovlen = 1;
+        // SAFETY: receives into a stack buffer of its own length.
+        let n = unsafe { libc::recvmsg(self.fd(), &mut hdr, libc::MSG_DONTWAIT) };
+        if n > 0 && hdr.msg_flags & libc::MSG_TRUNC != 0 {
+            // Longer than any peer may send: drop it whole, never half.
+            return self.recv();
+        }
         if n < 0 {
             let e = io::Error::last_os_error().raw_os_error();
             if !matches!(e, Some(libc::EAGAIN | libc::EINTR)) {
@@ -197,6 +258,30 @@ mod tests {
         assert_eq!(shell.recv().unwrap(), ["awake", "0"]);
         assert_eq!(shell.recv().unwrap(), ["toast", "Saved"]);
         assert!(shell.recv().is_none());
+    }
+
+    #[test]
+    fn any_path_survives_a_field() {
+        let odd = PathBuf::from(OsStr::from_bytes(b"/home/u/a\tb\nc%d \xff\xc3\xa9.txt"));
+        let f = path_field(&odd);
+        assert!(!f.contains(['\t', '\n']));
+        assert_eq!(f, "/home/u/a%09b%0Ac%25d %FF\u{e9}.txt");
+        assert_eq!(path_of(&f), odd);
+        assert_eq!(path_of("/plain/path"), PathBuf::from("/plain/path"));
+        assert_eq!(path_of("/bad%2"), PathBuf::from("/bad%2"));
+        assert_eq!(path_of("/end%"), PathBuf::from("/end%"));
+    }
+
+    #[test]
+    fn a_long_message_goes_whole_or_not_at_all() {
+        let (shell, app) = Link::pair().unwrap();
+        nonblock_cloexec(app.as_raw_fd()).unwrap();
+        let app = Link::new(app);
+        let long = "x".repeat(MAX - 5);
+        assert!(shell.send(&["open", &long]));
+        assert_eq!(app.recv().unwrap(), ["open", long.as_str()]);
+        assert!(!shell.send(&["open", &"y".repeat(MAX)]), "never cut");
+        assert!(app.recv().is_none());
     }
 
     #[cfg(target_os = "linux")]

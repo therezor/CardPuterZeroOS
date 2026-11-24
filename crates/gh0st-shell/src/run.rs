@@ -2919,7 +2919,7 @@ impl Shell {
     /// Starts `app` in front. The shell lets go of the panel and keyboard
     /// until the app is paused or gone.
     fn launch(&mut self, app: &App) {
-        let argv = child::argv(app, &self.terminal);
+        let argv = child::argv(app, &self.terminal, &[]);
         let fb_path = self.display.device();
         let kb_path = self.input.path();
         let dev = Devices {

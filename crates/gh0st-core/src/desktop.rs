@@ -3,6 +3,7 @@
 //! stock shows up here the same. Additions: `Comment` (the list layout's second
 //! line) and `TryExec` (hide an entry whose program is missing).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub const MAX_NAME: usize = 128;
@@ -61,8 +62,8 @@ impl FieldCode {
     }
 
     /// The words for `files` in this code's form: paths or `file://` URIs,
-    /// all of them or the first.
-    pub fn args(self, files: &[PathBuf]) -> Vec<String> {
+    /// all of them or the first. Paths keep every byte.
+    pub fn args(self, files: &[PathBuf]) -> Vec<OsString> {
         let files = if self.many() {
             files
         } else {
@@ -71,8 +72,8 @@ impl FieldCode {
         files
             .iter()
             .map(|f| match self {
-                FieldCode::File | FieldCode::Files => f.to_string_lossy().into_owned(),
-                FieldCode::Url | FieldCode::Urls => crate::uri::from_path(f),
+                FieldCode::File | FieldCode::Files => f.clone().into_os_string(),
+                FieldCode::Url | FieldCode::Urls => crate::uri::from_path(f).into(),
             })
             .collect()
     }
@@ -209,6 +210,9 @@ pub fn is_executable(p: &Path) -> bool {
 /// stock, because the stock rule lets them rely on `~` and quoting.
 pub fn split_exec(exec: &str) -> Vec<String> {
     expand_exec(exec, &[])
+        .into_iter()
+        .map(|w| w.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// The words of an `Exec`. A field code stays in its word as `\u{1}` and the
@@ -286,21 +290,21 @@ pub fn field_code(exec: &str) -> Option<FieldCode> {
 /// [`split_exec`] with `files` put where the field code is: a word that is
 /// only `%F` or `%U` becomes one word per file, any other code is replaced
 /// in place by the first file. Without a code, `files` are not passed.
-pub fn expand_exec(exec: &str, files: &[PathBuf]) -> Vec<String> {
+pub fn expand_exec(exec: &str, files: &[PathBuf]) -> Vec<OsString> {
     let code = field_code(exec);
     let mut out = Vec::new();
     for word in split_words(exec) {
         match (word.as_str(), code) {
             ("\u{1}F" | "\u{1}U", Some(c)) => out.extend(c.args(files)),
             _ => {
-                let mut w = String::new();
+                let mut w = OsString::new();
                 let mut chars = word.chars();
                 while let Some(ch) = chars.next() {
                     if ch != '\u{1}' {
-                        w.push(ch);
+                        w.push(ch.encode_utf8(&mut [0; 4]));
                     } else if let (Some(n), Some(c)) = (chars.next(), code) {
                         if FieldCode::of(n).is_some() {
-                            w.push_str(&c.args(files).join(" "));
+                            w.push(c.args(files).join(" ".as_ref()));
                         }
                     }
                 }

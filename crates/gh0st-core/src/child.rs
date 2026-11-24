@@ -4,10 +4,11 @@
 
 use crate::apps::App;
 use crate::desktop;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 pub const APP_CWD: &str = "/usr/share/APPLaunch";
@@ -20,21 +21,32 @@ pub struct Devices<'a> {
     pub keymap: &'a str,
 }
 
-/// The argv for `app`. Ours run directly. Third-party ones go through
-/// `sh -c` as in stock, since the stock Exec rule allows `~` and quoting.
-/// `Terminal=true` wraps either in the terminal command.
-pub fn argv(app: &App, terminal: &str) -> Vec<String> {
+/// The argv for `app`, opening `files` if its `Exec` takes them. Ours run
+/// directly, with the files in place of the field code. Third-party ones go
+/// through `sh -c` as in stock, since the stock Exec rule allows `~` and
+/// quoting; their files follow as `sh`'s positional arguments and never
+/// enter the line. `Terminal=true` wraps either in the terminal command.
+pub fn argv(app: &App, terminal: &str, files: &[PathBuf]) -> Vec<OsString> {
+    let exec = &app.entry.exec;
     let mut v = if app.ours {
-        desktop::split_exec(&app.entry.exec)
+        desktop::expand_exec(exec, files)
     } else {
-        vec!["/bin/sh".into(), "-c".into(), app.entry.exec.clone()]
+        let mut v: Vec<OsString> = vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            desktop::shell_line(exec).into(),
+        ];
+        if let Some(code) = desktop::field_code(exec) {
+            v.push("sh".into());
+            v.extend(code.args(files));
+        }
+        v
     };
     if app.entry.terminal {
-        let mut t = desktop::split_exec(terminal);
-        if !app.ours {
-            // The terminal runs the shell line itself.
-            v = vec!["/bin/sh".into(), "-c".into(), app.entry.exec.clone()];
-        }
+        let mut t: Vec<OsString> = desktop::split_exec(terminal)
+            .into_iter()
+            .map(Into::into)
+            .collect();
         t.append(&mut v);
         v = t;
     }
@@ -46,7 +58,12 @@ pub fn argv(app: &App, terminal: &str) -> Vec<String> {
 /// `link` is the app's end of the shell link; the app finds its number in
 /// `GH0ST_SHELL_FD`. Returns the new process group, whose id is the
 /// leader's pid.
-pub fn spawn(argv: &[String], dev: &Devices, pause: bool, link: Option<RawFd>) -> io::Result<i32> {
+pub fn spawn<S: AsRef<OsStr>>(
+    argv: &[S],
+    dev: &Devices,
+    pause: bool,
+    link: Option<RawFd>,
+) -> io::Result<i32> {
     let (prog, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::other("empty command"))?;
@@ -239,12 +256,13 @@ mod tests {
         assert_eq!(
             argv(
                 &app("/usr/bin/gh0st settings", true, false),
-                DEFAULT_TERMINAL
+                DEFAULT_TERMINAL,
+                &[]
             ),
             ["/usr/bin/gh0st", "settings"]
         );
         assert_eq!(
-            argv(&app("python3 ~/g.py", false, false), DEFAULT_TERMINAL),
+            argv(&app("python3 ~/g.py", false, false), DEFAULT_TERMINAL, &[]),
             ["/bin/sh", "-c", "python3 ~/g.py"]
         );
     }
@@ -252,9 +270,70 @@ mod tests {
     #[test]
     fn terminal_entries_run_inside_the_terminal() {
         assert_eq!(
-            argv(&app("vim", false, true), DEFAULT_TERMINAL),
+            argv(&app("vim", false, true), DEFAULT_TERMINAL, &[]),
             ["/usr/bin/gh0st-term", "-e", "/bin/sh", "-c", "vim"]
         );
+        let f = [PathBuf::from("/home/u/notes.txt")];
+        assert_eq!(
+            argv(&app("vim %f", false, true), DEFAULT_TERMINAL, &f),
+            [
+                "/usr/bin/gh0st-term",
+                "-e",
+                "/bin/sh",
+                "-c",
+                "vim \"$1\"",
+                "sh",
+                "/home/u/notes.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn files_reach_a_real_shell_as_they_are() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = std::env::temp_dir().join(format!("gh0st-argv-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let odd = [
+            "it's \"quoted\" $(touch pwned) `x`.txt".as_bytes(),
+            b"tab\there\nnewline",
+            b"\xff\xfe not utf8",
+        ];
+        let files: Vec<PathBuf> = odd
+            .iter()
+            .map(|n| d.join(std::ffi::OsStr::from_bytes(n)))
+            .collect();
+        let out = d.join("out");
+        // A third-party program that writes each argument it gets.
+        let script = d.join("put");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nfor a; do printf '%s\\0' \"$a\"; done > {}\n",
+                out.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let v = argv(
+            &app(&format!("{} %F", script.display()), false, false),
+            DEFAULT_TERMINAL,
+            &files,
+        );
+        let st = std::process::Command::new(&v[0])
+            .args(&v[1..])
+            .current_dir(&d)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        let got = std::fs::read(&out).unwrap();
+        let want: Vec<u8> = files
+            .iter()
+            .flat_map(|f| f.as_os_str().as_bytes().iter().copied().chain([0]))
+            .collect();
+        assert_eq!(got, want);
+        assert!(!d.join("pwned").exists(), "nothing in a name ran");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     fn dev() -> Devices<'static> {
