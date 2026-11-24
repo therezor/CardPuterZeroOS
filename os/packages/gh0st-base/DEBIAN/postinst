@@ -8,4 +8,9 @@ if [ "$1" = configure ]; then
         mkdir -p /var/lib/gh0st/update
         ls /usr/share/gh0st/migrations > /var/lib/gh0st/update/migrations
     fi
+    # The private MAC addresses are the image's alone now. Settings no
+    # longer writes these, so one left from before would pin its choice
+    # with nothing to change it.
+    rm -f /etc/NetworkManager/conf.d/90-gh0st-mac.conf \
+        /etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf
 fi

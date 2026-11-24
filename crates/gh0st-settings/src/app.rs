@@ -51,6 +51,8 @@ enum Ask {
     DateTime,
     HotspotName,
     HotspotPassword,
+    /// Name servers for every connection.
+    Dns,
 }
 
 /// Settings as one step of first-boot setup: one page with its label in the
@@ -662,6 +664,33 @@ impl Settings {
                 }
                 HelperCall::new(&["swappiness", word], format!("Swappiness: {word}"))
             }
+            Choice::Dns => {
+                let now = &s.nm.dns;
+                if word == "custom" {
+                    return self.ask(
+                        Dialog::Text {
+                            title: "DNS servers".into(),
+                            placeholder: "1.1.1.1, 9.9.9.9",
+                            text: now.replace(',', ", "),
+                            masked: false,
+                            secret: false,
+                        },
+                        Ask::Dns,
+                    );
+                }
+                let servers = match word {
+                    "auto" => "",
+                    w => match sysconf::DNS_PRESETS.iter().find(|(v, ..)| *v == w) {
+                        Some((_, _, servers)) => servers,
+                        None => return,
+                    },
+                };
+                if servers == now {
+                    return;
+                }
+                self.set_dns(cx, servers);
+                return;
+            }
             // Not gated: the SDK follows the key and redraws in it.
             Choice::Palette => {
                 if word != s.palette {
@@ -802,20 +831,6 @@ impl Settings {
                     ("on", "SSH on")
                 };
                 self.helper(cx, &["ssh", arg], done);
-            }
-            Setting::WifiMac => {
-                let (arg, done) = match self.state.nm.mac_private {
-                    true => ("device", "Wi-Fi uses the device's address"),
-                    false => ("stable", "An address for each network"),
-                };
-                self.helper(cx, &["mac", arg], done);
-            }
-            Setting::ScanMac => {
-                let (arg, done) = match self.state.nm.scan_random {
-                    true => ("device", "Scans use the device's address"),
-                    false => ("random", "Scans use a random address"),
-                };
-                self.helper(cx, &["scan-mac", arg], done);
             }
             Setting::SendHostname => {
                 let (arg, done) = match self.state.nm.send_hostname {
@@ -1226,6 +1241,15 @@ impl Settings {
                 }
             }
             Ask::Swap => self.set_swap(cx, text.trim()),
+            Ask::Dns => match sysconf::dns_servers(&text) {
+                Some(list) if list == self.state.nm.dns => {}
+                Some(list) => self.set_dns(cx, &list),
+                None if text.trim().is_empty() => self.set_dns(cx, ""),
+                None => {
+                    let why = format!("Up to {} IP addresses", sysconf::DNS_MAX);
+                    self.reject(cx, &why, Ask::Dns, &text);
+                }
+            },
             Ask::HotspotName => {
                 let name = text.trim();
                 if let Some(why) = hotspot::name_problem(name) {
@@ -1288,6 +1312,13 @@ impl Settings {
         self.helper_call(cx, call);
     }
 
+    /// `servers` empty takes each network's again.
+    fn set_dns(&mut self, cx: &mut Cx, servers: &str) {
+        let s = pages::dns_label(servers);
+        let arg = if servers.is_empty() { "auto" } else { servers };
+        self.helper_call(cx, HelperCall::new(&["dns", arg], format!("DNS: {s}")));
+    }
+
     fn set_conn_field(&mut self, cx: &mut Cx, name: &str, field: ConnField, text: &str) {
         let Some(c) = self.open_conn().filter(|c| c.name == name) else {
             return;
@@ -1314,12 +1345,17 @@ impl Settings {
                 let list: Vec<&str> = v.split([',', ' ']).filter(|s| !s.is_empty()).collect();
                 if list.iter().all(|s| net::valid_ipv4(s, false)) {
                     let joined = list.join(",");
-                    // Typed servers replace the ones DHCP offers.
+                    // Typed servers replace the ones the network offers,
+                    // IPv6's too, or those would still answer first.
                     let ignore = if joined.is_empty() { "no" } else { "yes" };
                     self.modify(
                         cx,
                         &c,
-                        &[("ipv4.dns", &joined), ("ipv4.ignore-auto-dns", ignore)],
+                        &[
+                            ("ipv4.dns", &joined),
+                            ("ipv4.ignore-auto-dns", ignore),
+                            ("ipv6.ignore-auto-dns", ignore),
+                        ],
                         true,
                     );
                 } else {

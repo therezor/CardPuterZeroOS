@@ -13,7 +13,9 @@ Mockups in `mockups/setup` (`cargo run -p gh0st-settings --example setup_mockups
 - A password is required. Settings has **Unlock with password** (on by default), so the
   lock screen can skip it. Settings' protected actions, sudo and SSH always ask for it.
 - Setup's privacy review and Settings > Privacy are the same rows, calling the same
-  helper verbs. Every privacy default the image ships can be switched in both.
+  helper verbs. The private MAC addresses are set by the image at install and are not
+  switches: a network that needs the device's own address sets it on its connection
+  page.
 
 ## The steps
 
@@ -53,7 +55,7 @@ spy", and 6 has a Skip chip. Esc goes back to the notice.
 |---|---|---|
 | 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. 7 Skip keeps the world country. |
 | 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. "Other" opens the region list. 7 Skip keeps the zone. |
-| 3 | Privacy | The private defaults, each switchable: Wi-Fi address per network, random address while scanning, hostname not sent, IPv6 privacy addresses, logs off. Network time and SSH are on System, the daily update check on Updates, Bluetooth on its page: each setting has one home. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
+| 3 | Privacy | The private defaults, each switchable: hostname not sent, IPv6 privacy addresses, logs off. Network time and SSH are on System, the daily update check on Updates, Bluetooth on its page: each setting has one home. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
 | 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. A cable needs no step: NetworkManager connects it as soon as it is in, before setup too, and network time then syncs (System turns it off). The address and hostname defaults cover a cable from the start. Wi-Fi goes online only here. |
 | 5 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
 | 6 | Account | The name and the password, then the password again on its own screen. |
@@ -180,10 +182,9 @@ are in `crates/gh0st/src/helper.rs`, the text in `gh0st_core::sysconf`.
 | `setup-finish` | none | Only during setup |
 | `set-time EPOCH` | the user's password | Gated. Sets the clock (`clock_settime`) and the RTC (`RTC_SET_TIME`), 2024 to 2099. `timedatectl set-time` is refused while network time is on. |
 | `ntp on\|off` | the user's password | Gated. `timedatectl set-ntp` |
-| `mac random\|stable\|device` | the user's password | Gated. `90-gh0st-mac.conf` |
-| `scan-mac random\|device` | the user's password | Gated. `90-gh0st-scan-mac.conf` |
 | `dhcp-hostname on\|off` | the user's password | Gated. `90-gh0st-dhcp-hostname.conf` |
 | `ip6-privacy on\|off` | the user's password | Gated. `90-gh0st-ip6-privacy.conf` |
+| `dns auto\|SERVERS` | the user's password | Gated. Settings > Network > DNS. Up to three IPv4 or IPv6 addresses as NetworkManager's global DNS in `90-gh0st-dns.conf`, which replaces what every network offers; `auto` removes it |
 | `update-auto on\|off` | the user's password | Gated. Enables or disables `gh0st-update-daily.timer` |
 
 The network verbs each write one whole file in `/etc/NetworkManager/conf.d`, which
@@ -222,7 +223,7 @@ chips, hint bar, menu, help and dialogs came with the design system.
   label, puts Skip on 7 or Done on 6, and has Power off in its menu. Esc on its own page
   goes back a step. It calls `cx.done()` once a country or time zone is set, or a network
   joined, after the job's success. Tests in `tests/embed.rs`.
-- `pages::privacy`: the five privacy rows, for Settings > Privacy and setup alike. The
+- `pages::privacy`: the three privacy rows, for Settings > Privacy and setup alike. The
   network rows read what NetworkManager runs with from its config files
   (`sysconf::nm_privacy`) and change through the helper verbs.
 - System > Date and time: a dialog, "2026-11-21 14:32", set through `set-time`.

@@ -292,13 +292,6 @@ fn privacy(t: &Theme, selected: usize) -> Canvas {
     let mut c = frame(t);
     top(&mut c, t, "shield", "Privacy", &setup(3), Net::None);
     let items = [
-        row(t, "wifi", "Private Wi-Fi address", Trailing::Toggle(true)),
-        row(
-            t,
-            "search",
-            "Random address in scans",
-            Trailing::Toggle(true),
-        ),
         row(t, "tag", "Send device name", Trailing::Toggle(false)),
         row(t, "globe", "IPv6 privacy address", Trailing::Toggle(true)),
         row(t, "hard-drive", "Keep logs", Trailing::ValueChevron("Off")),
@@ -640,7 +633,7 @@ const SCREENS: &[Screen] = &[
         privacy(t, 0)
     }),
     ("20-privacy-logs", "Keep logs opens its list", |t| {
-        privacy(t, 4)
+        privacy(t, 2)
     }),
     ("21-network", "Enter joins, 5 Scan, 7 Skip", network),
     (

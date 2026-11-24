@@ -148,11 +148,10 @@ fn sample_state() -> State {
         ssh: false,
         logs: Logs::Off,
         nm: sysconf::NmPrivacy {
-            mac_private: true,
-            scan_random: true,
             send_hostname: false,
             ip6_privacy: true,
             wifi_powersave: true,
+            dns: String::new(),
         },
         lock_password: true,
         lock_after: 300,
@@ -371,6 +370,12 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                     ),
                 ),
                 ("network", s(PageId::Network, 0)),
+                ("dns", s(PageId::Choose(Choice::Dns), 2)),
+                ("dns-custom", {
+                    let mut st = sample_state();
+                    st.nm.dns = "192.168.1.1".into();
+                    scene(&t, &st, PageId::Choose(Choice::Dns), 3, None)
+                }),
                 ("connection", s(PageId::Conn("HomeNet".into()), 1)),
                 ("wifi-end", s(PageId::Wifi, 6)),
                 ("hotspot", s(PageId::Hotspot, 0)),

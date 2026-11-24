@@ -77,9 +77,6 @@ pub enum Setting {
     ConnMethod,
     ConnMac,
     Ssh,
-    /// One address per network, not the device's own.
-    WifiMac,
-    ScanMac,
     SendHostname,
     Ip6Privacy,
     /// The lock screen asks for the password.
@@ -110,6 +107,8 @@ pub enum Choice {
     Compression,
     Swappiness,
     Palette,
+    /// Name servers for every connection: the network's, a preset, typed.
+    Dns,
 }
 
 /// Something Enter starts that is not a value.
@@ -447,7 +446,7 @@ pub fn chips(
 pub fn icon(id: &PageId) -> &'static str {
     match id {
         PageId::Wifi | PageId::Conn(_) => "wifi",
-        PageId::Network => "network",
+        PageId::Network | PageId::Choose(Choice::Dns) => "network",
         PageId::Bluetooth => "bluetooth",
         PageId::Display => "sun",
         PageId::Sound => "volume-2",

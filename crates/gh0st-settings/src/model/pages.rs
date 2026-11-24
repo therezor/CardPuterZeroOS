@@ -583,6 +583,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
                 Choice::Compression => "Compression",
                 Choice::Swappiness => "Swappiness",
                 Choice::Palette => "Palette",
+                Choice::Dns => "DNS",
             },
             Body::List(options(s, *c)),
             vec![],
@@ -797,53 +798,66 @@ fn hotspot_qr(s: &State) -> Body {
     }
 }
 
-/// One row per device. Enter opens its connection: the active one, or for a
-/// wired port with no cable, the saved wired profile.
+/// What the global DNS row shows.
+pub fn dns_label(dns: &str) -> String {
+    if dns.is_empty() {
+        return "Automatic".into();
+    }
+    sysconf::dns_preset(dns).map_or_else(|| dns.replace(',', ", "), str::to_string)
+}
+
+/// DNS for every connection, then one row per device. Wi-Fi opens the
+/// Wi-Fi page, where its networks and their settings live. A cable opens
+/// its connection: the active one, or with no cable, the saved profile.
 fn network(s: &State) -> Vec<Item> {
-    s.ifaces
-        .iter()
-        .map(|i| {
-            let wifi = i.name.starts_with("wl");
-            if i.connection == hotspot::CONN {
-                return Item::new(
-                    "radio-tower",
-                    format!("{} \u{00b7} Hotspot", i.name),
-                    Value::TextChevron(hotspot::ADDRESS.into()),
-                    Act::Open(PageId::Hotspot),
-                );
-            }
-            let profile = if !i.connection.is_empty() {
-                Some(i.connection.clone())
-            } else if !wifi {
-                s.conns
-                    .iter()
-                    .find(|(_, t)| t == "802-3-ethernet")
-                    .map(|(n, _)| n.clone())
+    let dns = Item::new(
+        "globe",
+        "DNS",
+        Value::TextChevron(dns_label(&s.nm.dns)),
+        Act::Open(PageId::Choose(Choice::Dns)),
+    );
+    let devices = s.ifaces.iter().map(|i| {
+        let wifi = i.name.starts_with("wl");
+        if i.connection == hotspot::CONN {
+            return Item::new(
+                "radio-tower",
+                format!("{} \u{00b7} Hotspot", i.name),
+                Value::TextChevron(hotspot::ADDRESS.into()),
+                Act::Open(PageId::Hotspot),
+            );
+        }
+        let open = if wifi {
+            Some(PageId::Wifi)
+        } else if !i.connection.is_empty() {
+            Some(PageId::Conn(i.connection.clone()))
+        } else {
+            s.conns
+                .iter()
+                .find(|(_, t)| t == "802-3-ethernet")
+                .map(|(n, _)| PageId::Conn(n.clone()))
+        };
+        let value = if i.ipv4.is_empty() {
+            i.state.clone()
+        } else {
+            i.ipv4.split('/').next().unwrap_or(&i.ipv4).to_string()
+        };
+        Item {
+            icon: Some(if wifi { "wifi" } else { "ethernet-port" }),
+            label: if i.connection.is_empty() {
+                i.name.clone()
             } else {
-                None
-            };
-            let value = if i.ipv4.is_empty() {
-                i.state.clone()
+                format!("{} \u{00b7} {}", i.name, i.connection)
+            },
+            value: if open.is_some() {
+                Value::TextChevron(value)
             } else {
-                i.ipv4.split('/').next().unwrap_or(&i.ipv4).to_string()
-            };
-            Item {
-                icon: Some(if wifi { "wifi" } else { "ethernet-port" }),
-                label: if i.connection.is_empty() {
-                    i.name.clone()
-                } else {
-                    format!("{} \u{00b7} {}", i.name, i.connection)
-                },
-                value: if profile.is_some() {
-                    Value::TextChevron(value)
-                } else {
-                    Value::Text(value)
-                },
-                act: profile.map_or(Act::None, |p| Act::Open(PageId::Conn(p))),
-                danger: false,
-            }
-        })
-        .collect()
+                Value::Text(value)
+            },
+            act: open.map_or(Act::None, Act::Open),
+            danger: false,
+        }
+    });
+    std::iter::once(dns).chain(devices).collect()
 }
 
 fn conn(s: &State, name: &str) -> Vec<Item> {
@@ -891,12 +905,17 @@ fn conn(s: &State, name: &str) -> Vec<Item> {
             )),
             Act::Run(Command::ConnEdit(ConnField::Gateway)),
         ),
-        Item::new(
-            "",
-            "DNS",
-            Value::TextChevron(shown(&c.dns, "Automatic")),
-            Act::Run(Command::ConnEdit(ConnField::Dns)),
-        ),
+        // DNS for every connection takes the place of this one's.
+        if s.nm.dns.is_empty() {
+            Item::new(
+                "",
+                "DNS",
+                Value::TextChevron(shown(&c.dns, "Automatic")),
+                Act::Run(Command::ConnEdit(ConnField::Dns)),
+            )
+        } else {
+            Item::new("", "DNS", Value::Off("set in Network"), Act::None)
+        },
         Item::new(
             "shield",
             "MAC address",
@@ -973,22 +992,11 @@ fn bluetooth(s: &State) -> Vec<Item> {
 /// The private defaults, each switchable. Settings > Privacy and setup's
 /// privacy step show the same rows. Each setting has one home: SSH and
 /// network time are on System, Bluetooth on its page, the daily update
-/// check on Updates.
+/// check on Updates. The private MAC addresses are the image's, set at
+/// install, and a network's own choice is on its connection page.
 pub fn privacy(s: &State) -> Vec<Item> {
     let set = |icon, label, on, what| Item::new(icon, label, Value::Toggle(on), Act::Set(what));
     vec![
-        set(
-            "wifi",
-            "Private Wi-Fi address",
-            s.nm.mac_private,
-            Setting::WifiMac,
-        ),
-        set(
-            "search",
-            "Random address in scans",
-            s.nm.scan_random,
-            Setting::ScanMac,
-        ),
         set(
             "tag",
             "Send device name",
@@ -1415,6 +1423,26 @@ fn options(s: &State, c: Choice) -> Vec<Item> {
                 )
             })
             .collect(),
+        Choice::Dns => {
+            let custom = !s.nm.dns.is_empty() && sysconf::dns_preset(&s.nm.dns).is_none();
+            let mut v = vec![row(
+                "Automatic".into(),
+                "The network's",
+                "auto".into(),
+                s.nm.dns.is_empty(),
+            )];
+            for (verb, label, servers) in sysconf::DNS_PRESETS {
+                let first = servers.split(',').next().unwrap_or(servers);
+                v.push(row(label.into(), first, verb.into(), s.nm.dns == servers));
+            }
+            let note = if custom {
+                s.nm.dns.as_str()
+            } else {
+                "Type them"
+            };
+            v.push(row("Custom".into(), note, "custom".into(), custom));
+            v
+        }
         Choice::Palette => s
             .palettes
             .iter()
@@ -1650,7 +1678,63 @@ mod tests {
             ..Iface::default()
         }];
         let p = build(&PageId::Network, &s);
-        assert_eq!(p.item(0).unwrap().act, Act::Open(PageId::Hotspot));
+        assert_eq!(p.item(1).unwrap().act, Act::Open(PageId::Hotspot));
+    }
+
+    #[test]
+    fn network_has_dns_and_leaves_wifi_to_its_page() {
+        let mut s = state();
+        s.ifaces = vec![
+            Iface {
+                name: "wlan0".into(),
+                connection: "HomeNet".into(),
+                ipv4: "192.168.1.42/24".into(),
+                ..Iface::default()
+            },
+            Iface {
+                name: "eth0".into(),
+                state: "unavailable".into(),
+                ..Iface::default()
+            },
+        ];
+        s.conns = vec![("Wired connection 1".into(), "802-3-ethernet".into())];
+        let p = build(&PageId::Network, &s);
+        let dns = p.item(0).unwrap();
+        assert_eq!(dns.act, Act::Open(PageId::Choose(Choice::Dns)));
+        assert_eq!(dns.value, Value::TextChevron("Automatic".into()));
+        assert_eq!(p.item(1).unwrap().act, Act::Open(PageId::Wifi));
+        assert_eq!(
+            p.item(2).unwrap().act,
+            Act::Open(PageId::Conn("Wired connection 1".into()))
+        );
+    }
+
+    #[test]
+    fn dns_for_every_connection_names_its_choice() {
+        let mut s = state();
+        let checked = |s: &State| {
+            let p = build(&PageId::Choose(Choice::Dns), s);
+            (0..p.len())
+                .find(|&i| p.item(i).unwrap().icon == Some("check"))
+                .map(|i| p.item(i).unwrap().label.clone())
+        };
+        assert_eq!(checked(&s).as_deref(), Some("Automatic"));
+        s.nm.dns = sysconf::DNS_PRESETS[1].2.into();
+        assert_eq!(checked(&s).as_deref(), Some("Quad9"));
+        assert_eq!(dns_label(&s.nm.dns), "Quad9");
+        s.nm.dns = "192.168.1.1".into();
+        assert_eq!(checked(&s).as_deref(), Some("Custom"));
+        assert_eq!(dns_label(&s.nm.dns), "192.168.1.1");
+        // A connection's own DNS gives way to it.
+        s.conn = Some(Conn {
+            name: "HomeNet".into(),
+            ..Conn::default()
+        });
+        let p = build(&PageId::Conn("HomeNet".into()), &s);
+        let row = (0..p.len())
+            .map(|i| p.item(i).unwrap())
+            .find(|i| i.label == "DNS");
+        assert_eq!(row.unwrap().value, Value::Off("set in Network"));
     }
 
     #[test]
@@ -1868,11 +1952,10 @@ mod tests {
     fn privacy_shows_every_private_default_as_a_switch() {
         let mut s = state();
         s.nm = NmPrivacy {
-            mac_private: true,
-            scan_random: true,
             send_hostname: false,
             ip6_privacy: true,
             wifi_powersave: true,
+            dns: String::new(),
         };
         let p = build(&PageId::Privacy, &s);
         let labels: Vec<&str> = (0..p.len())
@@ -1880,17 +1963,11 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            [
-                "Private Wi-Fi address",
-                "Random address in scans",
-                "Send device name",
-                "IPv6 privacy address",
-                "Keep logs",
-            ]
+            ["Send device name", "IPv6 privacy address", "Keep logs"]
         );
-        let on: Vec<Value> = (0..4).map(|i| p.item(i).unwrap().value.clone()).collect();
-        assert_eq!(on, [true, true, false, true].map(Value::Toggle).to_vec());
-        assert_eq!(p.item(1).unwrap().act, Act::Set(Setting::ScanMac));
+        let on: Vec<Value> = (0..2).map(|i| p.item(i).unwrap().value.clone()).collect();
+        assert_eq!(on, [false, true].map(Value::Toggle).to_vec());
+        assert_eq!(p.item(1).unwrap().act, Act::Set(Setting::Ip6Privacy));
     }
 
     /// Each setting has one home, so no row's action shows up on two pages.

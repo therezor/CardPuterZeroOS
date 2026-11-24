@@ -13,10 +13,9 @@
 //!     gh0st-helper swappiness 0..200             password
 //!     gh0st-helper set-time EPOCH                password
 //!     gh0st-helper ntp on|off                    password
-//!     gh0st-helper mac random|stable|device      password
-//!     gh0st-helper scan-mac random|device        password
 //!     gh0st-helper dhcp-hostname on|off          password
 //!     gh0st-helper ip6-privacy on|off            password
+//!     gh0st-helper dns auto|SERVERS              password
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper usb-power on|off
 //!     gh0st-helper wifi-powersave on|off
@@ -50,7 +49,7 @@ use crate::auth::{self, Auth};
 use gh0st_core::hotspot::{self, Profile, Security};
 use gh0st_core::rfkill::{self, Radio};
 use gh0st_core::store::{self, Job, Mirror, Request};
-use gh0st_core::sysconf::{self, CpuMode, MacPolicy};
+use gh0st_core::sysconf::{self, CpuMode};
 use std::ffi::CString;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, FileExt, PermissionsExt};
@@ -101,10 +100,10 @@ pub enum Verb {
     Swappiness(u32),
     SetTime(i64),
     Ntp(bool),
-    Mac(MacPolicy),
-    ScanMac(bool),
     DhcpHostname(bool),
     Ip6Privacy(bool),
+    /// Name servers for every connection, checked; None takes each network's.
+    Dns(Option<String>),
     Rfkill(Radio, bool),
     /// The built-in Ethernet chip may suspend.
     UsbPower(bool),
@@ -152,10 +151,9 @@ impl Verb {
             | Verb::Swappiness(_)
             | Verb::SetTime(_)
             | Verb::Ntp(_)
-            | Verb::Mac(_)
-            | Verb::ScanMac(_)
             | Verb::DhcpHostname(_)
             | Verb::Ip6Privacy(_)
+            | Verb::Dns(_)
             | Verb::UpdateInstall
             | Verb::UpdateAuto(_)
             | Verb::UpdateChannel(_)
@@ -210,11 +208,10 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["swappiness", n] => Verb::Swappiness(number(n, sysconf::SWAPPINESS_MAX)?),
         ["set-time", n] => Verb::SetTime(epoch(n)?),
         ["ntp", s] => Verb::Ntp(on(s)?),
-        ["mac", m] => Verb::Mac(MacPolicy::from_verb(m)?),
-        ["scan-mac", "random"] => Verb::ScanMac(true),
-        ["scan-mac", "device"] => Verb::ScanMac(false),
         ["dhcp-hostname", s] => Verb::DhcpHostname(on(s)?),
         ["ip6-privacy", s] => Verb::Ip6Privacy(on(s)?),
+        ["dns", "auto"] => Verb::Dns(None),
+        ["dns", list] => Verb::Dns(Some(sysconf::dns_servers(list)?)),
         ["user-create", n] if sysconf::valid_user_name(n) => Verb::UserCreate(n.to_string()),
         ["setup-finish"] => Verb::SetupFinish,
         ["rfkill", "bluetooth", s] => Verb::Rfkill(Radio::Bluetooth, on(s)?),
@@ -547,6 +544,22 @@ fn write_nm(path: &str, text: &str) -> Result<(), String> {
     run(&["nmcli", "general", "reload", "conf"])
 }
 
+/// The global DNS file, or none, then resolv.conf written again from it.
+fn set_dns(servers: Option<&str>) -> Result<(), String> {
+    let path = sysconf::NM_DNS_DROPIN;
+    match servers {
+        Some(s) => write_conf(path, &sysconf::dns_conf(s))?,
+        None => match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("{path}: {e}"));
+            }
+            _ => {}
+        },
+    }
+    run(&["nmcli", "general", "reload", "conf"])?;
+    run(&["nmcli", "general", "reload", "dns-rc"])
+}
+
 /// The system clock now, and the RTC when there is one, so the time
 /// survives a power cut before network time.
 #[cfg(target_os = "linux")]
@@ -809,10 +822,6 @@ fn act(v: Verb) -> Result<(), String> {
         Verb::Swappiness(n) => set_swappiness(n),
         Verb::SetTime(t) => set_time(t),
         Verb::Ntp(on) => run(&["timedatectl", "set-ntp", if on { "true" } else { "false" }]),
-        Verb::Mac(p) => write_nm(sysconf::NM_MAC_DROPIN, &p.conf()),
-        Verb::ScanMac(random) => {
-            write_nm(sysconf::NM_SCAN_MAC_DROPIN, &sysconf::scan_mac_conf(random))
-        }
         Verb::DhcpHostname(send) => write_nm(
             sysconf::NM_HOSTNAME_DROPIN,
             &sysconf::dhcp_hostname_conf(send),
@@ -821,6 +830,7 @@ fn act(v: Verb) -> Result<(), String> {
             sysconf::NM_IP6_PRIVACY_DROPIN,
             &sysconf::ip6_privacy_conf(on),
         ),
+        Verb::Dns(servers) => set_dns(servers.as_deref()),
         Verb::UserCreate(name) => {
             let mut password = auth::read_password();
             let r = user_create(&name, &password);
@@ -1001,8 +1011,8 @@ pub fn main(args: &[String]) -> i32 {
             "usage: gh0st-helper logs off|ram|persistent | ssh on|off | gpu-mem 16..256 | \
              regdom XX | cpu balanced|power-saver|performance | hostname NAME | swap MB | \
              swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | set-time EPOCH | ntp on|off | \
-             mac random|stable|device | scan-mac random|device | dhcp-hostname on|off | \
-             ip6-privacy on|off | rfkill bluetooth|wlan on|off | usb-power on|off | \
+             dhcp-hostname on|off | \
+             ip6-privacy on|off | dns auto|SERVERS | rfkill bluetooth|wlan on|off | usb-power on|off | \
              wifi-powersave on|off | hotspot on|off | hotspot name NAME | hotspot password | \
              hotspot security wpa3|mixed | power off|reboot | update-check | update-install | \
              update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
@@ -1133,17 +1143,17 @@ mod tests {
         );
         assert_eq!(parse(&args("ntp off")), Some(Verb::Ntp(false)));
         assert_eq!(
-            parse(&args("mac stable")),
-            Some(Verb::Mac(MacPolicy::Stable))
-        );
-        assert_eq!(parse(&args("scan-mac device")), Some(Verb::ScanMac(false)));
-        assert_eq!(
             parse(&args("dhcp-hostname on")),
             Some(Verb::DhcpHostname(true))
         );
         assert_eq!(
             parse(&args("ip6-privacy off")),
             Some(Verb::Ip6Privacy(false))
+        );
+        assert_eq!(parse(&args("dns auto")), Some(Verb::Dns(None)));
+        assert_eq!(
+            parse(&args("dns 9.9.9.9,2620:fe::fe")),
+            Some(Verb::Dns(Some("9.9.9.9,2620:fe::fe".into())))
         );
         assert_eq!(
             parse(&args("user-create alex")),
@@ -1242,9 +1252,12 @@ mod tests {
             "set-time 9999999999",
             "set-time 1795000000.5",
             "ntp maybe",
-            "mac stable-ssid",
-            "mac",
-            "scan-mac on",
+            "mac random",
+            "scan-mac random",
+            "dns",
+            "dns 9.9.9.9;reboot",
+            "dns ../etc",
+            "dns 1.1.1.1,1.0.0.1,9.9.9.9,8.8.8.8",
             "dhcp-hostname yes",
             "ip6-privacy 2",
             "user-create",
@@ -1278,10 +1291,10 @@ mod tests {
             ("swappiness 100", true),
             ("set-time 1795000000", true),
             ("ntp on", true),
-            ("mac random", true),
-            ("scan-mac random", true),
             ("dhcp-hostname off", true),
             ("ip6-privacy on", true),
+            ("dns auto", true),
+            ("dns 9.9.9.9", true),
             ("rfkill wlan on", false),
             ("usb-power on", false),
             ("wifi-powersave on", false),
@@ -1320,7 +1333,7 @@ mod tests {
         for verb in ["user-create alex", "setup-finish"] {
             assert!(parse(&args(verb)).unwrap().setup_only(), "{verb}");
         }
-        for verb in ["hostname zero", "ssh on", "power off", "mac random"] {
+        for verb in ["hostname zero", "ssh on", "power off", "ip6-privacy on"] {
             assert!(!parse(&args(verb)).unwrap().setup_only(), "{verb}");
         }
     }

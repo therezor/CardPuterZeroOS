@@ -420,60 +420,11 @@ pub fn usb_power_rule(save: bool) -> String {
     )
 }
 
-pub const NM_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-mac.conf";
-pub const NM_SCAN_MAC_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf";
 pub const NM_HOSTNAME_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-dhcp-hostname.conf";
 pub const NM_IP6_PRIVACY_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-ip6-privacy.conf";
 pub const NM_POWERSAVE_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-wifi-powersave.conf";
+pub const NM_DNS_DROPIN: &str = "/etc/NetworkManager/conf.d/90-gh0st-dns.conf";
 const NM_HEADER: &str = "# Settings > Privacy.\n";
-
-/// The hardware address a connection shows the network.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MacPolicy {
-    /// A new one each time it connects.
-    Random,
-    /// One per network, the same each time: the image's default.
-    Stable,
-    /// The device's own.
-    Device,
-}
-
-impl MacPolicy {
-    pub fn from_verb(s: &str) -> Option<MacPolicy> {
-        Some(match s {
-            "random" => MacPolicy::Random,
-            "stable" => MacPolicy::Stable,
-            "device" => MacPolicy::Device,
-            _ => return None,
-        })
-    }
-
-    pub fn verb(self) -> &'static str {
-        match self {
-            MacPolicy::Random => "random",
-            MacPolicy::Stable => "stable",
-            MacPolicy::Device => "device",
-        }
-    }
-
-    pub fn conf(self) -> String {
-        let (wifi, ethernet) = match self {
-            MacPolicy::Random => ("random", "random"),
-            MacPolicy::Stable => ("stable-ssid", "stable"),
-            MacPolicy::Device => ("permanent", "permanent"),
-        };
-        format!(
-            "{NM_HEADER}[connection]\nwifi.cloned-mac-address={wifi}\n\
-             ethernet.cloned-mac-address={ethernet}\n"
-        )
-    }
-}
-
-/// A random address while scanning for networks.
-pub fn scan_mac_conf(random: bool) -> String {
-    let v = if random { "yes" } else { "no" };
-    format!("{NM_HEADER}[device]\nwifi.scan-rand-mac-address={v}\n")
-}
 
 /// Whether DHCP tells the network this device's name.
 pub fn dhcp_hostname_conf(send: bool) -> String {
@@ -486,6 +437,45 @@ pub fn dhcp_hostname_conf(send: bool) -> String {
 pub fn ip6_privacy_conf(on: bool) -> String {
     let v = if on { 2 } else { 0 };
     format!("{NM_HEADER}[connection]\nipv6.ip6-privacy={v}\n")
+}
+
+/// Name servers for every connection, picked by name in Settings: (verb,
+/// label, servers). Neither logs who asks, by their own policies.
+pub const DNS_PRESETS: [(&str, &str, &str); 2] = [
+    (
+        "cloudflare",
+        "Cloudflare",
+        "1.1.1.1,1.0.0.1,2606:4700:4700::1111",
+    ),
+    ("quad9", "Quad9", "9.9.9.9,149.112.112.112,2620:fe::fe"),
+];
+
+/// glibc reads three name servers (`MAXNS`).
+pub const DNS_MAX: usize = 3;
+
+/// A list of name servers, split on commas and spaces, each an IPv4 or
+/// IPv6 address, written back the way the address prints. None if any
+/// is not an address, or there are none or too many.
+pub fn dns_servers(list: &str) -> Option<String> {
+    let mut out = Vec::new();
+    for s in list.split([',', ' ']).filter(|s| !s.is_empty()) {
+        out.push(s.parse::<std::net::IpAddr>().ok()?.to_string());
+    }
+    (!out.is_empty() && out.len() <= DNS_MAX).then(|| out.join(","))
+}
+
+/// Name servers for every connection. NetworkManager's global DNS takes
+/// the place of what each network offers, and of a server a profile names.
+pub fn dns_conf(servers: &str) -> String {
+    format!("# Settings > Network > DNS.\n[global-dns-domain-*]\nservers={servers}\n")
+}
+
+/// The preset these servers are, by label.
+pub fn dns_preset(servers: &str) -> Option<&'static str> {
+    DNS_PRESETS
+        .iter()
+        .find(|(_, _, s)| *s == servers)
+        .map(|(_, label, _)| *label)
 }
 
 /// Wi-Fi power saving for every connection: 3 on, 2 off. It applies from
@@ -523,23 +513,22 @@ pub fn nm_conf_order(files: &[Vec<String>]) -> Vec<std::path::PathBuf> {
 
 /// The privacy settings NetworkManager runs with, from its config files'
 /// text in read order. Unset ones take NetworkManager's own defaults: the
-/// device's address, a random one while scanning, the name sent, no IPv6
-/// temporary addresses.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// name sent, no IPv6 temporary addresses. The private MAC addresses are
+/// the image's alone (`50-gh0st.conf`), so they are not read here.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NmPrivacy {
-    pub mac_private: bool,
-    pub scan_random: bool,
     pub send_hostname: bool,
     pub ip6_privacy: bool,
     /// Not privacy, but read from the same files: Wi-Fi power saving, on
     /// unless a file says 2 (brcmfmac turns it on by itself).
     pub wifi_powersave: bool,
+    /// The global DNS servers, comma-separated; empty takes each network's.
+    pub dns: String,
 }
 
 pub fn nm_privacy(files: &[String]) -> NmPrivacy {
-    let mut wifi_mac = String::new();
-    let (mut scan, mut v4_name, mut ip6) = (String::new(), String::new(), String::new());
-    let mut powersave = String::new();
+    let (mut v4_name, mut ip6) = (String::new(), String::new());
+    let (mut powersave, mut dns) = (String::new(), String::new());
     for text in files {
         let mut section = "";
         for line in text.lines() {
@@ -553,11 +542,10 @@ pub fn nm_privacy(files: &[String]) -> NmPrivacy {
             };
             let v = v.trim().to_string();
             match (section, k.trim()) {
-                ("connection", "wifi.cloned-mac-address") => wifi_mac = v,
-                ("device", "wifi.scan-rand-mac-address") => scan = v,
                 ("connection", "ipv4.dhcp-send-hostname") => v4_name = v,
                 ("connection", "ipv6.ip6-privacy") => ip6 = v,
                 ("connection", "wifi.powersave") => powersave = v,
+                ("global-dns-domain-*", "servers") => dns = v,
                 _ => {}
             }
         }
@@ -567,11 +555,10 @@ pub fn nm_privacy(files: &[String]) -> NmPrivacy {
         _ => matches!(v, "yes" | "true" | "1" | "on"),
     };
     NmPrivacy {
-        mac_private: matches!(wifi_mac.as_str(), "stable-ssid" | "stable" | "random"),
-        scan_random: yes(&scan, true),
         send_hostname: yes(&v4_name, true),
         ip6_privacy: matches!(ip6.as_str(), "1" | "2"),
         wifi_powersave: powersave != "2",
+        dns,
     }
 }
 
@@ -808,29 +795,36 @@ mod tests {
         assert_eq!(CpuMode::from_governor("ondemand\n"), None);
     }
     #[test]
-    fn each_mac_policy_writes_both_kinds_of_connection() {
-        let c = MacPolicy::Stable.conf();
-        assert!(c.contains("wifi.cloned-mac-address=stable-ssid\n"));
-        assert!(c.contains("ethernet.cloned-mac-address=stable\n"));
-        assert!(
-            MacPolicy::Device
-                .conf()
-                .contains("wifi.cloned-mac-address=permanent")
-        );
-        for p in [MacPolicy::Random, MacPolicy::Stable, MacPolicy::Device] {
-            assert_eq!(MacPolicy::from_verb(p.verb()), Some(p));
-        }
-        assert_eq!(MacPolicy::from_verb("stable-ssid"), None);
-    }
-
-    #[test]
     fn the_privacy_files_say_what_they_set() {
-        assert!(scan_mac_conf(false).contains("[device]\nwifi.scan-rand-mac-address=no\n"));
         let h = dhcp_hostname_conf(false);
         assert!(h.contains("ipv4.dhcp-send-hostname=false\n"));
         assert!(h.contains("ipv6.dhcp-send-hostname=false\n"));
         assert!(ip6_privacy_conf(true).contains("ipv6.ip6-privacy=2\n"));
         assert!(ip6_privacy_conf(false).contains("ipv6.ip6-privacy=0\n"));
+    }
+
+    #[test]
+    fn dns_servers_are_addresses_and_read_back() {
+        assert_eq!(
+            dns_servers(" 1.1.1.1, 2606:4700:4700::1111 ").as_deref(),
+            Some("1.1.1.1,2606:4700:4700::1111")
+        );
+        for bad in [
+            "",
+            "1.1.1",
+            "dns.example",
+            "1.1.1.1;x",
+            "1.1.1.1,2.2.2.2,3.3.3.3,4.4.4.4",
+        ] {
+            assert_eq!(dns_servers(bad), None, "{bad}");
+        }
+        for (_, label, servers) in DNS_PRESETS {
+            assert_eq!(dns_servers(servers).as_deref(), Some(servers));
+            assert_eq!(dns_preset(servers), Some(label));
+        }
+        let p = nm_privacy(&[dns_conf("9.9.9.9")]);
+        assert_eq!(p.dns, "9.9.9.9");
+        assert!(dns_conf("9.9.9.9").contains("[global-dns-domain-*]\nservers=9.9.9.9\n"));
     }
 
     #[test]
@@ -880,26 +874,23 @@ mod tests {
         assert_eq!(
             p,
             NmPrivacy {
-                mac_private: true,
-                scan_random: true,
                 send_hostname: false,
                 ip6_privacy: true,
-                wifi_powersave: true
+                wifi_powersave: true,
+                dns: String::new(),
             }
         );
-        let ours = MacPolicy::Device.conf() + &dhcp_hostname_conf(true);
-        let p = nm_privacy(&[image.into(), ours]);
-        assert!(!p.mac_private && p.send_hostname && p.ip6_privacy);
+        let p = nm_privacy(&[image.into(), dhcp_hostname_conf(true)]);
+        assert!(p.send_hostname && p.ip6_privacy);
         // Stock ships none of these: NetworkManager's defaults.
         let stock = nm_privacy(&["[main]\nplugins=ifupdown,keyfile\n".into()]);
         assert_eq!(
             stock,
             NmPrivacy {
-                mac_private: false,
-                scan_random: true,
                 send_hostname: true,
                 ip6_privacy: false,
-                wifi_powersave: true
+                wifi_powersave: true,
+                dns: String::new(),
             }
         );
         let off = nm_privacy(&[image.into(), wifi_powersave_conf(false)]);
@@ -907,7 +898,7 @@ mod tests {
         let on = nm_privacy(&[wifi_powersave_conf(false), wifi_powersave_conf(true)]);
         assert!(on.wifi_powersave);
         // A key in the wrong section is not that setting.
-        assert!(!nm_privacy(&["[device]\nwifi.cloned-mac-address=random\n".into()]).mac_private);
+        assert!(!nm_privacy(&["[device]\nipv6.ip6-privacy=2\n".into()]).ip6_privacy);
     }
     #[test]
     fn zones_come_from_the_country_s_lines() {
