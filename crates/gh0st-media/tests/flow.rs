@@ -28,7 +28,10 @@ fn a_file_given_opens_on_the_whole_screen() {
     // A whole-screen picture covers the top bar's rows: a 4:3 photo is
     // as tall as the screen, black either side.
     let f = d.frame();
-    assert!((140..180).all(|x| f.get(x, 2) != 0), "the picture reaches the top");
+    assert!(
+        (140..180).all(|x| f.get(x, 2) != 0),
+        "the picture reaches the top"
+    );
     assert!((0..40).all(|x| f.get(x, 85) == 0), "black beside it");
     assert!(d.toast().is_none());
 }

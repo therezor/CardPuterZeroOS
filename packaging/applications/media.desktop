@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Media
+Comment=Pictures, video and music
+Exec=/usr/bin/gh0st-media %f
+Icon=gh0st:images
+Terminal=false
+TryExec=/usr/libexec/gh0st-mediad
+MimeType=image/*;video/*;audio/*;application/vnd.rn-realmedia;application/vnd.ms-asf;
+X-Gh0st-Bars=none
+X-Gh0st-Background=true

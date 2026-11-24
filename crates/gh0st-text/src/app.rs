@@ -978,6 +978,33 @@ impl Page for Editor {
         }
     }
 
+    /// A file another app opened here while this one runs.
+    fn opened(&mut self, paths: &[PathBuf], cx: &mut Cx) {
+        let Some(p) = paths.first() else {
+            return;
+        };
+        if self.path.as_deref() == Some(p.as_path()) {
+            return;
+        }
+        if self.dirty() || self.saving.is_some() {
+            cx.toast("Save this file first, then open the other again");
+            return;
+        }
+        // Let go of this file: its index, find, watch.
+        if let Some(t) = self.index.take() {
+            cx.cancel(t);
+        }
+        if let Some((_, t)) = self.finder.take() {
+            cx.cancel(t);
+        }
+        if let Some((_, w)) = self.watch.take() {
+            cx.unwatch(w);
+        }
+        *self = Editor::open(Some(p), self.opts.clone());
+        self.start(cx);
+        cx.redraw();
+    }
+
     fn start(&mut self, cx: &mut Cx) {
         let s = cx.settings();
         self.model = match self.opts.keys {

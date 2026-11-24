@@ -1278,6 +1278,15 @@ impl Page for Media {
         }
     }
 
+    /// A file to show: the one the app was started with, or one another
+    /// app opened here while this one runs.
+    fn opened(&mut self, paths: &[PathBuf], cx: &mut Cx) {
+        if let Some(p) = paths.first() {
+            self.open_given(p.clone(), cx);
+            cx.redraw();
+        }
+    }
+
     fn stop(&mut self, cx: &mut Cx) {
         self.quitting = true;
         self.save(cx);
