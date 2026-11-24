@@ -9,6 +9,8 @@ pub mod lock;
 pub mod motion;
 pub mod notices;
 pub mod overlay;
+pub mod prompt;
 pub mod run;
+pub mod services;
 pub mod switcher;
 pub mod tasks;

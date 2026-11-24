@@ -10,6 +10,7 @@
 
 use gh0st_core::usage::{AppUsage, SystemUsage};
 use gh0st_shell::home::{self, Entry, Home, Icon, Layout, Size};
+use gh0st_shell::prompt::{self, Ask, Kind, Origin};
 use gh0st_shell::switcher::{self, Card, Switcher};
 use gh0st_ui::Canvas;
 use gh0st_ui::color::{Color, hex};
@@ -289,6 +290,36 @@ fn lock(t: &Theme, field: Option<usize>, ready: bool, note: Option<(Tone, &str)>
     c
 }
 
+/// A keyring question, as the shell asks it.
+fn ask(t: &Theme, origin: Origin, kind: Kind, typed: usize, checking: bool, wrong: bool) -> Canvas {
+    let mut s = status(&[], None, "Keyring");
+    s.icon = "key-round";
+    let a = Ask { origin, kind };
+    let v = prompt::View {
+        ask: &a,
+        typed,
+        checking,
+        wrong,
+    };
+    let mut c = grounded(t, true);
+    prompt::draw(&mut c, t, &s, &v);
+    c
+}
+
+fn approve() -> Kind {
+    Kind::Approve {
+        app: "Chromium".into(),
+        what: "read \u{201c}GitHub token\u{201d}".into(),
+    }
+}
+
+fn password(reason: &str) -> Kind {
+    Kind::Password {
+        reason: reason.into(),
+        retry: false,
+    }
+}
+
 /// Home's menu with Lock selected.
 fn home_menu(t: &Theme, stock: Option<&Path>) -> Canvas {
     let mut c = home(t, stock, Layout::Grid, None);
@@ -383,6 +414,21 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
             ("home-list", home(&t, stock, Layout::List, None)),
             ("switcher", switcher_scene(&t, stock, 2, 1)),
             ("lock", lock(&t, None, true, None)),
+            (
+                "prompt-approve",
+                ask(&t, Origin::Daemon(1), approve(), 0, false, false),
+            ),
+            (
+                "prompt-password",
+                ask(
+                    &t,
+                    Origin::Daemon(2),
+                    password("git-credential-libsecret wants the keyring"),
+                    6,
+                    false,
+                    false,
+                ),
+            ),
         ];
         if all || palette.name == "Mint" {
             scenes.extend([
@@ -428,6 +474,45 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                     lock(&t, None, true, Some((Tone::Info, "2 notifications"))),
                 ),
                 ("home-menu-lock", home_menu(&t, stock)),
+                (
+                    "prompt-wrong",
+                    ask(
+                        &t,
+                        Origin::Daemon(2),
+                        password("Chromium wants the keyring"),
+                        0,
+                        false,
+                        true,
+                    ),
+                ),
+                (
+                    "prompt-checking",
+                    ask(
+                        &t,
+                        Origin::Daemon(2),
+                        password("Chromium wants the keyring"),
+                        9,
+                        true,
+                        false,
+                    ),
+                ),
+                (
+                    "prompt-open",
+                    ask(
+                        &t,
+                        Origin::Open,
+                        password(
+                            "Your apps keep their passwords here. Type your password to open it.",
+                        ),
+                        0,
+                        false,
+                        false,
+                    ),
+                ),
+                (
+                    "prompt-stale",
+                    ask(&t, Origin::Stale, password(""), 3, false, false),
+                ),
             ]);
         }
         scenes

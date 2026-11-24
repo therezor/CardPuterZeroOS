@@ -9,6 +9,8 @@ use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::lock::{self, Lock};
 use crate::notices::{self, Panel};
 use crate::overlay::Overlay;
+use crate::prompt::{self, Ask, Kind, Origin, Prompts};
+use crate::services::{Said, Services, Which};
 use crate::switcher::{Card, HoldTick, Switcher};
 use crate::tasks::{self, Task, Tasks};
 use gh0st_core::apps::{self, App, Dirs, IconRef};
@@ -19,6 +21,7 @@ use gh0st_core::config::{self, Config};
 use gh0st_core::esc::EscHold;
 use gh0st_core::evdev;
 use gh0st_core::job::{self, Job};
+use gh0st_core::keyring::{Answer, ToDaemon, ToShell};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
 use gh0st_core::link::Link;
 use gh0st_core::notify::{self, Dismissed, Notice};
@@ -105,6 +108,8 @@ enum Screen {
     /// Backlight off after `dark_time`. The next key wakes the lock screen
     /// once Lock after has passed, else goes straight back.
     Off,
+    /// A keyring question, asked while the shell holds the keyboard.
+    Prompt,
 }
 
 /// Where Esc on the switcher goes back to.
@@ -123,6 +128,8 @@ enum Pending {
     /// The app in front asked for another over the link: pause it, then
     /// bring this one up.
     Open(String),
+    /// The keyring has a question: park the app in front, then ask.
+    Prompt,
 }
 
 /// What a watched fd says changed. Only Linux has the watches.
@@ -145,6 +152,8 @@ enum JobKind {
     Passwd,
     /// `unix_chkpwd`: was that the password?
     Chkpwd,
+    /// `unix_chkpwd` on a keyring prompt's password.
+    PromptCheck,
 }
 
 /// Where keys come from: the keyboard, or a script in `--sim`.
@@ -344,6 +353,20 @@ struct Shell {
     /// instead of on the FRAME_MS timer.
     paced: bool,
     first_frame: bool,
+    /// `gh0st keyring` and `gh0st session`.
+    services: Services,
+    /// The keyring's questions.
+    prompts: Prompts,
+    /// The keyring said its vault is open.
+    keyring_open: bool,
+    /// This unlock sent the keyring a password.
+    unlock_sent: bool,
+    /// Where the prompt goes back to: the screen, and the app it parked.
+    prompt_from: Screen,
+    prompt_app: Option<String>,
+    /// The prompt password under `unix_chkpwd`, and that check's pid.
+    prompt_input: Option<Vec<u8>>,
+    prompt_pid: i32,
 }
 
 fn home_dir() -> PathBuf {
@@ -491,6 +514,19 @@ impl Shell {
             wake_at: Instant::now(),
             paced: false,
             first_frame: true,
+            // No bus on a host sim, unless a test brings its own.
+            services: if sim.is_some() && std::env::var_os("GH0ST_SERVICES").is_none() {
+                Services::none()
+            } else {
+                Services::start(rt::now_ms())
+            },
+            prompts: Prompts::default(),
+            keyring_open: false,
+            unlock_sent: false,
+            prompt_from: Screen::Home,
+            prompt_app: None,
+            prompt_input: None,
+            prompt_pid: 0,
             config,
             wall: None,
             wall_from: None,
@@ -597,6 +633,14 @@ impl Shell {
                     }
                 }
                 if let Some(mut input) = self.check_input.take() {
+                    // Only a password the system agreed to opens the vault,
+                    // and it goes before the app comes back.
+                    if result == password::Check::Right && current {
+                        let pw = input.strip_suffix(&[0]).unwrap_or(&input).to_vec();
+                        let mut m = ToDaemon::Unlock { pw };
+                        self.unlock_sent |= self.services.tell(&m);
+                        m.wipe();
+                    }
                     password::wipe(&mut input);
                 }
                 match result {
@@ -619,7 +663,276 @@ impl Shell {
                 }
                 self.dirty = true;
             }
+            JobKind::PromptCheck => self.prompt_checked(&j),
         }
+    }
+
+    /// What the daemons said.
+    fn services_said(&mut self) {
+        for said in self.services.read() {
+            match said {
+                Said::Keyring(m) => self.keyring_said(m),
+                Said::Session(m) => {
+                    if let [verb, stem, on] = m.as_slice() {
+                        if verb == "awake" {
+                            self.inhibit(stem, on == "1");
+                        }
+                    }
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
+    fn keyring_said(&mut self, m: ToShell) {
+        if self.debug {
+            eprintln!("gh0st shell: keyring {m:?}");
+        }
+        match m {
+            ToShell::Ready => {}
+            ToShell::Unlocked => {
+                self.keyring_open = true;
+                self.prompts.remove(&Origin::Stale);
+                self.prompts.remove(&Origin::Open);
+            }
+            ToShell::Wrong => {
+                // The old password was wrong too: ask again.
+                self.prompts.push(stale_ask(true));
+            }
+            ToShell::Stale => self.prompts.push(stale_ask(false)),
+            ToShell::Broken => {
+                self.prompts.remove(&Origin::Stale);
+                self.toast("The keyring can't read its file");
+            }
+            ToShell::AskPassword { id, reason, retry } => self.prompts.push(Ask {
+                origin: Origin::Daemon(id),
+                kind: Kind::Password { reason, retry },
+            }),
+            ToShell::AskApprove { id, app, what } => self.prompts.push(Ask {
+                origin: Origin::Daemon(id),
+                kind: Kind::Approve { app, what },
+            }),
+            ToShell::Cancel { id } => self.prompts.cancel(id),
+        }
+    }
+
+    /// `gh0st session` relays a ScreenSaver inhibit as the app's `awake`.
+    fn inhibit(&mut self, stem: &str, on: bool) {
+        let file = format!("{stem}.desktop");
+        if let Some(t) = self.tasks.iter_mut().find(|t| t.id == file) {
+            t.awake = on;
+        }
+        if on && self.tasks.front().is_some_and(|t| t.awake) {
+            self.undim();
+        }
+    }
+
+    /// A daemon died and was started again: what the keyring held is gone,
+    /// and so are its questions.
+    fn daemon_died(&mut self, w: Which) {
+        if w == Which::Keyring {
+            self.keyring_open = false;
+            self.prompts.clear_all();
+            if self.screen == Screen::Prompt {
+                self.prompt_leave();
+            }
+        }
+    }
+
+    /// Shows the next question when nothing else is in the way.
+    fn maybe_prompt(&mut self) {
+        if self.screen == Screen::Prompt {
+            if self.prompts.is_empty() && self.pending.is_none() {
+                self.prompt_leave();
+            }
+            return;
+        }
+        if self.prompts.is_empty()
+            || self.pending.is_some()
+            || !self.held.is_empty()
+            || matches!(self.screen, Screen::Locked | Screen::Off)
+        {
+            return;
+        }
+        if self.app_front() {
+            self.pending = Some(Pending::Prompt);
+            return;
+        }
+        self.prompt_from = self.screen;
+        self.prompt_app = None;
+        self.open_prompt();
+    }
+
+    fn open_prompt(&mut self) {
+        self.home_menu = None;
+        self.switcher.cancel_hold();
+        self.screen = Screen::Prompt;
+        self.full_flush = true;
+        self.dirty = true;
+        self.sync_grab();
+    }
+
+    /// Parks the app in front, then asks. An app that can't be parked (run
+    /// through sudo, or holding the keyboard) could read the answer: the
+    /// question is refused instead.
+    fn prompt_over_front(&mut self, now: u64) {
+        if self.prompts.is_empty() {
+            return;
+        }
+        match self.park_front(now) {
+            Ok(id) => {
+                self.take_screen();
+                self.prompt_from = Screen::Home;
+                self.prompt_app = Some(id);
+                self.open_prompt();
+            }
+            Err(name) => {
+                let why = match name {
+                    Some(n) => format!("{n} holds the screen: can't ask"),
+                    None => "Can't ask now".into(),
+                };
+                self.refuse_prompts(&why);
+            }
+        }
+    }
+
+    fn prompt_leave(&mut self) {
+        self.prompts.checking = false;
+        // Home under a resuming app is never drawn: the loop skips frames
+        // while it comes back.
+        self.screen = match self.prompt_from {
+            Screen::Switcher | Screen::Notices => self.prompt_from,
+            _ => Screen::Home,
+        };
+        if let Some(id) = self.prompt_app.take() {
+            if self.tasks.get(&id).is_some_and(|t| t.resumable()) {
+                self.pending = Some(Pending::Resume(id));
+            }
+        }
+        self.full_flush = true;
+        self.dirty = true;
+        self.sync_grab();
+    }
+
+    /// Every waiting question is answered no.
+    fn refuse_prompts(&mut self, why: &str) {
+        while let Some(a) = self.prompts.current().cloned() {
+            if let Origin::Daemon(id) = a.origin {
+                self.services.tell(&ToDaemon::Answer {
+                    id,
+                    answer: Answer::Deny,
+                });
+            }
+            self.prompts.done();
+        }
+        self.toast(why.to_string());
+        if self.screen == Screen::Prompt {
+            self.prompt_leave();
+        }
+    }
+
+    fn prompt_key(&mut self, k: &Key) {
+        match self.prompts.key(k) {
+            prompt::Action::None => {}
+            prompt::Action::Redraw => self.dirty = true,
+            prompt::Action::Check(mut pw) => {
+                if self.tries.wait(password::boottime()) > 0 {
+                    password::wipe(&mut pw);
+                    self.prompts.checked_wrong();
+                    self.toast("Too many tries: wait a little");
+                } else {
+                    self.tries.fails += 1;
+                    self.tries.last = password::boottime();
+                    self.save_tries();
+                    let input = password::chkpwd_input(&pw);
+                    password::wipe(&mut pw);
+                    self.run_prompt_check(input);
+                }
+                self.dirty = true;
+            }
+            prompt::Action::Old(pw) => {
+                let mut m = ToDaemon::Old { pw };
+                self.services.tell(&m);
+                m.wipe();
+                self.prompts.done();
+                self.dirty = true;
+            }
+            prompt::Action::Answer(id, answer) => {
+                self.services.tell(&ToDaemon::Answer { id, answer });
+                self.prompts.done();
+                self.dirty = true;
+            }
+            prompt::Action::Dismiss(origin) => {
+                if let Origin::Daemon(id) = origin {
+                    self.services.tell(&ToDaemon::Answer {
+                        id,
+                        answer: Answer::Deny,
+                    });
+                }
+                if let Some(mut old) = self.prompt_input.take() {
+                    password::wipe(&mut old);
+                }
+                self.prompts.done();
+                self.dirty = true;
+            }
+        }
+    }
+
+    fn run_prompt_check(&mut self, mut input: Vec<u8>) {
+        let prog = std::env::var("GH0ST_CHKPWD").unwrap_or_else(|_| password::CHKPWD.into());
+        let user = self.user.clone();
+        if self.start_job_with(
+            JobKind::PromptCheck,
+            &[&prog, &user, "nonull"],
+            Some(&input),
+        ) {
+            self.prompt_pid = self.jobs.last().map_or(0, |(_, j)| j.pid);
+            if let Some(mut old) = self.prompt_input.replace(input) {
+                password::wipe(&mut old);
+            }
+        } else {
+            password::wipe(&mut input);
+            self.prompts.checked_wrong();
+            self.toast("Can't check the password");
+        }
+    }
+
+    /// The prompt's password was checked: a right one goes to the keyring.
+    fn prompt_checked(&mut self, j: &Job) {
+        let Some(mut input) = self.prompt_input.take() else {
+            return;
+        };
+        let stale = j.pid != self.prompt_pid || !self.prompts.checking;
+        let result = password::chkpwd_result(j.code());
+        if stale {
+            password::wipe(&mut input);
+            return;
+        }
+        match result {
+            password::Check::Right => {
+                self.tries = Tries::default();
+                self.save_tries();
+                let pw = input.strip_suffix(&[0]).unwrap_or(&input).to_vec();
+                let mut m = match self.prompts.current().map(|a| a.origin.clone()) {
+                    Some(Origin::Daemon(id)) => ToDaemon::Password { id, pw },
+                    _ => ToDaemon::Unlock { pw },
+                };
+                self.services.tell(&m);
+                m.wipe();
+                self.prompts.done();
+            }
+            password::Check::Wrong => self.prompts.checked_wrong(),
+            password::Check::Broken => {
+                // Not a try: nothing checked it. Unchecked, it can't open
+                // the vault either.
+                self.tries.fails = self.tries.fails.saturating_sub(1);
+                self.save_tries();
+                self.prompts.checked_wrong();
+                self.toast("Can't check the password");
+            }
+        }
+        password::wipe(&mut input);
+        self.dirty = true;
     }
 
     fn save_tries(&self) {
@@ -829,6 +1142,7 @@ impl Shell {
             let now = rt::now_ms();
             if self.input.finished(now) {
                 self.tasks.close_all(now);
+                self.services.stop();
                 return 0;
             }
             let shell = !app && self.screen != Screen::Off;
@@ -888,6 +1202,8 @@ impl Shell {
                 .collect();
             let links_at = fds.len();
             fds.extend(links.iter().map(|&(_, fd)| rt::pollfd(fd)));
+            let services_at = fds.len();
+            fds.extend(self.services.fds().into_iter().map(rt::pollfd));
             if let Err(e) = rt::wait(&mut fds, deadline) {
                 eprintln!("gh0st shell: poll: {e}");
                 return 1;
@@ -914,6 +1230,7 @@ impl Shell {
                         }
                         _ => {
                             self.tasks.close_all(now);
+                            self.services.stop();
                             return 0;
                         }
                     }
@@ -950,6 +1267,9 @@ impl Shell {
                     self.read_link(pgid);
                 }
             }
+            if fds[services_at..].iter().any(rt::readable) {
+                self.services_said();
+            }
             keys_buf.clear();
             self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
             for &(c, v) in &keys_buf {
@@ -972,15 +1292,21 @@ impl Shell {
                     Some(Pending::Pause) => self.pause_front(now),
                     Some(Pending::Resume(id)) => self.resume(&id, now),
                     Some(Pending::Open(id)) => self.open_over_front(&id, now),
+                    Some(Pending::Prompt) => self.prompt_over_front(now),
                     None => {}
                 }
             }
+            self.maybe_prompt();
         }
     }
 
     /// Routes every exited child: an app's leader, or a job.
     fn reap(&mut self) {
         for (pid, status) in child::reap() {
+            if let Some(w) = self.services.exited(pid, rt::now_ms()) {
+                self.daemon_died(w);
+                continue;
+            }
             self.tasks.exited(pid);
             if let Some((_, j)) = self.jobs.iter_mut().find(|(_, j)| j.pid == pid) {
                 j.exited(status);
@@ -1283,6 +1609,10 @@ impl Shell {
         match self.screen {
             Screen::Home => self.unlock_to = Back::Home,
             Screen::Switcher => self.unlock_to = self.back.clone(),
+            // The question waits; the app it parked comes back first.
+            Screen::Prompt => {
+                self.unlock_to = self.prompt_app.take().map_or(Back::Home, Back::App);
+            }
             _ => {}
         }
         // From the lock screen, the lock and where it goes back to stay.
@@ -1449,6 +1779,9 @@ impl Shell {
     }
 
     fn enter_locked(&mut self, now: u64) {
+        self.services.tell(&ToDaemon::Lock);
+        self.keyring_open = false;
+        self.unlock_sent = false;
         self.screen = Screen::Locked;
         self.lock.rest();
         self.probe_retried = false;
@@ -1480,6 +1813,22 @@ impl Shell {
         self.dirty = true;
         if self.debug {
             eprintln!("gh0st shell: unlocked");
+        }
+        // No password came with this unlock (the lock password is off), so
+        // nothing opened the keyring: ask once.
+        if !self.unlock_sent
+            && !self.keyring_open
+            && self.services.running(Which::Keyring)
+            && self.account == Some(Account::Password)
+        {
+            self.prompts.push(Ask {
+                origin: Origin::Open,
+                kind: Kind::Password {
+                    reason: "Your apps keep their passwords here. Type your password to open it."
+                        .into(),
+                    retry: false,
+                },
+            });
         }
         match std::mem::replace(&mut self.unlock_to, Back::Home) {
             // The lock screen stays until the app is back, so home never
@@ -1989,6 +2338,10 @@ impl Shell {
             self.low.dismiss();
             self.dirty = true;
             self.swallow_release = Some(k.code);
+            return;
+        }
+        if self.screen == Screen::Prompt {
+            self.prompt_key(&k);
             return;
         }
         if self.screen == Screen::Locked {
@@ -2590,8 +2943,12 @@ impl Shell {
     /// locked or dark, so no app behind reads the password.
     fn sync_grab(&mut self) {
         let want = !self.app_front()
-            && (self.tasks.any_paused() || matches!(self.screen, Screen::Locked | Screen::Off));
-        self.input.grab(want);
+            && (self.tasks.any_paused()
+                || matches!(self.screen, Screen::Locked | Screen::Off | Screen::Prompt));
+        if !self.input.grab(want) && want && self.screen == Screen::Prompt {
+            // Another program holds the keyboard: it would read the password.
+            self.refuse_prompts("The keyboard is taken: can't ask");
+        }
     }
 
     fn open_switcher(&mut self, back: Back, at: usize) {
@@ -2799,7 +3156,7 @@ impl Shell {
             _ => Some(0),
         };
         let ground = self.wall.as_ref().and_then(|w| match self.screen {
-            Screen::Locked => Some(w.lock.clone()),
+            Screen::Locked | Screen::Prompt => Some(w.lock.clone()),
             Screen::Home | Screen::Switcher | Screen::Notices => Some(w.home.clone()),
             _ => None,
         });
@@ -2809,6 +3166,25 @@ impl Shell {
         status.notices = self.notices.len().min(u8::MAX as usize) as u8;
         match self.screen {
             Screen::Locked => self.draw_lock(&clock),
+            Screen::Prompt => match self.prompts.current() {
+                Some(ask) => {
+                    let status = Status {
+                        dock: &[],
+                        front: None,
+                        icon: "key-round",
+                        title: "Keyring",
+                        ..status
+                    };
+                    let v = prompt::View {
+                        ask,
+                        typed: self.prompts.typed(),
+                        checking: self.prompts.checking,
+                        wrong: self.prompts.wrong,
+                    };
+                    prompt::draw(&mut self.canvas, &t, &status, &v);
+                }
+                None => self.home.draw(&mut self.canvas, &t, &status, now),
+            },
             Screen::Switcher => self.switcher.draw(&mut self.canvas, &t, &status, now),
             Screen::Notices => {
                 let status = Status {
@@ -2939,6 +3315,16 @@ impl Shell {
 
 /// Wakes for app installs (true: rescan), and for battery, charger and link
 /// changes (false: re-read status only).
+fn stale_ask(retry: bool) -> Ask {
+    Ask {
+        origin: Origin::Stale,
+        kind: Kind::Password {
+            reason: String::new(),
+            retry,
+        },
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn watches(d: &Dirs) -> Vec<(Wake, Watch)> {
     let apps = Watch::dirs(&[d.ours.as_path(), d.stock.as_path()]).map(|w| (Wake::Apps, w));
