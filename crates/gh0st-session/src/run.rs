@@ -10,6 +10,7 @@ use gh0st_dbus::{Conn, Kind, Message, Value, bus};
 
 use crate::inhibit::{self, Inhibit};
 use crate::notify::{self, Notifications};
+use crate::portal::{self, Portal};
 
 /// Where the session daemon finds its end of the shell's socket pair.
 pub const ENV: &str = "GH0ST_SESSION_FD";
@@ -17,9 +18,11 @@ pub const ENV: &str = "GH0ST_SESSION_FD";
 struct Session {
     bus: Conn,
     link: Option<Link>,
-    who: HashMap<String, Who>,
+    /// Each caller once: who it is and its pid.
+    who: HashMap<String, (Who, Option<i32>)>,
     notes: Notifications,
     inhibit: Inhibit,
+    portal: Portal,
 }
 
 fn take_link() -> Option<Link> {
@@ -57,7 +60,7 @@ pub fn main(args: &[String]) -> i32 {
             return 1;
         }
     };
-    for name in [notify::NAME, inhibit::NAME] {
+    for name in [notify::NAME, inhibit::NAME, portal::NAME] {
         match bus::own(&mut conn, name) {
             Ok(true) => {}
             Ok(false) => {
@@ -81,6 +84,7 @@ pub fn main(args: &[String]) -> i32 {
         who: HashMap::new(),
         notes: Notifications::new(gh0st_core::notify::user_dir()),
         inhibit: Inhibit::default(),
+        portal: Portal::default(),
     };
     s.say(&["ready"]);
     s.run()
@@ -122,12 +126,12 @@ impl Session {
                 eprintln!("gh0st session: bus: {e}");
                 return 1;
             }
-            if let Some(l) = &self.link {
-                // The shell says nothing to us yet; a hang-up ends us.
-                while l.recv().is_some() {}
-                if l.closed() {
-                    return 0;
-                }
+            if !self.shell_lines() {
+                return 0;
+            }
+            if let Err(e) = self.flush_out() {
+                eprintln!("gh0st session: bus: {e}");
+                return 1;
             }
         }
     }
@@ -142,6 +146,7 @@ impl Session {
                     if new.is_empty() && name.starts_with(':') {
                         self.who.remove(name);
                         self.inhibit.gone(name);
+                        self.portal.gone(name);
                     }
                 }
                 _ => {}
@@ -155,7 +160,7 @@ impl Session {
         let Some(sender) = m.sender.clone() else {
             return Ok(());
         };
-        let who = match self.who.get(&sender) {
+        let (who, pid) = match self.who.get(&sender) {
             Some(w) => w.clone(),
             None => {
                 let creds = bus::credentials(&mut self.bus, &sender).unwrap_or_default();
@@ -166,20 +171,29 @@ impl Session {
                         app: "exe:unknown".into(),
                         label: "An unknown program".into(),
                     });
-                self.who.insert(sender.clone(), w.clone());
-                w
+                let pid = creds.pid.and_then(|p| i32::try_from(p).ok());
+                self.who.insert(sender.clone(), (w.clone(), pid));
+                (w, pid)
             }
         };
         let path = m.path.as_deref().unwrap_or("");
-        let reply = if path == notify::PATH {
+        let reply = if path == portal::OURS_PATH {
+            // The shell names the chooser it started before the chooser can
+            // ask: read what it said first.
+            self.shell_lines();
+            self.portal.chooser_call(&m, pid)
+        } else if path.starts_with(portal::PATH) {
+            self.portal.call(&m, &sender, pid, &who.label)
+        } else if path == notify::PATH {
             self.notes.call(&m, &who, &sender)
         } else if inhibit::PATHS.contains(&path) {
             self.inhibit.call(&m, &who, &sender)
         } else if m.is(bus::INTROSPECTABLE, "Introspect") {
             let child = match path {
                 "/" => vec!["org", "ScreenSaver"],
-                "/org" => vec!["freedesktop"],
-                "/org/freedesktop" => vec!["Notifications", "ScreenSaver"],
+                "/org" => vec!["freedesktop", "gh0st"],
+                "/org/freedesktop" => vec!["Notifications", "ScreenSaver", "portal"],
+                "/org/freedesktop/portal" => vec!["desktop"],
                 _ => vec![],
             };
             Message::reply(&m).arg(Value::str(bus::introspect(&[], &child)))
@@ -200,9 +214,57 @@ impl Session {
         Ok(())
     }
 
+    /// Under `--test` there is no shell: `GH0ST_PORTAL_ANSWER` names the
+    /// file every chooser picks, and every open succeeds.
+    fn test_answer(&mut self, f: &[String]) {
+        if self.link.is_some() {
+            return;
+        }
+        let Some(answer) = std::env::var_os("GH0ST_PORTAL_ANSWER") else {
+            return;
+        };
+        if let (Some(verb), Some(id)) = (f.first(), f.get(1).and_then(|i| i.parse().ok())) {
+            if verb == "pick" || verb == "open" {
+                self.portal
+                    .answer_for_test(id, std::path::Path::new(&answer));
+            }
+        }
+    }
+
+    /// What the shell said: the portal's answers. False once it hung up.
+    fn shell_lines(&mut self) -> bool {
+        let Some(l) = &self.link else {
+            return true;
+        };
+        let mut lines = Vec::new();
+        while let Some(m) = l.recv() {
+            lines.push(m);
+        }
+        let open = !l.closed();
+        for m in lines {
+            self.portal.shell_said(&m);
+        }
+        open
+    }
+
     fn flush_out(&mut self) -> gh0st_dbus::Result<()> {
         for s in std::mem::take(&mut self.notes.out) {
             self.bus.send(s)?;
+        }
+        // Answers can make more answers (a test's), so drain until quiet.
+        while !self.portal.out.is_empty() {
+            for o in std::mem::take(&mut self.portal.out) {
+                match o {
+                    portal::Out::Bus(m) => {
+                        self.bus.send(m)?;
+                    }
+                    portal::Out::Shell(f) => {
+                        let fields: Vec<&str> = f.iter().map(String::as_str).collect();
+                        self.say(&fields);
+                        self.test_answer(&f);
+                    }
+                }
+            }
         }
         for (app, on) in std::mem::take(&mut self.inhibit.out) {
             self.say(&["awake", &app, if on { "1" } else { "0" }]);

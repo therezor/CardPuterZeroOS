@@ -218,6 +218,8 @@ impl Tasks {
     pub fn cards(&self) -> Vec<Card> {
         self.list
             .iter()
+            // A chooser belongs to the app it serves: no card of its own.
+            .filter(|t| !t.id.starts_with("gh0st-picker-"))
             .map(|t| Card {
                 id: t.id.clone(),
                 name: t.name.clone(),

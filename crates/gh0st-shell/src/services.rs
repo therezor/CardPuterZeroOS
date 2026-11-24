@@ -185,6 +185,14 @@ impl Services {
     }
 
     /// Tells the keyring. False when it isn't running.
+    /// A line for `gh0st session`: the portal's answers.
+    pub fn say_session(&self, fields: &[&str]) -> bool {
+        self.running.iter().any(|d| match &d.end {
+            End::Session(l) => l.send(fields),
+            End::Keyring(_) => false,
+        })
+    }
+
     pub fn tell(&self, m: &ToDaemon) -> bool {
         let Some(fd) = self.running.iter().find_map(|d| match &d.end {
             End::Keyring(fd) => Some(fd.as_raw_fd()),

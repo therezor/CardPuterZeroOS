@@ -38,6 +38,29 @@ pub fn parse_stat(stat: &str) -> Option<ProcStat> {
     })
 }
 
+/// Whether process `pid` is in group `pgid` or descends from a process
+/// in it: an app, or a program it started (the terminal's shell, a
+/// script). Walks up at most 32 parents.
+pub fn belongs_to(pid: i32, pgid: i32) -> bool {
+    let mut at = pid;
+    for _ in 0..32 {
+        let Some(st) = fs::read_to_string(format!("/proc/{at}/stat"))
+            .ok()
+            .and_then(|s| parse_stat(&s))
+        else {
+            return false;
+        };
+        if st.pgrp == pgid || st.pid == pgid {
+            return true;
+        }
+        if st.ppid <= 1 {
+            return false;
+        }
+        at = st.ppid;
+    }
+    false
+}
+
 /// Every process, read one stat file at a time. Processes that exit
 /// mid-scan are skipped.
 pub fn processes() -> impl Iterator<Item = ProcStat> {

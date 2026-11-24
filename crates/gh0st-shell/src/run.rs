@@ -133,6 +133,18 @@ enum Pending {
     Open(String, Vec<PathBuf>),
 }
 
+/// A portal request the shell acts on, once every key is up.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PortalAsk {
+    /// Run Files as the chooser for request `id`, asked by `pid`.
+    Pick { id: String, pid: i32 },
+    /// Open `path` in its app for request `id`.
+    Open { id: String, pid: i32, path: PathBuf },
+}
+
+/// Task ids of the choosers: never an app's own file name.
+const PICKER: &str = "gh0st-picker-";
+
 /// What a watched fd says changed. Only Linux has the watches.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -342,6 +354,8 @@ struct Shell {
     return_to: Vec<(String, String)>,
     /// Every app that opens files, hidden ones too.
     openers: Vec<App>,
+    /// Portal requests waiting for the keys to be up and the screen on.
+    portal: std::collections::VecDeque<PortalAsk>,
     home_armed: bool,
     swallow_release: Option<u16>,
     rescan_at: Option<u64>,
@@ -525,6 +539,7 @@ impl Shell {
             toast_notice: None,
             return_to: Vec::new(),
             openers: Vec::new(),
+            portal: Default::default(),
             home_armed: false,
             swallow_release: None,
             rescan_at: None,
@@ -748,13 +763,43 @@ impl Shell {
         for said in self.services.read() {
             match said {
                 Said::Keyring(m) => self.keyring_said(m),
-                Said::Session(m) => {
-                    if let [verb, stem, on] = m.as_slice() {
-                        if verb == "awake" {
+                Said::Session(m) => match m.first().map(String::as_str) {
+                    Some("awake") => {
+                        if let [_, stem, on] = m.as_slice() {
                             self.inhibit(stem, on == "1");
                         }
                     }
-                }
+                    Some("pick") => {
+                        if let [_, id, pid] = m.as_slice() {
+                            let pid = pid.parse().unwrap_or(0);
+                            self.portal.push_back(PortalAsk::Pick {
+                                id: id.clone(),
+                                pid,
+                            });
+                        }
+                    }
+                    Some("open") => {
+                        if let [_, id, pid, path] = m.as_slice() {
+                            self.portal.push_back(PortalAsk::Open {
+                                id: id.clone(),
+                                pid: pid.parse().unwrap_or(0),
+                                path: link::path_of(path),
+                            });
+                        }
+                    }
+                    Some("cancel") => {
+                        if let Some(id) = m.get(1) {
+                            self.portal.retain(|a| match a {
+                                PortalAsk::Pick { id: i, .. } | PortalAsk::Open { id: i, .. } => {
+                                    i != id
+                                }
+                            });
+                            let task = format!("{PICKER}{id}");
+                            self.tasks.close(&task, rt::now_ms());
+                        }
+                    }
+                    _ => {}
+                },
             }
         }
         self.dirty = true;
@@ -851,6 +896,70 @@ impl Shell {
     }
 
     /// Shows the next question when nothing else is in the way.
+    /// Acts on the next portal request once nothing else is under way.
+    /// Only the app in front, or a program it started, may ask.
+    fn maybe_portal(&mut self, now: u64) {
+        if self.portal.is_empty()
+            || self.pending.is_some()
+            || !self.held.is_empty()
+            || self.screen == Screen::Prompt
+            || matches!(self.screen, Screen::Locked | Screen::Off)
+        {
+            return;
+        }
+        let Some(ask) = self.portal.pop_front() else {
+            return;
+        };
+        let (id, pid) = match &ask {
+            PortalAsk::Pick { id, pid } | PortalAsk::Open { id, pid, .. } => (id.clone(), *pid),
+        };
+        let front = self.tasks.front().map(|t| t.pgid);
+        let allowed = front.is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g));
+        if !allowed {
+            if self.debug {
+                eprintln!("gh0st shell: portal {id} refused: pid {pid} is not in front");
+            }
+            self.services.say_session(&["refuse", &id]);
+            return;
+        }
+        match ask {
+            PortalAsk::Open { path, .. } => {
+                let ok = self.open_file(None, path);
+                self.services
+                    .say_session(&[if ok { "done" } else { "refuse" }, &id]);
+            }
+            PortalAsk::Pick { .. } => {
+                let Some(files) = self
+                    .openers
+                    .iter()
+                    .chain(&self.apps)
+                    .find(|a| a.ours && a.file == "files.desktop")
+                    .cloned()
+                else {
+                    self.services.say_session(&["refuse", &id]);
+                    return;
+                };
+                let mut picker = files;
+                let program = picker.entry.exec.split_whitespace().next().unwrap_or("");
+                picker.entry.exec = format!("{program} --pick {id}");
+                picker.file = format!("{PICKER}{id}");
+                picker.entry.background = false;
+                self.openers.push(picker);
+                self.open_over_front(&format!("{PICKER}{id}"), &[], now);
+                self.openers.retain(|a| !a.file.starts_with(PICKER));
+                match self.tasks.get(&format!("{PICKER}{id}")) {
+                    Some(t) => {
+                        let pgid = t.pgid.to_string();
+                        self.services.say_session(&["picker", &id, &pgid]);
+                    }
+                    None => {
+                        self.services.say_session(&["refuse", &id]);
+                    }
+                }
+            }
+        }
+    }
+
     fn maybe_prompt(&mut self, now: u64) {
         if self.screen == Screen::Prompt {
             if self.prompts.is_empty() && self.pending.is_none() {
@@ -1436,6 +1545,7 @@ impl Shell {
                 }
             }
             self.maybe_prompt(now);
+            self.maybe_portal(now);
         }
     }
 
@@ -1490,6 +1600,10 @@ impl Shell {
             if self.back == Back::App(t.id.clone()) {
                 self.back = Back::Home;
             }
+        }
+        for t in gone.iter().filter(|t| t.id.starts_with(PICKER)) {
+            let id = &t.id[PICKER.len()..];
+            self.services.say_session(&["gone", id]);
         }
         // A link in the chain whose opener left can't lead back.
         self.return_to
@@ -2161,36 +2275,45 @@ impl Shell {
     /// type opens with. A running target that speaks link version 2 gets
     /// the file; one that doesn't is left alone, so nothing it holds is
     /// lost.
-    fn open_file(&mut self, app: Option<&str>, path: PathBuf) {
+    fn open_file(&mut self, app: Option<&str>, path: PathBuf) -> bool {
         let target = match app {
             Some(name) => match self.openers.iter().find(|a| a.answers_to(name)) {
                 Some(a) => a.clone(),
-                None => return self.toast(format!("Can't find {name}")),
+                None => {
+                    self.toast(format!("Can't find {name}"));
+                    return false;
+                }
             },
             None => {
                 let Ok(mime) = gh0st_core::mime::of_path(&path) else {
-                    return self.toast("That file is gone".to_string());
+                    self.toast("That file is gone");
+                    return false;
                 };
                 let list = handlers::MimeApps::load(&handlers::list_path());
                 match handlers::default_for(&self.openers, &list, mime) {
                     Some(a) => a.clone(),
-                    None => return self.toast("No app opens this file".to_string()),
+                    None => {
+                        self.toast("No app opens this file");
+                        return false;
+                    }
                 }
             }
         };
         let running = self.tasks.get(&target.file);
         if running.is_some_and(|t| t.link_v < 2) {
-            return self.toast(format!("Close {} to open this file", target.entry.name));
+            self.toast(format!("Close {} to open this file", target.entry.name));
+            return false;
         }
         let front = self.tasks.front().map(|t| t.id.clone());
         if front.as_deref() == Some(target.file.as_str()) {
             // The app in front opens it itself.
             self.hand_files(&target.file, &[path]);
-            return;
+            return true;
         }
         if front.is_some() {
             self.pending = Some(Pending::Open(target.file.clone(), vec![path]));
         }
+        true
     }
 
     /// Sends `open` for each file to a running app on link version 2.
