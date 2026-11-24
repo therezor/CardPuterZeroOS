@@ -320,7 +320,9 @@ impl Dialog {
                 });
             }
             widgets::key_row(c, t, body.x, y, &hints);
-            if let Some(word) = self.held_word() {
+            // With Enter in the row there is no room, and the red chip on 7
+            // names the held answer.
+            if let Some(word) = self.held_word().filter(|_| self.hold) {
                 let say = format!("hold 7 to {word}");
                 let sw = t.f.small.measure(&say);
                 let sr = Rect::new(body.right() - sw, y, sw, t.m.pill_h);
