@@ -108,7 +108,8 @@ pub fn wipe(b: &mut [u8]) {
 pub enum Lookup {
     Found(Secret),
     /// Items match but the keyring is locked, or they are another app's:
-    /// pass them to [`Keyring::unlock`] and look again once it ends.
+    /// pass them to [`Keyring::unlock`] and look again once it ends. Empty
+    /// when the keyring hasn't been opened since start, so nothing is known.
     Locked(Vec<String>),
     Missing,
     /// No keyring answers.
@@ -225,7 +226,9 @@ impl Keyring {
         }
         let (open, shut) = match self.search(attrs) {
             Ok(r) => r,
-            Err(e) if e.ends_with("IsLocked") => (Vec::new(), Vec::new()),
+            // Not opened since start: what it holds is unknown, not missing.
+            // `unlock(&[])` opens it.
+            Err(e) if e.ends_with("IsLocked") => return Lookup::Locked(Vec::new()),
             Err(_) => return Lookup::Absent,
         };
         if let Some(item) = open.first() {

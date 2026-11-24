@@ -220,6 +220,19 @@ impl Wire for Local {
     }
 }
 
+fn files_kr(w: &Rc<RefCell<World>>, bus: &str) -> Keyring {
+    let me = Caller {
+        bus: bus.into(),
+        app: "files".into(),
+        label: "Files".into(),
+    };
+    Keyring::over(Some(Box::new(Local { w: w.clone(), me })))
+}
+
+fn attrs_of<'a>(a: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+    a.iter().map(|(k, v)| (*k, v.as_str())).collect()
+}
+
 fn keyring(name: &str) -> (Rc<RefCell<World>>, Keyring) {
     let dir = std::env::temp_dir().join(format!("gh0st-files-kr-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -323,4 +336,82 @@ fn no_keyring_asks_every_time() {
     assert_eq!(d.dialog().map(|x| x.0), Some("Password for me"));
     keys(&mut d, "esc");
     assert_eq!(replies(&log), [None]);
+}
+
+#[test]
+fn a_locked_keyring_opens_then_connects() {
+    let h = Home::new("locked");
+    let (w, mut kr) = keyring("locked");
+    let a = nas_attrs();
+    kr.store("nas (SFTP)", &attrs_of(&a), b"hunter2", true)
+        .unwrap();
+    w.borrow_mut().svc.lock();
+    let mut f = fake();
+    asks_password(&mut f);
+    let (mut d, log) = drive(&h, f, files_kr(&w, ":1.9"));
+    keys(&mut d, "tab\nx\nx\nx\nenter");
+    assert_eq!(
+        d.dialog(),
+        None,
+        "the keyring's own prompt, then no question"
+    );
+    assert_eq!(replies(&log), [Some("hunter2".to_string())]);
+}
+
+#[test]
+fn a_vault_not_opened_since_start_is_opened_not_skipped() {
+    let h = Home::new("unopened");
+    let (w, mut kr) = keyring("unopened");
+    let a = nas_attrs();
+    kr.store("nas (SFTP)", &attrs_of(&a), b"hunter2", true)
+        .unwrap();
+    let vault = w.borrow().dir.join("login.vault");
+    w.borrow_mut().svc = Service::new(vault, Cost::TEST);
+    let mut f = fake();
+    asks_password(&mut f);
+    let (mut d, log) = drive(&h, f, files_kr(&w, ":1.9"));
+    keys(&mut d, "tab\nx\nx\nx\nenter");
+    assert_eq!(d.dialog(), None);
+    assert_eq!(replies(&log), [Some("hunter2".to_string())]);
+}
+
+#[test]
+fn only_the_server_that_listed_keeps_its_password() {
+    let h = Home::new("two");
+    let mut pi = Server::new(Proto::Sftp);
+    pi.name = "pi".into();
+    pi.host = "pi.local".into();
+    pi.user = "pi".into();
+    let mut nas = Server::new(Proto::Sftp);
+    nas.name = "nas".into();
+    nas.host = "nas.local".into();
+    nas.user = "me".into();
+    servers::save(&h.dir.join("data/servers"), &[nas, pi.clone()]).unwrap();
+    let (w, kr) = keyring("two");
+    let mut f = fake();
+    f.first.insert(
+        "pi".into(),
+        vec![
+            Ask::Password {
+                server: "pi".into(),
+                retry: false,
+            },
+            Ask::HostKey {
+                server: "pi".into(),
+                host: "pi.local".into(),
+                fingerprint: "SHA256:abc".into(),
+            },
+        ],
+    );
+    let (mut d, _) = drive(&h, f, kr);
+    // Places on B: Home, Card, Trash, nas, pi, Add server.
+    keys(&mut d, "tab\nx\nx\nx\nx\nenter\ntype pi-pw\nenter");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Trust pi.local?"));
+    keys(&mut d, "esc\nesc\nf\nenter");
+    let mut check = files_kr(&w, ":1.10");
+    let a = pi.attrs();
+    assert!(
+        matches!(check.lookup(&attrs_of(&a)), Lookup::Missing),
+        "pi never listed: its password isn't kept"
+    );
 }

@@ -8,7 +8,7 @@ use crate::servers::{self, Proto, Server};
 use crate::words;
 use gh0st_app::prelude::*;
 use gh0st_app::secret::{Keyring, Lookup};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 const VIEW_MAX: u64 = 256 * 1024;
@@ -250,9 +250,11 @@ pub struct Files {
     /// A password the server form or a dialog gave, by server: stored once
     /// its listing works, if the server remembers.
     typed: HashMap<String, String>,
-    /// A server's password came from the keyring for this request: a wrong
-    /// one asks the user instead.
-    from_keyring: HashSet<Id>,
+    /// Requests whose password question has asked the keyring to unlock
+    /// once: a second time types it instead.
+    tried_unlock: HashSet<Id>,
+    /// Worker questions waiting behind the one showing.
+    queued: VecDeque<(Id, Ask)>,
     /// Forget pressed once on a server row.
     armed: bool,
     title: String,
@@ -284,7 +286,8 @@ impl Files {
             transfers: Vec::new(),
             asking: None,
             typed: HashMap::new(),
-            from_keyring: HashSet::new(),
+            tried_unlock: HashSet::new(),
+            queued: VecDeque::new(),
             armed: false,
             title: String::new(),
             status: String::new(),
@@ -678,7 +681,7 @@ impl Files {
             }
             (Pending::List(i), Event::Listed { .. }) => {
                 self.pending.remove(&id);
-                self.listed(id);
+                self.listed(id, i);
                 let (sort, hidden) = (self.sort, self.hidden);
                 let s = &mut self.sides[i];
                 if s.state == State::Loading(id) {
@@ -759,29 +762,84 @@ impl Files {
         }
     }
 
-    /// A listing worked: a password typed for its server is now known good.
-    fn listed(&mut self, id: Id) {
-        self.from_keyring.remove(&id);
-        let names: Vec<String> = self.typed.keys().cloned().collect();
-        for name in names {
-            let Some(srv) = self.server(&name).cloned() else {
-                continue;
-            };
-            let Some(pw) = self.typed.remove(&name) else {
-                continue;
-            };
-            if srv.remember {
-                let attrs = srv.attrs();
-                let a: Vec<(&str, &str)> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
-                let _ = self.kr.store(&srv.label(), &a, pw.as_bytes(), true);
-            }
-            pw.into_bytes().fill(0);
+    /// A listing on side `i` worked: a password typed for its server is
+    /// now known good. Others' wait for their own.
+    fn listed(&mut self, id: Id, i: usize) {
+        self.tried_unlock.remove(&id);
+        let Some(srv) = self.server_of(&self.sides[i].loc).cloned() else {
+            return;
+        };
+        let Some(pw) = self.typed.remove(&srv.name) else {
+            return;
+        };
+        if srv.remember {
+            let attrs = srv.attrs();
+            let a: Vec<(&str, &str)> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let _ = self.kr.store(&srv.label(), &a, pw.as_bytes(), true);
         }
+        pw.into_bytes().fill(0);
     }
 
     // ---- questions ----
 
+    /// A question from the worker. One shows at a time; the rest wait.
     fn ask(&mut self, id: Id, ask: Ask, cx: &mut Cx) {
+        if self.asking.is_some() {
+            self.queued.push_back((id, ask));
+            return;
+        }
+        self.ask_now(id, ask, cx);
+    }
+
+    /// The next waiting question, once the last is answered.
+    fn next_ask(&mut self, cx: &mut Cx) {
+        if self.asking.is_none() {
+            if let Some((id, ask)) = self.queued.pop_front() {
+                self.ask_now(id, ask, cx);
+            }
+        }
+    }
+
+    /// Answers a password question from the keyring. False when the user
+    /// has to type it; true when answered, or waiting on the keyring's
+    /// prompt.
+    fn password_from_keyring(&mut self, id: Id, ask: &Ask, srv: &Server, cx: &mut Cx) -> bool {
+        let attrs = srv.attrs();
+        let a: Vec<(&str, &str)> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        // Twice at most: once, and again after an unlock.
+        for _ in 0..2 {
+            match self.kr.lookup(&a) {
+                Lookup::Found(pw) => {
+                    let text = pw.as_str().unwrap_or_default().to_string();
+                    self.reply(id, Some(text), cx);
+                    return true;
+                }
+                Lookup::Locked(items) if self.tried_unlock.insert(id) => {
+                    match self.kr.unlock(&items) {
+                        Ok(None) => continue,
+                        Ok(Some(p)) => match self.kr.ended(&p) {
+                            Some(false) => continue,
+                            Some(true) => return false,
+                            None => {
+                                self.watch_keyring(cx);
+                                self.asking = Some(Asking {
+                                    id,
+                                    ask: ask.clone(),
+                                    prompt: Some(p),
+                                });
+                                return true;
+                            }
+                        },
+                        Err(_) => return false,
+                    }
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    fn ask_now(&mut self, id: Id, ask: Ask, cx: &mut Cx) {
         match &ask {
             Ask::Password { server, retry } => {
                 let server = server.clone();
@@ -792,34 +850,13 @@ impl Files {
                     }
                 }
                 if *retry {
+                    // What was tried is wrong: neither it nor the kept one again.
                     self.typed.remove(&server);
                 }
                 let srv = self.server(&server).cloned();
-                if let (Some(srv), false) = (&srv, *retry && self.from_keyring.contains(&id)) {
-                    if srv.remember && !retry {
-                        let attrs = srv.attrs();
-                        let a: Vec<(&str, &str)> =
-                            attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
-                        match self.kr.lookup(&a) {
-                            Lookup::Found(pw) => {
-                                self.from_keyring.insert(id);
-                                let text = pw.as_str().unwrap_or_default().to_string();
-                                self.reply(id, Some(text), cx);
-                                return;
-                            }
-                            Lookup::Locked(items) => {
-                                if let Ok(Some(p)) = self.kr.unlock(&items) {
-                                    self.watch_keyring(cx);
-                                    self.asking = Some(Asking {
-                                        id,
-                                        ask,
-                                        prompt: Some(p),
-                                    });
-                                    return;
-                                }
-                            }
-                            Lookup::Missing | Lookup::Absent => {}
-                        }
+                if let Some(srv) = srv.as_ref().filter(|s| s.remember && !retry) {
+                    if self.password_from_keyring(id, &ask, srv, cx) {
+                        return;
                     }
                 }
                 let (title, host) = match &srv {
@@ -1554,6 +1591,7 @@ impl Page for Files {
                     self.view = View::Browse;
                     self.asking = None;
                     self.reply(id, Some(text), cx);
+                    self.next_ask(cx);
                 }
             }
         }
@@ -1568,6 +1606,7 @@ impl Page for Files {
                 self.view = View::Browse;
                 self.asking = None;
                 self.reply(id, Some("skip".into()), cx);
+                self.next_ask(cx);
                 return false;
             }
             _ => {
@@ -1699,6 +1738,7 @@ impl Page for Files {
                     _ => text,
                 };
                 self.reply(a.id, text, cx);
+                self.next_ask(cx);
             }
             (ASK_ADDRESS..=ASK_NAME, Some(text)) => {
                 let View::Server(f) = &mut self.view else {
@@ -1739,15 +1779,12 @@ impl Page for Files {
                 self.kr.changed();
                 return;
             };
-            if let Some(dismissed) = self.kr.ended(&prompt) {
+            if self.kr.ended(&prompt).is_some() {
+                // Opened, the keyring answers; dismissed, the user types it.
                 let Some(a) = self.asking.take() else {
                     return;
                 };
-                if dismissed {
-                    self.reply(a.id, None, cx);
-                } else {
-                    self.ask(a.id, a.ask, cx);
-                }
+                self.ask_now(a.id, a.ask, cx);
             }
         }
         cx.redraw();

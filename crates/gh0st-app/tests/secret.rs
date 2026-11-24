@@ -143,6 +143,24 @@ fn a_locked_keyring_opens_through_a_prompt() {
 }
 
 #[test]
+fn a_vault_not_yet_opened_is_locked_not_missing() {
+    let w = world("unopened");
+    let mut kr = app(&w, ":1.1", "files");
+    kr.store("nas", &NAS, b"one", true).unwrap();
+    // The device starts again: the vault is on disk, not open.
+    let vault = w.borrow().dir.join("login.vault");
+    w.borrow_mut().svc = Service::new(vault, Cost::TEST);
+    let mut kr = app(&w, ":1.2", "files");
+    let Lookup::Locked(items) = kr.lookup(&NAS) else {
+        panic!("locked, not missing")
+    };
+    assert!(items.is_empty());
+    let p = kr.unlock(&items).unwrap().expect("a prompt");
+    assert_eq!(kr.ended(&p), Some(false));
+    assert_eq!(found(kr.lookup(&NAS)), b"one");
+}
+
+#[test]
 fn another_apps_secret_takes_the_users_yes() {
     let w = world("other");
     let mut mail = app(&w, ":1.1", "mail");
