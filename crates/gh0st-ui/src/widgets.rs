@@ -823,6 +823,15 @@ pub fn selection(c: &mut Canvas, t: &Theme, r: Rect) {
     c.pane(r, t.m.radius_large, t.c.surface);
 }
 
+/// The switcher's selected card: a pane on an `accent` foot, as the dock's
+/// mark above it. Cards are large and sit on a picture, where a dark foot
+/// is hard to see.
+pub fn card_selection(c: &mut Canvas, t: &Theme, r: Rect) {
+    let under = Rect::new(r.x, r.y + t.m.lift + 1, r.w, r.h);
+    c.round_rect(under, t.m.radius_large, t.c.accent);
+    c.pane(r, t.m.radius_large, t.c.surface);
+}
+
 /// What a grid tile or list row shows for one app.
 pub struct AppItem<'a> {
     pub label: &'a str,
@@ -996,9 +1005,8 @@ pub struct Card<'a> {
 /// A card without its selection frame: a thin edge so it reads as a card,
 /// then its content.
 pub fn card_content(c: &mut Canvas, t: &Theme, r: Rect, card: &Card, selected: bool) {
-    if !selected {
-        c.pane(r, t.m.radius_large, t.c.surface);
-    }
+    // Only the selected card stands on a pane, as on home: the rest sit on
+    // the page, so the one in front of you is the one that stands out.
     let b = t.m.badge;
     // Badge, name and line as one block, centred in the card.
     let has_line = !card.note.is_empty() || card.stats.is_some();

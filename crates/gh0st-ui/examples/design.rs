@@ -1179,7 +1179,7 @@ fn switcher_base(t: &Theme) -> Canvas {
             paused,
         };
         if i == 1 {
-            widgets::selection(&mut c, t, r);
+            widgets::card_selection(&mut c, t, r);
         }
         widgets::card_content(&mut c, t, r, &cd, i == 1);
     }
