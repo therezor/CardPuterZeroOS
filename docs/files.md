@@ -48,7 +48,7 @@ not shown.
 | Enter, Right | Opens the row |
 | Esc, Left | Up a folder. Clears marks or a search first. At Places, held 0.7 s, exits |
 | Tab | The other side |
-| Space | Marks the row and moves down |
+| Space, 4 | Marks the row and moves down |
 | Ctrl+C, Ctrl+X, Ctrl+V | Copy, Cut, Paste |
 | `a` | Marks all, or none |
 | `n` | Finds in the folder as you type |
@@ -60,9 +60,10 @@ not shown.
 | `t` | Transfers |
 | Fn+L, Fn+M, Fn+N | A screen up, a screen down, the last row |
 
-Chips: 5 Copy, 6 Paste, 7 Cut, 8 the menu. They stay on their keys; Paste
-is grey until something waits. An empty folder shows Paste alone. Inside an
-archive, Copy stands alone on 6. On a server's row in Places: 5 Edit, 7
+Chips: 4 Mark, 5 Copy, 6 Paste, 7 Cut, 8 the menu. Mark takes key 4 from
+Esc, which still goes up a folder. They stay on their keys; Paste is grey
+until something waits. An empty folder shows Paste alone. Inside an
+archive: 4 Mark and 6 Copy. On a server's row in Places: 5 Edit, 7
 Forget, pressed twice.
 
 The menu (≡) also has Mark, Clear the clipboard, Compress to zip, Same folder on both sides, Sort by

@@ -1458,6 +1458,7 @@ impl Files {
         }
         let archive = self.side().loc.is_archive();
         match n {
+            4 => self.mark(),
             // Inside an archive Copy stands alone, on 6.
             6 if archive => self.take(false, cx),
             5 => self.take(false, cx),
@@ -1633,11 +1634,14 @@ impl Page for Files {
                     return Bars::top();
                 }
                 let copy = Chip::new("copy", "Copy");
+                // Mark on 4: Esc itself still goes up a folder.
+                let marked = s.current().is_some_and(|e| s.marks.contains(&e.name));
+                let mark = Chip::new("check", "Mark").on(marked);
                 if s.loc.is_archive() {
                     return if s.entries.is_empty() {
                         Bars::top()
                     } else {
-                        Bars::top().chip(6, copy)
+                        Bars::top().chip(4, mark).chip(6, copy)
                     };
                 }
                 let paste = Chip::new("corner-down-left", "Paste");
@@ -1655,6 +1659,7 @@ impl Page for Files {
                     };
                 }
                 Bars::top()
+                    .chip(4, mark)
                     .chip(5, copy)
                     .chip(6, paste)
                     .chip(7, Chip::new("x", "Cut"))

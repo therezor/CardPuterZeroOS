@@ -101,8 +101,8 @@ fn copy_then_paste_in_another_folder() {
     // Paste waits, greyed, until something is copied.
     keys(&mut d, "6");
     assert!(copies(&log).is_empty());
-    // Music, mark a and c, Copy on 5. Nothing moves yet.
-    keys(&mut d, "enter\nspace\nx\nspace\n5");
+    // Music, mark a (Space) and c (4), Copy on 5. Nothing moves yet.
+    keys(&mut d, "enter\nspace\nx\n4\n5");
     assert_eq!(d.toast(), Some("Copied 2 items. Paste with 6"));
     assert!(copies(&log).is_empty());
     // Up, into the server on the same side, Paste on 6.
