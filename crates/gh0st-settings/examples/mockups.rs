@@ -89,15 +89,19 @@ fn sample_state() -> State {
         ifaces: vec![
             Iface {
                 name: "wlan0".into(),
+                kind: "wifi".into(),
                 state: "connected".into(),
                 connection: "HomeNet".into(),
                 ipv4: "192.168.1.42/24".into(),
+                ipv6: vec!["fd56:18a6:a0a3:0:1eb1:a942:24d8:5d6f/64".into()],
                 mac: "2c:cf:67:0a:41:9e".into(),
                 gateway: "192.168.1.1".into(),
                 dns: "1.1.1.1, 9.9.9.9".into(),
+                speed: None,
             },
             Iface {
                 name: "eth0".into(),
+                kind: "ethernet".into(),
                 state: "unavailable".into(),
                 ..Iface::default()
             },
@@ -370,6 +374,8 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                     ),
                 ),
                 ("network", s(PageId::Network, 0)),
+                ("network-details", s(PageId::NetInfo, 0)),
+                ("network-details-end", s(PageId::NetInfo, 20)),
                 (
                     "dns-custom",
                     scene(

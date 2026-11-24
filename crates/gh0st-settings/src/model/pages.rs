@@ -85,12 +85,18 @@ pub struct Conn {
 #[derive(Clone, Debug, Default)]
 pub struct Iface {
     pub name: String,
+    /// nmcli's type: `wifi`, `ethernet`.
+    pub kind: String,
     pub state: String,
     pub connection: String,
     pub ipv4: String,
+    /// Global and unique-local addresses; link-local ones are left out.
+    pub ipv6: Vec<String>,
     pub mac: String,
     pub gateway: String,
     pub dns: String,
+    /// The link's speed in Mb/s, for a cable.
+    pub speed: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -562,6 +568,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
             vec![("U", "scan"), ("Del", "forget")],
         ),
         PageId::Network => ("Network", Body::List(network(s)), vec![]),
+        PageId::NetInfo => ("Network details", Body::Info(net_info(s)), vec![]),
         PageId::Hotspot => ("Hotspot", Body::List(hotspot(s)), vec![("U", "reload")]),
         PageId::HotspotQr => ("Join the hotspot", hotspot_qr(s), vec![]),
         PageId::Conn(name) => ("Connection", Body::List(conn(s, name)), vec![]),
@@ -869,7 +876,70 @@ fn network(s: &State) -> Vec<Item> {
             danger: false,
         }
     });
-    [dns, servers].into_iter().chain(devices).collect()
+    let details = Item::new(
+        "info",
+        "Network details",
+        Value::Chevron,
+        Act::Open(PageId::NetInfo),
+    );
+    [dns, servers]
+        .into_iter()
+        .chain(devices)
+        .chain([details])
+        .collect()
+}
+
+/// Every interface as read-only lines: what it is joined to, its addresses,
+/// its MAC and its link. For finding the device on a network, or checking
+/// which MAC a router sees.
+fn net_info(s: &State) -> Vec<Line> {
+    let mut out = Vec::new();
+    if !s.hostname.is_empty() {
+        out.push(Line::Readout("Name".into(), s.hostname.clone()));
+    }
+    let line = |k: &str, v: &str| Line::Readout(k.into(), v.into());
+    for i in &s.ifaces {
+        let what = match i.kind.as_str() {
+            "wifi" => "Wi-Fi",
+            "ethernet" => "Ethernet",
+            _ => "Link",
+        };
+        out.push(Line::Head(format!("{what} {}", i.name)));
+        out.push(line("State", &i.state));
+        if !i.connection.is_empty() {
+            out.push(line("Network", &i.connection));
+        }
+        if i.kind == "wifi"
+            && let Some(n) = s.networks.iter().find(|n| n.active)
+        {
+            out.push(line("Signal", &format!("{} of 4 bars", n.bars)));
+        }
+        if !i.ipv4.is_empty() {
+            out.push(line("IPv4", &i.ipv4));
+        }
+        if !i.gateway.is_empty() {
+            out.push(line("Gateway", &i.gateway));
+        }
+        if !i.dns.is_empty() {
+            out.push(line("DNS", &i.dns));
+        }
+        if !i.ipv6.is_empty() {
+            out.push(line("IPv6", ""));
+            for a in &i.ipv6 {
+                out.push(Line::Wide(a.split('/').next().unwrap_or(a).to_string()));
+            }
+        }
+        if !i.mac.is_empty() {
+            out.push(line("MAC", &i.mac));
+        }
+        if let Some(mb) = i.speed {
+            out.push(line("Speed", &format!("{mb} Mb/s")));
+        }
+    }
+    if s.ifaces.is_empty() {
+        out.push(line("Network", "Reading\u{2026}"));
+    }
+    out
 }
 
 fn conn(s: &State, name: &str) -> Vec<Item> {

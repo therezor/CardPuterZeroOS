@@ -446,6 +446,9 @@ impl Settings {
                 if matches!(id, PageId::Hotspot | PageId::HotspotQr) {
                     self.query_hotspot(cx);
                 }
+                if id == PageId::NetInfo {
+                    self.query_net(cx, false);
+                }
                 if matches!(id, PageId::System | PageId::Advanced | PageId::Swap) {
                     self.query_advanced(cx);
                 }
@@ -1725,7 +1728,7 @@ impl Settings {
             "nmcli",
             "-t",
             "-f",
-            "GENERAL.DEVICE,GENERAL.TYPE,GENERAL.STATE,GENERAL.CONNECTION,GENERAL.HWADDR,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS",
+            "GENERAL.DEVICE,GENERAL.TYPE,GENERAL.STATE,GENERAL.CONNECTION,GENERAL.HWADDR,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS",
             "device",
             "show",
         ];
@@ -2046,7 +2049,13 @@ impl Settings {
             }
             NetJob::List if ok => st.networks = net::parse_list(&out, &st.profiles),
             NetJob::List => fail(cx, &net::failure(&out, false)),
-            NetJob::Devices if ok => st.ifaces = net::parse_devices(&out),
+            NetJob::Devices if ok => {
+                st.ifaces = net::parse_devices(&out);
+                let sys = std::path::Path::new("/sys/class/net");
+                for i in st.ifaces.iter_mut().filter(|i| i.kind == "ethernet") {
+                    i.speed = net::speed(sys, &i.name);
+                }
+            }
             NetJob::HotspotQuery => {
                 // No profile yet: the helper makes one when it first turns on.
                 let (name, psk, security) = net::parse_hotspot(if ok { &out } else { "" });

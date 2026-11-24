@@ -50,6 +50,8 @@ pub enum PageId {
     HotspotQr,
     /// PNGs in ~/Pictures, to make one the wallpaper.
     Pictures,
+    /// Every interface's addresses, MAC and link, to read.
+    NetInfo,
 }
 
 /// A value a row changes in place: Enter flips a toggle, Z and C step the rest.
@@ -204,6 +206,11 @@ impl Item {
 
 pub enum Line {
     Readout(String, String),
+    /// A heading over the readouts under it.
+    Head(String),
+    /// A value too long to share its line with a label, as an IPv6
+    /// address: mono, the whole width.
+    Wide(String),
 }
 
 pub enum Body {
@@ -351,6 +358,11 @@ pub fn draw(c: &mut Canvas, t: &Theme, page: &Page, cur: Cursor, armed: Option<&
                 let r = Rect::new(area.x, area.y + slot as i32 * t.m.line_h, w, t.m.line_h);
                 match line {
                     Line::Readout(k, v) => widgets::readout(c, t, r, k, v),
+                    Line::Head(h) => widgets::section(c, t, r, h),
+                    Line::Wide(v) => {
+                        let r = Rect::new(r.x + t.m.pad, r.y, r.w - 2 * t.m.pad, r.h);
+                        widgets::text_in(c, t.f.mono, r, v, t.c.fg);
+                    }
                 }
             }
             let track = Rect::new(area.x, area.y, w, area.h);

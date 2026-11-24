@@ -268,7 +268,7 @@ pub fn parse_radio(out: &str) -> Option<bool> {
 }
 
 /// `nmcli -t -f GENERAL.DEVICE,GENERAL.TYPE,GENERAL.STATE,GENERAL.CONNECTION,
-/// GENERAL.HWADDR,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show`: blocks of
+/// GENERAL.HWADDR,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS device show`: blocks of
 /// `KEY:value` lines, one block per device. Loopback and Wi-Fi P2P go.
 pub fn parse_devices(out: &str) -> Vec<Iface> {
     let mut out_list = Vec::new();
@@ -305,7 +305,10 @@ pub fn parse_devices(out: &str) -> Vec<Iface> {
         };
         let value = value.clone();
         match key {
-            "GENERAL.TYPE" => *kind = value,
+            "GENERAL.TYPE" => {
+                i.kind = value.clone();
+                *kind = value;
+            }
             // "100 (connected)": keep the words.
             "GENERAL.STATE" => {
                 i.state = value
@@ -318,11 +321,23 @@ pub fn parse_devices(out: &str) -> Vec<Iface> {
             "IP4.ADDRESS" if i.ipv4.is_empty() => i.ipv4 = value,
             "IP4.GATEWAY" if value != "--" => i.gateway = value,
             "IP4.DNS" => dns.push(value),
+            "IP6.ADDRESS" if !value.to_lowercase().starts_with("fe80") => i.ipv6.push(value),
             _ => {}
         }
     }
     finish(&mut cur, &mut dns);
     out_list
+}
+
+/// A cable's link speed in Mb/s, from sysfs. None for Wi-Fi, a link
+/// that is down, or a driver that doesn't say.
+pub fn speed(sys: &std::path::Path, iface: &str) -> Option<u32> {
+    let s = std::fs::read_to_string(sys.join(iface).join("speed")).ok()?;
+    s.trim()
+        .parse::<i64>()
+        .ok()
+        .filter(|&n| n > 0)
+        .map(|n| n as u32)
 }
 
 /// A failed join, in a few words for a toast.
@@ -386,6 +401,14 @@ mod tests {
         assert_eq!(d[0].dns, "1.1.1.1, 9.9.9.9");
         assert_eq!(d[1].state, "unavailable");
         assert!(d[1].connection.is_empty() && d[1].gateway.is_empty());
+        assert_eq!(d[0].kind, "wifi");
+    }
+
+    #[test]
+    fn ipv6_keeps_routable_addresses() {
+        let out = "GENERAL.DEVICE:eth0\nGENERAL.TYPE:ethernet\nIP6.ADDRESS[1]:fd56\\:18a6\\:\\:ecf/128\nIP6.ADDRESS[2]:fe80\\:\\:da1a/64\n";
+        let d = parse_devices(out);
+        assert_eq!(d[0].ipv6, ["fd56:18a6::ecf/128"]);
     }
 
     #[test]
