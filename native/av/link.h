@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace camd {
+namespace gh0st {
 
 class Link {
 public:
@@ -23,4 +23,4 @@ private:
     bool closed_ = false;
 };
 
-} // namespace camd
+} // namespace gh0st

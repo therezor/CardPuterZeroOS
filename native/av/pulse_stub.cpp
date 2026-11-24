@@ -5,7 +5,7 @@
 #include <chrono>
 #include <thread>
 
-namespace camd {
+namespace gh0st {
 
 std::vector<Source> sources()
 {
@@ -58,4 +58,4 @@ void PaOut::close()
     s_ = nullptr;
 }
 
-} // namespace camd
+} // namespace gh0st

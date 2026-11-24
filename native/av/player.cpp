@@ -1,7 +1,8 @@
 #include "player.h"
 #include "pulse.h"
-#include "still.h"
+#include "decode.h"
 
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -18,7 +19,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-namespace camd {
+namespace gh0st {
 
 namespace {
 
@@ -291,7 +292,8 @@ struct Player::State {
     {
         std::string why = "can't decode this video";
         if (hw) {
-            fprintf(stderr, "gh0st-camd: the hardware decoder gave nothing, trying software\n");
+            fprintf(stderr, "%s: the hardware decoder gave nothing, trying software\n",
+                    program_invocation_short_name);
             avcodec_free_context(&vdec);
             if (openDecoder(vi, vdec, why, false)) {
                 std::lock_guard<std::mutex> l(mu);
@@ -558,7 +560,8 @@ bool Player::open(const std::string &path, int w, int h, std::string &why)
             s.sound = true;
         } else {
             // No sound server: the picture plays on, silent.
-            fprintf(stderr, "gh0st-camd: %s: playing without sound: %s\n", path.c_str(),
+            fprintf(stderr, "%s: %s: playing without sound: %s\n", program_invocation_short_name,
+                    path.c_str(),
                     none.c_str());
             avcodec_free_context(&s.adec);
             swr_free(&s.swr);
@@ -575,7 +578,8 @@ bool Player::open(const std::string &path, int w, int h, std::string &why)
     s.video = std::thread([&s] { s.videoLoop(); });
     if (s.ai >= 0)
         s.audio = std::thread([&s] { s.audioLoop(); });
-    fprintf(stderr, "gh0st-camd: playing %s, %dx%d to %dx%d, %s decoder, %s\n", path.c_str(), vw, vh,
+    fprintf(stderr, "%s: playing %s, %dx%d to %dx%d, %s decoder, %s\n",
+            program_invocation_short_name, path.c_str(), vw, vh,
             s.outW, s.outH, s.hw ? "hardware" : "software", s.sound ? "with sound" : "silent");
     return true;
 }
@@ -663,4 +667,4 @@ bool Player::news(Status &out)
     return true;
 }
 
-} // namespace camd
+} // namespace gh0st

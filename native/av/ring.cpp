@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace camd {
+namespace gh0st {
 
 static const uint32_t MAGIC = 0x47304352; // "G0CR"
 static const uint32_t VERSION = 1;
@@ -60,4 +60,4 @@ uint32_t Ring::write(uint32_t slot, uint16_t w, uint16_t h,
     return seq_;
 }
 
-} // namespace camd
+} // namespace gh0st

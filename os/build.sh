@@ -43,7 +43,7 @@ changed() {
     shift
     git -C "$root" log -1 --format="$fmt" -- "$@"
 }
-GH0ST_STAMP=$(changed '%ct.%h' crates assets packaging Cargo.toml Cargo.lock \
+GH0ST_STAMP=$(changed '%ct.%h' crates native assets packaging Cargo.toml Cargo.lock \
     os/packages/gh0st os/packages/gh0st-term os/packages/gh0st-camera)
 # gh0st-camera's Depends pins libcamera exactly: a new pin is a new
 # version, or the repo keeps the old deb under the same name.

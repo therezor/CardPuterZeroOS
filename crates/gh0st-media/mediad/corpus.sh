@@ -77,6 +77,9 @@ printf 'not a picture at all' > text.jpg
 
 # Video, with sound.
 ff $src -c:v libx264 -pix_fmt yuv420p -c:a aac h264.mp4
+# Long enough for the player's checks to seek about.
+ff -f lavfi -i testsrc2=size=320x240:rate=30:duration=10 -f lavfi -i sine=duration=10 \
+    -c:v libx264 -pix_fmt yuv420p -c:a aac long.mp4
 ff -display_rotation 90 -i h264.mp4 -c copy rotated.mp4
 ff $src -c:v libx265 -tag:v hvc1 -pix_fmt yuv420p -c:a aac hevc.mp4
 ff $src -c:v libvpx-vp9 -b:v 300k -c:a libopus vp9.webm

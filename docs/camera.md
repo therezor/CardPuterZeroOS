@@ -227,7 +227,10 @@ Zoom and exposure start at 1x and ±0 on every launch.
 
 ## The helper
 
-`crates/gh0st-camera/camd` is C++17 with a plain Makefile. Its parts:
+`crates/gh0st-camera/camd` is C++17 with a plain Makefile. It shares the
+picture, player, link and ring code with the media helper: those sources
+are in `native/av` (`docs/media.md`), and the Makefile builds them through
+`VPATH`. Its parts:
 
 - `main.cpp`: the loop, the protocol, and a worker thread that encodes
   stills, so the preview returns while a JPEG is written.
@@ -246,10 +249,10 @@ Zoom and exposure start at 1x and ±0 on every launch.
   libavcodec on a thread of its own, open only while recording. Each packet
   is stamped on the monotonic clock the sensor stamps frames with, so the
   two tracks line up; the sound's track then runs on by sample count.
-- `pulse.cpp`: sound in and out through PulseAudio's simple API, which
+- `pulse.cpp` (shared): sound in and out through PulseAudio's simple API, which
   PipeWire answers, with about 100 ms buffered. `pulse_stub.cpp` stands in
   on hosts: no microphones, and playback silent but timed.
-- `player.cpp`: plays a video. One thread reads the file ahead, one decodes
+- `player.cpp` (shared): plays a video. One thread reads the file ahead, one decodes
   the picture (the VPU's `h264_v4l2m2m`, software when it can't) and keeps
   it on the clock, one decodes the sound and writes it to the server. A
   late picture is dropped. The VPU's pictures sit in uncached memory, so
@@ -262,9 +265,9 @@ Zoom and exposure start at 1x and ±0 on every launch.
   nothing polls and the sound stream closes, so the codec sleeps. Only the
   loop thread touches the link and the ring. `make playcheck` builds a host check of play, pause, seek and the
   end.
-- `still.cpp`: JPEG from raw YUV420 (libjpeg-turbo), EXIF written by hand,
-  and thumbnails decoded at 1/8 scale.
-- `link.cpp`, `ring.cpp`: the two halves of the wire, as in `src/`.
+- `still.cpp`: JPEG from raw YUV420 (libjpeg-turbo) and EXIF written by
+  hand. `decode.cpp` (shared) reads them back, at 1/8 scale for a tile.
+- `link.cpp`, `ring.cpp` (shared): the two halves of the wire, as in `src/`.
 
 How it gets the most from the sensor:
 

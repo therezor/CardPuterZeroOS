@@ -4,7 +4,7 @@
 #include <pulse/pulseaudio.h>
 #include <pulse/simple.h>
 
-namespace camd {
+namespace gh0st {
 
 namespace {
 
@@ -173,4 +173,4 @@ void PaOut::close()
     s_ = nullptr;
 }
 
-} // namespace camd
+} // namespace gh0st

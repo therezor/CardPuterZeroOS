@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace camd {
+namespace gh0st {
 
 class Player {
 public:
@@ -43,4 +43,4 @@ private:
     int wake_;
 };
 
-} // namespace camd
+} // namespace gh0st

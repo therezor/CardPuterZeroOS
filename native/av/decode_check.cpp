@@ -1,6 +1,6 @@
-// Host checks for still.cpp's readers of files from elsewhere: a crafted
+// Host checks for decode.cpp's readers of files from elsewhere: a crafted
 // EXIF and a huge picture. `make check` builds and runs them.
-#include "still.cpp"
+#include "decode.cpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -58,7 +58,7 @@ std::string hugeJpeg()
             break;
         }
     std::string path = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") +
-                       "/gh0st-camd-huge.jpg";
+                       "/gh0st-decode-huge.jpg";
     FILE *f = std::fopen(path.c_str(), "wb");
     std::fwrite(mem, 1, n, f);
     std::fclose(f);
@@ -75,12 +75,12 @@ int main()
     std::fwrite(b.data(), 1, b.size(), f);
     std::rewind(f);
     std::vector<uint8_t> jpg;
-    expect(!camd::exifThumb(f, jpg), "a thumbnail offset that wraps is refused");
+    expect(!gh0st::exifThumb(f, jpg), "a thumbnail offset that wraps is refused");
     std::fclose(f);
 
     std::string path = hugeJpeg();
     std::vector<uint16_t> out;
-    expect(!camd::jpegTo565(path, 320, 170, 1, 0.5f, 0.5f, out), "a 3.6 GP picture is skipped");
+    expect(!gh0st::jpegTo565(path, 320, 170, 1, 0.5f, 0.5f, out), "a 3.6 GP picture is skipped");
     std::remove(path.c_str());
     return failed ? 1 : 0;
 }

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace camd {
+namespace gh0st {
 
 class Ring {
 public:
@@ -27,4 +27,4 @@ private:
     uint32_t seq_ = 0;
 };
 
-} // namespace camd
+} // namespace gh0st

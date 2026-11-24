@@ -1,4 +1,5 @@
 #include "mic.h"
+#include "camd.h"
 #include "pulse.h"
 
 #include <algorithm>

@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace camd {
+namespace gh0st {
 
 static const size_t MAX = 512;
 
@@ -61,4 +61,4 @@ bool Link::recv(std::vector<std::string> &fields)
     return true;
 }
 
-} // namespace camd
+} // namespace gh0st

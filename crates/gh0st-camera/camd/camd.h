@@ -2,6 +2,8 @@
 // protocol and the reasons.
 #pragma once
 
+#include "pix.h"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -9,6 +11,10 @@
 #include <vector>
 
 namespace camd {
+
+// Pictures, the player, the link and the ring are shared with gh0st-mediad
+// (native/av).
+using namespace gh0st;
 
 enum class Fault { None, NoCamera, NoMemory, Busy, Other };
 
@@ -22,38 +28,12 @@ struct Controls {
     int quality = 95;
 };
 
-// A full-range 4:2:0 picture with packed planes.
-struct Yuv420 {
-    int w = 0, h = 0;
-    std::vector<uint8_t> y, u, v;
-    int cw() const { return (w + 1) / 2; }
-    int ch() const { return (h + 1) / 2; }
-    void resize(int nw, int nh)
-    {
-        w = nw;
-        h = nh;
-        y.assign(size_t(w) * h, 0);
-        u.assign(size_t(cw()) * ch(), 128);
-        v.assign(size_t(cw()) * ch(), 128);
-    }
-};
-
 struct ShotMeta {
     int64_t exposure_us = 0;
     float gain = 1.0f;
     float zoom = 1.0f;
     float ev = 0.0f;
     std::string model;
-};
-
-// One preview frame as the backend has it: RGB565 rows or YUV420 planes.
-struct View {
-    enum Fmt { RGB565, YUV420 } fmt;
-    int w, h;
-    const uint8_t *p[3];
-    int stride[3];
-    // YUV in 16 to 235 (video's BT.709) rather than 0 to 255 (sYCC).
-    bool limited = false;
 };
 
 // A full-size video frame as the encoder takes it: one dmabuf and its

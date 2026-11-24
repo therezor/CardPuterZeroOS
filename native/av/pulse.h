@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace camd {
+namespace gh0st {
 
 struct Source {
     std::string name, desc;
@@ -58,4 +58,4 @@ private:
     int rate_ = 0;
 };
 
-} // namespace camd
+} // namespace gh0st

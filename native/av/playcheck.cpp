@@ -11,7 +11,7 @@
 #include <thread>
 #include <unistd.h>
 
-using namespace camd;
+using namespace gh0st;
 
 namespace {
 
