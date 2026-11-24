@@ -323,3 +323,23 @@ fn media_and_macros_can_be_picked_from_type() {
         "x x Enter picks Media"
     );
 }
+
+#[test]
+fn the_usb_cable_has_a_system_too() {
+    let cable = FakeCable::new(UsbState::Connected);
+    let log = cable.log.clone();
+    let app = App::with(Box::new(FakeBt::new()), Box::new(cable), dir("usb-mac"));
+    let mut d = Driver::new(app);
+    // The USB row, its settings, System one step on to macOS, then typing.
+    d.wait(50)
+        .keys("e")
+        .wait(50)
+        .keys("x\nc\nf\nenter")
+        .wait(50);
+    d.keys("alt+c");
+    assert_eq!(
+        pressed(&log),
+        [(mods::LGUI, key::C)],
+        "Alt is Cmd on a Mac over USB"
+    );
+}

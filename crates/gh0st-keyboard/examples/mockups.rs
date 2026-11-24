@@ -237,6 +237,17 @@ const SCENES: &[Scene] = &[
         },
     },
     Scene {
+        name: "17-usb-settings",
+        keys: "e\nwait 50\nx\nc",
+        make: |d| {
+            App::with(
+                Box::new(bt_connected()),
+                Box::new(FakeCable::new(UsbState::Connected)),
+                dir_with(d, &hosts()),
+            )
+        },
+    },
+    Scene {
         name: "16-help",
         keys: "help",
         make: |d| mac_session(d, TYPE),

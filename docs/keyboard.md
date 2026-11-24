@@ -16,6 +16,8 @@ computer or a phone, over Bluetooth LE or a USB cable. It is an SDK app,
   typed here gets a field.
 - **A host's page**: its name, its system and "Stay connected behind apps".
   It opens after pairing with "Start typing" first.
+- **The USB cable's page** (E, or Host settings on its row): the system on
+  the other end, so Alt sends Cmd to a Mac over USB too.
 - **The session**, in five modes. Fn+Space lists them; a digit or Enter
   picks one. The app remembers the last.
 

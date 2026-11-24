@@ -149,14 +149,14 @@ impl Bluetooth for FakeBt {
 
 pub struct FakeCable {
     pub state: UsbState,
-    pub sent: Vec<Report>,
+    pub log: SharedLog,
 }
 
 impl FakeCable {
     pub fn new(state: UsbState) -> FakeCable {
         FakeCable {
             state,
-            sent: Vec::new(),
+            log: SharedLog::default(),
         }
     }
 }
@@ -176,7 +176,7 @@ impl Cable for FakeCable {
         if self.state != UsbState::Connected {
             return false;
         }
-        self.sent.push(*r);
+        self.log.borrow_mut().sent.push(*r);
         true
     }
     fn stop(&mut self) {

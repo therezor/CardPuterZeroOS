@@ -43,12 +43,7 @@ impl Profile {
         self.icon = icon_of(h.system);
         s.save_hosts();
         if s.target == Some(Target::Bt(self.address.clone())) {
-            let o = s.engine.options();
-            s.release();
-            s.engine.set_options(crate::engine::Options {
-                system: s.system(),
-                ..o
-            });
+            s.system_changed();
         }
     }
 }
@@ -149,5 +144,80 @@ impl Screen for Profile {
             }
         }
         Nav::Stay
+    }
+}
+
+/// The USB cable's settings: what it plugs into. One for the cable, since
+/// a computer on it gives no name to tell it apart.
+pub struct UsbProfile {
+    list: List,
+}
+
+impl UsbProfile {
+    pub fn new() -> UsbProfile {
+        UsbProfile { list: List::new() }
+    }
+
+    fn step(&mut self, s: &mut Shared, d: i32, cx: &mut Cx) {
+        let all = System::ALL;
+        let i = all.iter().position(|x| *x == s.usb_system).unwrap_or(0);
+        s.usb_system = all[gh0st_app::cycle(i, d, all.len())];
+        cx.settings()
+            .set_str(crate::app::USB_SYSTEM, s.usb_system.id());
+        if s.target == Some(Target::Usb) {
+            s.system_changed();
+        }
+    }
+}
+
+impl Default for UsbProfile {
+    fn default() -> Self {
+        UsbProfile::new()
+    }
+}
+
+impl Screen for UsbProfile {
+    fn title(&self) -> &str {
+        words::USB
+    }
+
+    fn icon(&self) -> &str {
+        "usb"
+    }
+
+    fn about(&self) -> &str {
+        words::USB_PROFILE_ABOUT
+    }
+
+    fn draw(&self, s: &Shared, ui: &mut Ui) {
+        let rows = [
+            Row::link(words::START_TYPING).icon("keyboard"),
+            Row::choice(words::SYSTEM, s.usb_system.name()).icon(icon_of(s.usb_system)),
+        ];
+        ui.list(&self.list, &rows);
+    }
+
+    fn key(&mut self, s: &mut Shared, key: Key, cx: &mut Cx) -> Nav {
+        match self.list.key(key) {
+            Some(Action::Open(0)) => {
+                if matches!(
+                    s.usb.state(),
+                    crate::link::UsbState::Off | crate::link::UsbState::Failed
+                ) {
+                    s.usb.enable(true);
+                }
+                s.set_target(Target::Usb, cx);
+                Nav::Replace(Box::new(Session::new(s)))
+            }
+            Some(Action::Open(1)) => {
+                self.step(s, 1, cx);
+                Nav::Stay
+            }
+            Some(Action::Change(1, d)) => {
+                self.step(s, d, cx);
+                Nav::Stay
+            }
+            _ => Nav::Stay,
+        }
     }
 }

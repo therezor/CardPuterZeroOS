@@ -59,6 +59,7 @@ pub const START_TYPING: &str = "Start typing";
 pub const NAME: &str = "Name";
 pub const SYSTEM: &str = "System";
 pub const STAY: &str = "Stay connected behind apps";
+pub const USB_PROFILE_ABOUT: &str = "System sets what Alt sends (Cmd on a Mac or an iPhone) and the shortcuts, for whatever the USB cable plugs into.";
 pub const PROFILE_ABOUT: &str = "System sets what Alt sends (Cmd on a Mac or an iPhone) and the shortcuts.
 Stay connected keeps the host linked while another app is in front. It is off for a phone, so the phone's own keyboard comes back.";
 pub fn paired(host: &str) -> String {

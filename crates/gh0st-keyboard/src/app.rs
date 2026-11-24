@@ -20,6 +20,8 @@ use crate::words;
 const HELPER: &str = "/usr/libexec/gh0st-helper";
 /// The config key for the host used last: an address, or "usb".
 pub const LAST: &str = "keyboard.last";
+/// The system on the other end of the USB cable.
+pub const USB_SYSTEM: &str = "keyboard.usb_system";
 /// Shows typed characters on the typing screen, or dots.
 pub const SHOW_TYPED: &str = "keyboard.show_typed";
 
@@ -57,6 +59,8 @@ pub struct Shared {
     classic_off: bool,
     /// Runs the root helper; off for tests and mockups.
     pub helpers: bool,
+    /// What the USB cable plugs into: Alt sends Cmd to a Mac there too.
+    pub usb_system: System,
     /// Unblocks the radio; tests and mockups pass one that can't fail.
     pub unblock: fn() -> std::io::Result<()>,
 }
@@ -98,6 +102,7 @@ impl Shared {
             moves: Vec::new(),
             classic_off: false,
             helpers: true,
+            usb_system: System::Windows,
             unblock: unblock_bluetooth,
         }
     }
@@ -135,7 +140,8 @@ impl Shared {
     pub fn system(&self) -> System {
         match &self.target {
             Some(Target::Bt(a)) => self.host(a).map(|h| h.system).unwrap_or_default(),
-            _ => System::Windows,
+            Some(Target::Usb) => self.usb_system,
+            None => System::Windows,
         }
     }
 
@@ -156,6 +162,17 @@ impl Shared {
             Some(Target::Usb) => self.usb.state() == UsbState::Connected,
             None => false,
         }
+    }
+
+    /// The target's system changed: what Alt sends follows, with nothing
+    /// held across the change.
+    pub fn system_changed(&mut self) {
+        self.release();
+        let o = self.engine.options();
+        self.engine.set_options(Options {
+            system: self.system(),
+            ..o
+        });
     }
 
     /// Keys now go to `t`. Everything held is let go first.
@@ -650,6 +667,13 @@ impl Page for App {
         }
         self.s.sync_hosts();
         self.s.show_typed = cx.settings().config().get_bool(SHOW_TYPED).unwrap_or(true);
+        let usb = cx
+            .settings()
+            .config()
+            .get_str(USB_SYSTEM)
+            .unwrap_or("")
+            .to_string();
+        self.s.usb_system = System::from_id(&usb);
         self.sync_watches(cx);
         let last = cx.settings().config().get_str(LAST).map(String::from);
         if let Some(root) = self.stack.first_mut() {

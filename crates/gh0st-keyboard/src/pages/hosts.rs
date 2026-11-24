@@ -6,7 +6,9 @@ use gh0st_app::prelude::*;
 use crate::app::{Nav, Screen, Shared, Target};
 use crate::host::System;
 use crate::link::{Advert, Event, UsbState};
-use crate::pages::{pair::Pair, profile::Profile, session::Session};
+use crate::pages::pair::Pair;
+use crate::pages::profile::{Profile, UsbProfile};
+use crate::pages::session::Session;
 use crate::words;
 
 const PAIR: u32 = 1;
@@ -196,12 +198,7 @@ impl Screen for Hosts {
                 .keys("p")
                 .opens(),
         );
-        c.add(
-            Command::action(EDIT, "Host settings")
-                .keys("e")
-                .opens()
-                .enabled(host.is_some()),
-        );
+        c.add(Command::action(EDIT, "Host settings").keys("e").opens());
         c.add(Command::action(UNLINK, words::UNLINK).enabled(linked));
         c.add(
             Command::action(FORGET, words::FORGET)
@@ -225,7 +222,7 @@ impl Screen for Hosts {
             PAIR => Nav::Push(Box::new(Pair::new())),
             EDIT => match self.selected_host(s) {
                 Some(a) => Nav::Push(Box::new(Profile::new(s, &a, false))),
-                None => Nav::Stay,
+                None => Nav::Push(Box::new(UsbProfile::new())),
             },
             UNLINK => {
                 if let Some(a) = self.selected_host(s) {
