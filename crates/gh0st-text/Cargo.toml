@@ -1,0 +1,14 @@
+[package]
+name = "gh0st-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Text: a code and text editor for the CardputerZero, a gh0st app"
+
+[dependencies]
+gh0st-app.workspace = true
+gh0st-core.workspace = true
+libc.workspace = true
+# wcwidth, as the terminal uses it: CJK and emoji take two cells.
+unicode-width = "0.2"

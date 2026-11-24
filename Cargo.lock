@@ -378,6 +378,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-text"
+version = "0.2.0"
+dependencies = [
+ "gh0st-app",
+ "gh0st-core",
+ "libc",
+ "unicode-width",
+]
+
+[[package]]
 name = "gh0st-ui"
 version = "0.2.0"
 dependencies = [

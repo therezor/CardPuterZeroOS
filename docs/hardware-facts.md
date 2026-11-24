@@ -624,6 +624,10 @@ Checked in a container with trixie's packages, not on a device.
 | `unix_chkpwd` right password | exits 0 with `password\0` on stdin, run by root | helper auth |
 | `unix_chkpwd` as the user | exits 0 for the user's own password and 7 (`PAM_AUTH_ERR`) for a wrong one, run by UID 1000 (setgid `shadow`). Any other exit lets the user in and stops the lock asking | lock screen |
 | `passwd -S` as the user | prints `<user> P ...` for the user's own account, `NP` or `L` otherwise | lock screen |
+| Text: first screen of a 1 GB file | under 150 ms | `gh0st-text` bench (`examples/bench.rs`) |
+| Text: PSS with a 1 GB file open | under 12 MB | `scripts/measure.sh gh0st-text` |
+| Text: keystroke to flush | under 4 ms, one text row flushed | `GH0ST_LOG=debug` |
+| Text: index and find slices | 8 ms at most each | `gh0st-text` bench |
 | `EVIOCGRAB` while an app holds the grab | fails with `EBUSY` | dark over an app |
 | Dark current | `current_now` lower with the terminal sent behind and the backlight off than on home | dark state |
 | Restore-target off | a new stream with a parked app's key plays on the default device | `50-gh0st-streams.conf` |
