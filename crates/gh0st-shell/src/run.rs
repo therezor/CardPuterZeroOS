@@ -572,6 +572,10 @@ impl Shell {
         if s.lock_password {
             s.lock_secure = true;
             s.enter_locked(rt::now_ms());
+        } else {
+            // Straight to home: no password opens the keyring, so ask
+            // once `passwd -S` says the account has one.
+            s.probe_account();
         }
         Ok(s)
     }
