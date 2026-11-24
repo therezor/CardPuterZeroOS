@@ -2377,6 +2377,15 @@ impl Page for Files {
         self.retitle();
     }
 
+    /// Back in front: another app may have changed the folder (Text saved
+    /// a file opened from here). Local folders read again; servers wait.
+    fn front(&mut self, front: bool, cx: &mut Cx) {
+        if front && self.pick.is_none() && matches!(self.view, View::Browse) {
+            self.reload(&[], cx);
+            cx.redraw();
+        }
+    }
+
     fn ready(&mut self, watch: Watch, cx: &mut Cx) {
         if self.engine_watch.is_some_and(|w| w.0 == watch) {
             self.drain(cx);

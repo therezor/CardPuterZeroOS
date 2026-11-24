@@ -172,6 +172,9 @@ fn token_ok(t: &str) -> bool {
 
 impl Question {
     fn from_options(mode: Mode, app: &str, title: &str, o: Option<&Value>) -> Question {
+        // A program with no app entry is named by its path: its last part
+        // says enough in a top bar.
+        let app = app.rsplit('/').next().unwrap_or(app);
         let get = |k: &str| o.and_then(|o| o.get(k));
         let mut filters: Vec<Filter> = get("filters")
             .map(Value::inner)
@@ -238,7 +241,7 @@ impl Question {
         Question {
             mode,
             multiple: mode == Mode::Open && flag(get("multiple")),
-            app: app.chars().take(64).collect(),
+            app: app.chars().take(16).collect(),
             title: title.chars().take(MAX_TEXT).collect(),
             accept: text(get("accept_label")).replace('_', ""),
             filters,
@@ -758,6 +761,8 @@ mod tests {
         assert_eq!(q.name, "notes.txt");
         assert_eq!(q.folder, Some("/home/u/Docs".into()));
         assert_eq!(q.accept, "Export");
+        let q = Question::from_options(Mode::Open, "/home/lol/bin/pick", "", None);
+        assert_eq!(q.app, "pick");
         let q = Question::from_options(
             Mode::Open,
             "A",
