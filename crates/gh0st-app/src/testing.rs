@@ -197,6 +197,11 @@ impl Driver {
     }
 
     /// Memory is short (see [`Page::low_memory`](crate::Page::low_memory)).
+    /// The test's own home folder: where its recent list is kept.
+    pub fn home(&self) -> &std::path::Path {
+        &self.rt.s.home
+    }
+
     /// The recent list, newest first, as the app left it.
     pub fn recent(&self) -> Vec<std::path::PathBuf> {
         gh0st_core::recent::list(&self.rt.s.home, gh0st_core::recent::KEEP)

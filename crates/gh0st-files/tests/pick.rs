@@ -141,3 +141,24 @@ fn the_chooser_is_one_pane_tab_and_the_other_side_are_not_there() {
     keys(&mut d, "enter\ntab\nenter");
     assert_eq!(*answer.borrow(), Some(Some(vec![h.0.join("Docs/plan.md")])));
 }
+
+#[test]
+fn recent_files_of_the_asked_type_are_a_place_to_pick_from() {
+    let h = home("recent");
+    let mut spec = Spec::new(Mode::Open, "Media");
+    spec.filters = vec![sound()];
+    spec.filter = Some(0);
+    let (mut d, answer) = chooser(&h, spec);
+    let home = d.home().to_path_buf();
+    for (f, mime) in [
+        ("Music/a.flac", "audio/flac"),
+        ("Music/notes.txt", "text/plain"),
+    ] {
+        gh0st_core::recent::add(&home, &h.0.join(f), mime, "x", "x %u").unwrap();
+    }
+    // Up to Places: Home, Card, Recent. notes.txt isn't sound: a.flac heads it.
+    keys(&mut d, "esc\nx\nx\nenter");
+    assert_eq!(d.title(), "Recent");
+    keys(&mut d, "enter");
+    assert_eq!(*answer.borrow(), Some(Some(vec![h.0.join("Music/a.flac")])));
+}

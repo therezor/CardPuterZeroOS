@@ -110,6 +110,8 @@ enum Place {
     Home,
     Card,
     Downloads,
+    /// Files opened lately, by any app.
+    Recent,
     Trash,
     Server(usize),
     Add,
@@ -267,6 +269,9 @@ struct Transfer {
     name: String,
 }
 
+/// Recent files the Recent place lists at most.
+const RECENT_SHOWN: usize = 50;
+
 /// What a request was for, so its events land in the right place.
 #[derive(Clone, Debug)]
 enum Pending {
@@ -322,6 +327,11 @@ enum View {
     },
     /// The chooser's file types.
     Filters {
+        list: List,
+    },
+    /// Files opened lately, newest first: Enter opens one, or picks it.
+    Recent {
+        files: Vec<PathBuf>,
         list: List,
     },
 }
@@ -635,6 +645,32 @@ impl Files {
         };
     }
 
+    /// The recent list, what is still there and, in the chooser, what its
+    /// file types take.
+    fn open_recent(&mut self, cx: &mut Cx) {
+        let spec = self.spec().cloned();
+        let files: Vec<PathBuf> = cx
+            .recent_files(RECENT_SHOWN)
+            .into_iter()
+            .filter(|p| p.is_file())
+            .filter(|p| {
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy())
+                    .unwrap_or_default();
+                spec.as_ref().is_none_or(|s| s.shows(&name, false))
+            })
+            .collect();
+        if files.is_empty() {
+            cx.toast("Nothing opened lately");
+            return;
+        }
+        self.view = View::Recent {
+            files,
+            list: List::stopping(),
+        };
+    }
+
     fn side(&self) -> &Side {
         &self.sides[self.cur]
     }
@@ -665,6 +701,15 @@ impl Files {
     }
 
     /// "nas:/backup", for a transfer naming where things go.
+    /// A folder as the user reads it: `~` for home.
+    fn short(&self, d: &Path) -> String {
+        match d.strip_prefix(&self.home) {
+            Ok(r) if r.as_os_str().is_empty() => "~".into(),
+            Ok(r) => format!("~/{}", r.display()),
+            Err(_) => d.display().to_string(),
+        }
+    }
+
     fn where_(&self, i: usize) -> String {
         self.sides[i].loc.show(&self.home)
     }
@@ -737,6 +782,9 @@ impl Files {
         if self.has_downloads {
             v.push(Place::Downloads);
         }
+        if self.spec().is_none_or(|s| s.mode == Mode::Open) {
+            v.push(Place::Recent);
+        }
         // A chooser picks on the card only.
         if self.pick.is_some() {
             return v;
@@ -756,6 +804,10 @@ impl Files {
 
     fn open_place(&mut self, p: Place, cx: &mut Cx) {
         let loc = match p {
+            Place::Recent => {
+                self.open_recent(cx);
+                return;
+            }
             Place::Home => Loc::Local(self.home.clone()),
             Place::Card => Loc::Local("/".into()),
             Place::Downloads => Loc::Local(self.downloads()),
@@ -2173,6 +2225,7 @@ impl Page for Files {
             View::Key(_) => "SSH key",
             View::Conflict { .. } => "Already there",
             View::OpenWith { .. } => "Open with",
+            View::Recent { .. } => "Recent",
             View::Filters { .. } => "File type",
             View::Browse => &self.title,
         }
@@ -2341,6 +2394,19 @@ impl Page for Files {
                     }
                     self.view = View::Browse;
                     cx.open_with(&h.id, &path);
+                }
+            }
+            View::Recent { files, list } => {
+                if let Some(Action::Open(i)) = list.key(key) {
+                    let Some(path) = files.get(i).cloned() else {
+                        return;
+                    };
+                    self.view = View::Browse;
+                    if self.pick.is_some() {
+                        self.finish(Some(vec![path]), cx);
+                    } else {
+                        cx.open_file(&path);
+                    }
                 }
             }
             View::Filters { list } => {
@@ -2721,6 +2787,21 @@ impl Page for Files {
                     .collect();
                 ui.list(list, &rows);
             }
+            View::Recent { files, list } => {
+                let names: Vec<(String, String)> = files
+                    .iter()
+                    .map(|p| {
+                        let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                        let dir = p.parent().map(|d| self.short(d)).unwrap_or_default();
+                        (name.unwrap_or_default(), dir)
+                    })
+                    .collect();
+                let rows: Vec<Row> = names
+                    .iter()
+                    .map(|(n, d)| Row::info(n, d).icon("file"))
+                    .collect();
+                ui.list(list, &rows);
+            }
             View::Filters { list } => {
                 let spec = self.spec();
                 let at = spec.and_then(|s| s.filter);
@@ -3048,6 +3129,7 @@ impl Files {
                     Place::Home => ("Home".into(), String::new(), "house"),
                     Place::Card => ("Card".into(), String::new(), "hard-drive"),
                     Place::Downloads => ("Downloads".into(), String::new(), "download"),
+                    Place::Recent => ("Recent".into(), String::new(), "clock"),
                     Place::Trash => {
                         let n = self.trash_n;
                         let v = if n == 0 {

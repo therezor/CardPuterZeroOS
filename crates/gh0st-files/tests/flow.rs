@@ -80,8 +80,8 @@ fn keys(d: &mut Driver, script: &str) {
     }
 }
 
-// Places on side B: Home, Card, Trash, nas, Add server.
-const B_TO_NAS: &str = "tab\nx\nx\nx\nenter\ntab";
+// Places on side B: Home, Card, Recent, Trash, nas, Add server.
+const B_TO_NAS: &str = "tab\nx\nx\nx\nx\nenter\ntab";
 
 fn copies(log: &Rc<RefCell<Vec<Request>>>) -> Vec<(Vec<Loc>, Loc, bool)> {
     log.borrow()
@@ -107,7 +107,7 @@ fn copy_then_paste_in_another_folder() {
     assert_eq!(d.toast(), Some("Copied 2 items. Paste with 6"));
     assert!(copies(&log).is_empty());
     // Up, into the server on the same side, Paste on 6.
-    keys(&mut d, "esc\nesc\nx\nx\nx\nenter\n6");
+    keys(&mut d, "esc\nesc\nx\nx\nx\nx\nenter\n6");
     let music = Loc::Local(h.home().join("Music"));
     let nas = Loc::Remote {
         server: "nas".into(),
@@ -134,7 +134,7 @@ fn cut_moves_once_and_not_into_its_own_folder() {
     let (mut d, log) = drive(&h, fake(), Keyring::over(None));
     keys(&mut d, "enter\nx\n7\n6");
     assert_eq!(d.toast(), Some("It is in this folder already"));
-    keys(&mut d, "esc\nesc\nx\nx\nx\nenter\n6");
+    keys(&mut d, "esc\nesc\nx\nx\nx\nx\nenter\n6");
     let moved = copies(&log);
     assert_eq!(moved.len(), 1);
     assert!(moved[0].2, "a cut pastes as a move");
@@ -176,7 +176,7 @@ fn esc_climbs_to_places_and_tab_keeps_each_side() {
     assert!(!d.quit());
     assert!(d.lint().is_empty());
     keys(&mut d, "tab\ntab\nenter");
-    keys(&mut d, "x\nx\nx\nx\nenter");
+    keys(&mut d, "x\nx\nx\nx\nx\nenter");
     assert_eq!(d.dialog(), None);
 }
 
@@ -313,7 +313,7 @@ fn a_typed_password_is_kept_once_it_works() {
     let mut f = fake();
     asks_password(&mut f);
     let (mut d, log) = drive(&h, f, kr);
-    keys(&mut d, "tab\nx\nx\nx\nenter");
+    keys(&mut d, "tab\nx\nx\nx\nx\nenter");
     assert_eq!(d.dialog().map(|x| x.0), Some("Password for me"));
     keys(&mut d, "type s3cret\nenter");
     assert_eq!(replies(&log), [Some("s3cret".to_string())]);
@@ -346,7 +346,7 @@ fn a_kept_password_connects_without_asking() {
     let mut f = fake();
     asks_password(&mut f);
     let (mut d, log) = drive(&h, f, kr);
-    keys(&mut d, "tab\nx\nx\nx\nenter");
+    keys(&mut d, "tab\nx\nx\nx\nx\nenter");
     assert_eq!(d.dialog(), None, "no question");
     assert_eq!(replies(&log), [Some("hunter2".to_string())]);
 }
@@ -357,7 +357,7 @@ fn no_keyring_asks_every_time() {
     let mut f = fake();
     asks_password(&mut f);
     let (mut d, log) = drive(&h, f, Keyring::over(None));
-    keys(&mut d, "tab\nx\nx\nx\nenter");
+    keys(&mut d, "tab\nx\nx\nx\nx\nenter");
     assert_eq!(d.dialog().map(|x| x.0), Some("Password for me"));
     keys(&mut d, "esc");
     assert_eq!(replies(&log), [None]);
@@ -374,7 +374,7 @@ fn a_locked_keyring_opens_then_connects() {
     let mut f = fake();
     asks_password(&mut f);
     let (mut d, log) = drive(&h, f, files_kr(&w, ":1.9"));
-    keys(&mut d, "tab\nx\nx\nx\nenter");
+    keys(&mut d, "tab\nx\nx\nx\nx\nenter");
     assert_eq!(
         d.dialog(),
         None,
@@ -395,7 +395,7 @@ fn a_vault_not_opened_since_start_is_opened_not_skipped() {
     let mut f = fake();
     asks_password(&mut f);
     let (mut d, log) = drive(&h, f, files_kr(&w, ":1.9"));
-    keys(&mut d, "tab\nx\nx\nx\nenter");
+    keys(&mut d, "tab\nx\nx\nx\nx\nenter");
     assert_eq!(d.dialog(), None);
     assert_eq!(replies(&log), [Some("hunter2".to_string())]);
 }
@@ -429,8 +429,8 @@ fn only_the_server_that_listed_keeps_its_password() {
         ],
     );
     let (mut d, _) = drive(&h, f, kr);
-    // Places on B: Home, Card, Trash, nas, pi, Add server.
-    keys(&mut d, "tab\nx\nx\nx\nx\nenter\ntype pi-pw\nenter");
+    // Places on B: Home, Card, Recent, Trash, nas, pi, Add server.
+    keys(&mut d, "tab\nx\nx\nx\nx\nx\nenter\ntype pi-pw\nenter");
     assert_eq!(d.dialog().map(|x| x.0), Some("Trust pi.local?"));
     keys(&mut d, "esc\nesc\nf\nenter");
     let mut check = files_kr(&w, ":1.10");
@@ -593,7 +593,7 @@ fn a_question_waits_for_the_users_own_dialog() {
     let mut d = Driver::new(page);
     d.frame();
     // B starts connecting to the NAS; A opens a Trash dialog meanwhile.
-    keys(&mut d, "tab\nx\nx\nx\nenter\ntab\nenter\ndelete");
+    keys(&mut d, "tab\nx\nx\nx\nx\nenter\ntab\nenter\ndelete");
     assert_eq!(d.dialog().map(|x| x.0), Some("Move to the Trash?"));
     release(&mut d, &go, tx);
     assert_eq!(

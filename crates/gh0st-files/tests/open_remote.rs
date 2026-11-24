@@ -50,8 +50,8 @@ fn a_server_file_is_copied_then_opened_in_its_app() {
         pick: None,
     }));
     d.frame();
-    // Places on side B: Home, Card, Trash, nas. Then the file.
-    for k in ["tab", "x", "x", "x", "enter", "x", "enter"] {
+    // Places on side B: Home, Card, Recent, Trash, nas. Then the file.
+    for k in ["tab", "x", "x", "x", "x", "enter", "x", "enter"] {
         d.keys(k);
         d.frame();
     }

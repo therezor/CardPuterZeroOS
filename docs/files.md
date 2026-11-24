@@ -231,8 +231,11 @@ you may have open. The top bar says what it does and for whom: `Open ·
 ~/Documents` and `Text`.
 
 - One pane: no second side, no Tab, no clipboard.
-- It shows the card only: Home, Card and Downloads. No servers, no Trash,
-  and archives are files.
+- It shows the card only: Home, Card, Downloads and, to open, Recent. No
+  servers, no Trash, and archives are files.
+- **Recent** lists the files opened lately by any app, newest first, of
+  the types the app takes. Enter picks one. Files lists it among Places
+  too, where Enter opens the file in its app.
 - The app's file types hide the rest; folders always show. With more than
   one type, a Type chip picks which.
 - **Open:** Enter picks the file. When the app takes several, 4 or Space
