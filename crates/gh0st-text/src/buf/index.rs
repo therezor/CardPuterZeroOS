@@ -66,7 +66,7 @@ impl Index {
         let mut line = self.done_line;
         let mut last = self.last_mark();
         let marks = &mut self.marks;
-        b.for_each(self.done..end, |c| {
+        let r = b.for_each(self.done..end, |c| {
             let mut rest = c;
             let mut at = off;
             while !rest.is_empty() {
@@ -97,9 +97,11 @@ impl Index {
             }
             off = at;
             true
-        })?;
+        });
+        // What was read counts, even when the disk stopped the slice.
         self.done = off;
         self.done_line = line;
+        r?;
         Ok(self.done >= b.len())
     }
 

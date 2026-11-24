@@ -176,20 +176,25 @@ impl Saver {
             let mut err = None;
             let file = &mut self.file;
             let mut off = self.off;
-            buf.for_each(self.off..end, |c| match file.write_all(c) {
-                Ok(()) => {
-                    off += c.len() as u64;
-                    true
-                }
-                Err(e) => {
-                    err = Some(e);
-                    false
-                }
-            })?;
+            let from = self.off;
+            // Only what is in memory: the card reads ahead meanwhile.
+            let r = buf.nowait(|b| {
+                b.for_each(from..end, |c| match file.write_all(c) {
+                    Ok(()) => {
+                        off += c.len() as u64;
+                        true
+                    }
+                    Err(e) => {
+                        err = Some(e);
+                        false
+                    }
+                })
+            });
+            self.off = off;
             if let Some(e) = err {
                 return Err(e);
             }
-            self.off = off;
+            r?;
             if self.off < self.len {
                 return Ok(false);
             }

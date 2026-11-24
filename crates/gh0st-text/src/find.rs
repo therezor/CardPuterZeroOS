@@ -12,6 +12,8 @@ pub enum Found {
     Miss,
     /// Not done: call again.
     More,
+    /// The disk is behind: call again a little later.
+    Wait,
 }
 
 pub struct Finder {
@@ -72,10 +74,23 @@ impl Finder {
         let end = limit.min(self.at.saturating_add(budget.max(1)));
         let mut window = std::mem::take(&mut self.carry);
         let base = self.at - window.len() as u64;
-        b.for_each(self.at..end, |c| {
-            window.extend_from_slice(c);
-            true
-        })?;
+        let kept = window.len();
+        let r = b.nowait(|b| {
+            b.for_each(self.at..end, |c| {
+                window.extend_from_slice(c);
+                true
+            })
+        });
+        // The disk is behind: search what came, and wait for the rest.
+        let waiting = matches!(&r, Err(e) if e.kind() == io::ErrorKind::WouldBlock);
+        if !waiting {
+            r?;
+        }
+        let end = if waiting {
+            self.at + (window.len() - kept) as u64
+        } else {
+            end
+        };
         if let Some(i) = find(&window, &self.needle, self.fold) {
             let hit = base + i as u64;
             return Ok(Found::Hit(hit));
@@ -83,6 +98,9 @@ impl Finder {
         self.at = end;
         let keep = window.len().min(n - 1);
         self.carry = window[window.len() - keep..].to_vec();
+        if waiting {
+            return Ok(Found::Wait);
+        }
         if end < limit {
             return Ok(Found::More);
         }
@@ -140,7 +158,7 @@ mod tests {
             match f.step(b, budget).unwrap() {
                 Found::Hit(at) => return Some(at),
                 Found::Miss => return None,
-                Found::More => {}
+                Found::More | Found::Wait => {}
             }
         }
     }

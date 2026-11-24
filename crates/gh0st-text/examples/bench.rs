@@ -25,6 +25,12 @@ fn rss_kb() -> i64 {
 }
 
 fn main() -> std::io::Result<()> {
+    // The editor's reader runs as this binary, as it does as gh0st-text.
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if raw.first().map(String::as_str) == Some("--warm") {
+        let from = raw.get(2).and_then(|f| f.parse().ok()).unwrap_or(0);
+        std::process::exit(gh0st_text::warm::main(raw[1].as_ref(), from));
+    }
     let Some(path) = std::env::args().nth(1) else {
         eprintln!("usage: bench FILE");
         std::process::exit(2);
@@ -49,13 +55,37 @@ fn main() -> std::io::Result<()> {
     let last = b.line_start(len)?;
     let to_end = ms(t);
 
-    // Index slices of 2 MB, the slowest one, and the whole run.
+    // Index slices of 2 MB, the slowest one, and the whole run. A slice
+    // the disk is behind on waits 15 ms, as the app's timer does.
     let t = Instant::now();
     let mut slices = 0;
+    let mut waits = 0;
     let mut worst: f64 = 0.0;
+    // A reader brings the file into memory, as the editor starts one.
+    let mut warm = (b.len() >= gh0st_text::warm::MIN)
+        .then(|| gh0st_text::warm::spawn(path.as_ref(), 0).ok())
+        .flatten();
+    b.set_warming(warm.is_some());
     loop {
+        if let Some(pid) = warm {
+            let mut st = 0;
+            // SAFETY: a non-blocking wait on our own child.
+            if unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) } == pid {
+                warm = None;
+                b.set_warming(false);
+            }
+        }
         let s = Instant::now();
-        let done = b.index_step(2 << 20)?;
+        let done = match b.index_step(2 << 20) {
+            Ok(d) => d,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                worst = worst.max(ms(s));
+                waits += 1;
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         worst = worst.max(ms(s));
         slices += 1;
         if done {
@@ -122,7 +152,7 @@ fn main() -> std::io::Result<()> {
     println!("first screen      {first:.2} ms");
     println!("last line start   {to_end:.2} ms (at {last})");
     println!(
-        "index             {index:.0} ms in {slices} slices of 2 MB, worst {worst:.2} ms, {:.0} MB/s",
+        "index             {index:.0} ms in {slices} slices of 2 MB and {waits} waits for the disk, worst {worst:.2} ms, {:.0} MB/s",
         (len as f64 / 1048576.0) / (index / 1000.0)
     );
     println!("lines             {} (exact: {})", lines.count, lines.exact);

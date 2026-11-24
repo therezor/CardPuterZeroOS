@@ -7,6 +7,7 @@ mod index;
 pub mod save;
 pub mod scan;
 mod store;
+
 mod undo;
 
 pub use index::Lines;
@@ -43,6 +44,8 @@ pub struct Buffer {
     len: u64,
     undo: Undo,
     index: Index,
+    /// A reader process is bringing the file into memory.
+    warming: bool,
     /// Bumped by every change, so a view knows its caches are stale.
     version: u64,
 }
@@ -79,6 +82,7 @@ impl Buffer {
             len,
             undo: Undo::default(),
             index: Index::default(),
+            warming: false,
             version: 0,
         };
         if len > 0 {
@@ -447,11 +451,30 @@ impl Buffer {
     }
 
     /// Reads on with the line index for about `budget` bytes. True once it
-    /// has read the whole document.
+    /// has read the whole document. While a reader brings the file into
+    /// memory ([`set_warming`](Buffer::set_warming)), a `WouldBlock` error
+    /// means the disk is behind: step again a little later.
     pub fn index_step(&mut self, budget: u64) -> io::Result<bool> {
         let mut ix = std::mem::take(&mut self.index);
-        let r = ix.step(self, budget);
+        let r = self.nowait(|b| ix.step(b, budget));
         self.index = ix;
+        r
+    }
+
+    /// A reader process is bringing the file into memory: far reads take
+    /// only what is there. Without one they wait for the disk, or nothing
+    /// would ever read the rest.
+    pub fn set_warming(&mut self, on: bool) {
+        self.warming = on;
+    }
+
+    /// Runs `f` with every read taking only what is in memory, while a
+    /// reader warms the file.
+    pub fn nowait<T>(&mut self, f: impl FnOnce(&mut Buffer) -> T) -> T {
+        let on = self.warming;
+        self.stores.iter_mut().for_each(|s| s.set_nowait(on));
+        let r = f(self);
+        self.stores.iter_mut().for_each(|s| s.set_nowait(false));
         r
     }
 

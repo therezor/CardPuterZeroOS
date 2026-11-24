@@ -19,6 +19,10 @@ cargo run --release -p gh0st-text --example bench -- FILE   # engine timings
   keeps a mark every 64 KB, 16 K marks for a gigabyte. Until it reaches the
   end, the top bar shows how far it has read, and the line count is a
   guess.
+- For a file past 8 MB, a reader process brings it into memory at idle IO
+  priority (`gh0st-text --warm`). The index, find and save take only what is
+  there and try again 15 ms later, so the card's pace and its stalls never
+  freeze the page. The reader dies with the editor.
 - A file with a NUL in its first 64 KB opens as hex, read only.
 - Bytes stay as they were: text that is not UTF-8 shows as `?` in red and
   saves unchanged, CR LF stays CR LF, and a missing final newline stays

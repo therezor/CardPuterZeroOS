@@ -3,6 +3,12 @@
 //! Not `mmap`: a mapped file that another program truncates kills the
 //! reader with SIGBUS. Here a short read just comes back short, and the
 //! editor says the file changed.
+//!
+//! Work that reads far ahead (the line index, find, save) may read without
+//! waiting while a reader process brings the file into memory (`warm`): it
+//! takes only what is there and gets `WouldBlock` for the rest. An SD card
+//! reads 20 MB a second and stalls now and then, so a slice that waited for
+//! it would freeze the page.
 
 use std::fs::File;
 use std::io;
@@ -19,6 +25,8 @@ pub struct Store {
     len: u64,
     slots: Vec<Slot>,
     clock: u64,
+    /// Reads take only what the page cache holds.
+    nowait: bool,
 }
 
 struct Slot {
@@ -37,6 +45,7 @@ impl Store {
             len,
             slots: Vec::new(),
             clock: 0,
+            nowait: false,
         })
     }
 
@@ -47,7 +56,14 @@ impl Store {
             len: 0,
             slots: Vec::new(),
             clock: 0,
+            nowait: false,
         }
+    }
+
+    /// Reads from here on take only what is in memory: a block that is not
+    /// fails with `WouldBlock`.
+    pub fn set_nowait(&mut self, on: bool) {
+        self.nowait = on;
     }
 
     /// The size the file had when it opened.
@@ -124,7 +140,12 @@ impl Store {
         let mut got = 0;
         if let Some(f) = &self.file {
             while got < want {
-                match f.read_at(&mut slot.data[got..want], start + got as u64) {
+                let r = if self.nowait {
+                    read_nowait(f, &mut slot.data[got..want], start + got as u64)
+                } else {
+                    f.read_at(&mut slot.data[got..want], start + got as u64)
+                };
+                match r {
                     Ok(0) => break,
                     Ok(n) => got += n,
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -139,6 +160,45 @@ impl Store {
         slot.data.truncate(got);
         Ok(i)
     }
+}
+
+/// `pread` that takes only what the page cache holds: `preadv2` with
+/// `RWF_NOWAIT`. A kernel or file system without it reads as usual.
+#[cfg(target_os = "linux")]
+fn read_nowait(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+    use std::os::fd::AsRawFd;
+    const RWF_NOWAIT: libc::c_int = 0x8;
+    let iov = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
+    };
+    // SAFETY: one iovec over a live buffer. On 64-bit the offset is one
+    // argument, and the high half is ignored.
+    let n = unsafe {
+        libc::syscall(
+            libc::SYS_preadv2,
+            f.as_raw_fd(),
+            &iov as *const libc::iovec,
+            1,
+            off as libc::c_long,
+            0 as libc::c_long,
+            RWF_NOWAIT,
+        )
+    };
+    if n >= 0 {
+        return Ok(n as usize);
+    }
+    let e = io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(libc::EAGAIN) => Err(io::ErrorKind::WouldBlock.into()),
+        Some(libc::EOPNOTSUPP | libc::EINVAL | libc::ENOSYS) => f.read_at(buf, off),
+        _ => Err(e),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_nowait(f: &File, buf: &mut [u8], off: u64) -> io::Result<usize> {
+    f.read_at(buf, off)
 }
 
 #[cfg(test)]

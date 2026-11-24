@@ -12,6 +12,7 @@ use crate::buf::{Buffer, Lines};
 use crate::find::{Finder, Found};
 use crate::lex::{self, Cache, Lang, Role, Span};
 use crate::view::{self, Glyph};
+use crate::warm;
 use crate::watch::{Change, FileWatch};
 use gh0st_app::RawKey;
 use gh0st_app::gfx::color::mix;
@@ -74,6 +75,8 @@ const VIEWING: &str = "Viewing";
 /// Work per slice of the index, find and save: the loop stays quick to
 /// keys between slices.
 const SLICE_MS: u64 = 8;
+/// How long a slice waits for the card to read ahead before trying again.
+const DISK_WAIT_MS: u64 = 15;
 /// A file under this is saved in one go.
 const SAVE_AT_ONCE: u64 = 8 << 20;
 
@@ -157,6 +160,8 @@ pub struct Editor {
     clip: Vec<u8>,
     watch: Option<(FileWatch, Watch)>,
     context: String,
+    /// The reader bringing a big file into memory (`warm`).
+    warm: Option<i32>,
 }
 
 impl Editor {
@@ -218,6 +223,31 @@ impl Editor {
             clip: Vec::new(),
             watch: None,
             context: String::new(),
+            warm: None,
+        }
+    }
+
+    /// Starts a reader of the file from `from`, for big files: the index,
+    /// find and save then never wait for the card.
+    fn warm_from(&mut self, from: u64, cx: &mut Cx) {
+        let Some(p) = self.path.clone() else {
+            return;
+        };
+        let len = self.doc.borrow().buf.len();
+        if self.warm.is_some() || len.saturating_sub(from) < warm::MIN || self.binary {
+            return;
+        }
+        if let Ok(pid) = warm::spawn(&p, from) {
+            cx.adopt(pid);
+            self.warm = Some(pid);
+            self.doc.borrow_mut().buf.set_warming(true);
+        }
+    }
+
+    fn stop_warm(&mut self) {
+        if let Some(pid) = self.warm.take() {
+            warm::stop(pid);
+            self.doc.borrow_mut().buf.set_warming(false);
         }
     }
 
@@ -499,6 +529,7 @@ impl Editor {
         }
         let from = self.hit.map_or(self.cursor, |(a, _)| a + 1);
         let f = Finder::new(&self.needle, from, true);
+        self.warm_from(from, cx);
         if let Some((_, t)) = self.finder.take() {
             cx.cancel(t);
         }
@@ -511,7 +542,7 @@ impl Editor {
         };
         let t0 = Instant::now();
         loop {
-            let r = f.step(&mut self.doc.borrow_mut().buf, 4 << 20);
+            let r = f.step(&mut self.doc.borrow_mut().buf, 1 << 20);
             match r {
                 Ok(Found::Hit(at)) => {
                     let n = f.needle().len() as u64;
@@ -532,6 +563,11 @@ impl Editor {
                 Ok(Found::More) => {
                     cx.busy("Finding");
                     self.finder = Some((f, cx.after(0)));
+                    return;
+                }
+                Ok(Found::Wait) => {
+                    cx.busy("Finding");
+                    self.finder = Some((f, cx.after(DISK_WAIT_MS)));
                     return;
                 }
                 Err(e) => {
@@ -587,6 +623,7 @@ impl Editor {
                 let big = self.doc.borrow().buf.len() > SAVE_AT_ONCE;
                 if big {
                     cx.busy("Saving");
+                    self.warm_from(0, cx);
                 }
                 self.saving = Some((s, cx.after(0)));
             }
@@ -600,7 +637,7 @@ impl Editor {
         };
         let t0 = Instant::now();
         loop {
-            let r = s.step(&mut self.doc.borrow_mut().buf, 4 << 20);
+            let r = s.step(&mut self.doc.borrow_mut().buf, 1 << 20);
             match r {
                 Ok(true) => {
                     self.saved = self.doc.borrow().buf.state();
@@ -614,6 +651,10 @@ impl Editor {
                 Ok(false) if (t0.elapsed().as_millis() as u64) < SLICE_MS => {}
                 Ok(false) => {
                     self.saving = Some((s, cx.after(0)));
+                    return;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    self.saving = Some((s, cx.after(DISK_WAIT_MS)));
                     return;
                 }
                 Err(e) => {
@@ -631,7 +672,8 @@ impl Editor {
         let t0 = Instant::now();
         let done = self.doc.borrow_mut().buf.index_step(budget);
         let ms = t0.elapsed().as_micros().max(1) as u64;
-        if self.opts.index_budget.is_none() {
+        let waiting = matches!(&done, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock);
+        if self.opts.index_budget.is_none() && !waiting {
             // Aim each slice at SLICE_MS.
             self.budget = (self.budget * SLICE_MS * 1000 / ms).clamp(64 << 10, 256 << 20);
         }
@@ -639,6 +681,8 @@ impl Editor {
             // A millisecond apart, so keys and frames come between slices.
             Ok(false) => self.index = Some(cx.after(1)),
             Ok(true) => {}
+            // The card is reading ahead: come back when it has had time.
+            Err(_) if waiting => self.index = Some(cx.after(DISK_WAIT_MS)),
             Err(e) => self.error = Some(e.to_string()),
         }
     }
@@ -1005,6 +1049,20 @@ impl Page for Editor {
         cx.redraw();
     }
 
+    /// The reader ended: the file is in memory, or it gave up. Reads wait
+    /// for the disk again, so whatever is left still gets read.
+    fn exited(&mut self, pid: i32, _code: Option<i32>, cx: &mut Cx) {
+        if self.warm == Some(pid) {
+            self.warm = None;
+            self.doc.borrow_mut().buf.set_warming(false);
+        }
+        let _ = cx;
+    }
+
+    fn stop(&mut self, _cx: &mut Cx) {
+        self.stop_warm();
+    }
+
     fn start(&mut self, cx: &mut Cx) {
         let s = cx.settings();
         self.model = match self.opts.keys {
@@ -1025,6 +1083,7 @@ impl Page for Editor {
             Mode::Edit
         };
         if !self.doc.borrow().buf.lines().exact {
+            self.warm_from(0, cx);
             self.index = Some(cx.after(1));
         }
         if let Some(p) = &self.path {
