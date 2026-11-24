@@ -1,0 +1,10 @@
+[package]
+name = "gh0st-dbus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A small D-Bus codec and connection for one poll loop"
+
+[dependencies]
+libc.workspace = true

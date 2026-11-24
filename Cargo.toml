@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/gh0st",
     "crates/gh0st-core",
+    "crates/gh0st-dbus",
     "crates/gh0st-ui",
     "crates/gh0st-shell",
     "crates/gh0st-app",
@@ -26,6 +27,7 @@ gh0st-core = { path = "crates/gh0st-core" }
 gh0st-ui = { path = "crates/gh0st-ui" }
 gh0st-shell = { path = "crates/gh0st-shell" }
 gh0st-app = { path = "crates/gh0st-app" }
+gh0st-dbus = { path = "crates/gh0st-dbus" }
 libc = "0.2"
 
 # A 512 MB board: small text, no unwinding tables, stripped.

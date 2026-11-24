@@ -151,6 +151,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-dbus"
+version = "0.2.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "gh0st-settings"
 version = "0.2.0"
 dependencies = [

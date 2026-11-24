@@ -32,6 +32,9 @@ battery in `/sys/class/power_supply`. Details and sources in
 - `crates/gh0st-shell`: the home screen (grid or list, nav and search modes),
   the switcher and the dock. `examples/mockups.rs` renders its screens to PNG.
 - `crates/gh0st-core`: syscalls, event loop, input, config, apps, children.
+- `crates/gh0st-dbus`: our D-Bus codec and connection. SASL EXTERNAL, the
+  wire format with every spec limit checked, fd passing, one poll loop and
+  no threads. `tests/fuzz.rs` mutates real messages.
 - `crates/gh0st-app`: the app SDK. Pages, OS bars, soft keys, lists, jobs,
   a sim backend and a test driver. Apps depend on it alone. The guide is
   `docs/sdk.md`, which is also the crate's rustdoc, so its examples compile in
