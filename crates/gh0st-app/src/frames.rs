@@ -1,6 +1,7 @@
-//! The frame ring: shared memory the helper draws preview frames into and
-//! the app reads, so 100 KB a frame never crosses the socket. The app makes
-//! it, and the helper inherits its fd.
+//! The frame ring: shared memory a helper draws pictures into and the app
+//! reads, so 100 KB a frame never crosses a socket. The app makes it, and
+//! the helper inherits its fd ([`crate::sidecar`]). `native/av/ring.cpp` is
+//! the C++ writer.
 //!
 //! A 64-byte header (magic, version, slot count, pixels per slot), then the
 //! slots. Each slot is a 16-byte header (a sequence number, width, height)
@@ -8,6 +9,7 @@
 //! it writes and even when done; a reader that sees it change drops the
 //! frame. The helper never rewrites the slot it announced last.
 
+use std::ffi::CStr;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::sync::atomic::{AtomicU32, Ordering, fence};
@@ -17,12 +19,8 @@ const VERSION: u32 = 1;
 const HEAD: usize = 64;
 const SLOT_HEAD: usize = 16;
 
-/// Slots the preview cycles through. The last slot holds thumbnails.
-pub const PREVIEW_SLOTS: u32 = 3;
-pub const SLOTS: u32 = PREVIEW_SLOTS + 1;
-pub const THUMB_SLOT: u32 = PREVIEW_SLOTS;
-/// The most pixels one slot holds: the whole panel.
-pub const SLOT_PX: usize = 320 * 170;
+/// The whole panel: the most pixels a slot needs to hold.
+pub const SCREEN_PX: usize = 320 * 170;
 
 pub struct Ring {
     fd: OwnedFd,
@@ -39,11 +37,11 @@ fn slot_bytes(px: usize) -> usize {
     SLOT_HEAD + px * 2
 }
 
-fn memfd() -> io::Result<OwnedFd> {
+fn memfd(name: &CStr) -> io::Result<OwnedFd> {
     #[cfg(target_os = "linux")]
     {
         // SAFETY: a NUL-terminated name; the fd is fresh and ours.
-        let fd = unsafe { libc::memfd_create(c"gh0st-camera".as_ptr(), libc::MFD_CLOEXEC) };
+        let fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -54,7 +52,7 @@ fn memfd() -> io::Result<OwnedFd> {
     {
         // Hosts without memfd: a temp file, gone from the directory at once.
         let mut tpl = std::env::temp_dir()
-            .join("gh0st-camera-XXXXXX")
+            .join(format!("{}-XXXXXX", name.to_string_lossy()))
             .into_os_string()
             .into_encoded_bytes();
         tpl.push(0);
@@ -91,10 +89,11 @@ fn map(fd: &OwnedFd, len: usize) -> io::Result<*mut u8> {
 }
 
 impl Ring {
-    /// A new ring of `SLOTS` slots, each as big as the panel.
-    pub fn create() -> io::Result<Ring> {
-        let fd = memfd()?;
-        let len = HEAD + SLOTS as usize * slot_bytes(SLOT_PX);
+    /// A new ring of `slots` slots of `slot_px` pixels each, named `name`
+    /// in /proc.
+    pub fn create(name: &CStr, slots: u32, slot_px: usize) -> io::Result<Ring> {
+        let fd = memfd(name)?;
+        let len = HEAD + slots as usize * slot_bytes(slot_px);
         // SAFETY: ftruncate on our own fd.
         if unsafe { libc::ftruncate(fd.as_raw_fd(), len as libc::off_t) } != 0 {
             return Err(io::Error::last_os_error());
@@ -104,13 +103,13 @@ impl Ring {
             fd,
             base,
             len,
-            slots: SLOTS,
-            slot_px: SLOT_PX,
+            slots,
+            slot_px,
         };
         r.put_u32(0, MAGIC);
         r.put_u32(4, VERSION);
-        r.put_u32(8, SLOTS);
-        r.put_u32(12, SLOT_PX as u32);
+        r.put_u32(8, slots);
+        r.put_u32(12, slot_px as u32);
         Ok(r)
     }
 
@@ -153,6 +152,14 @@ impl Ring {
 
     pub fn fd(&self) -> RawFd {
         self.fd.as_raw_fd()
+    }
+
+    pub fn slots(&self) -> u32 {
+        self.slots
+    }
+
+    pub fn slot_px(&self) -> usize {
+        self.slot_px
     }
 
     fn put_u32(&self, off: usize, v: u32) {
@@ -238,9 +245,13 @@ impl Drop for Ring {
 mod tests {
     use super::*;
 
+    fn ring() -> Ring {
+        Ring::create(c"gh0st-test", 4, SCREEN_PX).unwrap()
+    }
+
     #[test]
     fn a_frame_written_on_one_side_reads_on_the_other() {
-        let a = Ring::create().unwrap();
+        let a = ring();
         let b = Ring::open(a.share().unwrap()).unwrap();
         a.write(1, 4, 3, 2, |px| px.copy_from_slice(&[1, 2, 3, 4, 5, 6]));
         let mut out = Vec::new();
@@ -250,7 +261,7 @@ mod tests {
 
     #[test]
     fn a_stale_announcement_reads_nothing() {
-        let a = Ring::create().unwrap();
+        let a = ring();
         a.write(0, 2, 1, 1, |px| px[0] = 7);
         a.write(0, 6, 1, 1, |px| px[0] = 8);
         let mut out = Vec::new();
@@ -261,7 +272,7 @@ mod tests {
 
     #[test]
     fn a_file_that_is_no_ring_is_refused() {
-        let fd = memfd().unwrap();
+        let fd = memfd(c"gh0st-test").unwrap();
         // SAFETY: test fd.
         unsafe { libc::ftruncate(fd.as_raw_fd(), 4096) };
         assert!(Ring::open(fd).is_err());

@@ -12,7 +12,6 @@ path = "src/main.rs"
 
 [dependencies]
 gh0st-app.workspace = true
-gh0st-core.workspace = true
 libc.workspace = true
 
 # The mockups double as fixtures: `cargo test` draws every scene under the

@@ -252,6 +252,14 @@ pub struct Metrics {
     pub rail_w: i32,
     /// Between the tiles of a grid of pictures (`gh0st_app::Tiles`).
     pub tile_gap: i32,
+    /// Words over a picture sit on a dark plate this far around them.
+    pub plate_pad: i32,
+    /// Where a zoomed picture's view is: a map at most this big.
+    pub map_w: i32,
+    pub map_h: i32,
+    /// A video's progress line over the buttons, and its room to them.
+    pub track_h: i32,
+    pub track_lift: i32,
 }
 
 #[derive(Clone, Copy)]
@@ -1076,6 +1084,11 @@ pub const CARDPUTER: Metrics = Metrics {
     // (320 - 170 * 4 / 3) / 2: what a 226x170 picture leaves each side.
     rail_w: 47,
     tile_gap: 3,
+    plate_pad: 5,
+    map_w: 40,
+    map_h: 30,
+    track_h: 3,
+    track_lift: 6,
 };
 
 /// Which of the six tints a common icon takes. The order of Settings' first

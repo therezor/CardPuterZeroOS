@@ -10,4 +10,3 @@ pub mod fake;
 pub mod files;
 pub mod helper;
 pub mod proto;
-pub mod ring;

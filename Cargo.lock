@@ -270,7 +270,6 @@ name = "gh0st-camera"
 version = "0.2.0"
 dependencies = [
  "gh0st-app",
- "gh0st-core",
  "libc",
 ]
 

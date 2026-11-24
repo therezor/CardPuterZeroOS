@@ -884,6 +884,27 @@ impl Page for Tail {
 }
 ```
 
+### A helper beside the app
+
+Some work needs a library an app can't link: libcamera, ffmpeg. That work
+runs in a helper program the app starts, a sidecar. The camera's
+`gh0st-camd` and the media app's `gh0st-mediad` are two.
+
+- `sidecar::Sidecar::spawn(argv, env, ring)` starts it in its own process
+  group with its ends of a socket pair and of a `frames::Ring`, as fd
+  numbers in the two variables `env` names. Watch `fd()`, adopt `pid`,
+  and drain `recv()` in `ready`. `Sidecar::thread` runs a fake in its
+  place, for tests and mockups.
+- `frames::Ring` is shared memory in slots of RGB565, each with a sequence
+  number. The helper draws a picture into a slot and names the slot in a
+  message, so pictures never cross the socket. `native/av/ring.cpp` is the
+  C++ writer.
+- `media` draws what comes back. `Picture` reads a slot and draws it
+  centred. `PictureView` keeps a picture's zoom steps, fit or fill, and
+  where the view is, and asks for no more than the screen shows.
+  `SeekBar` draws a video's time and progress, and `AskQueue` keeps one ask
+  in flight so the newest view is never stuck behind a page of tiles.
+
 ### Running behind
 
 When the user allows it (Settings > Apps, or `X-Gh0st-Background=true` in the

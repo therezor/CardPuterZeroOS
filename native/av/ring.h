@@ -1,4 +1,4 @@
-// The frame ring the app made: the writer's side of src/ring.rs.
+// The frame ring the app made: the writer's side of gh0st_app::frames.
 #pragma once
 
 #include <cstddef>

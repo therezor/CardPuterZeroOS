@@ -2,10 +2,11 @@
 //! painted landscape for a sensor. Tests, mockups and `--sim` runs use it,
 //! so nothing on a host needs libcamera. Files it "saves" hold a few bytes.
 
+use crate::helper::{PREVIEW_SLOTS, THUMB_SLOT};
 use crate::proto::{Cmd, Event, Mode, Playing, State};
-use crate::ring::{PREVIEW_SLOTS, Ring, THUMB_SLOT};
-use gh0st_core::link::Link;
-use gh0st_core::rt;
+use gh0st_app::frames::Ring;
+use gh0st_app::rt;
+use gh0st_app::sidecar::Link;
 
 /// A preview frame every 40 ms, as the real helper paces them.
 const FRAME_MS: u64 = 40;

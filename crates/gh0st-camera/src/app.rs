@@ -12,8 +12,9 @@ use crate::proto::{Cmd, Event, Fault, Mode, Playing, State, VideoSize};
 use gh0st_app::gfx::icon::{self, IconSize};
 use gh0st_app::gfx::theme::{CARDPUTER, Metrics, ON_PICTURE, PANEL_OFF, PICTURE_PLATE};
 use gh0st_app::gfx::{Canvas, Color, Rect, Theme, widgets};
+use gh0st_app::media::{AskQueue, Picture, PictureView, SeekBar, clock, plate, plate_text};
 use gh0st_app::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub mod key {
@@ -67,10 +68,6 @@ const SEEK_MS: u64 = 5000;
 /// The gallery grid: columns, and rows on screen.
 const GRID_COLS: usize = 5;
 const GRID_ROWS: usize = 3;
-/// Zoom steps in the full view, past fitting the screen. The last step is
-/// always one photo pixel per screen pixel.
-const FULL_ZOOMS: [f32; 4] = [1.0, 2.0, 4.0, 8.0];
-
 const ZOOMS: [(f32, &str); 7] = [
     (1.0, "1\u{d7}"),
     (1.25, "1.25\u{d7}"),
@@ -148,34 +145,6 @@ struct Playback {
     state: Playing,
 }
 
-/// A picture the helper drew for us.
-#[derive(Default)]
-struct Pic {
-    px: Vec<u16>,
-    w: u16,
-    h: u16,
-}
-
-impl Pic {
-    fn draw(&self, c: &mut Canvas, r: Rect) {
-        if self.w == 0 {
-            return;
-        }
-        let x = r.x + (r.w - self.w as i32) / 2;
-        let y = r.y + (r.h - self.h as i32) / 2;
-        let old = c.set_clip(c.clip().intersect(&r));
-        c.blit565(
-            x,
-            y,
-            self.w as i32,
-            self.h as i32,
-            self.w as usize,
-            &self.px,
-        );
-        c.set_clip(old);
-    }
-}
-
 pub struct Camera {
     source: Source,
     dir: PathBuf,
@@ -202,21 +171,17 @@ pub struct Camera {
     flicker60: bool,
     /// The light control is open over the picture: 5 and 7 are − and +.
     light: bool,
-    frame: Pic,
+    frame: Picture,
     /// The newest shot, small, for the rail.
     last: Option<PathBuf>,
-    last_pic: Pic,
+    last_pic: Picture,
     /// Tiles drawn so far, by path. An empty one could not be drawn.
-    tiles_pic: HashMap<PathBuf, Pic>,
-    asks: VecDeque<Ask>,
-    asking: Option<Ask>,
+    tiles_pic: HashMap<PathBuf, Picture>,
+    asks: AskQueue<Ask>,
     tiles: gh0st_app::Tiles,
-    full_pic: Pic,
-    /// The zoom step, and where the view looks, 0 to 1 across the photo.
-    zoom_at: usize,
-    centre: (f32, f32),
-    /// The photo's own size, for the closest zoom.
-    full_px: Option<(u32, u32)>,
+    full_pic: Picture,
+    /// The full view's zoom and place over the photo's own size.
+    full: PictureView,
     info: bool,
     saving: bool,
     flash: bool,
@@ -258,17 +223,14 @@ impl Camera {
             mic_step: None,
             flicker60: false,
             light: false,
-            frame: Pic::default(),
+            frame: Picture::default(),
             last: None,
-            last_pic: Pic::default(),
+            last_pic: Picture::default(),
             tiles_pic: HashMap::new(),
-            asks: VecDeque::new(),
-            asking: None,
+            asks: AskQueue::new(),
             tiles: gh0st_app::Tiles::new(GRID_COLS, GRID_ROWS),
-            full_pic: Pic::default(),
-            zoom_at: 0,
-            centre: (0.5, 0.5),
-            full_px: None,
+            full_pic: Picture::default(),
+            full: PictureView::new(CARDPUTER.width, CARDPUTER.height),
             info: false,
             saving: false,
             flash: false,
@@ -322,7 +284,7 @@ impl Camera {
             }
         };
         self.watch = Some(cx.watch(h.fd()));
-        if let Some(pid) = h.pid {
+        if let Some(pid) = h.pid() {
             cx.adopt(pid);
         }
         self.helper = Some(h);
@@ -357,7 +319,7 @@ impl Camera {
             let t = thumb_size(&CARDPUTER);
             self.ask(For::Last, p, t, 1.0, (0.5, 0.5));
         } else {
-            self.last_pic = Pic::default();
+            self.last_pic = Picture::default();
         }
     }
 
@@ -368,10 +330,7 @@ impl Camera {
             For::Full => self.asks.retain(|a| a.what != For::Full),
             For::Tile => {
                 let same = |a: &Ask| a.what == For::Tile && a.path == path;
-                if self.tiles_pic.contains_key(&path)
-                    || self.asks.iter().any(same)
-                    || self.asking.as_ref().is_some_and(same)
-                {
+                if self.tiles_pic.contains_key(&path) || self.asks.has(same) {
                     return;
                 }
             }
@@ -385,17 +344,13 @@ impl Camera {
             cx: centre.0,
             cy: centre.1,
         };
-        self.asks.push_back(Ask { what, path, cmd });
+        self.asks.push(Ask { what, path, cmd });
         self.next_ask();
     }
 
     fn next_ask(&mut self) {
-        if self.asking.is_some() {
-            return;
-        }
-        if let Some(a) = self.asks.pop_front() {
-            self.send(a.cmd.clone());
-            self.asking = Some(a);
+        if let Some(cmd) = self.asks.take_next().map(|a| a.cmd.clone()) {
+            self.send(cmd);
         }
     }
 
@@ -428,69 +383,23 @@ impl Camera {
             For::Full,
             p,
             (m.width as u16, m.height as u16),
-            self.zoom(),
-            self.centre,
+            self.full.zoom(),
+            self.full.centre(),
         );
         self.context = format!("{} of {}", self.tiles.at() + 1, self.shots.len());
-    }
-
-    /// The zoom steps this shot has: up to its own pixels.
-    fn zooms(&self) -> Vec<f32> {
-        let m = &CARDPUTER;
-        let Some((w, h)) = self.full_px else {
-            return vec![1.0];
-        };
-        let fit = (m.width as f32 / w as f32).min(m.height as f32 / h as f32);
-        let most = 1.0 / fit;
-        let mut z: Vec<f32> = FULL_ZOOMS
-            .iter()
-            .copied()
-            .filter(|&z| z < most * 0.9)
-            .collect();
-        if most > 1.05 {
-            z.push(most);
-        }
-        z
-    }
-
-    fn zoom(&self) -> f32 {
-        let z = self.zooms();
-        z[self.zoom_at.min(z.len() - 1)]
-    }
-
-    /// How much of the photo the screen shows at this zoom, 0 to 1 each way.
-    fn view_frac(&self) -> (f32, f32) {
-        let m = &CARDPUTER;
-        let Some((w, h)) = self.full_px else {
-            return (1.0, 1.0);
-        };
-        let (w, h) = (w as f32, h as f32);
-        let scale = (m.width as f32 / w).min(m.height as f32 / h) * self.zoom();
-        (
-            (m.width as f32 / scale / w).min(1.0),
-            (m.height as f32 / scale / h).min(1.0),
-        )
-    }
-
-    /// Keeps the view inside the photo.
-    fn clamp_centre(&mut self) {
-        let (fw, fh) = self.view_frac();
-        self.centre.0 = self.centre.0.clamp(fw / 2.0, 1.0 - fw / 2.0);
-        self.centre.1 = self.centre.1.clamp(fh / 2.0, 1.0 - fh / 2.0);
     }
 
     /// Shows the selected shot whole, fitted.
     fn open_full(&mut self) {
         self.stop_play();
         self.view = View::Full;
-        self.zoom_at = 0;
-        self.centre = (0.5, 0.5);
-        self.full_pic = Pic::default();
-        self.full_px = self
+        self.full_pic = Picture::default();
+        let size = self
             .shots
             .get(self.tiles.at())
             .filter(|s| s.kind == Kind::Photo)
             .and_then(|s| files::jpeg_size(&s.path));
+        self.full.show(size);
         self.want_full();
     }
 
@@ -565,16 +474,12 @@ impl Camera {
             }
             Event::Frame { slot, seq, .. } if self.play.is_some() => {
                 if let Some(h) = &self.helper {
-                    let pic = &mut self.full_pic;
-                    if let Some((w, hh)) = h.ring.read(slot, seq, &mut pic.px) {
-                        (pic.w, pic.h) = (w, hh);
-                    }
+                    self.full_pic.read_into(h.ring(), slot, seq);
                 }
             }
             Event::Frame { slot, seq, .. } => {
                 if let Some(h) = &self.helper {
-                    if let Some((w, hh)) = h.ring.read(slot, seq, &mut self.frame.px) {
-                        (self.frame.w, self.frame.h) = (w, hh);
+                    if self.frame.read_into(h.ring(), slot, seq) {
                         self.flash = false;
                         if self.phase == Phase::Starting {
                             self.phase = Phase::Live;
@@ -614,15 +519,14 @@ impl Camera {
             Event::Thumb {
                 path, slot, seq, ..
             } => {
-                let mut pic = Pic::default();
-                if let Some(h) = &self.helper {
-                    if let Some((w, hh)) = h.ring.read(slot, seq, &mut pic.px) {
-                        (pic.w, pic.h) = (w, hh);
-                    }
-                }
+                let pic = self
+                    .helper
+                    .as_ref()
+                    .map(|h| Picture::read(h.ring(), slot, seq))
+                    .unwrap_or_default();
                 self.answered(&path, pic);
             }
-            Event::NoThumb { path } => self.answered(&path, Pic::default()),
+            Event::NoThumb { path } => self.answered(&path, Picture::default()),
             Event::NoMic(why) => {
                 eprintln!("gh0st-camera: no microphone: {why}");
                 cx.toast_tone(Tone::Warning, "Recording without sound");
@@ -671,8 +575,8 @@ impl Camera {
     }
 
     /// The helper's answer to the picture in flight.
-    fn answered(&mut self, path: &str, pic: Pic) {
-        let Some(a) = self.asking.take() else {
+    fn answered(&mut self, path: &str, pic: Picture) {
+        let Some(a) = self.asks.answered() else {
             return;
         };
         if a.path.to_string_lossy() == path {
@@ -691,9 +595,9 @@ impl Camera {
                                 path: path.into(),
                                 w: CARDPUTER.width as u16,
                                 h: CARDPUTER.height as u16,
-                                zoom: self.zoom(),
-                                cx: self.centre.0,
-                                cy: self.centre.1,
+                                zoom: self.full.zoom(),
+                                cx: self.full.centre().0,
+                                cy: self.full.centre().1,
                             })
                     {
                         self.full_pic = pic;
@@ -710,7 +614,6 @@ impl Camera {
             cx.unwatch(w);
         }
         self.helper = None;
-        self.asking = None;
         self.asks.clear();
         self.rec = None;
         if !self.quitting && !matches!(self.phase, Phase::Failed(_)) {
@@ -828,7 +731,7 @@ impl Camera {
     fn close_review(&mut self) {
         self.stop_play();
         self.view = View::Finder;
-        self.full_pic = Pic::default();
+        self.full_pic = Picture::default();
         self.asks.retain(|a| a.what == For::Last);
         self.refresh();
         self.want_last_thumb();
@@ -935,48 +838,6 @@ fn tile_size(m: &Metrics) -> (i32, i32) {
 fn preview_rect(t: &Theme, video: bool) -> Rect {
     let (w, h) = preview_size(&t.m, video);
     Rect::new((t.m.width - w) / 2, 0, w, h)
-}
-
-/// Where the video is: its time top right, and a bar over the buttons.
-fn draw_progress(c: &mut Canvas, t: &Theme, p: &Playback) {
-    let m = t.m.margin;
-    let label = if p.dur_ms > 0 {
-        format!("{} / {}", clock(p.pos_ms), clock(p.dur_ms))
-    } else {
-        clock(p.pos_ms)
-    };
-    let w = t.f.small_bold.measure(&label) + 10;
-    plate_text(c, t, t.m.width - m - w, t.m.margin_v, &label, ON_PICTURE);
-    if p.dur_ms == 0 {
-        return;
-    }
-    let track = Rect::new(m, foot(&t.m) - 6, t.m.width - 2 * m, 3);
-    c.fill_alpha(track, PICTURE_PLATE, 150);
-    let done = (track.w as u64 * p.pos_ms.min(p.dur_ms) / p.dur_ms) as i32;
-    c.fill(Rect::new(track.x, track.y, done, track.h), t.c.accent);
-}
-
-/// A dark plate under words drawn over the picture.
-fn plate(c: &mut Canvas, r: Rect) {
-    c.fill_alpha(r, PICTURE_PLATE, 150);
-}
-
-/// Words on a plate over the picture, starting at `x`. Returns the plate.
-fn plate_text(c: &mut Canvas, t: &Theme, x: i32, y: i32, s: &str, ink: Color) -> Rect {
-    let f = t.f.small_bold;
-    let r = Rect::new(x, y, f.measure(s) + 2 * 5, t.m.pill_h + 4);
-    plate(c, r);
-    widgets::text_in(c, f, Rect::new(r.x + 5, r.y, r.w - 10, r.h), s, ink);
-    r
-}
-
-fn clock(ms: u64) -> String {
-    let s = ms / 1000;
-    if s >= 3600 {
-        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
-    } else {
-        format!("{:02}:{:02}", s / 60, s % 60)
-    }
 }
 
 impl Camera {
@@ -1323,7 +1184,7 @@ impl Camera {
         let Some(s) = self.shots.get(self.tiles.at()) else {
             return;
         };
-        if self.full_pic.w == 0 {
+        if self.full_pic.is_empty() {
             widgets::text_centre(c, t.f.small, screen, "\u{2026}", ON_PICTURE);
         }
         let m = t.m.margin;
@@ -1348,45 +1209,29 @@ impl Camera {
                 icon::draw(c, name, IconSize::Large, cr.x + 6, cr.y + 6, ON_PICTURE);
             }
             if let Some(p) = &self.play {
-                draw_progress(c, t, p);
+                SeekBar {
+                    pos_ms: p.pos_ms,
+                    dur_ms: p.dur_ms,
+                    repeat: None,
+                }
+                .draw_over(c, t);
             }
         }
-        if self.zoom_at > 0 {
-            let z = self.zoom();
-            let most = self.zooms().last().copied().unwrap_or(1.0);
-            let label = if (z - most).abs() < 0.01 {
-                "1:1".to_string()
-            } else {
-                format!("{}\u{d7}", z)
-            };
-            let w = t.f.small_bold.measure(&label) + 10;
-            plate_text(c, t, t.m.width - m - w, y, &label, ON_PICTURE);
-            // Where the view is in the photo: a small map.
-            let (fw, fh) = self.view_frac();
-            let map = Rect::new(t.m.width - m - 40, y + t.m.pill_h + 10, 40, 30);
-            plate(c, map);
-            let v = Rect::new(
-                map.x + ((self.centre.0 - fw / 2.0) * map.w as f32) as i32,
-                map.y + ((self.centre.1 - fh / 2.0) * map.h as f32) as i32,
-                ((fw * map.w as f32) as i32).max(2),
-                ((fh * map.h as f32) as i32).max(2),
-            );
-            c.fill_alpha(v, ON_PICTURE, 160);
-        }
+        self.full.draw_marks(c, t, y);
         if self.info {
-            let l = gh0st_core::rt::local_at(s.when);
+            let l = gh0st_app::rt::local_at(s.when);
             let mut lines = vec![
                 format!(
                     "{} {} {}, {:02}:{:02}",
                     l.day,
-                    gh0st_core::rt::month_short(l.month),
+                    gh0st_app::rt::month_short(l.month),
                     l.year,
                     l.hour,
                     l.minute
                 ),
                 files::size(s.bytes),
             ];
-            if let Some((w, h)) = self.full_px {
+            if let Some((w, h)) = self.full.size() {
                 lines.push(format!("{w}\u{d7}{h}"));
             }
             let mut y = r.bottom() + 4;
@@ -1471,8 +1316,7 @@ impl Page for Camera {
                     .chip(7, Chip::new("fast-forward", "").runs(AHEAD).disabled(idle))
             }
             View::Full => {
-                let photo = self.full_px.is_some();
-                let most = self.zooms().len() - 1;
+                let photo = self.full.size().is_some();
                 let b = Bars::actions()
                     .over()
                     .chip(6, Chip::new("trash-2", "Delete").hold());
@@ -1481,13 +1325,13 @@ impl Page for Camera {
                         5,
                         Chip::new("zoom-out", "")
                             .runs(ZOOM_OUT)
-                            .disabled(self.zoom_at == 0),
+                            .disabled(!self.full.can_zoom_out()),
                     )
                     .chip(
                         7,
                         Chip::new("zoom-in", "")
                             .runs(ZOOM_IN)
-                            .disabled(self.zoom_at >= most),
+                            .disabled(!self.full.can_zoom_in()),
                     )
                 } else {
                     b
@@ -1583,7 +1427,7 @@ impl Page for Camera {
                 self.stop_play();
                 self.view = View::Gallery;
                 self.info = false;
-                self.full_pic = Pic::default();
+                self.full_pic = Picture::default();
                 self.asks.retain(|a| a.what != For::Full);
                 self.want_tiles();
                 false
@@ -1655,7 +1499,7 @@ impl Page for Camera {
             return;
         }
         if self.view == View::Full {
-            let zoomed = self.zoom_at > 0;
+            let zoomed = self.full.zoomed();
             let (l, r) = if zoomed {
                 ("Look left", "Look right")
             } else {
@@ -1759,7 +1603,7 @@ impl Page for Camera {
             MODE => {
                 self.cancel_count(cx);
                 self.video = !self.video;
-                self.frame = Pic::default();
+                self.frame = Picture::default();
                 self.send(Cmd::Stop);
                 self.restart();
             }
@@ -1832,30 +1676,30 @@ impl Page for Camera {
                     self.want_tiles();
                 }
             }
-            PREV | NEXT | UP | DOWN if self.zoom_at > 0 => {
+            PREV | NEXT | UP | DOWN if self.full.zoomed() => {
                 // A third of the view at a time.
-                let (fw, fh) = self.view_frac();
-                match id {
-                    PREV => self.centre.0 -= fw / 3.0,
-                    NEXT => self.centre.0 += fw / 3.0,
-                    UP => self.centre.1 -= fh / 3.0,
-                    _ => self.centre.1 += fh / 3.0,
+                let (dx, dy) = match id {
+                    PREV => (-1, 0),
+                    NEXT => (1, 0),
+                    UP => (0, -1),
+                    _ => (0, 1),
+                };
+                if self.full.pan(dx, dy) {
+                    self.want_full();
                 }
-                self.clamp_centre();
-                self.want_full();
             }
             PREV => self.step(-1),
             NEXT => self.step(1),
             FULL => self.open_full(),
             ZOOM_IN | ZOOM_OUT => {
-                let most = self.zooms().len() - 1;
-                self.zoom_at = if id == ZOOM_IN {
-                    (self.zoom_at + 1).min(most)
+                let moved = if id == ZOOM_IN {
+                    self.full.zoom_in()
                 } else {
-                    self.zoom_at.saturating_sub(1)
+                    self.full.zoom_out()
                 };
-                self.clamp_centre();
-                self.want_full();
+                if moved {
+                    self.want_full();
+                }
             }
             INFO => self.info = !self.info,
             _ => {}

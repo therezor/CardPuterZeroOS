@@ -29,7 +29,7 @@ impl Kind {
 
 /// `CAM_20261123_143005`, from seconds since 1970.
 pub fn stem(prefix: &str, epoch: i64) -> String {
-    let l = gh0st_core::rt::local_at(epoch);
+    let l = gh0st_app::rt::local_at(epoch);
     format!(
         "{prefix}_{:04}{:02}{:02}_{:02}{:02}{:02}",
         l.year,

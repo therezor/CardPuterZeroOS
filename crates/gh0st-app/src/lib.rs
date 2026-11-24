@@ -7,9 +7,11 @@ mod command;
 mod dialog;
 mod field;
 mod form;
+pub mod frames;
 pub mod helper;
 mod key;
 mod list;
+pub mod media;
 mod menu;
 mod page;
 pub mod portal;
@@ -17,6 +19,7 @@ mod run;
 mod runtime;
 mod search;
 pub mod secret;
+pub mod sidecar;
 mod steps;
 pub mod system;
 mod tiles;
@@ -24,6 +27,8 @@ mod tiles;
 /// posting with more than [`Cx::post`] gives (a count, a tone, another app
 /// to open).
 pub use gh0st_core::notify;
+/// Time, the clock and poll, as the SDK's loop uses them.
+pub use gh0st_core::rt;
 pub mod testing;
 mod ui;
 pub mod watch;
