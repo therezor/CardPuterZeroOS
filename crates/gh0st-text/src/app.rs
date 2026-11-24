@@ -11,6 +11,7 @@ use crate::buf::save::{self, Saver, Way};
 use crate::buf::{Buffer, Lines};
 use crate::find::{Finder, Found};
 use crate::lex::{self, Cache, Lang, Role, Span};
+use crate::recent::Recent;
 use crate::view::{self, Glyph};
 use crate::warm;
 use crate::watch::{Change, FileWatch};
@@ -57,6 +58,7 @@ mod cmd {
     pub const UP_DOWN: u32 = 21;
     pub const LEFT_RIGHT: u32 = 22;
     pub const PAGE: u32 = 23;
+    pub const COMMENT: u32 = 24;
 }
 
 /// Dialog ids.
@@ -79,6 +81,10 @@ const SLICE_MS: u64 = 8;
 const DISK_WAIT_MS: u64 = 15;
 /// A file under this is saved in one go.
 const SAVE_AT_ONCE: u64 = 8 << 20;
+/// How far a bracket's pair is looked for.
+const PAIR_REACH: u64 = 64 << 10;
+/// One step of indent when the file's own can't be told.
+const INDENT: &[u8] = b"    ";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyModel {
@@ -116,6 +122,9 @@ pub struct Options {
     pub index_budget: Option<u64>,
     /// Asks to restore this many unsaved edits on open.
     pub restore: Option<usize>,
+    /// Where the recent files and the journal go, instead of the app's
+    /// data folder.
+    pub data: Option<PathBuf>,
 }
 
 struct Doc {
@@ -162,6 +171,9 @@ pub struct Editor {
     context: String,
     /// The reader bringing a big file into memory (`warm`).
     warm: Option<i32>,
+    /// The bracket at the cursor and its pair.
+    pair: Option<(u64, u64)>,
+    recent: Recent,
 }
 
 impl Editor {
@@ -224,7 +236,186 @@ impl Editor {
             watch: None,
             context: String::new(),
             warm: None,
+            pair: None,
+            recent: Recent::default(),
         }
+    }
+
+    /// The bracket at or just before the cursor and the one it pairs with,
+    /// looked for at most `PAIR_REACH` away. Quotes and comments are not
+    /// told apart.
+    fn find_pair(&self) -> Option<(u64, u64)> {
+        if self.binary {
+            return None;
+        }
+        let mut d = self.doc.borrow_mut();
+        let len = d.buf.len();
+        let mut at_cursor = [self.cursor, self.cursor.wrapping_sub(1)];
+        if self.cursor == 0 {
+            at_cursor[1] = u64::MAX;
+        }
+        for at in at_cursor.into_iter().filter(|&a| a < len) {
+            let b = d.buf.bytes(at..at + 1).ok()?.first().copied()?;
+            let (open, close, ahead) = match b {
+                b'(' => (b'(', b')', true),
+                b'[' => (b'[', b']', true),
+                b'{' => (b'{', b'}', true),
+                b')' => (b'(', b')', false),
+                b']' => (b'[', b']', false),
+                b'}' => (b'{', b'}', false),
+                _ => continue,
+            };
+            let mut depth = 0i64;
+            let mut found = None;
+            if ahead {
+                let mut off = at;
+                let _ = d.buf.for_each(at..(at + PAIR_REACH).min(len), |c| {
+                    for &x in c {
+                        depth += (x == open) as i64 - (x == close) as i64;
+                        if depth == 0 {
+                            found = Some(off);
+                            return false;
+                        }
+                        off += 1;
+                    }
+                    true
+                });
+            } else {
+                let mut end = at + 1;
+                let _ = d
+                    .buf
+                    .for_each_back(at.saturating_sub(PAIR_REACH)..at + 1, |c| {
+                        for &x in c.iter().rev() {
+                            end -= 1;
+                            depth += (x == close) as i64 - (x == open) as i64;
+                            if depth == 0 {
+                                found = Some(end);
+                                return false;
+                            }
+                        }
+                        true
+                    });
+            }
+            return found.map(|o| (at.min(o), at.max(o)));
+        }
+        None
+    }
+
+    /// The step of indent this line uses: a tab if it starts with one.
+    fn unit(line: &[u8]) -> &'static [u8] {
+        if line.first() == Some(&b'\t') {
+            b"\t"
+        } else {
+            INDENT
+        }
+    }
+
+    /// Comments the lines the selection touches, or the cursor's line, or
+    /// takes the comments off when every one of them has one. One undo step.
+    fn toggle_comment(&mut self) {
+        if self.read_only || self.binary {
+            return;
+        }
+        let Some(token) = self.doc.borrow().cache.lang().comment() else {
+            return;
+        };
+        let (a, b) = self.selection().unwrap_or((self.cursor, self.cursor));
+        let mut d = self.doc.borrow_mut();
+        let len = d.buf.len();
+        // The lines: their starts and texts, at most a few thousand.
+        let mut lines: Vec<(u64, Vec<u8>)> = Vec::new();
+        let mut at = d.buf.line_start(a).unwrap_or(0);
+        loop {
+            let end = d.buf.line_end(at).unwrap_or(len);
+            let text = d.buf.bytes(at..end.min(at + 4096)).unwrap_or_default();
+            lines.push((at, text));
+            // A selection ending at a line's start leaves that line out.
+            if end >= len || end + 1 >= b.max(a + 1) || lines.len() >= 4096 {
+                break;
+            }
+            at = end + 1;
+        }
+        let tok = token.as_bytes();
+        let body = |t: &[u8]| t[view::indent(t).len()..].to_vec();
+        let filled: Vec<&(u64, Vec<u8>)> =
+            lines.iter().filter(|(_, t)| !body(t).is_empty()).collect();
+        if filled.is_empty() {
+            return;
+        }
+        let all = filled.iter().all(|(_, t)| body(t).starts_with(tok));
+        let col = filled
+            .iter()
+            .map(|(_, t)| view::indent(t).len())
+            .min()
+            .unwrap_or(0);
+        d.buf.seal();
+        // Bottom up, so the offsets above stay true.
+        let mut shift = 0i64;
+        let mut last_shift = 0i64;
+        for (i, (start, t)) in filled.iter().enumerate().rev() {
+            let ind = view::indent(t).len();
+            let by = if all {
+                let mut n = tok.len();
+                if t.get(ind + n) == Some(&b' ') {
+                    n += 1;
+                }
+                let at = start + ind as u64;
+                let _ = d.buf.delete(at..at + n as u64);
+                d.cache.edited(at);
+                -(n as i64)
+            } else {
+                let mut ins = tok.to_vec();
+                ins.push(b' ');
+                let at = start + col as u64;
+                let _ = d.buf.insert(at, &ins);
+                d.cache.edited(at);
+                ins.len() as i64
+            };
+            shift += by;
+            if i == filled.len() - 1 {
+                last_shift = by;
+            }
+        }
+        d.buf.seal();
+        // The same lines stay selected, so the toggle undoes itself.
+        let first = lines[0].0;
+        let last = lines[lines.len() - 1]
+            .0
+            .saturating_add_signed(shift - last_shift);
+        let end = d.buf.line_end(last).unwrap_or(d.buf.len());
+        drop(d);
+        if self.anchor.is_some() {
+            self.anchor = Some(first);
+            self.cursor = end;
+        } else {
+            // One line: the cursor moves with its text.
+            let at = lines[0].0 + col as u64;
+            if self.cursor >= at {
+                self.cursor = self
+                    .cursor
+                    .saturating_add_signed(last_shift)
+                    .max(at)
+                    .min(end);
+            }
+        }
+    }
+
+    /// A closing bracket typed on a line of blanks: one step of indent
+    /// less first.
+    fn close_bracket(&mut self, c: u8) {
+        let (start, _, line) = self.line_at(self.cursor);
+        let at = (self.cursor - start) as usize;
+        let before = &line[..at.min(line.len())];
+        if self.selection().is_none()
+            && !before.is_empty()
+            && before.iter().all(|&x| x == b' ' || x == b'\t')
+        {
+            let unit = Self::unit(before);
+            if before.ends_with(unit) {
+                self.anchor = Some(self.cursor - unit.len() as u64);
+            }
+        }
+        self.type_bytes(&[c]);
     }
 
     /// Starts a reader of the file from `from`, for big files: the index,
@@ -456,13 +647,41 @@ impl Editor {
         self.hit = None;
     }
 
+    /// A new line with the indent of this one, a step more after an open
+    /// bracket (or a colon in Python and YAML). Between a bracket and its
+    /// closer, the closer goes on a line of its own.
     fn newline(&mut self) {
         let (start, _, line) = self.line_at(self.cursor);
         let at = (self.cursor - start) as usize;
+        let before = &line[..at.min(line.len())];
+        let indent = view::indent(before).to_vec();
+        let last = before
+            .iter()
+            .rev()
+            .find(|&&b| b != b' ' && b != b'\t')
+            .copied();
+        let lang = self.doc.borrow().cache.lang();
+        let opens = matches!(last, Some(b'{' | b'(' | b'['))
+            || (last == Some(b':') && matches!(lang, Lang::Python | Lang::Yaml));
+        let next = line.get(at).copied();
+        let closes = matches!(
+            (last, next),
+            (Some(b'{'), Some(b'}')) | (Some(b'('), Some(b')')) | (Some(b'['), Some(b']'))
+        );
         let mut ins = b"\n".to_vec();
-        ins.extend_from_slice(view::indent(&line[..at.min(line.len())]));
+        ins.extend_from_slice(&indent);
+        if opens {
+            ins.extend_from_slice(Self::unit(&line));
+        }
+        let land = ins.len() as u64;
+        if closes {
+            ins.push(b'\n');
+            ins.extend_from_slice(&indent);
+        }
         self.doc.borrow_mut().buf.seal();
+        let from = self.selection().map_or(self.cursor, |s| s.0);
         self.type_bytes(&ins);
+        self.cursor = from + land;
     }
 
     fn backspace(&mut self, forward: bool) {
@@ -717,6 +936,7 @@ impl Editor {
         self.area = self.bars().content(&t);
         self.reveal();
         self.refresh();
+        self.pair = self.find_pair();
     }
 
     fn set_mode(&mut self, m: Mode) {
@@ -840,15 +1060,17 @@ impl Editor {
             code::ENTER => self.newline(),
             code::BACKSPACE => self.backspace(false),
             code::DELETE => self.backspace(true),
-            code::TAB => self.type_bytes(b"    "),
+            code::TAB => self.type_bytes(INDENT),
             // Fn and a key that means nothing here types nothing.
             _ if k.fn_ => {}
-            _ => {
-                if let Some(c) = k.ch.filter(|c| !c.is_control()) {
+            _ => match k.ch.filter(|c| !c.is_control()) {
+                Some(c @ (')' | ']' | '}')) => self.close_bracket(c as u8),
+                Some(c) => {
                     let mut b = [0u8; 4];
                     self.type_bytes(c.encode_utf8(&mut b).as_bytes());
                 }
-            }
+                None => {}
+            },
         }
     }
 
@@ -937,6 +1159,7 @@ impl Editor {
             cmd::UP_DOWN | cmd::LEFT_RIGHT | cmd::PAGE => self.view_move(id, step),
             cmd::DISCARD => cx.quit(),
             cmd::EDIT if edit_ok => self.set_mode(Mode::Edit),
+            cmd::COMMENT if edit_ok => self.toggle_comment(),
             _ => {}
         }
     }
@@ -1078,6 +1301,11 @@ impl Page for Editor {
             .unwrap_or(0)
             .min(theme::TERM_TERMINUS.len() - 1);
         self.numbers = s.get_bool(key::NUMBERS).unwrap_or(true);
+        let data = self.opts.data.clone().unwrap_or_else(|| cx.data_dir());
+        self.recent = Recent::load(&data);
+        if let Some(p) = self.path.clone().filter(|p| p.exists()) {
+            self.recent.add(&p);
+        }
         self.mode = if self.model == KeyModel::Modal {
             Mode::View
         } else {
@@ -1301,6 +1529,11 @@ impl Page for Editor {
         ));
         c.add(here(Command::action(cmd::ALL, "Select all")));
         c.add(here(
+            Command::action(cmd::COMMENT, "Comment lines")
+                .keys("Ctrl+k")
+                .enabled(can_edit && self.doc.borrow().cache.lang().comment().is_some()),
+        ));
+        c.add(here(
             Command::action(cmd::LINE_START, "Line start")
                 .keys("Ctrl+a")
                 .keys_only(),
@@ -1391,6 +1624,7 @@ impl Page for Editor {
         let line_bg = mix(t.c.bg, t.c.surface, theme::TEXT_LINE);
         let sel_bg = mix(t.c.bg, t.c.accent, theme::TEXT_SELECT);
         let hit_bg = mix(t.c.bg, t.c.warning, theme::TEXT_MATCH);
+        let pair_bg = mix(t.c.bg, t.c.accent, theme::TEXT_PAIR);
         let c = ui.canvas();
         let mut start = self.top;
         let mut run = String::new();
@@ -1457,6 +1691,9 @@ impl Page for Editor {
                 } else if self.hit.is_some_and(|(a, b)| off >= a && off < b) {
                     flush(c, &mut run, run_x, run_color);
                     c.fill(Rect::new(x, y, w, look.ch), hit_bg);
+                } else if self.pair.is_some_and(|(a, b)| off == a || off == b) {
+                    flush(c, &mut run, run_x, run_color);
+                    c.fill(Rect::new(x, y, w, look.ch), pair_bg);
                 }
                 let color = match cell.glyph {
                     Glyph::Bad(_) => t.c.syntax(Role::Removed),
@@ -1565,5 +1802,35 @@ fn draw_hex(ui: &mut Ui, t: &Theme, area: Rect, look: Look, b: &mut Buffer, top:
             };
             look.font.draw(c, ax, y, &ch.to_string(), ink);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn editor(text: &[u8]) -> Editor {
+        let d = std::env::temp_dir().join(format!("gh0st-text-pair-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("pair.rs");
+        std::fs::write(&p, text).unwrap();
+        Editor::open(Some(&p), Options::default())
+    }
+
+    #[test]
+    fn a_bracket_finds_its_pair_both_ways() {
+        let mut e = editor(b"f(a[1], {b}) x");
+        e.cursor = 1;
+        assert_eq!(e.find_pair(), Some((1, 11)));
+        // Just after a closer counts too.
+        e.cursor = 12;
+        assert_eq!(e.find_pair(), Some((1, 11)));
+        e.cursor = 8;
+        assert_eq!(e.find_pair(), Some((8, 10)));
+        e.cursor = 13;
+        assert_eq!(e.find_pair(), None);
+        let mut open = editor(b"(((");
+        open.cursor = 0;
+        assert_eq!(open.find_pair(), None, "no pair, no mark");
     }
 }

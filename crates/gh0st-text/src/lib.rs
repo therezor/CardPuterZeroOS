@@ -9,6 +9,7 @@ pub mod app;
 pub mod buf;
 pub mod find;
 pub mod lex;
+pub mod recent;
 pub mod view;
 pub mod warm;
 pub mod watch;

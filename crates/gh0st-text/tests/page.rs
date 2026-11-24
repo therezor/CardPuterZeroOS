@@ -15,6 +15,7 @@ fn temp(name: &str, text: &[u8]) -> PathBuf {
 fn open(p: &Path, keys: KeyModel) -> Driver {
     let opts = Options {
         keys: Some(keys),
+        data: Some(data()),
         ..Options::default()
     };
     let mut d = Driver::new(Editor::open(Some(p), opts));
@@ -111,7 +112,11 @@ fn an_idle_editor_wakes_for_nothing() {
 #[test]
 fn a_file_opens_to_read_and_a_key_changes_nothing() {
     let p = temp("read.txt", b"one\ntwo\n");
-    let mut d = Driver::new(Editor::open(Some(&p), Options::default()));
+    let opts = Options {
+        data: Some(data()),
+        ..Options::default()
+    };
+    let mut d = Driver::new(Editor::open(Some(&p), opts));
     d.wait(100);
     d.keys("type xyz");
     d.keys("esc");
@@ -142,4 +147,61 @@ fn quitting_with_changes_saves_keeps_editing_or_discards_held() {
     d.keys("down 7").wait(900).keys("up 7");
     assert!(d.quit());
     assert_eq!(std::fs::read(&p).unwrap(), b"one\n");
+}
+
+fn data() -> PathBuf {
+    let d = std::env::temp_dir().join(format!("gh0st-text-data-{}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+fn editing(p: &Path) -> Driver {
+    let opts = Options {
+        keys: Some(KeyModel::Modeless),
+        data: Some(data()),
+        ..Options::default()
+    };
+    let mut d = Driver::new(Editor::open(Some(p), opts));
+    d.wait(100);
+    d
+}
+
+#[test]
+fn enter_after_an_open_bracket_indents_and_puts_the_closer_below() {
+    let p = temp("indent.rs", b"fn a() {}\n");
+    let mut d = editing(&p);
+    d.keys("ctrl+e\nfn+z\nenter\ntype x;\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"fn a() {\n    x;\n}\n");
+}
+
+#[test]
+fn a_closer_on_a_blank_line_steps_back_one_indent() {
+    let p = temp("dedent.rs", b"fn a() {\n    x;\n");
+    let mut d = editing(&p);
+    d.keys("fn+x\nctrl+e\nenter\ntype }\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"fn a() {\n    x;\n}\n");
+}
+
+#[test]
+fn comment_toggles_the_lines_in_one_undo() {
+    let p = temp("toggle.py", b"a = 1\n  b = 2\n\nc = 3\n");
+    let mut d = editing(&p);
+    // Select from the first line into the last, then toggle.
+    d.keys("shift+fn+x\nshift+fn+x\nshift+fn+x\nshift+fn+c\nctrl+k\nctrl+s");
+    d.wait(100);
+    assert_eq!(
+        std::fs::read(&p).unwrap(),
+        b"# a = 1\n#   b = 2\n\n# c = 3\n"
+    );
+    d.keys("ctrl+k\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"a = 1\n  b = 2\n\nc = 3\n");
+    d.keys("ctrl+z\nctrl+s");
+    d.wait(100);
+    assert_eq!(
+        std::fs::read(&p).unwrap(),
+        b"# a = 1\n#   b = 2\n\n# c = 3\n"
+    );
 }

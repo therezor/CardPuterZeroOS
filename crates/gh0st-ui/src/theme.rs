@@ -1197,6 +1197,8 @@ pub const TERM_CURSOR_W: i32 = 2;
 pub const TEXT_SELECT: u8 = 90;
 pub const TEXT_MATCH: u8 = 120;
 pub const TEXT_LINE: u8 = 150;
+/// A bracket and its pair, under and over the cursor.
+pub const TEXT_PAIR: u8 = 60;
 /// Space between the editor's line numbers and its text, in px.
 pub const TEXT_GUTTER_GAP: i32 = 4;
 pub const TERM_MARK_W: i32 = 2;
