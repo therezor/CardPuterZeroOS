@@ -2,7 +2,7 @@
 //! the views a side opens (a text file, a file's info, a server's form, the
 //! transfers).
 
-use crate::engine::{Ask, Engine, Event, Id, Nothing, Request};
+use crate::engine::{Ask, Engine, Event, Id, Request};
 use crate::model::{self, Entry, Kind, Loc, Sort, Type};
 use crate::servers::{self, Proto, Server};
 use crate::words;
@@ -34,6 +34,7 @@ const CMD_COPY: u32 = 17;
 const CMD_MOVE: u32 = 18;
 const CMD_PGUP: u32 = 19;
 const CMD_PGDN: u32 = 20;
+const CMD_KEY: u32 = 21;
 
 // Dialogs.
 const ASK_COPY: u32 = 1;
@@ -43,7 +44,6 @@ const ASK_RENAME: u32 = 4;
 const ASK_MKDIR: u32 = 5;
 const ASK_PASSWORD: u32 = 6;
 const ASK_HOSTKEY: u32 = 7;
-const ASK_CHANGED: u32 = 8;
 const ASK_EMPTY: u32 = 9;
 const ASK_ADDRESS: u32 = 10;
 const ASK_USER: u32 = 11;
@@ -71,7 +71,7 @@ impl Options {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| "/".into()),
             data: None,
-            engine: Box::new(Nothing::new()),
+            engine: Box::new(crate::child::Child::new()),
             keyring: Keyring::connect(),
         }
     }
@@ -189,6 +189,8 @@ enum Pending {
     /// A change on a side's folder: reload both when it ends.
     Op(&'static str),
     Transfer,
+    /// Making the SSH key.
+    Key,
 }
 
 struct ServerForm {
@@ -214,6 +216,8 @@ enum View {
     },
     Server(ServerForm),
     Transfers,
+    /// The app's SSH key: its public half, once made.
+    Key(Option<String>),
     Conflict {
         id: Id,
         name: String,
@@ -242,7 +246,7 @@ pub struct Files {
     sort: Sort,
     hidden: bool,
     engine: Box<dyn Engine>,
-    engine_watch: Option<Watch>,
+    engine_watch: Option<(Watch, std::os::fd::RawFd)>,
     kr: Keyring,
     kr_watch: Option<Watch>,
     next: Id,
@@ -261,6 +265,10 @@ pub struct Files {
     armed: bool,
     title: String,
     status: String,
+    /// Read when Places shows, not on every draw: whether Downloads is
+    /// there, and how much the Trash holds.
+    has_downloads: bool,
+    trash_n: usize,
 }
 
 impl Files {
@@ -293,6 +301,8 @@ impl Files {
             armed: false,
             title: String::new(),
             status: String::new(),
+            has_downloads: false,
+            trash_n: 0,
         };
         f.retitle();
         f
@@ -380,7 +390,7 @@ impl Files {
 
     fn places(&self) -> Vec<Place> {
         let mut v = vec![Place::Home, Place::Card];
-        if self.downloads().is_dir() {
+        if self.has_downloads {
             v.push(Place::Downloads);
         }
         v.push(Place::Trash);
@@ -574,6 +584,7 @@ impl Files {
         let loc = self.sides[i].loc.clone();
         match &loc {
             Loc::Places => {
+                self.look_at_places();
                 let s = &mut self.sides[i];
                 s.entries.clear();
                 s.state = State::Ready;
@@ -617,6 +628,13 @@ impl Files {
         }
     }
 
+    fn look_at_places(&mut self) {
+        self.has_downloads = self.downloads().is_dir();
+        self.trash_n = std::fs::read_dir(self.trash())
+            .map(|r| r.count())
+            .unwrap_or(0);
+    }
+
     fn reload_all(&mut self, cx: &mut Cx) {
         for i in 0..2 {
             let keep = self.sides[i].current().map(|e| e.name.clone());
@@ -647,12 +665,22 @@ impl Files {
 
     fn send(&mut self, req: Request, cx: &mut Cx) {
         self.engine.send(req);
-        if self.engine_watch.is_none() {
-            if let Some(fd) = self.engine.fd() {
-                self.engine_watch = Some(cx.watch(fd));
-            }
-        }
+        self.rewatch(cx);
         self.drain(cx);
+    }
+
+    /// Watches the worker's fd, a new one after a restart, none once gone.
+    fn rewatch(&mut self, cx: &mut Cx) {
+        let fd = self.engine.fd();
+        if self.engine_watch.map(|w| w.1) == fd {
+            return;
+        }
+        if let Some((w, _)) = self.engine_watch.take() {
+            cx.unwatch(w);
+        }
+        if let Some(fd) = fd {
+            self.engine_watch = Some((cx.watch(fd), fd));
+        }
     }
 
     fn drain(&mut self, cx: &mut Cx) {
@@ -665,6 +693,7 @@ impl Files {
                 self.event(e, cx);
             }
         }
+        self.rewatch(cx);
         self.retitle();
     }
 
@@ -711,6 +740,18 @@ impl Files {
                 }
             }
             (_, Event::Ask { ask, .. }) => self.ask(id, ask, cx),
+            (Pending::List(i), Event::Resolved { path, .. }) => {
+                // "~" was the server's home: the side and its base go there.
+                let s = &mut self.sides[i];
+                for l in [&mut s.loc, &mut s.base] {
+                    if let Loc::Remote { path: p, .. } = l {
+                        if p == "~" {
+                            *p = path.clone();
+                        }
+                    }
+                }
+                self.retitle();
+            }
             (
                 Pending::Transfer,
                 Event::Progress {
@@ -745,10 +786,25 @@ impl Files {
             }
             (Pending::Transfer, Event::Error { text, .. }) => {
                 self.pending.remove(&id);
+                let shown = self.transfers.iter().any(|t| t.id == id);
                 self.transfers.retain(|t| t.id != id);
                 cx.keep_awake(!self.transfers.is_empty());
-                cx.toast_tone(Tone::Critical, &text);
+                // Stop already said so.
+                if shown || text != "Stopped" {
+                    cx.toast_tone(Tone::Critical, &text);
+                }
                 self.reload_all(cx);
+            }
+            (Pending::Key, Event::Done { .. }) => {
+                self.pending.remove(&id);
+                if let View::Key(k) = &mut self.view {
+                    *k = self.data.as_ref().and_then(|d| read_public_key(d));
+                }
+                cx.toast_tone(Tone::Ok, "Key made");
+            }
+            (Pending::Key, Event::Error { text, .. }) => {
+                self.pending.remove(&id);
+                cx.toast_tone(Tone::Critical, &text);
             }
             (Pending::Op(done), Event::Done { .. }) => {
                 self.pending.remove(&id);
@@ -882,17 +938,6 @@ impl Files {
                 cx.ask(
                     ASK_HOSTKEY,
                     Dialog::confirm(&format!("Trust {host}?"), &line).yes("trust"),
-                );
-            }
-            Ask::HostKeyChanged { server } => {
-                let line = format!(
-                    "{server} sent a different key than last time. Someone may be in the way."
-                );
-                cx.ask(
-                    ASK_CHANGED,
-                    Dialog::confirm("Server key changed", &line)
-                        .danger()
-                        .yes("ok"),
                 );
             }
             Ask::Passphrase => {
@@ -1200,9 +1245,13 @@ impl Files {
                 let all = Proto::ALL;
                 let i = all.iter().position(|p| *p == f.s.proto).unwrap_or(0);
                 let default_port = f.s.port == f.s.proto.port();
+                let default_path = f.s.path == f.s.proto.start();
                 f.s.proto = all[gh0st_app::cycle(i, d, all.len())];
                 if default_port {
                     f.s.port = f.s.proto.port();
+                }
+                if default_path {
+                    f.s.path = f.s.proto.start().into();
                 }
             }
             (1, _) => cx.ask(
@@ -1216,7 +1265,9 @@ impl Files {
             (4, _) => f.s.remember = !f.s.remember,
             (5, _) => cx.ask(
                 ASK_FOLDER,
-                Dialog::text("Folder to open", "/").value(&f.s.path),
+                Dialog::text("Folder to open", "/")
+                    .value(&f.s.path)
+                    .line("~ is your home folder there."),
             ),
             (6, _) => {
                 let name = if f.s.name.is_empty() {
@@ -1278,6 +1329,40 @@ impl Files {
         self.view = View::Browse;
         self.side_mut().loc = Loc::Places;
         self.open_place(Place::Server(i), cx);
+    }
+
+    fn public_key(&self) -> Option<String> {
+        self.data.as_ref().and_then(|d| read_public_key(d))
+    }
+
+    /// Makes the SSH key: a random passphrase goes to the keyring first,
+    /// then the worker runs ssh-keygen with it.
+    fn make_key(&mut self, cx: &mut Cx) {
+        if self.pending.values().any(|p| matches!(p, Pending::Key)) {
+            return;
+        }
+        let Some(pass) = random_passphrase() else {
+            cx.toast_tone(Tone::Critical, "No randomness to make a key with");
+            return;
+        };
+        let attrs = [("xdg:schema", servers::SCHEMA), ("key", "ssh")];
+        if self
+            .kr
+            .store("Files SSH key", &attrs, pass.as_bytes(), true)
+            .is_err()
+        {
+            cx.toast_tone(Tone::Warning, "The key needs the keyring: unlock it first");
+            return;
+        }
+        let id = self.id();
+        self.pending.insert(id, Pending::Key);
+        self.send(
+            Request::MakeKey {
+                id,
+                passphrase: pass,
+            },
+            cx,
+        );
     }
 
     fn save_servers(&mut self, cx: &mut Cx) {
@@ -1375,6 +1460,23 @@ impl Default for Files {
     }
 }
 
+fn read_public_key(data: &Path) -> Option<String> {
+    std::fs::read_to_string(data.join("ssh/id_ed25519.pub"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 32 random bytes as hex.
+fn random_passphrase() -> Option<String> {
+    use std::io::Read;
+    let mut b = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut b))
+        .ok()?;
+    Some(b.iter().map(|x| format!("{x:02x}")).collect())
+}
+
 /// Sorted, and hidden names gone unless asked for.
 fn shape(mut v: Vec<Entry>, sort: Sort, hidden: bool) -> Vec<Entry> {
     if !hidden {
@@ -1457,6 +1559,7 @@ impl Page for Files {
             View::Server(f) if f.editing.is_some() => "Edit server",
             View::Server(_) => "Add server",
             View::Transfers => "Transfers",
+            View::Key(_) => "SSH key",
             View::Conflict { .. } => "Already there",
             View::Browse => &self.title,
         }
@@ -1493,6 +1596,7 @@ impl Page for Files {
         if let Some(p) = self.servers_path() {
             self.servers = servers::load(&p);
         }
+        self.look_at_places();
         let s = cx.settings();
         self.sort = Sort::parse(s.get_str(KEY_SORT).unwrap_or("name"));
         self.hidden = s.get_bool(KEY_HIDDEN).unwrap_or(false);
@@ -1533,6 +1637,12 @@ impl Page for Files {
             View::Transfers if !self.transfers.is_empty() => {
                 Bars::top().chip(6, Chip::new("x", "Stop"))
             }
+            View::Key(None) => Bars::top().chip(
+                6,
+                Chip::new("key-round", "Make")
+                    .main()
+                    .busy(self.pending.values().any(|p| matches!(p, Pending::Key))),
+            ),
             _ => Bars::top(),
         }
     }
@@ -1540,6 +1650,8 @@ impl Page for Files {
     fn key(&mut self, key: Key, cx: &mut Cx) {
         match &mut self.view {
             View::Browse => self.browse_key(key, cx),
+            View::Key(None) if key == Key::Soft(6) => self.make_key(cx),
+            View::Key(_) => {}
             View::Viewer { scroll, .. } => {
                 if !scroll.key(key) {
                     let page = 6;
@@ -1725,7 +1837,7 @@ impl Page for Files {
                     cx,
                 );
             }
-            (ASK_PASSWORD | ASK_HOSTKEY | ASK_CHANGED, text) => {
+            (ASK_PASSWORD | ASK_HOSTKEY, text) => {
                 let Some(a) = self.asking.take() else {
                     return;
                 };
@@ -1736,7 +1848,6 @@ impl Page for Files {
                 }
                 let text = match id {
                     ASK_HOSTKEY => text.map(|_| "yes".to_string()),
-                    ASK_CHANGED => None,
                     _ => text,
                 };
                 self.reply(a.id, text, cx);
@@ -1759,8 +1870,10 @@ impl Page for Files {
                     ASK_SECRET => f.password = (!text.is_empty()).then_some(text),
                     ASK_FOLDER => {
                         let t = text.trim();
-                        f.s.path = if t.starts_with('/') {
+                        f.s.path = if t.starts_with('/') || t == "~" {
                             t.to_string()
+                        } else if t.is_empty() {
+                            f.s.proto.start().to_string()
                         } else {
                             format!("/{t}")
                         };
@@ -1774,7 +1887,7 @@ impl Page for Files {
     }
 
     fn ready(&mut self, watch: Watch, cx: &mut Cx) {
-        if Some(watch) == self.engine_watch {
+        if self.engine_watch.is_some_and(|w| w.0 == watch) {
             self.drain(cx);
         } else if Some(watch) == self.kr_watch {
             let Some(prompt) = self.asking.as_ref().and_then(|a| a.prompt.clone()) else {
@@ -1882,6 +1995,7 @@ impl Page for Files {
         );
         c.group("Places");
         c.add(Command::action(CMD_ADD, "Add server").opens());
+        c.add(Command::action(CMD_KEY, "SSH key").opens());
         c.add(Command::action(CMD_EMPTY, "Empty the Trash"));
     }
 
@@ -1938,6 +2052,7 @@ impl Page for Files {
             }
             CMD_TRANSFERS => self.view = View::Transfers,
             CMD_ADD => self.open_form(Server::new(Proto::Sftp), None),
+            CMD_KEY => self.view = View::Key(self.public_key()),
             CMD_EMPTY => {
                 let n = std::fs::read_dir(self.trash())
                     .map(|r| r.count())
@@ -1997,13 +2112,25 @@ impl Page for Files {
                         .icon("user"),
                     Row::link("Password").value(pw).icon("key-round"),
                     Row::toggle("Remember it", f.s.remember).icon("lock"),
-                    Row::link("Folder").value(&f.s.path).icon("folder"),
+                    Row::link("Folder")
+                        .value(if f.s.path == "~" { "home" } else { &f.s.path })
+                        .icon("folder"),
                     Row::link("Name")
                         .value(if name.is_empty() { "none" } else { name })
                         .icon("tag"),
                 ];
                 ui.list(&f.list, &rows);
             }
+            View::Key(Some(k)) => {
+                ui.qr(k, &[("Key", "ed25519"), ("Add it to", "authorized_keys")]);
+            }
+            View::Key(None) => ui.notice(
+                "key-round",
+                None,
+                "No SSH key yet",
+                "With one, servers that know it let Files in with no password.",
+                &[],
+            ),
             View::Transfers => {
                 if self.transfers.is_empty() {
                     ui.message("check", "Nothing under way");
@@ -2063,9 +2190,7 @@ impl Files {
                     Place::Card => ("Card".into(), String::new(), "hard-drive"),
                     Place::Downloads => ("Downloads".into(), String::new(), "download"),
                     Place::Trash => {
-                        let n = std::fs::read_dir(self.trash())
-                            .map(|r| r.count())
-                            .unwrap_or(0);
+                        let n = self.trash_n;
                         let v = if n == 0 {
                             "empty".into()
                         } else {

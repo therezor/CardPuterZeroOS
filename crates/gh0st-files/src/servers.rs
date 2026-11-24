@@ -59,6 +59,12 @@ impl Proto {
         }
     }
 
+    /// Where a new server opens: the user's home over SFTP ("~"), the top
+    /// elsewhere.
+    pub fn start(self) -> &'static str {
+        if self == Proto::Sftp { "~" } else { "/" }
+    }
+
     /// Sends the password and the files where anyone on the network can
     /// read them.
     pub fn plain(self) -> bool {
@@ -91,7 +97,7 @@ impl Server {
             host: String::new(),
             port: proto.port(),
             user: String::new(),
-            path: "/".into(),
+            path: proto.start().into(),
             remember: true,
         }
     }

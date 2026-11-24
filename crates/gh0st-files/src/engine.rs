@@ -13,7 +13,8 @@ pub type Id = u32;
 pub enum Request {
     /// A server the next requests may name, sent before its first use.
     Server(Server),
-    /// A remote folder's entries.
+    /// A remote folder's entries. A path of "~" is the server's home:
+    /// [`Event::Resolved`] says where that is.
     List {
         id: Id,
         at: Loc,
@@ -46,14 +47,15 @@ pub enum Request {
         at: Loc,
         name: String,
     },
-    /// Entries of `archive` (all when empty) into a new folder `to`.
+    /// Entries of `archive` (all when empty), from one folder of it, into
+    /// the folder `to`, made if missing.
     Extract {
         id: Id,
         archive: Loc,
         entries: Vec<String>,
         to: Loc,
     },
-    /// `items` into a new zip `to`.
+    /// `items`, all in one folder, into a new zip `to`.
     Compress {
         id: Id,
         items: Vec<Loc>,
@@ -67,6 +69,29 @@ pub enum Request {
         id: Id,
         text: Option<String>,
     },
+    /// Makes the app's SSH key, sealed with `passphrase`.
+    MakeKey {
+        id: Id,
+        passphrase: String,
+    },
+}
+
+impl Request {
+    /// The request's own id; None for those that answer or name another.
+    pub fn id(&self) -> Option<Id> {
+        match self {
+            Request::Server(_) | Request::Cancel { .. } | Request::Reply { .. } => None,
+            Request::List { id, .. }
+            | Request::Contents { id, .. }
+            | Request::Copy { id, .. }
+            | Request::Delete { id, .. }
+            | Request::Rename { id, .. }
+            | Request::Mkdir { id, .. }
+            | Request::Extract { id, .. }
+            | Request::Compress { id, .. }
+            | Request::MakeKey { id, .. } => Some(*id),
+        }
+    }
 }
 
 /// What the worker needs the user for.
@@ -80,12 +105,10 @@ pub enum Ask {
         host: String,
         fingerprint: String,
     },
-    /// A key changed since last time: refused, the user is told.
-    HostKeyChanged { server: String },
     /// The app's SSH key passphrase: the page answers from the keyring.
     Passphrase,
     /// `name` is in the target already: "replace", "skip" or "both", and
-    /// "all" after a space to say the same for the rest.
+    /// " all" after it to say the same for the rest.
     Conflict { name: String },
 }
 
@@ -98,6 +121,11 @@ pub enum Event {
     },
     Listed {
         id: Id,
+    },
+    /// Where "~" turned out to be.
+    Resolved {
+        id: Id,
+        path: String,
     },
     /// Bytes done of all, and the file under way.
     Progress {
@@ -124,6 +152,7 @@ impl Event {
         match self {
             Event::Entries { id, .. }
             | Event::Listed { id }
+            | Event::Resolved { id, .. }
             | Event::Progress { id, .. }
             | Event::Ask { id, .. }
             | Event::Done { id }
@@ -159,21 +188,12 @@ impl Default for Nothing {
 
 impl Engine for Nothing {
     fn send(&mut self, req: Request) {
-        let id = match req {
-            Request::Server(_) | Request::Cancel { .. } | Request::Reply { .. } => return,
-            Request::List { id, .. }
-            | Request::Contents { id, .. }
-            | Request::Copy { id, .. }
-            | Request::Delete { id, .. }
-            | Request::Rename { id, .. }
-            | Request::Mkdir { id, .. }
-            | Request::Extract { id, .. }
-            | Request::Compress { id, .. } => id,
-        };
-        self.0.push(Event::Error {
-            id,
-            text: "The worker isn't built yet".into(),
-        });
+        if let Some(id) = req.id() {
+            self.0.push(Event::Error {
+                id,
+                text: "This needs the worker".into(),
+            });
+        }
     }
 
     fn events(&mut self) -> Vec<Event> {

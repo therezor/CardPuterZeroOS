@@ -5,8 +5,11 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod app;
+pub mod child;
 pub mod engine;
 pub mod fake;
 pub mod model;
+pub mod proto;
 pub mod servers;
 pub mod words;
+pub mod worker;

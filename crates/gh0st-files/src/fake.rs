@@ -155,7 +155,8 @@ impl Engine for Fake {
             | Request::Rename { id, .. }
             | Request::Mkdir { id, .. }
             | Request::Extract { id, .. }
-            | Request::Compress { id, .. } => self.out.push(Event::Done { id }),
+            | Request::Compress { id, .. }
+            | Request::MakeKey { id, .. } => self.out.push(Event::Done { id }),
             Request::Server(_) | Request::Cancel { .. } => {}
         }
     }

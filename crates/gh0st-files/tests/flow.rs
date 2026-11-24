@@ -40,6 +40,7 @@ impl Home {
         nas.name = "nas".into();
         nas.host = "nas.local".into();
         nas.user = "me".into();
+        nas.path = "/".into();
         servers::save(&dir.join("data/servers"), &[nas]).unwrap();
         Home { dir }
     }
