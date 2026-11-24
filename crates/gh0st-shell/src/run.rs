@@ -353,6 +353,8 @@ struct Shell {
     first_frame: bool,
     /// `gh0st keyring` and `gh0st session`.
     services: Services,
+    /// Under `--sim`: tests may swap the programs that check passwords.
+    sim: bool,
     /// The keyring's questions.
     prompts: Prompts,
     /// The keyring said its vault is open.
@@ -521,6 +523,7 @@ impl Shell {
                 _ => Services::start(rt::now_ms(), sim.is_some()),
             },
             prompts: Prompts::default(),
+            sim: sim.is_some(),
             keyring_open: false,
             unlock_sent: false,
             open_asked: false,
@@ -900,7 +903,7 @@ impl Shell {
     }
 
     fn run_prompt_check(&mut self, mut input: Vec<u8>) {
-        let prog = std::env::var("GH0ST_CHKPWD").unwrap_or_else(|_| password::CHKPWD.into());
+        let prog = self.test_prog("GH0ST_CHKPWD", password::CHKPWD);
         let user = self.user.clone();
         if self.start_job_with(
             JobKind::PromptCheck,
@@ -956,6 +959,16 @@ impl Shell {
         self.dirty = true;
     }
 
+    /// The program for a password check: a test's stand-in under `--sim`
+    /// only. On a device, nothing in the environment picks what reads the
+    /// login password.
+    fn test_prog(&self, var: &str, real: &str) -> String {
+        match self.sim.then(|| std::env::var(var).ok()).flatten() {
+            Some(p) => p,
+            None => real.into(),
+        }
+    }
+
     fn save_tries(&self) {
         if let Some(p) = &self.tries_path {
             let _ = self.tries.save(p);
@@ -967,7 +980,7 @@ impl Shell {
         if self.probing {
             return;
         }
-        let prog = std::env::var("GH0ST_PASSWD").unwrap_or_else(|_| "passwd".into());
+        let prog = self.test_prog("GH0ST_PASSWD", "passwd");
         self.probing = self.start_job(JobKind::Passwd, &[&prog, "-S"]);
     }
 
@@ -1923,7 +1936,7 @@ impl Shell {
     /// still won't, the user is let in this once: no checker means no way
     /// in, and a lockout means a reflash.
     fn run_check(&mut self, mut input: Vec<u8>) {
-        let prog = std::env::var("GH0ST_CHKPWD").unwrap_or_else(|_| password::CHKPWD.into());
+        let prog = self.test_prog("GH0ST_CHKPWD", password::CHKPWD);
         let user = self.user.clone();
         if self.start_job_with(JobKind::Chkpwd, &[&prog, &user, "nonull"], Some(&input)) {
             self.check_pid = self.jobs.last().map_or(0, |(_, j)| j.pid);
