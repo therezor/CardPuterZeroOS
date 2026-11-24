@@ -181,6 +181,14 @@ impl Input {
         }
     }
 
+    /// The keys down now, or None where only events tell (a script).
+    fn pressed(&self) -> Option<Vec<u16>> {
+        match self {
+            Input::Device(d) => d.pressed(),
+            Input::Script(_) => None,
+        }
+    }
+
     fn finished(&self, now: u64) -> bool {
         matches!(self, Input::Script(s) if s.finished(now))
     }
@@ -2545,6 +2553,12 @@ impl Shell {
         self.esc_armed = false;
         self.home_armed = false;
         self.esc = EscHold::default();
+        // An app that grabbed the keyboard hid the releases from us; a key
+        // left in `held` would keep the screen on and stall every Pending.
+        if let Some(down) = self.input.pressed() {
+            self.held.retain(|c| down.contains(c));
+            self.esc_down = down.contains(&code::ESC);
+        }
         self.last_input = rt::now_ms();
         self.full_flush = true;
         // Settings and stock apps may have changed config.json and the pins,

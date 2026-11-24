@@ -25,6 +25,9 @@ const EV_MSC: u16 = 4;
 const MSC_SCAN: u16 = 4;
 /// `_IOW('E', 0x90, int)`.
 const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
+/// `EVIOCGKEY(KEY_BITS)`: `_IOC(_IOC_READ, 'E', 0x18, KEY_BITS)`.
+const KEY_BITS: usize = 96;
+const EVIOCGKEY: libc::c_ulong = 0x8000_0000 | ((KEY_BITS as libc::c_ulong) << 16) | 0x4518;
 /// Scan-and-sync pairs that overflow any reader's queue. 64 did on the
 /// device; the queue size is the driver's guess, so leave room.
 const FLUSH_PAIRS: usize = 256;
@@ -129,6 +132,16 @@ impl Device {
         self.file.as_raw_fd()
     }
 
+    /// The keys down now, as the kernel tracks them. It tracks them even
+    /// while another reader holds the grab, so this sees releases the shell
+    /// missed.
+    pub fn pressed(&self) -> Option<Vec<u16>> {
+        let mut bits = [0u8; KEY_BITS];
+        // SAFETY: EVIOCGKEY writes at most KEY_BITS bytes into a local array.
+        let n = unsafe { libc::ioctl(self.fd(), EVIOCGKEY as _, bits.as_mut_ptr()) };
+        (n >= 0).then(|| keys_in(&bits))
+    }
+
     /// Key events ready now, as (code, value). Never blocks.
     pub fn read_keys(&self, out: &mut Vec<(u16, i32)>) {
         let mut buf = [InputEvent::default(); 32];
@@ -150,5 +163,32 @@ impl Device {
                 return;
             }
         }
+    }
+}
+
+/// The key codes set in an evdev key bitmap.
+fn keys_in(bits: &[u8]) -> Vec<u16> {
+    let mut out = Vec::new();
+    for (i, &b) in bits.iter().enumerate() {
+        for bit in 0..8 {
+            if b & (1 << bit) != 0 {
+                out.push((i * 8 + bit) as u16);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_key_bitmap_reads_as_codes() {
+        let mut bits = [0u8; KEY_BITS];
+        bits[0] = 0b10; // ESC is 1
+        bits[102 / 8] |= 1 << (102 % 8); // HOME
+        assert_eq!(keys_in(&bits), vec![1, 102]);
+        assert!(keys_in(&[0; KEY_BITS]).is_empty());
     }
 }
