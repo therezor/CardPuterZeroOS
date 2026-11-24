@@ -5,5 +5,6 @@
 pub mod engine;
 pub mod hid;
 pub mod host;
+pub mod link;
 pub mod pages;
 pub mod words;
