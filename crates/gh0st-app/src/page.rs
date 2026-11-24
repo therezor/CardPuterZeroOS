@@ -404,6 +404,8 @@ pub(crate) struct Shared {
     pub asking: bool,
     /// Where notices go: the user's folder, or a test's own.
     pub notices: PathBuf,
+    /// The shared clipboard.
+    pub clip: crate::clipboard::Clip,
 }
 
 impl Shared {
@@ -420,6 +422,7 @@ impl Shared {
             closable: true,
             asking: false,
             notices: crate::notify::user_dir(),
+            clip: crate::clipboard::Clip::default(),
         }
     }
 
@@ -736,6 +739,19 @@ impl Cx<'_> {
         if let Err(e) = crate::notify::post(&self.s.notices, &n) {
             eprintln!("gh0st app: notice {tag}: {e}");
         }
+    }
+
+    /// Copies `data` (text, as UTF-8 or the bytes as they are) to the
+    /// clipboard every app shares. False when it was refused: only the app
+    /// in front may copy, 16 MB at most.
+    pub fn copy(&mut self, data: &[u8]) -> bool {
+        self.s.clip.copy(data)
+    }
+
+    /// The text copied last, by this app or another. None when nothing
+    /// is, or when this app isn't in front.
+    pub fn paste(&mut self) -> Option<Vec<u8>> {
+        self.s.clip.paste()
     }
 
     /// Takes back notice `tag`, posted by [`post`](Cx::post).

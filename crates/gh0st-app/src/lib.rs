@@ -3,6 +3,7 @@
 #![doc = include_str!("../../../docs/sdk.md")]
 
 mod bars;
+mod clipboard;
 mod command;
 mod dialog;
 mod field;

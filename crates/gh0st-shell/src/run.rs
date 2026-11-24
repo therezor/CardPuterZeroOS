@@ -250,6 +250,9 @@ struct Shell {
     preview: Option<(u64, wallpaper::Baked)>,
     /// The frozen screen a portal question is about.
     shot: Option<(u64, Canvas)>,
+    /// The process group `gh0st session` was last told is in front, for
+    /// the clipboard; -1 before it knows.
+    front_told: i32,
     /// What `wall` was baked from: the setting, the palette, the file's age.
     wall_from: Option<(String, &'static str, Option<std::time::SystemTime>)>,
     display: Box<dyn Display>,
@@ -588,6 +591,7 @@ impl Shell {
             wall: None,
             preview: None,
             shot: None,
+            front_told: -1,
             wall_from: None,
         };
         s.prompts.size = (s.t.m.width, s.t.m.height);
@@ -1018,9 +1022,21 @@ impl Shell {
         }
     }
 
+    /// Tells `gh0st session` which app is in front when that changes: only
+    /// it may use the clipboard.
+    fn tell_front(&mut self) {
+        let front = self.tasks.front().map_or(0, |t| t.pgid);
+        if front != self.front_told && self.services.say_session(&["front", &front.to_string()]) {
+            self.front_told = front;
+        }
+    }
+
     /// A daemon died and was started again: what the keyring held is gone,
     /// and so are its questions.
     fn daemon_died(&mut self, w: Which) {
+        if w == Which::Session {
+            self.front_told = -1;
+        }
         if w == Which::Keyring {
             self.keyring_open = false;
             self.prompts.clear_all();
@@ -1739,6 +1755,7 @@ impl Shell {
             }
             self.maybe_prompt(now);
             self.maybe_portal(now);
+            self.tell_front();
         }
     }
 
@@ -2264,6 +2281,11 @@ impl Shell {
 
     fn enter_locked(&mut self, now: u64) {
         self.services.tell(&ToDaemon::Lock);
+        // What was copied may be a password: it goes with the lock, unless
+        // Settings keeps it.
+        if self.config.get_bool(config::key::CLIPBOARD_KEEP) != Some(true) {
+            self.services.say_session(&["clipboard-clear"]);
+        }
         self.keyring_open = false;
         self.unlock_sent = false;
         self.screen = Screen::Locked;

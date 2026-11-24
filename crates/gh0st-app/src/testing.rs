@@ -59,6 +59,7 @@ impl Driver {
         rt.off_device();
         rt.own_time();
         rt.portal_offline = true;
+        rt.s.clip.offline = true;
         rt.start(0);
         Driver {
             rt,
@@ -194,6 +195,17 @@ impl Driver {
     }
 
     /// Memory is short (see [`Page::low_memory`](crate::Page::low_memory)).
+    /// What the app has copied, as the clipboard holds it.
+    pub fn clipboard(&self) -> Option<&[u8]> {
+        self.rt.s.clip.local.as_deref()
+    }
+
+    /// Something copied, as if by another app.
+    pub fn set_clipboard(&mut self, data: &[u8]) -> &mut Driver {
+        self.rt.s.clip.local = Some(data.to_vec());
+        self
+    }
+
     /// A link or an address changed (see
     /// [`Page::network_changed`](crate::Page::network_changed)).
     pub fn network_changed(&mut self) -> &mut Driver {

@@ -4,6 +4,7 @@
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
+pub mod clipboard;
 pub mod inhibit;
 pub mod memory;
 pub mod monitor;

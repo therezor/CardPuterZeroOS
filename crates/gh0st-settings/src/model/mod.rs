@@ -87,6 +87,8 @@ pub enum Setting {
     Ssh,
     SendHostname,
     Ip6Privacy,
+    /// What was copied stays through the lock.
+    ClipboardKeep,
     /// The lock screen asks for the password.
     LockPassword,
     /// How long dark before the lock asks for it.

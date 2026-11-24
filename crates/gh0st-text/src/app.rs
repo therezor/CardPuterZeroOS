@@ -1409,12 +1409,15 @@ impl Editor {
         self.hit = None;
     }
 
-    fn copy(&mut self) -> bool {
+    /// The selection to the clipboard every app shares, bytes as they are.
+    /// This app keeps its own copy too, for when the shared one refuses.
+    fn copy(&mut self, cx: &mut Cx) -> bool {
         let Some((a, b)) = self.selection() else {
             return false;
         };
         let bytes = self.doc.borrow_mut().buf.bytes(a..b.min(a + (16 << 20)));
         self.clip = bytes.unwrap_or_default();
+        cx.copy(&self.clip);
         true
     }
 
@@ -1801,17 +1804,20 @@ impl Editor {
                 self.search.start();
             }
             cmd::COPY => {
-                if self.copy() {
+                if self.copy(cx) {
                     cx.toast("Copied");
                 }
             }
             cmd::CUT if edit_ok => {
-                if self.copy() {
+                if self.copy(cx) {
                     self.backspace(false);
                 }
             }
             cmd::PASTE if edit_ok => {
-                let clip = self.clip.clone();
+                let clip = cx.paste().unwrap_or_else(|| self.clip.clone());
+                if clip.is_empty() {
+                    cx.toast("Nothing copied");
+                }
                 self.doc.borrow_mut().buf.seal();
                 self.type_bytes(&clip);
                 self.doc.borrow_mut().buf.seal();
@@ -2336,7 +2342,7 @@ impl Page for Editor {
         c.add(here(
             Command::action(cmd::PASTE, "Paste")
                 .keys("Ctrl+v")
-                .enabled(can_edit && !self.clip.is_empty()),
+                .enabled(can_edit),
         ));
         c.add(here(Command::action(cmd::ALL, "Select all")));
         c.add(here(

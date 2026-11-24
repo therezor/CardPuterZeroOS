@@ -246,6 +246,7 @@ The shell runs these on the session bus before any app starts
 | `org.freedesktop.Notifications` | Each notification becomes a notice, as above. Its actions are chips; `ActionInvoked` and `NotificationClosed` go back to the poster |
 | `org.freedesktop.ScreenSaver` | Inhibit keeps the app's screen on, as `awake 1` does. A program an app started counts as that app |
 | `org.freedesktop.portal.Desktop` | The XDG portal (`docs/portal.md`): files, opening, notifications, the look, inhibit, the user's name |
+| `org.gh0st.Clipboard` | One clipboard for every app: `Set(s mime, ay)`, `Get(s mime)`, `Types`, `Clear`, and `Changed`. Only the app in front, or a program it started, may use it. 16 MB at most. The lock clears it, unless Settings > Privacy keeps it |
 
 The keyring's questions show on a shell screen. The app in front is parked
 for it, as Fn+K parks it, and gets `pause` and `resume` on its link.

@@ -245,6 +245,20 @@ impl Dialog {
         Out::Nothing
     }
 
+    /// Ctrl+V: the first line of `text` into the field, as typed.
+    pub(crate) fn paste(&mut self, text: &str) {
+        let Some(f) = self.field.as_mut() else {
+            return;
+        };
+        for c in text.lines().next().unwrap_or("").chars() {
+            if c.is_control() || f.text.len() + c.len_utf8() > MAX {
+                break;
+            }
+            f.text.push(c);
+        }
+        self.error = None;
+    }
+
     /// The answer's text, taken out so the dialog keeps no copy.
     pub(crate) fn take_text(&mut self) -> String {
         self.field

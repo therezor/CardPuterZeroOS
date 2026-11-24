@@ -922,6 +922,17 @@ Every page hears `Page::front(false)` when the app leaves the front, and
 right after, so `front(false)` is where it lets go of a device, such as a
 camera, and finishes a file it was writing.
 
+### The clipboard
+
+`cx.copy(bytes)` puts text on the clipboard every app shares, through
+`gh0st session`; `cx.paste()` gives back what was copied last, by this app
+or another. Bytes stay as they are, so text that isn't UTF-8 survives.
+Only the app in front may copy or paste: an app behind gets None, so it
+can't watch what the user copies. Ctrl+V types the first line copied into
+a typing page or a dialog's field, by itself. Off the device, and in a
+test, the app keeps its own: `Driver::clipboard()` reads it and
+`Driver::set_clipboard()` fills it.
+
 ### The network
 
 A link or an address that comes or goes (a cable pulled, Wi-Fi joined, an

@@ -164,6 +164,14 @@ impl Bar {
     }
 }
 
+/// The most Ctrl+V types into a field, a character at a time.
+const PASTE_MAX: usize = 1024;
+
+/// Ctrl+V, pressed.
+fn is_paste(raw: &gh0st_core::keys::Key) -> bool {
+    raw.state == State::Press && raw.ctrl && raw.text.is_some_and(|c| c.eq_ignore_ascii_case(&'v'))
+}
+
 enum Overlay {
     None,
     Menu(Menu),
@@ -813,6 +821,23 @@ impl Runtime {
             return;
         }
         let typing = self.stack[top].typing();
+        // Ctrl+V types the first line copied into whatever has focus.
+        if typing && is_paste(raw) {
+            let text = self.s.clip.paste().unwrap_or_default();
+            let line = String::from_utf8_lossy(&text);
+            let chars: Vec<char> = line
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take_while(|c| !c.is_control())
+                .take(PASTE_MAX)
+                .collect();
+            for c in chars {
+                self.call(top, now, |p, cx| p.key(Key::Char(c), cx));
+            }
+            return;
+        }
         let bars = self.top_bars();
         let plain = !raw.ctrl && !raw.alt && !raw.fn_;
         if raw.ch == Some('8') && plain && !typing && bars.menu && (bars.bottom || bars.corner) {
@@ -1070,6 +1095,12 @@ impl Runtime {
                     next: now + HOLD_FRAME_MS,
                     pc: 0,
                 });
+                return;
+            }
+            if d.typing() && is_paste(raw) {
+                if let Some(text) = self.s.clip.paste() {
+                    d.paste(&String::from_utf8_lossy(&text));
+                }
                 return;
             }
             match d.key(raw) {

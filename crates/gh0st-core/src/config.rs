@@ -54,6 +54,8 @@ pub mod key {
     pub const STORE_LAYOUT: &str = "gh0st.store.layout";
     /// The picture behind home and the lock: a built-in's name, `picture`
     /// for the user's own crop, or `off`.
+    /// Keep what was copied through the lock. Off: the lock clears it.
+    pub const CLIPBOARD_KEEP: &str = "gh0st.clipboard.keep";
     pub const WALLPAPER: &str = "gh0st.wallpaper";
 }
 

@@ -478,7 +478,10 @@ impl Term {
             }
             t.replies.clear();
         }
+        // OSC 52: a program in the tab copies, to the clipboard every app
+        // shares.
         if let Some(text) = t.clipboard.take() {
+            cx.copy(text.as_bytes());
             self.clipboard = text;
             cx.toast("Copied");
         }
@@ -832,6 +835,7 @@ impl Term {
         };
         let text = selected_text(&tab.vt.t, anchor, head, &mut self.scratch.borrow_mut());
         let lines = text.lines().count().max(1);
+        cx.copy(text.as_bytes());
         self.clipboard = text;
         self.mode = Mode::View;
         cx.toast(&format!("Copied {lines} lines"));
@@ -839,7 +843,11 @@ impl Term {
     }
 
     fn paste(&mut self, cx: &mut Cx) {
-        if self.clipboard.is_empty() {
+        let text = match cx.paste() {
+            Some(b) => String::from_utf8_lossy(&b).into_owned(),
+            None => self.clipboard.clone(),
+        };
+        if text.is_empty() {
             cx.toast("Nothing copied");
             return;
         }
@@ -847,7 +855,7 @@ impl Term {
             return;
         };
         let mut out = Vec::new();
-        keys::paste(&self.clipboard, &tab.vt.t.modes, &mut out);
+        keys::paste(&text, &tab.vt.t.modes, &mut out);
         self.send(&out, cx);
     }
 
@@ -1093,10 +1101,8 @@ impl Page for Term {
         c.add(on(Command::choice(cmd::LAYOUT, "Grid", grid).keys("m")));
         c.add(on(Command::action(cmd::FIND, "Find").keys("n")));
         c.add(on(Command::action(cmd::COPY, "Copy lines").keys("v")));
-        let pasteable = !self.clipboard.is_empty();
-        c.add(on(Command::action(cmd::PASTE, "Paste")
-            .keys("p")
-            .enabled(pasteable)));
+        // Another app may have copied: Paste is always there.
+        c.add(on(Command::action(cmd::PASTE, "Paste").keys("p")));
         c.group("Tabs");
         c.add(on(Command::action(cmd::NEW_TAB, "New tab").keys("o")));
         if self.tabs.len() > 1 {

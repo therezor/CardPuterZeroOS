@@ -108,6 +108,16 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
     --method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.PowerProfileMonitor \
     power-saver-enabled | grep -q false || fail "power-saver-enabled"
 
+echo "clipboard: what was copied comes back, bytes as they are"
+gdbus call --session --dest org.gh0st.Clipboard --object-path /org/gh0st/Clipboard \
+    --method org.gh0st.Clipboard.Set 'text/plain;charset=utf-8' "b'copied text'" >/dev/null || fail "Set"
+gdbus call --session --dest org.gh0st.Clipboard --object-path /org/gh0st/Clipboard \
+    --method org.gh0st.Clipboard.Get text/plain | grep -q "b'copied text'" || fail "Get"
+gdbus call --session --dest org.gh0st.Clipboard --object-path /org/gh0st/Clipboard \
+    --method org.gh0st.Clipboard.Clear >/dev/null || fail "Clear"
+gdbus call --session --dest org.gh0st.Clipboard --object-path /org/gh0st/Clipboard \
+    --method org.gh0st.Clipboard.Get text/plain 2>/dev/null && fail "cleared, still there"
+
 echo "portal: Settings reads the look and signals a change"
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.portal.Settings.ReadOne org.freedesktop.appearance color-scheme \

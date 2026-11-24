@@ -141,6 +141,10 @@ fn main_loop(
         Input::Keyboard(..) => gh0st_core::status::Watch::links().ok(),
         Input::Script(_) => None,
     };
+    // A sim keeps its own clipboard: a script must not reach the user's.
+    if matches!(input, Input::Script(_)) {
+        rt_.s.clip.offline = true;
+    }
     let mut raw = Vec::new();
     let mut full = false;
     // GH0ST_LOG=debug: what woke the loop, as the shell logs it.

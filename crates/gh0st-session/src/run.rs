@@ -8,6 +8,7 @@ use gh0st_core::ident::{self, Who};
 use gh0st_core::link::Link;
 use gh0st_dbus::{Conn, Kind, Message, Value, bus};
 
+use crate::clipboard::{self, Clipboard};
 use crate::inhibit::{self, Inhibit};
 use crate::memory::{self, Memory};
 use crate::monitor::{self, Network, Power};
@@ -27,6 +28,7 @@ struct Session {
     inhibit: Inhibit,
     portal: Portal,
     settings: Settings,
+    clipboard: Clipboard,
     memory: Memory,
     network: Network,
     power: Power,
@@ -73,7 +75,7 @@ pub fn main(args: &[String]) -> i32 {
             return 1;
         }
     };
-    for name in [notify::NAME, inhibit::NAME, portal::NAME] {
+    for name in [notify::NAME, inhibit::NAME, portal::NAME, clipboard::NAME] {
         match bus::own(&mut conn, name) {
             Ok(true) => {}
             Ok(false) => {
@@ -112,6 +114,7 @@ pub fn main(args: &[String]) -> i32 {
         inhibit: Inhibit::default(),
         portal,
         settings: Settings::new(&config),
+        clipboard: Clipboard::new(test),
         memory: Memory::open(),
         network: Network::default(),
         power: Power::new(),
@@ -283,6 +286,8 @@ impl Session {
             self.settings.call(&m)
         } else if path.starts_with(portal::PATH) {
             self.portal.call(&m, &sender, pid, &who.label)
+        } else if path == clipboard::PATH {
+            self.clipboard.call(&m, pid)
         } else if path == notify::PATH {
             let r = self.notes.call(&m, &who, &sender);
             self.test_press();
@@ -293,6 +298,7 @@ impl Session {
             let child = match path {
                 "/" => vec!["org", "ScreenSaver"],
                 "/org" => vec!["freedesktop", "gh0st"],
+                "/org/gh0st" => vec!["Clipboard"],
                 "/org/freedesktop" => vec!["Notifications", "ScreenSaver", "portal"],
                 "/org/freedesktop/portal" => vec!["desktop"],
                 _ => vec![],
@@ -411,6 +417,7 @@ impl Session {
         for m in lines {
             match m.first().map(String::as_str) {
                 Some("action" | "closed") => self.notes.shell_said(&m),
+                Some("front" | "clipboard-clear") => self.clipboard.shell_said(&m),
                 _ => self.portal.shell_said(&m),
             }
         }
@@ -422,6 +429,9 @@ impl Session {
             self.bus.send(s)?;
         }
         for s in std::mem::take(&mut self.settings.out) {
+            self.bus.send(s)?;
+        }
+        for s in std::mem::take(&mut self.clipboard.out) {
             self.bus.send(s)?;
         }
         let monitors = std::mem::take(&mut self.network.out)

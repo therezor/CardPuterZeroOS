@@ -225,6 +225,8 @@ pub struct State {
     /// `gh0st.sounds`: the shell's and apps' ticks and chimes.
     pub sounds: bool,
     pub clock_24h: bool,
+    /// The clipboard stays through the lock.
+    pub clipboard_keep: bool,
     pub apps: Vec<AppRow>,
     /// Settings > Default apps, one row per kind of file.
     pub defaults: Vec<DefaultRow>,
@@ -1190,6 +1192,12 @@ pub fn privacy(s: &State) -> Vec<Item> {
             s.nm.ip6_privacy,
             Setting::Ip6Privacy,
         ),
+        set(
+            "copy",
+            "Keep copied text when locked",
+            s.clipboard_keep,
+            Setting::ClipboardKeep,
+        ),
         Item::new(
             "hard-drive",
             "Keep logs",
@@ -2121,7 +2129,12 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            ["Send device name", "IPv6 privacy address", "Keep logs"]
+            [
+                "Send device name",
+                "IPv6 privacy address",
+                "Keep copied text when locked",
+                "Keep logs"
+            ]
         );
         let on: Vec<Value> = (0..2).map(|i| p.item(i).unwrap().value.clone()).collect();
         assert_eq!(on, [false, true].map(Value::Toggle).to_vec());
