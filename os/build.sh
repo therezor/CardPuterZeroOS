@@ -45,6 +45,10 @@ changed() {
 }
 GH0ST_STAMP=$(changed '%ct.%h' crates assets packaging Cargo.toml Cargo.lock \
     os/packages/gh0st os/packages/gh0st-term os/packages/gh0st-camera)
+# gh0st-camera's Depends pins libcamera exactly: a new pin is a new
+# version, or the repo keeps the old deb under the same name.
+libcamera=$(git -C "$root" log -1 --format='%ct.%h' -G'libcamera' -- os/lock.json)
+[ "${libcamera%%.*}" -gt "${GH0ST_STAMP%%.*}" ] 2>/dev/null && GH0ST_STAMP=$libcamera
 case $GH0ST_GIT_REV in *.dirty) GH0ST_STAMP=$SOURCE_DATE_EPOCH.$GH0ST_GIT_REV ;; esac
 GH0ST_BASE_STAMP=$(changed '%ct' os/packages/gh0st-base os/repo/gh0st.sources \
     os/repo/gh0st.pref os/repo/gh0st-archive-keyring.pgp)
