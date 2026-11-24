@@ -27,6 +27,8 @@ const size_t VIDEO_AHEAD = 90;
 const size_t AUDIO_AHEAD = 400;
 // A picture this late is dropped rather than shown.
 const int64_t LATE_US = 70000;
+// Packets sent with no picture out: the decoder has stopped.
+const int STALL_PACKETS = 60;
 
 int64_t nowUs()
 {
@@ -149,17 +151,19 @@ struct Player::State {
     }
 
     // Takes the next packet of `q`, or null at the end of the file. False:
-    // quitting.
-    bool next(std::deque<Pkt> &q, Pkt &k, uint32_t &mine, AVCodecContext *dec)
+    // quitting. `seeked`: a seek came since the last one, so the decoder
+    // starts afresh.
+    bool next(std::deque<Pkt> &q, Pkt &k, uint32_t &mine, bool &seeked)
     {
         std::unique_lock<std::mutex> l(mu);
+        seeked = false;
         for (;;) {
             cv.wait(l, [&] { return quit || !q.empty() || eof || serial != mine; });
             if (quit)
                 return false;
             if (serial != mine) {
                 mine = serial;
-                avcodec_flush_buffers(dec);
+                seeked = true;
                 continue;
             }
             if (!q.empty()) {
@@ -178,6 +182,7 @@ struct Player::State {
     }
 
     // Waits until `us` on the media clock. False: a seek or quit came.
+    // Paused, it sleeps until something changes: every change notifies.
     bool waitFor(int64_t us, uint32_t mine)
     {
         std::unique_lock<std::mutex> l(mu);
@@ -188,11 +193,14 @@ struct Player::State {
                 showOne = false;
                 return true;
             }
+            if (paused) {
+                cv.wait(l);
+                continue;
+            }
             int64_t ahead = us - mediaUs();
-            if (!paused && ahead <= 0)
+            if (ahead <= 0)
                 return true;
-            auto d = paused ? std::chrono::microseconds(200000) : std::chrono::microseconds(ahead);
-            cv.wait_for(l, d);
+            cv.wait_for(l, std::chrono::microseconds(ahead));
         }
     }
 
@@ -219,59 +227,119 @@ struct Player::State {
         poke();
     }
 
+    // One decoded picture: shown on time, dropped when late or before a
+    // seek's mark.
+    void picture(AVFrame *f, uint32_t mine)
+    {
+        int64_t pts = f->best_effort_timestamp;
+        int64_t us = pts == AV_NOPTS_VALUE ? 0 : av_rescale_q(pts, vtb, AVRational{1, 1000000});
+        {
+            std::lock_guard<std::mutex> l(mu);
+            if (us < skipUntil)
+                return;
+        }
+        if (!waitFor(us, mine))
+            return;
+        {
+            std::lock_guard<std::mutex> l(mu);
+            if (!paused && mediaUs() - us > LATE_US)
+                return;
+        }
+        show(f);
+        std::lock_guard<std::mutex> l(mu);
+        status.posMs = us / 1000;
+        if (us / 1000000 != lastSecond) {
+            lastSecond = us / 1000000;
+            tell();
+        }
+    }
+
+    // A seek: the decoder starts afresh. The VPU's decoder is opened again,
+    // as not every build of it can flush.
+    void resetVideo()
+    {
+        if (!hw) {
+            avcodec_flush_buffers(vdec);
+            return;
+        }
+        std::string why;
+        avcodec_free_context(&vdec);
+        if (!openDecoder(vi, vdec, why, true))
+            giveUp(why);
+    }
+
+    // No picture for a while: the VPU once more in software, then an error.
+    void stalled()
+    {
+        std::string why = "can't decode this video";
+        if (hw) {
+            fprintf(stderr, "gh0st-camd: the hardware decoder gave nothing, trying software\n");
+            avcodec_free_context(&vdec);
+            if (openDecoder(vi, vdec, why, false)) {
+                std::lock_guard<std::mutex> l(mu);
+                seekTo = status.posMs;
+                cv.notify_all();
+                return;
+            }
+        }
+        giveUp(why);
+    }
+
+    void giveUp(const std::string &why)
+    {
+        std::lock_guard<std::mutex> l(mu);
+        if (status.error.empty())
+            status.error = why;
+        tell();
+    }
+
     void videoLoop()
     {
         AVFrame *f = av_frame_alloc();
         uint32_t mine = 0;
+        bool seeked;
         Pkt k;
-        while (next(vq, k, mine, vdec)) {
-            bool atEnd = !k.p;
-            // A bad packet is skipped: the next keyframe heals the picture.
-            if (!atEnd)
-                avcodec_send_packet(vdec, k.p);
-            av_packet_free(&k.p);
-            while (!atEnd && avcodec_receive_frame(vdec, f) == 0) {
-                int64_t pts = f->best_effort_timestamp;
-                int64_t us = pts == AV_NOPTS_VALUE ? 0 : av_rescale_q(pts, vtb, AVRational{1, 1000000});
-                bool shown;
-                {
-                    std::lock_guard<std::mutex> l(mu);
-                    shown = us >= skipUntil;
-                }
-                // Before a seek's mark, or the seek or quit came first.
-                if (!shown || !waitFor(us, mine)) {
-                    av_frame_unref(f);
-                    continue;
-                }
-                bool late;
-                {
-                    std::lock_guard<std::mutex> l(mu);
-                    late = !paused && mediaUs() - us > LATE_US;
-                }
-                if (!late) {
-                    show(f);
-                    std::lock_guard<std::mutex> l(mu);
-                    status.posMs = us / 1000;
-                    if (us / 1000000 != lastSecond) {
-                        lastSecond = us / 1000000;
-                        tell();
-                    }
-                }
+        // Packets sent since the last picture came out.
+        int stall = 0;
+        auto drain = [&] {
+            while (vdec && avcodec_receive_frame(vdec, f) == 0) {
+                stall = 0;
+                picture(f, mine);
                 av_frame_unref(f);
             }
-            if (atEnd) {
-                // The end: what the decoder held is out, then wait for a seek.
+        };
+        while (next(vq, k, mine, seeked)) {
+            if (seeked) {
+                resetVideo();
+                stall = 0;
+            }
+            if (!vdec) {
+                av_packet_free(&k.p);
+                continue;
+            }
+            if (!k.p) {
+                // The end: what the decoder held comes out, then a seek or
+                // quit is awaited.
                 avcodec_send_packet(vdec, nullptr);
-                while (avcodec_receive_frame(vdec, f) == 0) {
-                    show(f);
-                    av_frame_unref(f);
-                }
+                drain();
                 std::unique_lock<std::mutex> l(mu);
                 vDone = true;
                 end_();
                 cv.wait(l, [&] { return quit || serial != mine; });
-                if (quit)
-                    break;
+                continue;
+            }
+            // Full: take pictures out, then send the same packet again. A
+            // bad packet is skipped; the next keyframe heals the picture.
+            int r;
+            for (int tries = 0; (r = avcodec_send_packet(vdec, k.p)) == AVERROR(EAGAIN) && tries < 50;
+                 tries++)
+                drain();
+            av_packet_free(&k.p);
+            stall++;
+            drain();
+            if (stall > STALL_PACKETS) {
+                stall = 0;
+                stalled();
             }
         }
         av_frame_free(&f);
@@ -281,41 +349,58 @@ struct Player::State {
     {
         AVFrame *f = av_frame_alloc();
         uint32_t mine = 0;
+        bool seeked;
         Pkt k;
         std::vector<int16_t> pcm;
         int ch = adec->ch_layout.nb_channels > 1 ? 2 : 1;
-        uint32_t heard = 0;
-        while (next(aq, k, mine, adec)) {
-            // A seek: what the server still holds is from before it.
-            if (heard != mine) {
-                heard = mine;
-                out.flush();
+        // Paused or played out, the stream closes so the codec can sleep.
+        auto rest = [&](auto until) {
+            std::unique_lock<std::mutex> l(mu);
+            if (!until())
+                return;
+            l.unlock();
+            out.close();
+            l.lock();
+            cv.wait(l, [&] { return !until(); });
+        };
+        while (next(aq, k, mine, seeked)) {
+            if (seeked) {
+                avcodec_flush_buffers(adec);
+                // What the server still holds is from before the seek.
+                if (out.isOpen())
+                    out.flush();
             }
             if (!k.p) {
-                std::unique_lock<std::mutex> l(mu);
-                aDone = true;
-                end_();
-                cv.wait(l, [&] { return quit || serial != mine; });
-                if (quit)
-                    break;
+                {
+                    std::lock_guard<std::mutex> l(mu);
+                    aDone = true;
+                    end_();
+                }
+                rest([&] { return !quit && serial == mine; });
                 continue;
             }
-            avcodec_send_packet(adec, k.p);
+            int r;
+            for (int tries = 0; (r = avcodec_send_packet(adec, k.p)) == AVERROR(EAGAIN) && tries < 50;
+                 tries++) {
+                while (avcodec_receive_frame(adec, f) == 0)
+                    av_frame_unref(f);
+            }
             av_packet_free(&k.p);
             while (avcodec_receive_frame(adec, f) == 0) {
                 int64_t us = av_rescale_q(f->best_effort_timestamp, atb, AVRational{1, 1000000});
+                rest([&] { return paused && !quit && serial == mine; });
                 bool drop, wait;
                 {
-                    std::unique_lock<std::mutex> l(mu);
-                    // Paused: hold the sound until play or a seek.
-                    while (paused && !quit && serial == mine)
-                        cv.wait_for(l, std::chrono::milliseconds(200));
+                    std::lock_guard<std::mutex> l(mu);
                     drop = us < skipUntil || serial != mine || quit;
                     // Far behind the picture (a slow card): catch up.
                     drop = drop || mediaUs() - us > 200000;
                     wait = us - mediaUs() > 200000;
                 }
                 if (wait && !waitFor(us - 100000, mine))
+                    drop = true;
+                std::string why;
+                if (!drop && !out.isOpen() && !out.open(adec->sample_rate, ch, why))
                     drop = true;
                 if (!drop) {
                     pcm.resize(size_t(f->nb_samples) * ch + 64);
@@ -341,14 +426,16 @@ struct Player::State {
         }
     }
 
-    bool openDecoder(int idx, AVCodecContext *&ctx, std::string &why)
+    bool openDecoder(int idx, AVCodecContext *&ctx, std::string &why, bool allowHw)
     {
         AVStream *st = fmt->streams[idx];
         const AVCodec *codec = nullptr;
         // The VPU decodes H.264 up to 1080p; software is the fallback.
 #ifdef __linux__
-        if (st->codecpar->codec_id == AV_CODEC_ID_H264)
+        if (allowHw && st->codecpar->codec_id == AV_CODEC_ID_H264)
             codec = avcodec_find_decoder_by_name("h264_v4l2m2m");
+#else
+        (void)allowHw;
 #endif
         for (int tries = 0; tries < 2; tries++) {
             if (!codec)
@@ -420,7 +507,7 @@ bool Player::open(const std::string &path, int w, int h, std::string &why)
     }
     s.vi = av_find_best_stream(s.fmt, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     s.ai = av_find_best_stream(s.fmt, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
-    if (s.vi < 0 || !s.openDecoder(s.vi, s.vdec, why)) {
+    if (s.vi < 0 || !s.openDecoder(s.vi, s.vdec, why, true)) {
         why = s.vi < 0 ? "no picture in this file" : why;
         close();
         return false;
@@ -441,7 +528,7 @@ bool Player::open(const std::string &path, int w, int h, std::string &why)
         s.outW = std::max(2, int(int64_t(vw) * h / vh) & ~1);
     }
     std::string none;
-    if (s.ai >= 0 && s.openDecoder(s.ai, s.adec, none)) {
+    if (s.ai >= 0 && s.openDecoder(s.ai, s.adec, none, false)) {
         s.atb = s.fmt->streams[s.ai]->time_base;
         int ch = s.adec->ch_layout.nb_channels > 1 ? 2 : 1;
         AVChannelLayout layout;

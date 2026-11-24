@@ -125,7 +125,8 @@ cost more than the pages are worth here.
 **ffmpeg.** Files runs `ffmpeg` and `ffprobe` for video previews. Debian's
 ffmpeg is a desktop build: its device library pulls OpenGL, so Mesa and
 LLVM, and its filters pull speech synthesis and recognition. That is 148
-packages and 367 MB of the 842 MB installed. It stays.
+packages and 367 MB of the 842 MB installed. It stays, and Camera's helper
+links its libraries for sound and playback.
 
 **Packages.**
 

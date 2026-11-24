@@ -34,6 +34,7 @@ fn pages() -> Vec<PageId> {
         PageId::Hotspot,
         PageId::Pictures,
         PageId::Choose(Choice::Palette),
+        PageId::Choose(Choice::Dns),
     ]
 }
 

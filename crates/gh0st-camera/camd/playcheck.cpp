@@ -1,6 +1,7 @@
 // A host check of the player: plays a file against the silent stub
 // server, then pauses, seeks while paused, plays on and runs to the end.
-//   make playcheck O=out && out/playcheck in.mp4
+// A second file, whose picture won't decode, must end in an error.
+//   make playcheck O=out && out/playcheck in.mp4 [broken.mp4]
 #include "player.h"
 
 #include <chrono>
@@ -50,8 +51,8 @@ void check(bool ok, const char *what)
 
 int main(int argc, char **argv)
 {
-    if (argc != 2)
-        return fprintf(stderr, "usage: playcheck in.mp4\n"), 2;
+    if (argc != 2 && argc != 3)
+        return fprintf(stderr, "usage: playcheck in.mp4 [broken.mp4]\n"), 2;
     int fds[2];
     if (pipe(fds))
         return 1;
@@ -81,5 +82,15 @@ int main(int argc, char **argv)
     pump(p, 800);
     check(!last.ended && last.posMs < 1500, "plays again from the start");
     p.close();
+    if (argc == 3) {
+        last = Player::Status();
+        if (!p.open(argv[2], 302, 170, why)) {
+            check(true, "a broken file is refused at open");
+        } else {
+            pump(p, 6000);
+            check(!last.error.empty(), "a picture that won't decode ends in an error");
+            p.close();
+        }
+    }
     return fails ? 1 : 0;
 }

@@ -252,8 +252,11 @@ Zoom and exposure start at 1x and ±0 on every launch.
 - `player.cpp`: plays a video. One thread reads the file ahead, one decodes
   the picture (the VPU's `h264_v4l2m2m`, software when it can't) and keeps
   it on the clock, one decodes the sound and writes it to the server. A
-  late picture is dropped. Only the loop thread touches the link and the
-  ring. `make playcheck` builds a host check of play, pause, seek and the
+  late picture is dropped. A seek opens the hardware decoder again, as not
+  every build of it can flush; 60 packets with no picture move it to
+  software, and software failing ends in `playerr`. Paused or at the end,
+  nothing polls and the sound stream closes, so the codec sleeps. Only the
+  loop thread touches the link and the ring. `make playcheck` builds a host check of play, pause, seek and the
   end.
 - `still.cpp`: JPEG from raw YUV420 (libjpeg-turbo), EXIF written by hand,
   and thumbnails decoded at 1/8 scale.
@@ -306,8 +309,11 @@ Builds:
 - `cargo run -p gh0st-camera --example mockups` writes every screen to
   `mockups/camera`. As a test it lints each one in every palette.
 - `make -C crates/gh0st-camera/camd playcheck O=$PWD/target/camd`, then
-  `target/camd/playcheck VIDEO.mp4`, plays a file against the silent stub
-  server: its pace, a pause, a paused seek, the end and a replay.
+  `target/camd/playcheck VIDEO.mp4 [BROKEN.mp4]`, plays a file against the
+  silent stub server: its pace, a pause, a paused seek, the end and a
+  replay; a file whose picture won't decode must end in an error. With
+  `GH0ST_CAMD_TEST` and ffmpeg on the host, `tests/flow.rs` plays a video
+  through the app and the stub helper.
   `mp4cat` with an AAC file, then ffprobe, checks the two tracks' lengths
   and that a cut file still plays.
 - `make -C crates/gh0st-camera/camd check O=$PWD/target/camd` runs host

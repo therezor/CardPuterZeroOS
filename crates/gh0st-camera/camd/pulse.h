@@ -50,6 +50,7 @@ public:
     // Drops what is buffered: a seek or a pause.
     void flush();
     void close();
+    bool isOpen() const { return s_ != nullptr; }
 
 private:
     void *s_ = nullptr;

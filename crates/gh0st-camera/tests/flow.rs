@@ -203,3 +203,45 @@ fn a_video_plays_pauses_and_stops_in_the_gallery() {
     // Back in the grid, nothing plays: the top bar's clock at most.
     assert!(drv.idle_wakes(5_000) <= 1);
 }
+
+#[test]
+fn the_cpp_helper_plays_a_video() {
+    let _one = serial();
+    let Ok(exe) = std::env::var("GH0ST_CAMD_TEST") else {
+        eprintln!("skipped: GH0ST_CAMD_TEST is not set");
+        return;
+    };
+    let d = dir("cpp-play");
+    std::fs::create_dir_all(&d).unwrap();
+    let video = d.join(format!("{}.mp4", files::stem("VID", 1_795_430_000)));
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+        .arg("testsrc2=size=1280x720:rate=30")
+        .args(["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000"])
+        .args([
+            "-t", "3", "-c:v", "libx264", "-bf", "0", "-g", "30", "-pix_fmt", "yuv420p",
+        ])
+        .args(["-c:a", "aac", "-ac", "1"])
+        .arg(&video)
+        .status();
+    if !made.is_ok_and(|s| s.success()) {
+        eprintln!("skipped: no ffmpeg to make a video");
+        return;
+    }
+    let mut drv = Driver::new(Camera::with(Source::Exec(vec![exe]), d.clone()));
+    drv.pump(300);
+    drv.keys("p").pump(300);
+    drv.keys("enter").pump(300);
+    let poster = drv.frame().pixels().to_vec();
+    drv.keys("enter").pump(1200);
+    let first = drv.frame().pixels().to_vec();
+    drv.pump(500);
+    assert_ne!(poster, first, "the video's picture is up");
+    assert_ne!(first, drv.frame().pixels(), "and it moves");
+    assert!(drv.lint().is_empty());
+    drv.keys("enter").pump(200);
+    let paused = drv.frame().pixels().to_vec();
+    drv.pump(600);
+    assert_eq!(paused, drv.frame().pixels(), "a pause holds the picture");
+    drv.keys("esc").pump(300);
+}
