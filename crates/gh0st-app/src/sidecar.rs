@@ -21,7 +21,7 @@ use std::process::{Command, Stdio};
 
 /// The link a helper talks over: one message per packet, fields split by
 /// tabs.
-pub use gh0st_core::link::Link;
+pub use gh0st_core::link::{Link, path_field, path_of};
 
 /// Where a helper finds its end of the link and the ring: the names of two
 /// variables holding fd numbers.

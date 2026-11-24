@@ -29,12 +29,16 @@ all: $(O)/gh0st-mediad
 $(O)/gh0st-mediad: $(addprefix $(O)/,$(addsuffix .o,$(common) pulse))
 	$(CXX) -s -o $@ $^ $(DEP_LIBS) $(PULSE_LIBS) -pthread -Wl,--as-needed
 
-check: $(O)/media_check $(O)/decode_check
+check: $(O)/media_check $(O)/decode_check $(O)/link_check
+	$(O)/link_check
 	$(O)/decode_check
 	$(O)/media_check $(CORPUS)
 
 $(O)/media_check: $(addprefix $(O)/,$(addsuffix .o,media_check stills decode cache lazy))
 	$(CXX) -o $@ $^ $(DEP_LIBS) -pthread
+
+$(O)/link_check: $(addprefix $(O)/,$(addsuffix .o,link_check link))
+	$(CXX) -o $@ $^
 
 $(O)/decode_check: $(O)/decode_check.o
 	$(CXX) -o $@ $^ $(DEP_LIBS) -pthread

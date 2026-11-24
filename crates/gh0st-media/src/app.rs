@@ -244,7 +244,7 @@ impl Media {
     }
 
     fn ask(&mut self, what: For) {
-        let p = |p: &PathBuf| p.to_string_lossy().into_owned();
+        let p = |p: &PathBuf| p.clone();
         match &what {
             For::Tile(path) => {
                 let same = |a: &Ask| a.what == what;
@@ -456,7 +456,7 @@ impl Media {
             w: m.width as u16,
             h: m.height as u16,
             flags,
-            path: path.to_string_lossy().into_owned(),
+            path: path.clone(),
         });
         self.play = Some(Playback {
             id,
@@ -596,7 +596,7 @@ impl Media {
             .queue
             .get(i)
             .and_then(|&e| self.entries.get(e))
-            .map(|e| e.path.to_string_lossy().into_owned())
+            .map(|e| e.path.clone())
         else {
             return;
         };
@@ -737,7 +737,7 @@ impl Media {
                     zoom: self.pv.zoom(),
                     cx: self.pv.centre().0,
                     cy: self.pv.centre().1,
-                    path: p.to_string_lossy().into_owned(),
+                    path: p.clone(),
                 };
                 if self.current().as_ref() == Some(&p) && a.cmd == want && self.frame_is_still() {
                     self.full = pic;

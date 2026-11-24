@@ -32,7 +32,8 @@ namespace mediad {
 
 namespace {
 
-const char *VERSION = "1";
+// 2: paths come escaped (link.h, pathOf).
+const char *VERSION = "2";
 // Slots 0 to 2 take a playing video's pictures in turn; the last one
 // answers asks, one at a time.
 const uint32_t PLAY_SLOTS = 3;
@@ -237,14 +238,14 @@ private:
                 say({"playerr", at(2), "bad size"});
                 return;
             }
-            cur_ = start(at(2), w, h, at(5), m.back(), why);
+            cur_ = start(at(2), w, h, at(5), gh0st::pathOf(m.back()), why);
             if (!cur_)
                 say({"playerr", at(2), why});
             return;
         }
         if (verb == "next" && m.size() >= 4 && cur_) {
             std::string why;
-            next_ = start(at(2), cur_->w, cur_->h, "paused", m.back(), why);
+            next_ = start(at(2), cur_->w, cur_->h, "paused", gh0st::pathOf(m.back()), why);
             return;
         }
         if (!cur_)
@@ -372,8 +373,8 @@ private:
     bool command(const std::vector<std::string> &m)
     {
         auto at = [&](size_t i) { return i < m.size() ? m[i] : std::string(); };
-        // The path is always the last field.
-        const std::string &path = m.back();
+        // The path is always the last field, escaped.
+        const std::string path = gh0st::pathOf(m.back());
         const std::string verb = at(0);
         if (verb == "hello") {
             say({"hello", VERSION});

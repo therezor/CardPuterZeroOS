@@ -1,9 +1,14 @@
 //! What the app and `gh0st-mediad` say to each other: one message per
 //! packet, fields split by tabs. Every ask carries an id the answer names,
-//! and a path is always the last field. docs/media.md has the list.
+//! and a path is always the last field, escaped as the shell link escapes
+//! one (`%XX`), so tabs and any byte in a name survive. docs/media.md has
+//! the list.
 
-/// The protocol version both sides send in `hello`.
-pub const VERSION: &str = "1";
+use gh0st_app::sidecar::{path_field, path_of};
+use std::path::PathBuf;
+
+/// The protocol version both sides send in `hello`. 2: paths are escaped.
+pub const VERSION: &str = "2";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Kind {
@@ -165,18 +170,18 @@ pub enum Cmd {
     Forget,
     Probe {
         id: u32,
-        path: String,
+        path: PathBuf,
     },
     Tags {
         id: u32,
-        path: String,
+        path: PathBuf,
     },
     /// The middle of the picture, cut to fill w x h.
     Thumb {
         id: u32,
         w: u16,
         h: u16,
-        path: String,
+        path: PathBuf,
     },
     /// Fitted in w x h at `zoom` (1: whole) around (cx, cy).
     View {
@@ -186,19 +191,19 @@ pub enum Cmd {
         zoom: f32,
         cx: f32,
         cy: f32,
-        path: String,
+        path: PathBuf,
     },
     PlayOpen {
         id: u32,
         w: u16,
         h: u16,
         flags: Flags,
-        path: String,
+        path: PathBuf,
     },
     /// Opens the next track now, to start the moment this one ends.
     PlayNext {
         id: u32,
-        path: String,
+        path: PathBuf,
     },
     Pause,
     Resume,
@@ -229,14 +234,14 @@ impl Cmd {
             Cmd::Hello => s(&["hello", VERSION]),
             Cmd::Quit => s(&["quit"]),
             Cmd::Forget => s(&["forget"]),
-            Cmd::Probe { id, path } => vec!["probe".into(), id.to_string(), path.clone()],
-            Cmd::Tags { id, path } => vec!["tags".into(), id.to_string(), path.clone()],
+            Cmd::Probe { id, path } => vec!["probe".into(), id.to_string(), path_field(path)],
+            Cmd::Tags { id, path } => vec!["tags".into(), id.to_string(), path_field(path)],
             Cmd::Thumb { id, w, h, path } => vec![
                 "thumb".into(),
                 id.to_string(),
                 w.to_string(),
                 h.to_string(),
-                path.clone(),
+                path_field(path),
             ],
             Cmd::View {
                 id,
@@ -254,7 +259,7 @@ impl Cmd {
                 num(*zoom),
                 num(*cx),
                 num(*cy),
-                path.clone(),
+                path_field(path),
             ],
             Cmd::PlayOpen {
                 id,
@@ -269,10 +274,15 @@ impl Cmd {
                 w.to_string(),
                 h.to_string(),
                 flags.word(),
-                path.clone(),
+                path_field(path),
             ],
             Cmd::PlayNext { id, path } => {
-                vec!["play".into(), "next".into(), id.to_string(), path.clone()]
+                vec![
+                    "play".into(),
+                    "next".into(),
+                    id.to_string(),
+                    path_field(path),
+                ]
             }
             Cmd::Pause => s(&["play", "pause"]),
             Cmd::Resume => s(&["play", "resume"]),
@@ -297,7 +307,7 @@ impl Cmd {
     pub fn parse(f: &[String]) -> Option<Cmd> {
         let s = |i: usize| f.get(i).map(String::as_str).unwrap_or("");
         let n = |i: usize| s(i).parse::<u32>().ok();
-        let path = || f.last().cloned().unwrap_or_default();
+        let path = || path_of(f.last().map(String::as_str).unwrap_or(""));
         Some(match (s(0), s(1)) {
             ("hello", _) => Cmd::Hello,
             ("quit", _) => Cmd::Quit,
@@ -665,6 +675,19 @@ mod tests {
         for c in all {
             assert_eq!(Cmd::parse(&strs(c.fields())), Some(c.clone()), "{c:?}");
         }
+    }
+
+    #[test]
+    fn any_path_survives_the_wire() {
+        use std::os::unix::ffi::OsStrExt;
+        let odd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/m/a\tb%41 \xff\xe9.mp3"));
+        let c = Cmd::Probe {
+            id: 1,
+            path: odd.clone(),
+        };
+        let f = c.fields();
+        assert!(!f[2].contains('\t'), "one field");
+        assert_eq!(Cmd::parse(&f), Some(c));
     }
 
     #[test]

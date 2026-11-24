@@ -476,19 +476,23 @@ impl Fake {
     }
 
     fn run(&mut self, cmd: Cmd) -> bool {
+        // The fake reads names; the real helper reads bytes.
+        let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
         match cmd {
             Cmd::Hello => self.say(Event::Hello(crate::proto::VERSION.into())),
             Cmd::Quit => return false,
             Cmd::Forget => {}
-            Cmd::Probe { id, path } => match info_of(&path) {
+            Cmd::Probe { id, path } => match info_of(&s(&path)) {
                 Ok(info) => self.say(Event::Info { id, info }),
                 Err(why) => self.say(Event::Fail { id, why }),
             },
             Cmd::Tags { id, path } => self.say(Event::Tags {
                 id,
-                tags: tags_of(&path),
+                tags: tags_of(&s(&path)),
             }),
-            Cmd::Thumb { id, w, h, path } => self.picture(id, true, &path, (w, h), 1.0, (0.5, 0.5)),
+            Cmd::Thumb { id, w, h, path } => {
+                self.picture(id, true, &s(&path), (w, h), 1.0, (0.5, 0.5))
+            }
             Cmd::View {
                 id,
                 w,
@@ -497,15 +501,15 @@ impl Fake {
                 cx,
                 cy,
                 path,
-            } => self.picture(id, false, &path, (w, h), zoom, (cx, cy)),
+            } => self.picture(id, false, &s(&path), (w, h), zoom, (cx, cy)),
             Cmd::PlayOpen {
                 id,
                 w,
                 h,
                 flags,
                 path,
-            } => self.open(id, (w, h), &flags, &path),
-            Cmd::PlayNext { id, path } => self.next = Some((id, path)),
+            } => self.open(id, (w, h), &flags, &s(&path)),
+            Cmd::PlayNext { id, path } => self.next = Some((id, s(&path))),
             Cmd::Pause => self.set_paused(true),
             Cmd::Resume => self.set_paused(false),
             Cmd::Stop => {

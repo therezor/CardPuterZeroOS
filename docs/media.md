@@ -85,8 +85,10 @@ playing video's pictures in turn; slot 3 answers asks.
 
 ### Messages
 
-One message per packet, fields split by tabs, at most 512 bytes. Every ask
-carries an id, the answer names it, and a path is always the last field.
+One message per packet, fields split by tabs, at most 8 KB. Every ask
+carries an id, the answer names it, and a path is always the last field,
+escaped as the shell link escapes one (`%XX`), so a tab or any byte in a
+name survives. Messages may be 8 KB; one too long is refused, not cut.
 
 | App to helper | Helper to app |
 |---|---|
