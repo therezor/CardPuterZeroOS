@@ -347,7 +347,7 @@ impl Settings {
         let mut rows: Vec<AppRow> =
             apps::scan_all(&Dirs::from_env(), &config, &pins, desktop::is_executable)
                 .into_iter()
-                .filter(|a| a.file != "settings.desktop")
+                .filter(|a| a.file != "settings.desktop" && !a.entry.no_display)
                 .map(|a| AppRow {
                     icon: config
                         .get_str(&apps::app_key(&a.file, "icon"))

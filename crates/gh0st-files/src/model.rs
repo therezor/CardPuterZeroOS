@@ -1,5 +1,6 @@
 //! What a side shows: where it is, what is there, and how it is sorted.
 
+use gh0st_core::mime;
 use std::path::{Path, PathBuf};
 
 /// A folder's listing stops here, with a row that says so: a bigger folder
@@ -86,21 +87,45 @@ pub enum Type {
 impl Type {
     pub fn of(name: &str) -> Type {
         let lower = name.to_ascii_lowercase();
-        let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
         if archive_ext(&lower) {
             return Type::Archive;
         }
-        match ext {
-            "txt" | "md" | "log" | "csv" | "ini" | "conf" | "cfg" | "desktop" | "service"
-            | "srt" | "nfo" => Type::Text,
-            "rs" | "c" | "h" | "cpp" | "hpp" | "py" | "sh" | "js" | "ts" | "json" | "toml"
-            | "yaml" | "yml" | "xml" | "html" | "css" | "lua" | "go" | "java" => Type::Code,
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" => Type::Image,
-            "mp3" | "flac" | "wav" | "ogg" | "opus" | "m4a" | "aac" => Type::Audio,
-            "mp4" | "mkv" | "webm" | "avi" | "mov" => Type::Video,
-            _ if ext.is_empty() && matches!(lower.as_str(), "readme" | "license" | "makefile") => {
-                Type::Text
-            }
+        let Some(m) = mime::of_name(name) else {
+            return match lower.as_str() {
+                "readme" | "license" | "copying" | "makefile" => Type::Text,
+                _ => Type::Other,
+            };
+        };
+        Type::of_mime(m)
+    }
+
+    /// What a MIME type looks like in a list.
+    pub fn of_mime(m: &str) -> Type {
+        // Text people read, as against code and data.
+        const PROSE: [&str; 15] = [
+            "text/plain",
+            "text/markdown",
+            "text/x-log",
+            "text/csv",
+            "text/tab-separated-values",
+            "text/org",
+            "text/x-rst",
+            "text/x-readme",
+            "text/x-copying",
+            "text/x-tex",
+            "text/vtt",
+            "text/x-ssa",
+            "application/x-subrip",
+            "application/rtf",
+            "text/x-gettext-translation",
+        ];
+        match m.split('/').next() {
+            Some("image") => Type::Image,
+            Some("audio") => Type::Audio,
+            Some("video") => Type::Video,
+            Some("inode") => Type::Folder,
+            _ if PROSE.contains(&m) => Type::Text,
+            _ if mime::is_a(m, mime::TEXT) => Type::Code,
             _ => Type::Other,
         }
     }

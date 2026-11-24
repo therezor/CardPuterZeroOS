@@ -187,6 +187,16 @@ impl App {
         program.rsplit('/').next() == Some(name)
     }
 
+    /// The desktop file stem: `text` for `text.desktop`.
+    pub fn id(&self) -> &str {
+        self.file.strip_suffix(".desktop").unwrap_or(&self.file)
+    }
+
+    /// Takes files: a field code in `Exec` and at least one `MimeType`.
+    pub fn opens_files(&self) -> bool {
+        !self.entry.mime_types.is_empty() && desktop::field_code(&self.entry.exec).is_some()
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(entry: DesktopEntry, ours: bool) -> App {
         App {
@@ -287,7 +297,7 @@ fn order_of(label: &str) -> Option<usize> {
 /// built in.
 pub fn scan(dirs: &Dirs, config: &Config, pins: &[String]) -> Vec<App> {
     let mut apps = scan_all(dirs, config, pins, desktop::is_executable);
-    apps.retain(|a| a.shown);
+    apps.retain(|a| a.shown && !a.entry.no_display);
     apps
 }
 
@@ -298,11 +308,19 @@ pub fn scan_with(
     executable: impl Fn(&Path) -> bool + Copy,
 ) -> Vec<App> {
     let mut apps = scan_all(dirs, config, pins, executable);
-    apps.retain(|a| a.shown);
+    apps.retain(|a| a.shown && !a.entry.no_display);
+    apps
+}
+
+/// The apps that open files, hidden ones and `NoDisplay` ones included.
+pub fn openers(dirs: &Dirs, config: &Config) -> Vec<App> {
+    let mut apps = scan_all(dirs, config, &[], desktop::is_executable);
+    apps.retain(App::opens_files);
     apps
 }
 
 /// Every app, hidden ones included (`shown` false), for Settings > Apps.
+/// `NoDisplay` entries are in it too: Settings leaves them out.
 pub fn scan_all(
     dirs: &Dirs,
     config: &Config,
