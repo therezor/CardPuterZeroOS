@@ -809,7 +809,10 @@ struct Player::State {
             avcodec_parameters_to_context(ctx, st->codecpar);
             ctx->pkt_timebase = st->time_base;
             if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !(codec->capabilities & AV_CODEC_CAP_HARDWARE)) {
-                ctx->thread_count = 4;
+                // Each frame thread holds pictures of its own: a small video
+                // keeps up with fewer, and costs less memory.
+                int64_t px = int64_t(st->codecpar->width) * st->codecpar->height;
+                ctx->thread_count = px <= 640 * 480 ? 2 : px <= 1280 * 720 ? 3 : 4;
                 ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
                 if (lowres)
                     ctx->lowres = std::min(1, int(codec->max_lowres));

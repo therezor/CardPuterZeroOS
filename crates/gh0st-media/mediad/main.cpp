@@ -14,6 +14,9 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -29,6 +32,15 @@ extern "C" {
 }
 
 namespace mediad {
+
+// Gives freed memory back: a closed player or a dropped 8 MP picture
+// leaves tens of MB in glibc's free lists otherwise.
+static void trim()
+{
+#ifdef __GLIBC__
+    malloc_trim(0);
+#endif
+}
 
 namespace {
 
@@ -263,6 +275,7 @@ private:
         } else if (verb == "stop") {
             next_.reset();
             cur_.reset();
+            trim();
         } else if (verb == "step" && p) {
             p->step();
         } else if (verb == "speed" && p) {
@@ -391,6 +404,7 @@ private:
                  strtof(at(5).c_str(), nullptr), strtof(at(6).c_str(), nullptr), path);
         } else if (verb == "forget") {
             stills_.forget();
+            trim();
         } else if (verb == "play") {
             play(m);
         }

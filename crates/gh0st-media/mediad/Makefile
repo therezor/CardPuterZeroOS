@@ -3,6 +3,7 @@
 #   make check O=OUT CORPUS=DIR  host checks: every file corpus.sh wrote,
 #                                then the shared JPEG reader's own
 #   make playcheck O=OUT        the player against the silent stub server
+#   make bench O=OUT            the device's numbers (bench.cpp)
 # Everything is written under O, so the sources may be read-only. The
 # picture, player, link and ring sources are shared with gh0st-camd, in
 # native/av.
@@ -29,8 +30,9 @@ all: $(O)/gh0st-mediad
 $(O)/gh0st-mediad: $(addprefix $(O)/,$(addsuffix .o,$(common) pulse))
 	$(CXX) -s -o $@ $^ $(DEP_LIBS) $(PULSE_LIBS) -pthread -Wl,--as-needed
 
-check: $(O)/media_check $(O)/decode_check $(O)/link_check
+check: $(O)/media_check $(O)/decode_check $(O)/link_check $(O)/cache_check
 	$(O)/link_check
+	$(O)/cache_check
 	$(O)/decode_check
 	$(O)/media_check $(CORPUS)
 
@@ -40,7 +42,15 @@ $(O)/media_check: $(addprefix $(O)/,$(addsuffix .o,media_check stills decode cac
 $(O)/link_check: $(addprefix $(O)/,$(addsuffix .o,link_check link))
 	$(CXX) -o $@ $^
 
+$(O)/cache_check: $(addprefix $(O)/,$(addsuffix .o,cache_check cache))
+	$(CXX) -o $@ $^
+
 $(O)/decode_check: $(O)/decode_check.o
+	$(CXX) -o $@ $^ $(DEP_LIBS) -pthread
+
+bench: $(O)/bench
+
+$(O)/bench: $(addprefix $(O)/,$(addsuffix .o,bench player pulse_stub decode stills cache lazy))
 	$(CXX) -o $@ $^ $(DEP_LIBS) -pthread
 
 playcheck: $(O)/playcheck
@@ -57,5 +67,5 @@ $(O):
 clean:
 	rm -rf $(O)
 
-.PHONY: all check playcheck clean
+.PHONY: all check playcheck bench clean
 -include $(wildcard $(O)/*.d)

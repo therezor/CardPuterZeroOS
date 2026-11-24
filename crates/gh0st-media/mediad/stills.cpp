@@ -15,6 +15,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/display.h>
 #include <libavutil/opt.h>
+#include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
 #include <libheif/heif.h>
@@ -223,6 +224,31 @@ Fail packBase(const uint8_t *const data[4], const int ls[4], AVPixelFormat fmt, 
         return Fail::Corrupt;
     double k = std::min(1.0, std::sqrt(BASE_PIXELS / (double(w) * h)));
     int bw = std::max(1, int(w * k)), bh = std::max(1, int(h * k));
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    bool alpha = desc && (desc->flags & AV_PIX_FMT_FLAG_ALPHA);
+    if (!alpha) {
+        // No alpha to put over black: straight to the screen's format, with
+        // no RGBA copy of the whole base on the way.
+        SwsContext *sws = sws_getContext(w, h, fmt, bw, bh, AV_PIX_FMT_RGB565LE,
+                                         k < 1 ? SWS_AREA : SWS_POINT, nullptr, nullptr, nullptr);
+        if (!sws)
+            return Fail::Unsupported;
+        Pic p;
+        try {
+            p.px.resize(size_t(bw) * bh);
+        } catch (const std::bad_alloc &) {
+            sws_freeContext(sws);
+            return Fail::NoMem;
+        }
+        p.w = bw;
+        p.h = bh;
+        uint8_t *dst[4] = {reinterpret_cast<uint8_t *>(p.px.data()), nullptr, nullptr, nullptr};
+        int dls[4] = {bw * 2, 0, 0, 0};
+        sws_scale(sws, data, ls, 0, h, dst, dls);
+        sws_freeContext(sws);
+        out = orient > 1 ? gh0st::orient(p, orient) : std::move(p);
+        return Fail::None;
+    }
     SwsContext *sws = sws_getContext(w, h, fmt, bw, bh, AV_PIX_FMT_RGBA,
                                      k < 1 ? SWS_AREA : SWS_POINT, nullptr, nullptr, nullptr);
     if (!sws)
@@ -247,7 +273,8 @@ Fail packBase(const uint8_t *const data[4], const int ls[4], AVPixelFormat fmt, 
         int a = q[3];
         p.px[i] = gh0st::pack565(q[0] * a / 255, q[1] * a / 255, q[2] * a / 255);
     }
-    out = gh0st::orient(p, orient);
+    rgba = std::vector<uint8_t>();
+    out = orient > 1 ? gh0st::orient(p, orient) : std::move(p);
     return Fail::None;
 }
 
