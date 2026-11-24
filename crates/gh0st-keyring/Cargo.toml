@@ -1,0 +1,25 @@
+[package]
+name = "gh0st-keyring"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The Keyring app: what the keyring holds, who may read it"
+
+[[bin]]
+name = "gh0st-keyring"
+path = "src/main.rs"
+
+[dependencies]
+gh0st-app.workspace = true
+gh0st-core.workspace = true
+gh0st-dbus.workspace = true
+
+[dev-dependencies]
+# The real Secret Service behind the app in tests and mockups.
+gh0st-keyringd.workspace = true
+
+# The mockups double as fixtures: every scene under the design lint.
+[[example]]
+name = "mockups"
+test = true

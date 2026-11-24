@@ -5,6 +5,7 @@ members = [
     "crates/gh0st-core",
     "crates/gh0st-dbus",
     "crates/gh0st-keyringd",
+    "crates/gh0st-keyring",
     "crates/gh0st-session",
     "crates/gh0st-ui",
     "crates/gh0st-shell",

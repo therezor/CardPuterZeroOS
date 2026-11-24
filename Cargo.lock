@@ -287,6 +287,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-keyring"
+version = "0.2.0"
+dependencies = [
+ "gh0st-app",
+ "gh0st-core",
+ "gh0st-dbus",
+ "gh0st-keyringd",
+]
+
+[[package]]
 name = "gh0st-keyringd"
 version = "0.2.0"
 dependencies = [

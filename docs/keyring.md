@@ -86,6 +86,25 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
   before the vault sees it.
 - While the device is locked, prompts wait for the unlock.
 
+## The Keyring app
+
+`gh0st-keyring` is a plain client of the same API, plus `org.gh0st.Keyring`
+for what the standard lacks. Nothing there returns a secret.
+
+- **Home:** Passwords, Wi-Fi and App access with their counts. Lock on 5
+  and Add on 7 while the keyring is open; Unlock on 6 while it is locked.
+- **Passwords and Wi-Fi:** items by the app that stored them.
+- **An item:** who stored it, and the secret behind dots. Show on 5 asks
+  the shell for the account password, even with the keyring open; Delete
+  on 7 confirms, then goes through the keyring's own prompt.
+- **App access:** which app may read which other app's secret. Revoke on 6
+  makes the app ask again.
+- **Add:** a name and a password, stored as the app's own
+  (`org.gh0st.Password`).
+
+The app makes quick calls that answer at once and waits on no prompt: a
+prompt's end comes on the bus fd, which the page watches.
+
 ## Password changes
 
 - **Settings** runs `gh0st keyring prepare` before `passwd`: the daemon

@@ -37,6 +37,9 @@ battery in `/sys/class/power_supply`. Details and sources in
   no threads. `tests/fuzz.rs` mutates real messages.
 - `crates/gh0st-keyringd`: the keyring, `gh0st keyring`. The vault, the
   Secret Service and the shell link. `docs/keyring.md` is its guide.
+- `crates/gh0st-keyring`: the Keyring app, an SDK app with its own binary.
+  `examples/mockups.rs` renders its screens into `mockups/keyring` from the
+  real Secret Service (`tests/common/fake.rs`).
 - `crates/gh0st-session`: `gh0st session`, Notifications and ScreenSaver on
   gh0st's notices and `awake`.
 - `crates/gh0st-app`: the app SDK. Pages, OS bars, soft keys, lists, jobs,

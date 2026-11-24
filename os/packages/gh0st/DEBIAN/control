@@ -10,7 +10,9 @@ Depends: gh0st-panel-modules, xdg-user-dirs, network-manager, wireplumber,
 Description: the Gh0st OS shell and Settings
  The home screen, switcher and OS bars (gh0st shell), Settings
  (gh0st-settings), Updates (gh0st-update and the update engine), the
- Store (gh0st-store and its engine) and the root helper. Static binaries;
+ Store (gh0st-store and its engine), the keyring and session services
+ (gh0st keyring, gh0st session) with the Keyring app (gh0st-keyring), and
+ the root helper. Static binaries;
  the Depends are the commands they run: nmcli, wpctl, bluetoothctl, rfkill,
  pkexec, vcgencmd, unix_chkpwd, passwd, iw, and systemd's systemctl,
  timedatectl and hostnamectl. dnsmasq-base and nftables are what

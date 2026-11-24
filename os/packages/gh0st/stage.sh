@@ -9,6 +9,7 @@ install -D -m 755 "$out/gh0st" "$dest/usr/bin/gh0st"
 install -m 755 "$out/gh0st-settings" "$dest/usr/bin/gh0st-settings"
 install -m 755 "$out/gh0st-update" "$dest/usr/bin/gh0st-update"
 install -m 755 "$out/gh0st-store" "$dest/usr/bin/gh0st-store"
+install -m 755 "$out/gh0st-keyring" "$dest/usr/bin/gh0st-keyring"
 ln -s gh0st "$dest/usr/bin/gh0st-shell"
 # pkexec runs the helper by this path. A hard link: the same root-owned file,
 # not a symlink, which pkexec refuses.
@@ -16,7 +17,7 @@ install -d "$dest/usr/libexec"
 ln "$dest/usr/bin/gh0st" "$dest/usr/libexec/gh0st-helper"
 install -D -m 644 -t "$dest/usr/share/gh0st/applications" \
     "$pk/applications/settings.desktop" "$pk/applications/store.desktop" \
-    "$pk/applications/update.desktop"
+    "$pk/applications/update.desktop" "$pk/applications/keyring.desktop"
 install -D -m 644 "$pk/polkit/50-gh0st.rules" "$dest/usr/share/polkit-1/rules.d/50-gh0st.rules"
 install -D -m 644 "$pk/polkit/org.gh0st.policy" \
     "$dest/usr/share/polkit-1/actions/org.gh0st.policy"

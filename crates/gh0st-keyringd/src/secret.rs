@@ -1309,9 +1309,16 @@ impl Service {
         if p.step != Step::Password {
             return;
         }
-        // Open already: the shell checked the password before sending it.
-        if matches!(p.action, Action::Reveal(..)) && self.unlocked() && self.verified_prompts {
-            self.after_unlock(id);
+        // Open already: the shell checked the password before sending it,
+        // or, unchecked, the vault file does.
+        if matches!(p.action, Action::Reveal(..)) && self.unlocked() {
+            let right = self.verified_prompts
+                || std::fs::read(&self.path).is_ok_and(|f| Vault::open(&f, pw).is_ok());
+            if right {
+                self.after_unlock(id);
+            } else {
+                self.wrong_password(id);
+            }
             return;
         }
         match self.unlock(pw, true) {
@@ -1325,28 +1332,31 @@ impl Service {
                 self.out.push(Out::Ask(Ask::Cancel { id }));
                 self.out.push(Out::Stale);
             }
-            Unlock::Wrong => {
-                let Some(p) = self.prompts.get_mut(&id) else {
-                    return;
-                };
-                p.tries += 1;
-                if p.tries >= TRIES {
-                    self.out.push(Out::Ask(Ask::Cancel { id }));
-                    self.complete(id, true, Value::str(""));
-                    return;
-                }
-                let reason = format!("{} wants the keyring", p.caller.label);
-                self.out.push(Out::Ask(Ask::Password {
-                    id,
-                    reason,
-                    retry: true,
-                }));
-            }
+            Unlock::Wrong => self.wrong_password(id),
             Unlock::Broken => {
                 self.out.push(Out::Ask(Ask::Cancel { id }));
                 self.complete(id, true, Value::str(""));
             }
         }
+    }
+
+    /// A wrong password: ask again, up to TRIES.
+    fn wrong_password(&mut self, id: u64) {
+        let Some(p) = self.prompts.get_mut(&id) else {
+            return;
+        };
+        p.tries += 1;
+        if p.tries >= TRIES {
+            self.out.push(Out::Ask(Ask::Cancel { id }));
+            self.complete(id, true, Value::str(""));
+            return;
+        }
+        let reason = format!("{} wants the keyring", p.caller.label);
+        self.out.push(Out::Ask(Ask::Password {
+            id,
+            reason,
+            retry: true,
+        }));
     }
 
     /// The shell's answer to an approval, or Esc on any prompt.

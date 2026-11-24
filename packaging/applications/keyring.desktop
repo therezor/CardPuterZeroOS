@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Keyring
+Comment=Passwords apps keep, and who may read them
+Exec=/usr/bin/gh0st-keyring
+Icon=gh0st:key-round
+Terminal=false
+X-Gh0st-Bars=both
