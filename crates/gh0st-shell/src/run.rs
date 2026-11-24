@@ -625,6 +625,10 @@ impl Shell {
                     self.probe_retried = true;
                     self.probe_account();
                 }
+                // The answer came after the unlock: ask then.
+                if !matches!(self.screen, Screen::Locked | Screen::Off) {
+                    self.maybe_ask_open();
+                }
                 self.dirty = true;
             }
             JobKind::Chkpwd => {
@@ -678,6 +682,29 @@ impl Shell {
             }
             JobKind::PromptCheck => self.prompt_checked(&j),
         }
+    }
+
+    /// No password came with the unlock (the lock password is off), so
+    /// nothing opened the keyring: ask once a boot. At the unlock, and when
+    /// `passwd -S` answers after it.
+    fn maybe_ask_open(&mut self) {
+        if self.unlock_sent
+            || self.keyring_open
+            || self.open_asked
+            || !self.services.running(Which::Keyring)
+            || self.account != Some(Account::Password)
+        {
+            return;
+        }
+        self.open_asked = true;
+        self.prompts.push(Ask {
+            origin: Origin::Open,
+            kind: Kind::Password {
+                reason: "Your apps keep their passwords here. Type your password to open it."
+                    .into(),
+                retry: false,
+            },
+        });
     }
 
     /// What the daemons said.
@@ -1874,24 +1901,7 @@ impl Shell {
         if self.debug {
             eprintln!("gh0st shell: unlocked");
         }
-        // No password came with this unlock (the lock password is off), so
-        // nothing opened the keyring: ask once.
-        if !self.unlock_sent
-            && !self.keyring_open
-            && !self.open_asked
-            && self.services.running(Which::Keyring)
-            && self.account == Some(Account::Password)
-        {
-            self.open_asked = true;
-            self.prompts.push(Ask {
-                origin: Origin::Open,
-                kind: Kind::Password {
-                    reason: "Your apps keep their passwords here. Type your password to open it."
-                        .into(),
-                    retry: false,
-                },
-            });
-        }
+        self.maybe_ask_open();
         match std::mem::replace(&mut self.unlock_to, Back::Home) {
             // The lock screen stays until the app is back, so home never
             // flashes in between.

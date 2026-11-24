@@ -98,6 +98,9 @@ enum Action {
     },
     /// Show one secret to this connection, after the account password.
     Reveal(String, u64),
+    /// Unlock paths asked for before the vault was ever opened: nothing
+    /// knows them yet. Open it, then unlock them as asked.
+    OpenThen(Vec<String>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -586,6 +589,15 @@ impl Service {
                 Message::reply(m)
                     .arg(Value::paths(open))
                     .arg(Value::paths(shut))
+            }
+            "Unlock" if self.db.is_none() => {
+                // Not opened since start: no path means anything yet, so
+                // the prompt opens the vault first.
+                let asked = paths(m.body.first());
+                let p = self.new_prompt(c, Action::OpenThen(asked));
+                Message::reply(m)
+                    .arg(Value::paths::<String>([]))
+                    .arg(Value::path(p))
             }
             "Unlock" => {
                 let mut open = Vec::new();
@@ -1264,6 +1276,24 @@ impl Service {
                 .map(|col| col.items.iter().map(|i| (coll.clone(), i.id)).collect())
                 .unwrap_or_default(),
             Action::CreateCollection { .. } => Vec::new(),
+            // Open now: what was asked for has meaning, so ask about it.
+            Action::OpenThen(asked) => {
+                let targets = asked
+                    .iter()
+                    .filter_map(|p| {
+                        if let Some((coll, n)) = self.resolve_item(p) {
+                            Some(Target::Item(coll, n))
+                        } else {
+                            self.resolve(p).map(Target::Collection)
+                        }
+                    })
+                    .collect();
+                if let Some(p) = self.prompts.get_mut(&id) {
+                    p.action = Action::Unlock(targets);
+                }
+                self.after_unlock(id);
+                return;
+            }
             // The password was the question: grant it and finish.
             Action::Reveal(_, n) => {
                 let n = *n;
@@ -1419,6 +1449,7 @@ impl Service {
                 Value::str("")
             }
             Action::Reveal(coll, n) => Value::paths([item_path(&coll, n)]),
+            Action::OpenThen(_) => Value::paths::<String>([]),
             Action::CreateCollection { label, alias } => {
                 let existing = self
                     .db

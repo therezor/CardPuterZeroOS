@@ -642,3 +642,31 @@ fn the_keyring_app_lists_names_and_reveals_after_the_password() {
     );
     assert_eq!(t.get(&caller(":1.4", "ide"), &item).unwrap_err(), IS_LOCKED);
 }
+
+#[test]
+fn unlock_before_the_vault_was_ever_opened_opens_it() {
+    let mut t = T::new("first-open");
+    let app = caller(":1.1", "keyring");
+    // Nothing opened since start, no vault on disk: Unlock still prompts.
+    let b = t.ok(
+        &app,
+        ROOT,
+        SVC,
+        "Unlock",
+        vec![Value::paths(["/org/freedesktop/secrets/collection/login"])],
+    );
+    let p = b[1].as_str().unwrap().to_string();
+    assert_ne!(p, "/");
+    t.ok(&app, &p, PROMPT, "Prompt", vec![Value::str("")]);
+    let Some(Ask::Password { id, .. }) = t.asks().first().cloned() else {
+        panic!()
+    };
+    t.svc.password(id, b"pw");
+    let (dismissed, result) = t.completed().unwrap();
+    assert!(!dismissed);
+    assert_eq!(
+        result.as_array().unwrap()[0].as_str(),
+        Some("/org/freedesktop/secrets/collection/login")
+    );
+    assert!(t.svc.unlocked() && t.dir.join("login.vault").exists());
+}
