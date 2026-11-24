@@ -152,6 +152,7 @@ A page needs `title` and `draw`. The other methods have defaults:
 | `timer` | A timer from `cx.after` or `cx.every` fires |
 | `job` | A process from `cx.spawn` prints a line or exits |
 | `stop` | The page closes or the app quits. Save state here |
+| `covered` | Help, the menu, a dialog or the busy card comes over the page |
 
 After every event the SDK calls `draw` and compares the frame with the last
 one. Only rows that changed go over SPI. A page never asks for a redraw and
@@ -191,6 +192,10 @@ page; Fn+Esc comes to `raw` as plain Esc, for vim and the like. Every
 key but Esc and the modifiers repeats. `RawKey::text` keeps the character
 under Ctrl and Alt, so Ctrl+[ can become ESC. Nothing is drawn after a raw key
 unless the page calls `cx.redraw()`.
+
+Help, the menu, a dialog and the busy card take the keys while they show,
+releases too. A page that passes held keys on, to a program or a host,
+lets go of them in `covered`, as it does in `front(false)`.
 
 ## Commands
 
