@@ -128,6 +128,26 @@ class Tmpfiles(unittest.TestCase):
         self.assertFalse(mirror.own_tmpfiles(b"L+ /etc/x - - - - /y\n", "demo"))
 
 
+    def test_root_reads_what_runs_as_root_and_an_app_keeps_its_own_config(self):
+        for n in ["etc/demo/config.json", "etc/demo.conf", "etc/default/demo", "usr/bin/demo",
+                  "usr/share/demo/x.py", "opt/demo/run"]:
+            self.assertFalse(mirror.root_reads(n, "demo"), n)
+        for n in ["etc/sudoers.d/demo", "etc/cron.d/demo", "usr/local/bin/apt-get", "usr/sbin/curl",
+                  "usr/share/dbus-1/system-services/x.service", "usr/share/dbus-1/system.d/x.conf",
+                  "usr/lib/python3/dist-packages/x.pth", "usr/lib/binfmt.d/x.conf",
+                  "lib/modules/6.18/x.ko", "usr/lib/aarch64-linux-gnu/security/pam_x.so",
+                  "usr/lib/aarch64-linux-gnu/libnss_x.so.2", "usr/lib/pam.d/login"]:
+            self.assertTrue(mirror.root_reads(n, "demo"), n)
+        # A name that is a system folder or file is not the app's own.
+        for pkg, n in [("sudoers.d", "etc/sudoers.d/zz"), ("cron.d", "etc/cron.d/x"),
+                       ("nsswitch", "etc/nsswitch.conf"), ("sudo", "etc/sudo.conf"),
+                       ("ld.so", "etc/ld.so.conf"), ("pam", "etc/pam.conf"),
+                       ("security", "etc/security/limits.conf"),
+                       ("dbus-1", "etc/dbus-1/system.d/x.conf"),
+                       ("kernel", "etc/kernel/postinst.d/x"), ("ssl", "etc/ssl/openssl.cnf"),
+                       ("network", "etc/network/if-up.d/x"), ("networkmanager", "etc/NetworkManager/x")]:
+            self.assertTrue(mirror.root_reads(n, pkg), (pkg, n))
+
 
 @unittest.skipUnless(shutil.which("dpkg-deb"), "needs dpkg-deb")
 class Debs(unittest.TestCase):

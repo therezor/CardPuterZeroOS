@@ -73,8 +73,9 @@ UNIT_DIRS = (
     "etc/systemd/",
     "etc/init.d/",
 )
-# Where root reads files and acts on them. dpkg never lets a package
-# overwrite another's files, so elsewhere a file is only data.
+# Where root reads files and acts on them, or runs what it finds. dpkg
+# never lets a package overwrite another's files, but a new file in one of
+# these is enough.
 ROOT_READS = (
     "etc/",
     "boot/",
@@ -84,14 +85,49 @@ ROOT_READS = (
     "usr/lib/modprobe.d/",
     "usr/lib/modules-load.d/",
     "usr/lib/sysusers.d/",
+    "usr/lib/binfmt.d/",
     "usr/lib/polkit-1/",
     "usr/share/polkit-1/",
     "usr/lib/NetworkManager/",
     "usr/lib/environment.d/",
+    "usr/lib/pam.d/",
+    "usr/lib/kernel/",
+    "usr/lib/apt/",
+    "usr/share/dbus-1/system-services/",
+    "usr/share/dbus-1/system.d/",
+    "lib/modules/",
+    "usr/lib/modules/",
+    "lib/firmware/",
+    "usr/lib/firmware/",
+    # Ahead of /usr/bin in root's PATH: a name here shadows a system tool.
+    "usr/local/",
+    "sbin/",
+    "usr/sbin/",
 )
+# Anywhere: Python runs a .pth as it starts, PAM and NSS load these.
+ROOT_LOADS = re.compile(r"(^|/)(security/[^/]+\.so|libnss_[^/]*)$|\.pth$")
+# Files and folders in /etc the base system reads. An app named after one
+# could pass it off as its own config.
+SYSTEM_ETC = {
+    "adduser", "alternatives", "apparmor", "apparmor.d", "apt", "avahi", "bash",
+    "bindresvport", "bluetooth", "ca-certificates", "console-setup", "cron",
+    "crontab", "dbus-1", "dconf", "debconf", "default", "deluser", "dhcp",
+    "dhcpcd", "dpkg", "e2scrub", "environment", "ethertypes", "fonts", "fstab",
+    "fuse", "gai", "group", "gshadow", "gss", "host", "hostname", "hosts",
+    "init", "init.d", "initramfs-tools", "inputrc", "iproute2", "iptables",
+    "issue", "kernel", "ld.so", "ldap", "libaudit", "locale", "localtime",
+    "login.defs", "logrotate", "machine-id", "mke2fs", "modprobe", "modules",
+    "network", "NetworkManager", "networks", "nftables", "nsswitch", "opt",
+    "os-release", "pam", "pam.d", "passwd", "pki", "polkit-1", "ppp", "profile",
+    "protocols", "python3", "resolv", "rmt", "rpc", "rsyslog", "security",
+    "selinux", "services", "shadow", "shells", "skel", "ssh", "ssl", "subgid",
+    "subuid", "sudo", "sudoers", "sysctl", "systemd", "terminfo", "timezone",
+    "tmpfiles", "udev", "ufw", "update-motd", "wpa_supplicant", "X11", "xattr",
+    "xdg", "zram-generator",
+}
 TMPFILES = ("usr/lib/tmpfiles.d/", "etc/tmpfiles.d/")
 # The last column dates the facts: rows from an older rule are checked again.
-FACTS = "3"
+FACTS = "4"
 CHECKED_COLS = [
     "sha256", "package", "version", "arch", "depends", "provides",
     "replaces", "conflicts", "breaks", "scripts", "paths", "service", "desktop",
@@ -310,14 +346,27 @@ def own_tmpfiles(text, pkg):
     return True
 
 
+def own_config(pkg):
+    """The /etc paths that are the app's own config, if its name is its own."""
+    if "." in pkg or pkg.lower() in {e.lower() for e in SYSTEM_ETC}:
+        return ()
+    return (f"etc/{pkg}/", f"etc/default/{pkg}", f"etc/{pkg}.conf")
+
+
+def root_reads(n, pkg):
+    """Whether root reads, loads or runs the file at `n` (no leading /)."""
+    if ROOT_LOADS.search(n):
+        return True
+    own = own_config(pkg)
+    return n.startswith(ROOT_READS) and not (own and n.startswith(own)) and not n.startswith(UNIT_DIRS)
+
+
 def facts(deb, sha256):
     """What a deb holds, for checked.tsv."""
     f = control_fields(deb)
     ctrl = {os.path.basename(n) for n, _, _, _ in members(deb, "ctrl")}
     data = members(deb, "fsys", lambda n: rel(n).startswith(TMPFILES))
     pkg = f.get("Package", "")
-    # Its own config is the app's business.
-    own = (f"etc/{pkg}/", f"etc/default/{pkg}", f"etc/{pkg}.conf")
     paths = service = False
     desktop = ""
     for name, is_dir, mode, body in data:
@@ -327,7 +376,7 @@ def facts(deb, sha256):
         if n.startswith(TMPFILES):
             if body is None or not own_tmpfiles(body, pkg):
                 paths = True
-        elif n.startswith(ROOT_READS) and not n.startswith(own) and not n.startswith(UNIT_DIRS):
+        elif root_reads(n, pkg):
             paths = True
         if mode & 0o6000:
             paths = True
@@ -641,7 +690,8 @@ def build(out, prev, apt, keyring, only, registry, cn_registry, work):
             dropped[pkg] = "listed twice"
         else:
             seen.add(pkg)
-            if a["download"]["sha256"] not in checked:
+            row = checked.get(a["download"]["sha256"])
+            if not row or row.get("facts") != FACTS:
                 todo.append(a)
     log(f"{len(todo)} debs to check")
 
