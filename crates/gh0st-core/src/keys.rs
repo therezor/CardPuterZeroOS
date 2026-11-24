@@ -461,6 +461,29 @@ impl Keyboard {
     }
 }
 
+/// Keys the OS acts on: Fn+K opens the switcher, Help opens the app's help,
+/// the rest are volume, brightness, screenshots and the media keys. A
+/// program that forwards keys (a terminal, a remote keyboard) drops them.
+pub fn os_key(c: u16) -> bool {
+    matches!(
+        c,
+        code::HOME
+            | code::HELP
+            | code::MUTE
+            | code::VOLUMEDOWN
+            | code::VOLUMEUP
+            | code::BRIGHTNESSDOWN
+            | code::BRIGHTNESSUP
+            | code::SYSRQ
+            | code::PRINT
+    ) || media_key(c)
+}
+
+/// Next, play or pause, previous and stop: Fn+Q, W and E.
+pub fn media_key(c: u16) -> bool {
+    (163..=166).contains(&c)
+}
+
 fn is_modifier(code: u16) -> bool {
     matches!(
         code,
