@@ -22,6 +22,8 @@ pub const COLL: &str = "org.freedesktop.Secret.Collection";
 pub const ITEM: &str = "org.freedesktop.Secret.Item";
 pub const SESSION: &str = "org.freedesktop.Secret.Session";
 pub const PROMPT: &str = "org.freedesktop.Secret.Prompt";
+/// Ours: what the Keyring app needs beyond the standard.
+pub const GH0ST: &str = "org.gh0st.Keyring";
 
 pub const IS_LOCKED: &str = "org.freedesktop.Secret.Error.IsLocked";
 pub const NO_SESSION: &str = "org.freedesktop.Secret.Error.NoSession";
@@ -90,7 +92,12 @@ enum Target {
 enum Action {
     Unlock(Vec<Target>),
     Delete(Target),
-    CreateCollection { label: String, alias: String },
+    CreateCollection {
+        label: String,
+        alias: String,
+    },
+    /// Show one secret to this connection, after the account password.
+    Reveal(String, u64),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -524,7 +531,9 @@ impl Service {
         {
             return Message::error(m, IS_LOCKED, "the keyring hasn't been opened since start");
         }
-        let r = if path == ROOT {
+        let r = if path == ROOT && iface == GH0ST {
+            self.gh0st_call(m, c, member)
+        } else if path == ROOT {
             self.service_call(m, c, member)
         } else if let Some(id) = path.strip_prefix(&format!("{ROOT}/prompt/p")) {
             id.parse().ok().map(|id| self.prompt_call(m, c, id, member))
@@ -704,6 +713,92 @@ impl Service {
                 Message::reply(m)
                     .arg(Value::path(coll_path(&id)))
                     .arg(Value::path("/"))
+            }
+            _ => return None,
+        })
+    }
+
+    /// `org.gh0st.Keyring`. Lists names, never secrets: a secret comes only
+    /// through `GetSecret`, after Reveal's password.
+    fn gh0st_call(&mut self, m: &Message, c: &Caller, member: &str) -> Option<Message> {
+        let item_ty = Ty::Struct(vec![Ty::Path, Ty::Str, Ty::Str, Ty::Str]);
+        Some(match member {
+            "State" => Message::reply(m)
+                .arg(Value::Bool(self.unlocked()))
+                .arg(Value::Bool(self.db.is_some())),
+            "Items" => {
+                let Some(db) = &self.db else {
+                    return Some(Message::error(m, IS_LOCKED, "not opened since start"));
+                };
+                let rows = db.collections.iter().flat_map(|col| {
+                    col.items.iter().map(|i| {
+                        Value::Struct(vec![
+                            Value::path(item_path(&col.id, i.id)),
+                            Value::str(&i.label),
+                            Value::str(&i.creator),
+                            Value::str(i.attr("xdg:schema").unwrap_or("")),
+                        ])
+                    })
+                });
+                Message::reply(m).arg(Value::Array(item_ty, rows.collect()))
+            }
+            "Access" => {
+                let Some(db) = &self.db else {
+                    return Some(Message::error(m, IS_LOCKED, "not opened since start"));
+                };
+                let rows: Vec<Value> = db
+                    .approvals
+                    .iter()
+                    .filter_map(|a| {
+                        db.collections.iter().find_map(|col| {
+                            col.items.iter().find(|i| i.id == a.item).map(|i| {
+                                Value::Struct(vec![
+                                    Value::str(&a.app),
+                                    Value::path(item_path(&col.id, i.id)),
+                                    Value::str(&i.label),
+                                ])
+                            })
+                        })
+                    })
+                    .collect();
+                Message::reply(m).arg(Value::Array(
+                    Ty::Struct(vec![Ty::Str, Ty::Path, Ty::Str]),
+                    rows,
+                ))
+            }
+            "Revoke" => {
+                if !self.unlocked() {
+                    return Some(Message::error(m, IS_LOCKED, "the keyring is locked"));
+                }
+                let app = m
+                    .body
+                    .first()
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let item = m
+                    .body
+                    .get(1)
+                    .and_then(Value::as_str)
+                    .and_then(|p| self.resolve_item(p));
+                if let (Some((_, n)), Some(db)) = (item, &mut self.db) {
+                    db.approvals.retain(|a| !(a.app == app && a.item == n));
+                    self.once.retain(|(_, i)| *i != n);
+                    self.save();
+                }
+                Message::reply(m)
+            }
+            "Reveal" => {
+                let Some((coll, n)) = m
+                    .body
+                    .first()
+                    .and_then(Value::as_str)
+                    .and_then(|p| self.resolve_item(p))
+                else {
+                    return Some(Message::error(m, NO_SUCH_OBJECT, "no such item"));
+                };
+                let p = self.new_prompt(c, Action::Reveal(coll, n));
+                Message::reply(m).arg(Value::path(p))
             }
             _ => return None,
         })
@@ -1122,7 +1217,11 @@ impl Service {
     }
 
     fn start(&mut self, id: u64) {
-        if self.unlocked() {
+        let reveal = match self.prompts.get(&id).map(|p| &p.action) {
+            Some(Action::Reveal(coll, n)) => self.item(coll, *n).map(|i| i.label.clone()),
+            _ => None,
+        };
+        if self.unlocked() && reveal.is_none() {
             self.after_unlock(id);
             return;
         }
@@ -1130,7 +1229,11 @@ impl Service {
             return;
         };
         p.step = Step::Password;
-        let reason = format!("{} wants the keyring", p.caller.label);
+        let reason = match reveal {
+            // Showing a secret on screen takes the password, open or not.
+            Some(label) => format!("{} wants to show \u{201c}{label}\u{201d}", p.caller.label),
+            None => format!("{} wants the keyring", p.caller.label),
+        };
         self.out.push(Out::Ask(Ask::Password {
             id,
             reason,
@@ -1161,6 +1264,13 @@ impl Service {
                 .map(|col| col.items.iter().map(|i| (coll.clone(), i.id)).collect())
                 .unwrap_or_default(),
             Action::CreateCollection { .. } => Vec::new(),
+            // The password was the question: grant it and finish.
+            Action::Reveal(_, n) => {
+                let n = *n;
+                self.once.insert((c.bus.clone(), n));
+                self.finish(id);
+                return;
+            }
         };
         let need: Vec<u64> = targets
             .iter()
@@ -1197,6 +1307,11 @@ impl Service {
             return;
         };
         if p.step != Step::Password {
+            return;
+        }
+        // Open already: the shell checked the password before sending it.
+        if matches!(p.action, Action::Reveal(..)) && self.unlocked() && self.verified_prompts {
+            self.after_unlock(id);
             return;
         }
         match self.unlock(pw, true) {
@@ -1293,6 +1408,7 @@ impl Service {
                 self.delete(&t);
                 Value::str("")
             }
+            Action::Reveal(coll, n) => Value::paths([item_path(&coll, n)]),
             Action::CreateCollection { label, alias } => {
                 let existing = self
                     .db
@@ -1382,7 +1498,7 @@ impl Service {
         }
         if path == ROOT {
             return bus::introspect(
-                &[SERVICE_XML, bus::PROPERTIES_XML],
+                &[SERVICE_XML, GH0ST_XML, bus::PROPERTIES_XML],
                 &["collection", "aliases"],
             );
         }
@@ -1470,6 +1586,15 @@ const SERVICE_XML: &str = r#" <interface name="org.freedesktop.Secret.Service">
   <signal name="CollectionCreated"><arg name="collection" type="o"/></signal>
   <signal name="CollectionDeleted"><arg name="collection" type="o"/></signal>
   <signal name="CollectionChanged"><arg name="collection" type="o"/></signal>
+ </interface>
+"#;
+
+const GH0ST_XML: &str = r#" <interface name="org.gh0st.Keyring">
+  <method name="State"><arg name="open" type="b" direction="out"/><arg name="known" type="b" direction="out"/></method>
+  <method name="Items"><arg name="items" type="a(osss)" direction="out"/></method>
+  <method name="Access"><arg name="access" type="a(sos)" direction="out"/></method>
+  <method name="Revoke"><arg name="app" type="s" direction="in"/><arg name="item" type="o" direction="in"/></method>
+  <method name="Reveal"><arg name="item" type="o" direction="in"/><arg name="prompt" type="o" direction="out"/></method>
  </interface>
 "#;
 

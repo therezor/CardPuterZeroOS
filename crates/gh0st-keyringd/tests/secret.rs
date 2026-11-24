@@ -567,3 +567,78 @@ fn password_changes() {
     assert_eq!(fresh.unlock(b"newer", true), Unlock::Opened);
     assert_eq!(fresh.db().unwrap().collections[0].items.len(), 1);
 }
+
+#[test]
+fn the_keyring_app_lists_names_and_reveals_after_the_password() {
+    let mut t = T::new("gh0st-iface");
+    t.svc.unlock(b"pw", true);
+    let git = caller(":1.1", "git");
+    let item = t.store(
+        &git,
+        "GitHub",
+        &[("xdg:schema", "org.git"), ("k", "v")],
+        b"tok",
+    );
+    let app = caller(":1.2", "keyring");
+    let rows = t.ok(&app, ROOT, GH0ST, "Items", vec![]);
+    let row = rows[0].as_array().unwrap()[0].as_struct().unwrap().to_vec();
+    assert_eq!(row[0].as_str(), Some(item.as_str()));
+    assert_eq!(
+        (row[1].as_str(), row[2].as_str(), row[3].as_str()),
+        (Some("GitHub"), Some("git"), Some("org.git"))
+    );
+    // Reveal: the password, even with the vault open, then the secret.
+    assert_eq!(t.get(&app, &item).unwrap_err(), IS_LOCKED);
+    let p = t.ok(&app, ROOT, GH0ST, "Reveal", vec![Value::path(item.clone())])[0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    t.ok(&app, &p, PROMPT, "Prompt", vec![Value::str("")]);
+    let Some(Ask::Password { id, reason, .. }) = t.asks().first().cloned() else {
+        panic!()
+    };
+    assert_eq!(reason, "keyring wants to show \u{201c}GitHub\u{201d}");
+    t.svc.password(id, b"pw");
+    assert!(!t.completed().unwrap().0);
+    assert_eq!(t.get(&app, &item).unwrap(), b"tok");
+    // Access and revoke.
+    let other = caller(":1.3", "ide");
+    let p = t.ok(
+        &other,
+        ROOT,
+        SVC,
+        "Unlock",
+        vec![Value::paths([item.clone()])],
+    )[1]
+    .as_str()
+    .unwrap()
+    .to_string();
+    t.ok(&other, &p, PROMPT, "Prompt", vec![Value::str("")]);
+    let Some(Ask::Approve { id, .. }) = t.asks().first().cloned() else {
+        panic!()
+    };
+    t.svc.answer(id, Answer::Always);
+    let access = t.ok(&app, ROOT, GH0ST, "Access", vec![]);
+    let row = access[0].as_array().unwrap()[0]
+        .as_struct()
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        (row[0].as_str(), row[2].as_str()),
+        (Some("ide"), Some("GitHub"))
+    );
+    t.ok(
+        &app,
+        ROOT,
+        GH0ST,
+        "Revoke",
+        vec![Value::str("ide"), Value::path(item.clone())],
+    );
+    assert!(
+        t.ok(&app, ROOT, GH0ST, "Access", vec![])[0]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(t.get(&caller(":1.4", "ide"), &item).unwrap_err(), IS_LOCKED);
+}
