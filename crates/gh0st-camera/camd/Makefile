@@ -2,6 +2,7 @@
 #   make SYSROOT=DIR O=OUT   the real helper, against libcamera unpacked in
 #                            DIR (os/image/build-image.sh does this)
 #   make stub O=OUT          a test-pattern sensor for any host
+#   make check O=OUT         host checks of the file readers
 # Everything is written under O, so the sources may be read-only.
 
 O ?= build
@@ -38,6 +39,13 @@ mp4cat: $(O)/mp4cat
 $(O)/mp4cat: $(O)/mp4cat.o $(O)/mp4.o
 	$(CXX) -o $@ $^ -pthread
 
+# Host checks of what reads files from elsewhere (still_check.cpp).
+check: $(O)/still_check
+	$(O)/still_check
+
+$(O)/still_check: $(O)/still_check.o $(addprefix $(O)/,$(addsuffix .o,link ring mp4))
+	$(CXX) -o $@ $^ $(JPEG_LIBS) -pthread
+
 $(O)/%.o: %.cpp | $(O)
 	$(CXX) $(CXXFLAGS) $(JPEG_CFLAGS) $(CAM_CFLAGS) -c -o $@ $<
 
@@ -47,5 +55,5 @@ $(O):
 clean:
 	rm -rf $(O)
 
-.PHONY: all stub mp4cat clean
+.PHONY: all stub mp4cat check clean
 -include $(wildcard $(O)/*.d)

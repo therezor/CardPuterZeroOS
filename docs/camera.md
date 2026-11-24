@@ -262,6 +262,9 @@ Builds:
   recording and leaves no wakeups; a held 6 deletes.
 - `cargo run -p gh0st-camera --example mockups` writes every screen to
   `mockups/camera`. As a test it lints each one in every palette.
+- `make -C crates/gh0st-camera/camd check O=$PWD/target/camd` runs host
+  checks of what reads photos from elsewhere: a crafted EXIF thumbnail
+  offset and a picture past 32 MP.
 - With `GH0ST_CAMD_TEST` naming a helper build, `tests/flow.rs` drives the
   app over it: a photo with EXIF, no `.part` left, a pause that wakes for
   nothing, and a shot after the return. Without it that test is skipped.

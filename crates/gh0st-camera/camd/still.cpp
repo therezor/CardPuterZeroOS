@@ -363,6 +363,10 @@ bool saveJpeg(const Yuv420 &img, const ShotMeta &meta, int quality, const std::s
 
 namespace {
 
+constexpr long DECODE_MEMORY = 96L << 20;
+// Four times the sensor's 8 MP.
+constexpr double DECODE_PIXELS = 32e6;
+
 // The JPEG thumbnail in a photo's EXIF (IFD1), as our stills carry one.
 bool exifThumb(FILE *f, std::vector<uint8_t> &jpg)
 {
@@ -393,7 +397,8 @@ bool exifThumb(FILE *f, std::vector<uint8_t> &jpg)
         else if (u16(e) == 0x0202)
             len = u32(e + 8);
     }
-    if (!at || !len || at + len > tn)
+    // In 64 bits: a crafted offset near 4 GB would wrap a 32-bit sum.
+    if (!at || !len || size_t(at) + len > tn)
         return false;
     jpg.assign(t + at, t + at + len);
     return true;
@@ -416,11 +421,21 @@ bool decodeView(FILE *f, const std::vector<uint8_t> *mem, int w, int h, float zo
         return false;
     }
     jpeg_create_decompress(&d);
+    // A progressive JPEG of a huge size wants its whole picture in memory.
+    // Past this libjpeg stops with an error instead, as it has no backing
+    // store, and the helper lives on.
+    d.mem->max_memory_to_use = DECODE_MEMORY;
     if (mem)
         jpeg_mem_src(&d, mem->data(), mem->size());
     else
         jpeg_stdio_src(&d, f);
     jpeg_read_header(&d, TRUE);
+    // Rows for the view are sized from the picture's width: a huge one from
+    // elsewhere is skipped, not decoded.
+    if (double(d.image_width) * d.image_height > DECODE_PIXELS) {
+        jpeg_destroy_decompress(&d);
+        return false;
+    }
     const double W = d.image_width, H = d.image_height;
     double scale = std::min(w / W, h / H) * std::max(1.0f, zoom);
     scale = std::min(scale, 1.0);
