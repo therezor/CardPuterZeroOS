@@ -118,6 +118,13 @@ pub trait Page {
         let _ = (tag, action, cx);
     }
 
+    /// A network link or address came or went: a cable out, Wi-Fi joined,
+    /// an address renewed. Read again what the page shows of the network.
+    /// The top bar follows by itself. Every page hears it.
+    fn network_changed(&mut self, cx: &mut Cx) {
+        let _ = cx;
+    }
+
     /// Memory is short: `level` is 50 low, 100 medium, 255 critical, as
     /// the portal's MemoryMonitor says it. Drop what can be built again:
     /// caches, thumbnails, decoded pictures. Every page on the stack hears

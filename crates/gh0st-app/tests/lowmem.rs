@@ -1,4 +1,5 @@
-//! Low memory reaches every page on the stack, the one on top first.
+//! Low memory and network changes reach every page on the stack, the one
+//! on top first.
 
 use gh0st_app::testing::Driver;
 use gh0st_app::{Cx, Key, Page, Ui};
@@ -29,6 +30,10 @@ impl Page for Cached {
     fn low_memory(&mut self, level: u8, _cx: &mut Cx) {
         self.heard.borrow_mut().push((self.name, level));
     }
+
+    fn network_changed(&mut self, _cx: &mut Cx) {
+        self.heard.borrow_mut().push((self.name, 0));
+    }
 }
 
 #[test]
@@ -41,4 +46,16 @@ fn every_page_drops_its_caches_top_first() {
     d.keys("enter");
     d.low_memory(100);
     assert_eq!(*heard.borrow(), [("Above", 100), ("Below", 100)]);
+}
+
+#[test]
+fn a_network_change_reaches_every_page() {
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let mut d = Driver::new(Cached {
+        name: "Below",
+        heard: heard.clone(),
+    });
+    d.keys("enter");
+    d.network_changed();
+    assert_eq!(*heard.borrow(), [("Above", 0), ("Below", 0)]);
 }

@@ -338,6 +338,16 @@ impl Runtime {
     }
 
     /// Memory is short: every page hears it, top first.
+    /// A link or an address changed: the top bar's network, then every
+    /// page.
+    pub fn network_changed(&mut self, now: u64) {
+        self.bar.links();
+        self.dirty = true;
+        for i in (0..self.stack.len()).rev() {
+            self.call_quiet(i, now, |p, cx| p.network_changed(cx));
+        }
+    }
+
     pub fn low_memory(&mut self, level: u8, now: u64) {
         for i in (0..self.stack.len()).rev() {
             self.call_quiet(i, now, |p, cx| p.low_memory(level, cx));

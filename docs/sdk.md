@@ -922,6 +922,14 @@ Every page hears `Page::front(false)` when the app leaves the front, and
 right after, so `front(false)` is where it lets go of a device, such as a
 camera, and finishes a file it was writing.
 
+### The network
+
+A link or an address that comes or goes (a cable pulled, Wi-Fi joined, an
+address renewed) redraws the top bar at once, and every page hears
+`Page::network_changed(cx)`: read again what the page shows of the
+network. The SDK learns it from netlink; nothing polls.
+`Driver::network_changed()` sends it in a test.
+
 ### Low memory
 
 The device has 512 MB. When memory runs short, every page hears

@@ -194,6 +194,13 @@ impl Driver {
     }
 
     /// Memory is short (see [`Page::low_memory`](crate::Page::low_memory)).
+    /// A link or an address changed (see
+    /// [`Page::network_changed`](crate::Page::network_changed)).
+    pub fn network_changed(&mut self) -> &mut Driver {
+        self.rt.network_changed(self.now);
+        self
+    }
+
     pub fn low_memory(&mut self, level: u8) -> &mut Driver {
         self.rt.low_memory(level, self.now);
         self

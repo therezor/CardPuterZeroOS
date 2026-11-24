@@ -134,6 +134,13 @@ fn main_loop(
     display.flush_all(&rt_.canvas);
     rt_.last_frame = rt::now_ms();
 
+    // Links and addresses, on the device: the top bar and the pages follow
+    // a cable pulled at once, not at the next minute.
+    #[cfg(target_os = "linux")]
+    let net = match input {
+        Input::Keyboard(..) => gh0st_core::status::Watch::links().ok(),
+        Input::Script(_) => None,
+    };
     let mut raw = Vec::new();
     let mut full = false;
     // GH0ST_LOG=debug: what woke the loop, as the shell logs it.
@@ -159,6 +166,13 @@ fn main_loop(
             fds.push(rt::pollfd_rw(fd, true, out));
             fds.len() - 1
         });
+        #[cfg(target_os = "linux")]
+        let net_at = net.as_ref().map(|w| {
+            fds.push(rt::pollfd(w.fd()));
+            fds.len() - 1
+        });
+        #[cfg(not(target_os = "linux"))]
+        let net_at: Option<usize> = None;
         let jobs_at = fds.len();
         fds.extend(jobs.iter().map(|&(_, fd)| rt::pollfd(fd)));
         let watch_at = fds.len();
@@ -180,6 +194,7 @@ fn main_loop(
                 i if Some(i) == link_at => "shell",
                 i if Some(i) == input_at => "keys",
                 i if Some(i) == portal_at => "portal",
+                i if Some(i) == net_at => "net",
                 i if i >= watch_at => "watch",
                 i if i >= jobs_at => "job",
                 _ => "?",
@@ -258,6 +273,12 @@ fn main_loop(
         }
         if portal_at.is_some_and(|i| fds[i].revents != 0) {
             rt_.portal_ready(now);
+        }
+        #[cfg(target_os = "linux")]
+        if let (Some(i), Some(w)) = (net_at, net.as_ref()) {
+            if rt::readable(&fds[i]) && w.drain() {
+                rt_.network_changed(now);
+            }
         }
         raw.clear();
         match &mut input {

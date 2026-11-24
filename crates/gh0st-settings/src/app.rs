@@ -201,6 +201,8 @@ pub struct Settings {
     /// Done or Skip was pressed while a change was still being made: go on
     /// once it is, as closing the step would stop it halfway.
     finish_when_idle: bool,
+    /// The network changed while nmcli was being asked: ask again after.
+    net_again: bool,
     /// A row waiting for its second press (design.md, Asking first). Any
     /// other key lets it go.
     armed: Option<Act>,
@@ -234,6 +236,7 @@ impl Settings {
             embed: None,
             finish_pending: false,
             finish_when_idle: false,
+            net_again: false,
         }
     }
 
@@ -1729,6 +1732,16 @@ impl Settings {
         }
     }
 
+    /// nmcli is being asked what `query_net` asks.
+    fn asking_net(&self) -> bool {
+        self.jobs.values().any(|(k, _)| {
+            matches!(
+                k,
+                NetJob::Radio | NetJob::Profiles | NetJob::List | NetJob::Devices
+            )
+        })
+    }
+
     /// Asks nmcli for the radio, the networks, the saved profiles and the
     /// devices. `rescan` makes the radio look again, which takes seconds.
     fn query_net(&mut self, cx: &mut Cx, rescan: bool) {
@@ -2133,6 +2146,10 @@ impl Settings {
         }
         // Skip pressed while this ran: the step is closing, so don't start
         // jobs it would only kill.
+        if self.net_again && !self.asking_net() {
+            self.net_again = false;
+            self.query_net(cx, false);
+        }
         if requery && !self.finish_when_idle {
             self.query_net(cx, rescan);
         }
@@ -2152,6 +2169,20 @@ impl Default for Settings {
 impl Page for Settings {
     fn title(&self) -> &str {
         &self.view.title
+    }
+
+    /// A cable out, Wi-Fi joined, an address renewed: the Network row,
+    /// Wi-Fi and Network details read again. Once at a time: a change while
+    /// nmcli answers asks again after.
+    fn network_changed(&mut self, cx: &mut Cx) {
+        if self.embed.is_some() {
+            return;
+        }
+        if self.asking_net() {
+            self.net_again = true;
+        } else {
+            self.query_net(cx, false);
+        }
     }
 
     fn icon(&self) -> &str {
