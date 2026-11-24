@@ -82,37 +82,63 @@ fn keys(d: &mut Driver, script: &str) {
 // Places on side B: Home, Card, Trash, nas, Add server.
 const B_TO_NAS: &str = "tab\nx\nx\nx\nenter\ntab";
 
-#[test]
-fn copy_sends_the_marked_files_to_the_other_side() {
-    let h = Home::new("copy");
-    let (mut d, log) = drive(&h, fake(), Keyring::over(None));
-    keys(&mut d, B_TO_NAS);
-    // Music, then mark a and c.
-    keys(&mut d, "enter\nspace\nx\nspace\n6");
-    assert_eq!(d.dialog().map(|x| x.0), Some("Copy 2 items?"));
-    keys(&mut d, "enter");
-    let music = Loc::Local(h.home().join("Music"));
-    let copy = log
-        .borrow()
+fn copies(log: &Rc<RefCell<Vec<Request>>>) -> Vec<(Vec<Loc>, Loc, bool)> {
+    log.borrow()
         .iter()
-        .find_map(|r| match r {
+        .filter_map(|r| match r {
             Request::Copy {
                 items, to, remove, ..
             } => Some((items.clone(), to.clone(), *remove)),
             _ => None,
         })
-        .expect("a copy");
-    assert_eq!(copy.0, vec![music.join("a.flac"), music.join("c.flac")]);
+        .collect()
+}
+
+#[test]
+fn copy_then_paste_in_another_folder() {
+    let h = Home::new("copy");
+    let (mut d, log) = drive(&h, fake(), Keyring::over(None));
+    // Paste waits, greyed, until something is copied.
+    keys(&mut d, "6");
+    assert!(copies(&log).is_empty());
+    // Music, mark a and c, Copy on 5. Nothing moves yet.
+    keys(&mut d, "enter\nspace\nx\nspace\n5");
+    assert_eq!(d.toast(), Some("Copied 2 items. Paste with 6"));
+    assert!(copies(&log).is_empty());
+    // Up, into the server on the same side, Paste on 6.
+    keys(&mut d, "esc\nesc\nx\nx\nx\nenter\n6");
+    let music = Loc::Local(h.home().join("Music"));
+    let nas = Loc::Remote {
+        server: "nas".into(),
+        path: "/".into(),
+    };
     assert_eq!(
-        copy.1,
-        Loc::Remote {
-            server: "nas".into(),
-            path: "/".into()
-        }
+        copies(&log),
+        [(
+            vec![music.join("a.flac"), music.join("c.flac")],
+            nas.clone(),
+            false
+        )]
     );
-    assert!(!copy.2);
     assert_eq!(d.toast(), Some("Copied 2 items"));
+    // A copy pastes again.
+    keys(&mut d, "6");
+    assert_eq!(copies(&log).len(), 2);
     assert!(d.lint().is_empty(), "{:?}", d.lint());
+}
+
+#[test]
+fn cut_moves_once_and_not_into_its_own_folder() {
+    let h = Home::new("cut");
+    let (mut d, log) = drive(&h, fake(), Keyring::over(None));
+    keys(&mut d, "enter\nx\n7\n6");
+    assert_eq!(d.toast(), Some("It is in this folder already"));
+    keys(&mut d, "esc\nesc\nx\nx\nx\nenter\n6");
+    let moved = copies(&log);
+    assert_eq!(moved.len(), 1);
+    assert!(moved[0].2, "a cut pastes as a move");
+    keys(&mut d, "6");
+    assert_eq!(copies(&log).len(), 1, "the clipboard is empty after");
 }
 
 #[test]
@@ -417,9 +443,9 @@ fn only_the_server_that_listed_keeps_its_password() {
     );
 }
 
-/// The page with the real worker binary: Copy on the card, end to end.
+/// The page with the real worker binary: Copy and Paste on the card.
 #[test]
-fn the_real_worker_copies_from_side_to_side() {
+fn the_real_worker_copies_and_pastes() {
     let h = Home::new("real");
     std::fs::create_dir_all(h.home().join("Backup")).unwrap();
     let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_gh0st-files"));
@@ -434,11 +460,8 @@ fn the_real_worker_copies_from_side_to_side() {
     });
     let mut d = Driver::new(page);
     d.frame();
-    // B: Places, then Home, then Backup. A: Music, mark b.flac, copy.
-    keys(
-        &mut d,
-        "tab\nenter\nenter\ntab\nx\nenter\nx\nspace\n6\nenter",
-    );
+    // Music, b.flac, Copy; up, Backup, Paste: all on one side.
+    keys(&mut d, "x\nenter\nx\n5\nesc\nf\nenter\n6");
     for _ in 0..50 {
         d.pump(100);
         if h.home().join("Backup/b.flac").exists() && d.toast().is_some() {

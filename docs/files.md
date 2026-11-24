@@ -7,16 +7,22 @@ two of them. It replaces M5's stock Files app.
 `cargo run -p gh0st-files --example mockups` draws every screen into
 `mockups/files`.
 
-## One pane, two sides
+## Copy, Cut, Paste
 
-The screen holds one full-width list. There are two sides, A and B, each
-with its own place, folder, selection and marks. Tab flips between them, and
-the top bar names the side and its folder: `A · ~/Music`.
+The screen holds one full-width list. Copy (5) or Cut (7) takes what is
+marked, or the row under the cursor, and nothing moves yet. Open any folder,
+on the card or a server, and Paste (6) brings it there: a copy, or a move
+for Cut. The top bar says what waits ("2 copied", "1 cut"); a cut item
+shows grey in its folder until it moves. A copy pastes again and again; a
+cut pastes once. Pasted into its own folder, a copy takes a new name
+("photo 2.png"). Paste is grey while nothing waits. Ctrl+C, Ctrl+X and
+Ctrl+V do the same.
 
-Copy and Move send what is marked to the other side's folder, so there is no
-clipboard to learn. With nothing marked they take the row under the cursor.
-A dialog names the target before anything moves: "Copy 2 items? To B:
-nas:/home/me".
+From inside an archive, Copy and then Paste extract what was taken.
+
+There are two sides, A and B, each with its own place, folder, selection and
+marks: two places open at once. Tab flips between them, and the top bar
+names the side and its folder: `A · ~/Music`. The clipboard serves both.
 
 Each side's root is **Places**: Home, Card (`/`), Downloads, Trash, every
 saved server, and Add server. Side A opens at Home, side B at Places.
@@ -43,6 +49,7 @@ not shown.
 | Esc, Left | Up a folder. Clears marks or a search first. At Places, held 0.7 s, exits |
 | Tab | The other side |
 | Space | Marks the row and moves down |
+| Ctrl+C, Ctrl+X, Ctrl+V | Copy, Cut, Paste |
 | `a` | Marks all, or none |
 | `n` | Finds in the folder as you type |
 | `r` | Rename |
@@ -53,11 +60,12 @@ not shown.
 | `t` | Transfers |
 | Fn+L, Fn+M, Fn+N | A screen up, a screen down, the last row |
 
-Chips: 5 Mark, 6 Copy, 7 Move, 8 the menu. Inside an archive nothing can
-move out, so Copy takes 7. On a server's row in Places: 5 Edit, 7 Forget,
-pressed twice.
+Chips: 5 Copy, 6 Paste, 7 Cut, 8 the menu. They stay on their keys; Paste
+is grey until something waits. An empty folder shows Paste alone. Inside an
+archive, Copy stands alone on 6. On a server's row in Places: 5 Edit, 7
+Forget, pressed twice.
 
-The menu (≡) also has Compress to zip, Same folder on both sides, Sort by
+The menu (≡) also has Mark, Clear the clipboard, Compress to zip, Same folder on both sides, Sort by
 (name, size, date, type), Hidden files, Add server, SSH key and Empty the
 Trash.
 Sort and hidden files are kept in `files.sort` and `files.hidden`.
@@ -125,9 +133,9 @@ the dialog says someone may be in the way.
 
 bsdtar (`libarchive-tools`) reads zip, tar with gzip, xz, bzip2, lz4 or
 zstd, 7z, rar and iso. Opening one lists its table of contents once; its
-folders then come from that list, with no more reading. Copy from inside one
-extracts the marked entries into the other side's folder. Extract here
-makes a new folder next to the archive.
+folders then come from that list, with no more reading. Copy inside one,
+then Paste in a folder, extracts what was taken there. Extract here makes a
+new folder next to the archive.
 
 bsdtar refuses entries with `..` or an absolute path unless given `-P`, and
 Files never passes it. Free space is checked before an extract. Compress to

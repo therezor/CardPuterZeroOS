@@ -31,14 +31,14 @@ const CMD_TRANSFERS: u32 = 14;
 const CMD_EMPTY: u32 = 15;
 const CMD_ADD: u32 = 16;
 const CMD_COPY: u32 = 17;
-const CMD_MOVE: u32 = 18;
+const CMD_CUT: u32 = 18;
 const CMD_PGUP: u32 = 19;
 const CMD_PGDN: u32 = 20;
 const CMD_KEY: u32 = 21;
+const CMD_PASTE: u32 = 22;
+const CMD_CLEAR: u32 = 23;
 
 // Dialogs.
-const ASK_COPY: u32 = 1;
-const ASK_MOVE: u32 = 2;
 const ASK_DELETE: u32 = 3;
 const ASK_RENAME: u32 = 4;
 const ASK_MKDIR: u32 = 5;
@@ -170,6 +170,15 @@ impl Side {
     }
 }
 
+/// What Copy or Cut took, waiting for Paste in another folder.
+#[derive(Clone, Debug)]
+struct Clip {
+    /// The folder the names are in.
+    from: Loc,
+    names: Vec<String>,
+    cut: bool,
+}
+
 #[derive(Clone, Debug)]
 struct Transfer {
     id: Id,
@@ -269,6 +278,8 @@ pub struct Files {
     /// there, and how much the Trash holds.
     has_downloads: bool,
     trash_n: usize,
+    clip: Option<Clip>,
+    status_tone: Tone,
 }
 
 impl Files {
@@ -303,6 +314,8 @@ impl Files {
             status: String::new(),
             has_downloads: false,
             trash_n: 0,
+            clip: None,
+            status_tone: Tone::Info,
         };
         f.retitle();
         f
@@ -337,13 +350,9 @@ impl Files {
         if i == 0 { 'A' } else { 'B' }
     }
 
-    /// "B: nas:/backup", for a dialog naming where things go.
+    /// "nas:/backup", for a transfer naming where things go.
     fn where_(&self, i: usize) -> String {
-        format!(
-            "{}: {}",
-            Files::letter(i),
-            self.sides[i].loc.show(&self.home)
-        )
+        self.sides[i].loc.show(&self.home)
     }
 
     fn retitle(&mut self) {
@@ -357,11 +366,15 @@ impl Files {
             shown
         };
         self.title = format!("{} \u{00b7} {shown}", Files::letter(self.cur));
-        self.status = match self.transfers.first() {
-            Some(t) if t.total > 0 => format!("{}%", t.done * 100 / t.total),
-            Some(_) => "\u{2026}".into(),
-            None if self.plain_here() => "Not private".into(),
-            None => String::new(),
+        (self.status, self.status_tone) = match (self.transfers.first(), &self.clip) {
+            (Some(t), _) if t.total > 0 => (format!("{}%", t.done * 100 / t.total), Tone::Info),
+            (Some(_), _) => ("\u{2026}".into(), Tone::Info),
+            (None, Some(c)) => {
+                let verb = if c.cut { "cut" } else { "copied" };
+                (format!("{} {verb}", c.names.len()), Tone::Info)
+            }
+            (None, None) if self.plain_here() => ("Not private".into(), Tone::Warning),
+            (None, None) => (String::new(), Tone::Info),
         };
     }
 
@@ -1012,7 +1025,9 @@ impl Files {
         }
     }
 
-    fn copy(&mut self, remove: bool, cx: &mut Cx) {
+    /// Copy (or Cut): the marked names, or the one under the cursor, wait
+    /// for Paste in any folder.
+    fn take(&mut self, cut: bool, cx: &mut Cx) {
         if !self.in_folder() {
             return;
         }
@@ -1020,39 +1035,41 @@ impl Files {
         if names.is_empty() {
             return;
         }
-        let other = 1 - self.cur;
-        let to = &self.sides[other].loc;
-        if *to == Loc::Places || to.is_archive() {
-            cx.toast(&format!(
-                "Open a folder on side {} first",
-                Files::letter(other)
-            ));
+        if cut && self.side().loc.is_archive() {
+            cx.toast("Nothing leaves an archive: Copy takes from it");
             return;
         }
-        if *to == self.side().loc {
-            cx.toast("Both sides show this folder");
-            return;
-        }
-        if remove && self.side().loc.is_archive() {
-            cx.toast("An archive can't be changed: Copy takes from it");
-            return;
-        }
-        let verb = if remove { "Move" } else { "Copy" };
-        let title = format!("{verb} {}?", words::what(&names));
-        let line = format!("To {}", self.where_(other));
-        let id = if remove { ASK_MOVE } else { ASK_COPY };
-        cx.ask(id, Dialog::confirm(&title, &line).yes(&verb.to_lowercase()));
+        let n = names.len();
+        self.clip = Some(Clip {
+            from: self.side().loc.clone(),
+            names,
+            cut,
+        });
+        self.side_mut().marks.clear();
+        let verb = if cut { "Cut" } else { "Copied" };
+        cx.toast(&format!("{verb} {}. Paste with 6", words::items(n)));
     }
 
-    fn start_copy(&mut self, remove: bool, cx: &mut Cx) {
-        let names = self.side().picked();
-        let other = 1 - self.cur;
-        let to = self.sides[other].loc.clone();
+    /// Paste: what Copy or Cut took, into this folder.
+    fn paste(&mut self, cx: &mut Cx) {
+        let Some(clip) = self.clip.clone() else {
+            cx.toast("Copy or Cut something first");
+            return;
+        };
+        let to = self.side().loc.clone();
+        if !self.in_folder() || to.is_archive() {
+            cx.toast("Open a folder to paste into");
+            return;
+        }
+        if clip.cut && clip.from == to {
+            cx.toast("It is in this folder already");
+            return;
+        }
         let id = self.id();
-        let what = words::items(names.len());
-        let req = match &self.side().loc {
+        let (req, verb) = match &clip.from {
             Loc::Archive { file, inner } => {
-                let entries = names
+                let entries = clip
+                    .names
                     .iter()
                     .map(|n| {
                         if inner.is_empty() {
@@ -1062,36 +1079,38 @@ impl Files {
                         }
                     })
                     .collect();
-                Request::Extract {
+                let r = Request::Extract {
                     id,
                     archive: (**file).clone(),
                     entries,
                     to: to.clone(),
-                }
+                };
+                (r, "Extracting")
             }
-            _ => Request::Copy {
-                id,
-                items: self.items(&names),
-                to: to.clone(),
-                remove,
-            },
-        };
-        let verb = match (&req, remove) {
-            (Request::Extract { .. }, _) => "Extracting",
-            (_, true) => "Moving",
-            _ => "Copying",
+            from => {
+                let r = Request::Copy {
+                    id,
+                    items: clip.names.iter().map(|n| from.join(n)).collect(),
+                    to: to.clone(),
+                    remove: clip.cut,
+                };
+                (r, if clip.cut { "Moving" } else { "Copying" })
+            }
         };
         self.transfers.push(Transfer {
             id,
             verb,
-            what,
-            to: self.where_(other),
+            what: words::items(clip.names.len()),
+            to: self.where_(self.cur),
             done: 0,
             total: 0,
             name: String::new(),
         });
+        // Cut moves once; a copy pastes again.
+        if clip.cut {
+            self.clip = None;
+        }
         self.pending.insert(id, Pending::Transfer);
-        self.side_mut().marks.clear();
         cx.keep_awake(true);
         self.send(req, cx);
     }
@@ -1439,10 +1458,11 @@ impl Files {
         }
         let archive = self.side().loc.is_archive();
         match n {
-            5 => self.mark(),
-            6 if !archive => self.copy(false, cx),
-            7 if archive => self.copy(false, cx),
-            7 => self.copy(true, cx),
+            // Inside an archive Copy stands alone, on 6.
+            6 if archive => self.take(false, cx),
+            5 => self.take(false, cx),
+            6 => self.paste(cx),
+            7 => self.take(true, cx),
             _ => {}
         }
     }
@@ -1574,15 +1594,7 @@ impl Page for Files {
     }
 
     fn status(&self) -> Option<(&str, Tone)> {
-        if self.status.is_empty() {
-            return None;
-        }
-        let tone = if self.transfers.is_empty() {
-            Tone::Warning
-        } else {
-            Tone::Info
-        };
-        Some((&self.status, tone))
+        (!self.status.is_empty()).then_some((self.status.as_str(), self.status_tone))
     }
 
     fn typing(&self) -> bool {
@@ -1617,21 +1629,35 @@ impl Page for Files {
                         .chip(5, Chip::new("pencil", "Edit"))
                         .chip(7, Chip::new("trash-2", "Forget").danger().armed(self.armed));
                 }
-                if !self.in_folder() || s.entries.is_empty() {
+                if !self.in_folder() {
                     return Bars::top();
                 }
-                let marked = s.current().is_some_and(|e| s.marks.contains(&e.name));
-                let mark = Chip::new("check", "Mark").on(marked);
                 let copy = Chip::new("copy", "Copy");
                 if s.loc.is_archive() {
-                    // Nothing moves out of an archive: Copy takes 7.
-                    Bars::top().chip(5, mark).chip(7, copy)
-                } else {
-                    Bars::top()
-                        .chip(5, mark)
-                        .chip(6, copy)
-                        .chip(7, Chip::new("arrow-right", "Move"))
+                    return if s.entries.is_empty() {
+                        Bars::top()
+                    } else {
+                        Bars::top().chip(6, copy)
+                    };
                 }
+                let paste = Chip::new("corner-down-left", "Paste");
+                let paste = if self.clip.is_some() {
+                    paste.main()
+                } else {
+                    paste.disabled(true)
+                };
+                if s.entries.is_empty() {
+                    // Nothing to take here; somewhere to paste.
+                    return if self.clip.is_some() {
+                        Bars::top().chip(6, paste)
+                    } else {
+                        Bars::top()
+                    };
+                }
+                Bars::top()
+                    .chip(5, copy)
+                    .chip(6, paste)
+                    .chip(7, Chip::new("x", "Cut"))
             }
             View::Server(_) => Bars::top().chip(6, Chip::new("plug-zap", "Connect").main()),
             View::Transfers if !self.transfers.is_empty() => {
@@ -1749,8 +1775,6 @@ impl Page for Files {
             Answer::No => None,
         };
         match (id, yes) {
-            (ASK_COPY, Some(_)) => self.start_copy(false, cx),
-            (ASK_MOVE, Some(_)) => self.start_copy(true, cx),
             (ASK_DELETE, Some(_)) => {
                 let names = self.side().picked();
                 let items = self.items(&names);
@@ -1913,9 +1937,27 @@ impl Page for Files {
         let archive_row = s.current().is_some_and(|e| e.sort() == Type::Archive);
         c.group("Files");
         c.add(
+            Command::action(CMD_COPY, "Copy")
+                .keys("Ctrl+c")
+                .enabled(folder)
+                .mode("Folder", folder && !s.search.active()),
+        );
+        c.add(
+            Command::action(CMD_CUT, "Cut")
+                .keys("Ctrl+x")
+                .enabled(writable)
+                .mode("Folder", writable && !s.search.active()),
+        );
+        c.add(
+            Command::action(CMD_PASTE, "Paste here")
+                .keys("Ctrl+v")
+                .enabled(writable && self.clip.is_some())
+                .mode("Folder", writable && !s.search.active()),
+        );
+        c.add(
             Command::action(CMD_MARK, "Mark")
                 .keys("space")
-                .keys_only()
+                .enabled(folder)
                 .mode("Folder", folder && !s.search.active()),
         );
         c.add(
@@ -1950,8 +1992,6 @@ impl Page for Files {
                 .repeats()
                 .mode("Folder", browse && !s.search.active()),
         );
-        c.add(Command::action(CMD_COPY, "Copy to the other side").enabled(folder));
-        c.add(Command::action(CMD_MOVE, "Move to the other side").enabled(writable));
         c.add(
             Command::action(CMD_RENAME, "Rename")
                 .keys("r")
@@ -1983,6 +2023,7 @@ impl Page for Files {
                 .mode("Folder", writable && !s.search.active()),
         );
         c.add(Command::action(CMD_COMPRESS, "Compress to zip").enabled(writable));
+        c.add(Command::action(CMD_CLEAR, "Clear the clipboard").enabled(self.clip.is_some()));
         c.add(Command::action(CMD_SAME, "Same folder on both sides").enabled(browse));
         c.group("View");
         c.add(Command::choice(CMD_SORT, "Sort by", self.sort.word()));
@@ -2016,8 +2057,10 @@ impl Page for Files {
                 };
                 self.side_mut().list.key(Key::Other(code));
             }
-            CMD_COPY => self.copy(false, cx),
-            CMD_MOVE => self.copy(true, cx),
+            CMD_COPY => self.take(false, cx),
+            CMD_CUT => self.take(true, cx),
+            CMD_PASTE => self.paste(cx),
+            CMD_CLEAR => self.clip = None,
             CMD_RENAME => self.rename(cx),
             CMD_MKDIR => self.mkdir(cx),
             CMD_DELETE => self.delete(cx),
@@ -2298,7 +2341,13 @@ impl Files {
                 } else {
                     Row::info(&e.name, size)
                 };
-                row.icon(icon).marked(marked).plain()
+                // Cut, waiting for Paste: grey until it moves.
+                let cut = self
+                    .clip
+                    .as_ref()
+                    .is_some_and(|c| c.cut && c.from == s.loc && c.names.contains(&e.name));
+                let row = row.icon(icon).marked(marked).plain();
+                if cut { row.dim() } else { row }
             })
             .collect();
         if s.more && !s.search.active() {

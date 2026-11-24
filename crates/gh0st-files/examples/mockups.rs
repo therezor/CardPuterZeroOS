@@ -149,6 +149,7 @@ fn scene(name: &'static str, keys: &'static str) -> Scene {
 #[cfg_attr(test, allow(dead_code))]
 fn main() {
     let out = PathBuf::from("mockups/files");
+    let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out).unwrap();
     each_scene(|name, d| {
         d.save(&out.join(format!("{name}.png"))).unwrap();
@@ -190,37 +191,29 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
         scene("03-marked", "x\nx\nenter\nx\nx\nx\nspace\nspace"),
         scene("04-remote", "tab\nx\nx\nx\nx\nenter"),
         scene("05-find", "n\ntype mu"),
+        // Music, two tracks marked, Copy; then up to Places and into the
+        // NAS on the same side, where Paste waits.
+        scene("06-copied", "x\nx\nenter\nx\nx\nx\nspace\nspace\n5"),
         scene(
-            "06-copy-ask",
-            concat!(
-                "tab\nx\nx\nx\nx\nenter\ntab\nx\nx\nenter\nx\nx\nx\nspace\nspace",
-                "\n6"
-            ),
+            "07-paste-here",
+            "x\nx\nenter\nx\nx\nx\nspace\nspace\n5\nesc\nesc\nx\nx\nx\nx\nenter",
         ),
         Scene {
-            name: "07-copying",
+            name: "08-pasting",
             copy: copying.clone(),
-            keys: concat!(
-                "tab\nx\nx\nx\nx\nenter\ntab\nx\nx\nenter\nx\nx\nx\nspace\nspace",
-                "\n6\nenter"
-            ),
+            keys: "x\nx\nenter\nx\nx\nx\nspace\nspace\n5\nesc\nesc\nx\nx\nx\nx\nenter\n6",
         },
         Scene {
-            name: "08-transfers",
+            name: "09-transfers",
             copy: copying,
-            keys: concat!(
-                "tab\nx\nx\nx\nx\nenter\ntab\nx\nx\nenter\nx\nx\nx\nspace\nspace",
-                "\n6\nenter\nt"
-            ),
+            keys: "x\nx\nenter\nx\nx\nx\nspace\nspace\n5\nesc\nesc\nx\nx\nx\nx\nenter\n6\nt",
         },
         Scene {
             name: "09-conflict",
             copy: conflict,
-            keys: concat!(
-                "tab\nx\nx\nx\nx\nenter\ntab\nx\nx\nenter\nx\nx\nx\nspace\nspace",
-                "\n6\nenter"
-            ),
+            keys: "x\nx\nenter\nx\nx\nx\nspace\nspace\n5\nesc\nesc\nx\nx\nx\nx\nenter\n6",
         },
+        scene("09-cut", "x\nx\nenter\nx\nx\n7"),
         scene("10-delete-trash", "x\nx\nenter\nx\nx\nx\ndelete"),
         scene(
             "11-delete-remote",

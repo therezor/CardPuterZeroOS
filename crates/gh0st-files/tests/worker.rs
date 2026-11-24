@@ -192,6 +192,16 @@ fn copies_moves_and_conflicts_on_the_card() {
     r.unwrap();
     assert_eq!(read(&b.join("n.txt")), "n2");
 
+    // Pasted into its own folder, a copy gets a new name and no question.
+    let id = w.id();
+    w.ok(Request::Copy {
+        id,
+        items: vec![local(&b.join("n.txt"))],
+        to: local(&b),
+        remove: false,
+    });
+    assert_eq!(read(&b.join("n 3.txt")), "n2");
+
     // A move on one drive is a rename.
     let id = w.id();
     w.ok(Request::Copy {

@@ -114,7 +114,14 @@ pub fn copy(
         }
         let name = leaf(item)?;
         if item.parent_folder().as_ref() == Some(to) {
-            return Err("It is in that folder already".into());
+            if remove {
+                return Err("It is in that folder already".into());
+            }
+            // A copy into its own folder: "photo 2.png" beside it.
+            let fresh = free_name(b, p, to, &name)?;
+            let fresh = leaf(&fresh)?;
+            copy_tree(b, p, &mut prog, item, to, &fresh, &mut all, 0)?;
+            continue;
         }
         if let (Loc::Local(a), Loc::Local(t)) = (item, to) {
             if t.starts_with(a) {

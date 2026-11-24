@@ -1,9 +1,9 @@
 //! What Files says, in one place.
 
 /// Help's About section.
-pub const ABOUT: &str = "Tab flips between sides A and B. Copy and Move send \
-what is marked to the other side. Server passwords stay in the keyring. \
-Deleted files wait in the Trash.";
+pub const ABOUT: &str = "Copy or Cut, open another folder, then Paste. Space \
+marks more than one. Tab flips between two places, A and B. Server \
+passwords stay in the keyring; deleted files wait in the Trash.";
 
 /// "1 item", "3 items".
 pub fn items(n: usize) -> String {
