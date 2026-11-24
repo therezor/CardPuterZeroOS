@@ -17,19 +17,28 @@ pub(crate) struct Splice {
     pub new_nl: Option<u64>,
 }
 
+/// One undo step: the splices of a typing run or a command.
+pub(crate) struct Step {
+    /// Names the text this step leaves, so undoing back to a saved state
+    /// reads as saved.
+    pub id: u64,
+    pub splices: Vec<Splice>,
+}
+
 #[derive(Default)]
 pub(crate) struct Undo {
-    done: Vec<Vec<Splice>>,
-    undone: Vec<Vec<Splice>>,
+    done: Vec<Step>,
+    undone: Vec<Step>,
     /// The last step takes more edits until sealed.
     open: bool,
+    next: u64,
 }
 
 impl Undo {
     pub fn record(&mut self, s: Splice) {
         self.undone.clear();
         if self.open {
-            if let Some(last) = self.done.last_mut().and_then(|g| g.last_mut()) {
+            if let Some(last) = self.done.last_mut().and_then(|g| g.splices.last_mut()) {
                 // Typing on from the last insert: one splice, not a hundred.
                 if last.old_len == 0 && s.old_len == 0 && s.at == last.at + last.new_len {
                     last.new_len += s.new_len;
@@ -50,11 +59,15 @@ impl Undo {
                 }
             }
             if let Some(g) = self.done.last_mut() {
-                g.push(s);
+                g.splices.push(s);
                 return;
             }
         }
-        self.done.push(vec![s]);
+        self.next += 1;
+        self.done.push(Step {
+            id: self.next,
+            splices: vec![s],
+        });
         self.open = true;
         if self.done.len() > STEPS {
             self.done.remove(0);
@@ -65,21 +78,26 @@ impl Undo {
         self.open = false;
     }
 
-    pub fn take_undo(&mut self) -> Option<Vec<Splice>> {
+    /// The text as it stands: the last step's id, 0 for the text as opened.
+    pub fn state(&self) -> u64 {
+        self.done.last().map_or(0, |g| g.id)
+    }
+
+    pub fn take_undo(&mut self) -> Option<Step> {
         self.open = false;
         self.done.pop()
     }
 
-    pub fn take_redo(&mut self) -> Option<Vec<Splice>> {
+    pub fn take_redo(&mut self) -> Option<Step> {
         self.open = false;
         self.undone.pop()
     }
 
-    pub fn push_redo(&mut self, g: Vec<Splice>) {
+    pub fn push_redo(&mut self, g: Step) {
         self.undone.push(g);
     }
 
-    pub fn push_done(&mut self, g: Vec<Splice>) {
+    pub fn push_done(&mut self, g: Step) {
         self.done.push(g);
     }
 

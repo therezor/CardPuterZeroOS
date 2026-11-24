@@ -4,6 +4,7 @@
 //! text that is not UTF-8, CR LF, a missing final newline.
 
 mod index;
+pub mod save;
 pub mod scan;
 mod store;
 mod undo;
@@ -407,7 +408,7 @@ impl Buffer {
     pub fn undo(&mut self) -> Option<u64> {
         let group = self.undo.take_undo()?;
         let mut at = None;
-        for s in group.iter().rev() {
+        for s in group.splices.iter().rev() {
             self.splice(s.at, s.new_len, &s.old);
             self.index
                 .edit(s.at, s.new_len, s.new_nl, s.old_len, s.old_nl);
@@ -421,7 +422,7 @@ impl Buffer {
     pub fn redo(&mut self) -> Option<u64> {
         let group = self.undo.take_redo()?;
         let mut at = None;
-        for s in &group {
+        for s in &group.splices {
             self.splice(s.at, s.old_len, &s.new);
             self.index
                 .edit(s.at, s.old_len, s.old_nl, s.new_len, s.new_nl);
@@ -433,6 +434,12 @@ impl Buffer {
 
     pub fn can_undo(&self) -> bool {
         self.undo.can_undo()
+    }
+
+    /// Names the text as it stands. The same after undoing back to it, so
+    /// a page compares it with the one it saved to know there are changes.
+    pub fn state(&self) -> u64 {
+        self.undo.state()
     }
 
     pub fn can_redo(&self) -> bool {

@@ -6,3 +6,4 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod buf;
+pub mod watch;
