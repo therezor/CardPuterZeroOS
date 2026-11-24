@@ -385,8 +385,7 @@ impl Runtime {
                 Request::Unwatch(id) => self.watches.retain(|w| w.id != id),
                 Request::Write { id, bytes } => {
                     if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
-                        w.out.extend_from_slice(&bytes);
-                        drain(w);
+                        queue(w, &bytes);
                     }
                 }
                 Request::Adopt(pid) => self.adopted.push((pid, owner)),
@@ -1395,6 +1394,19 @@ impl Runtime {
     }
 }
 
+/// Bytes a watch holds for a reader that isn't reading. A terminal answers
+/// each query a program prints; a program that never reads its input would
+/// otherwise grow this until the OOM killer comes.
+const OUT_MAX: usize = 1024 * 1024;
+
+/// Queues `bytes` for the watch's fd and writes what fits. Past `OUT_MAX`
+/// the new bytes are dropped, as a full tty drops input.
+fn queue(w: &mut WatchEntry, bytes: &[u8]) {
+    let room = OUT_MAX.saturating_sub(w.out.len());
+    w.out.extend_from_slice(&bytes[..bytes.len().min(room)]);
+    drain(w);
+}
+
 /// Writes queued bytes until the fd would block. A broken fd drops them:
 /// its reader is gone.
 fn drain(w: &mut WatchEntry) {
@@ -1760,6 +1772,31 @@ mod tests {
             let (mut d, log) = asker();
             d.keys("5\ntype abc").pause().resume().keys("enter");
             assert_eq!(*log.borrow(), ["1 Yes(\"abc\")"]);
+        }
+    }
+
+    #[test]
+    fn a_reader_that_never_reads_holds_at_most_out_max() {
+        let mut fds = [0; 2];
+        // SAFETY: pipe fills a two-int array.
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        // SAFETY: fcntl on a fresh fd we own.
+        unsafe { libc::fcntl(fds[1], libc::F_SETFL, libc::O_NONBLOCK) };
+        let mut w = WatchEntry {
+            id: 1,
+            owner: 0,
+            fd: fds[1],
+            out: Vec::new(),
+        };
+        let chunk = vec![b'x'; 64 * 1024];
+        for _ in 0..64 {
+            queue(&mut w, &chunk);
+        }
+        assert!(w.out.len() <= OUT_MAX, "{} queued", w.out.len());
+        // SAFETY: both ends are ours.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
         }
     }
 }

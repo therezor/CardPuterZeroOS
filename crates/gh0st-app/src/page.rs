@@ -470,7 +470,8 @@ impl Cx<'_> {
     }
 
     /// Writes to a watched fd without blocking. What doesn't fit now waits
-    /// in a queue and goes out when the fd has room, in order.
+    /// in a queue and goes out when the fd has room, in order. The queue
+    /// holds 1 MB; past that, new bytes are dropped.
     pub fn write(&mut self, watch: Watch, bytes: &[u8]) {
         self.s.requests.push(Request::Write {
             id: watch.0,
