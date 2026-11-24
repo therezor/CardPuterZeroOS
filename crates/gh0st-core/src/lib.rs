@@ -13,6 +13,8 @@ pub mod debver;
 pub mod desktop;
 pub mod esc;
 pub mod evdev;
+pub mod hid;
+pub mod hidgadget;
 pub mod hotspot;
 pub mod ident;
 pub mod job;
