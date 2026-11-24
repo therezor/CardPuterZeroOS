@@ -210,7 +210,7 @@ screen's bottom edge, right above its key, and pressing that key runs it.
 
 | Key | Holds |
 |---|---|
-| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here; the switcher puts All here, held; the camera puts Photos here, as a phone camera keeps its gallery bottom left. |
+| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here; the switcher puts All here, held; the camera puts Photos here, as a phone camera keeps its gallery bottom left; Files puts Mark here, with Copy, Paste and Cut beside it. Esc itself still goes back. |
 | 5, 6, 7 | the page's own actions |
 | 8 | the menu, an icon-only ≡ chip. The switcher has no menu and puts Close here. |
 

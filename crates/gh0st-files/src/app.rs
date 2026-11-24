@@ -109,6 +109,11 @@ struct Side {
     search: Search,
     /// An archive's whole table of contents while inside one.
     archive: Option<Vec<Entry>>,
+    /// The folder as listed, before sorting and hiding: a new sort or
+    /// Hidden files reshape it without listing again.
+    all: Vec<Entry>,
+    /// The row to put the cursor on once a listing under way arrives.
+    want: Option<String>,
 }
 
 impl Side {
@@ -123,6 +128,8 @@ impl Side {
             marks: BTreeSet::new(),
             search: Search::new(),
             archive: None,
+            all: Vec::new(),
+            want: None,
         }
     }
 
@@ -162,6 +169,22 @@ impl Side {
         self.list.select(first);
     }
 
+    /// A listing arrived: the cursor where it was asked to be, or the top.
+    fn settle(&mut self) {
+        match self.want.take() {
+            Some(w) if self.entries.iter().any(|e| e.name == w) => self.select_name(&w),
+            _ => self.top(),
+        }
+    }
+
+    /// New entries: sorted and filtered from `all`, marks kept for names
+    /// still there.
+    fn reshape(&mut self, sort: Sort, hidden: bool) {
+        self.entries = shape(self.all.clone(), sort, hidden);
+        let names: HashSet<&str> = self.entries.iter().map(|e| e.name.as_str()).collect();
+        self.marks.retain(|m| names.contains(m.as_str()));
+    }
+
     fn current(&self) -> Option<&Entry> {
         let i = self.list.selected().checked_sub(self.offset())?;
         self.shown().get(i).and_then(|&i| self.entries.get(i))
@@ -183,6 +206,10 @@ impl Side {
     }
 
     fn select_name(&mut self, name: &str) {
+        if self.state != State::Ready {
+            self.want = Some(name.into());
+            return;
+        }
         if let Some(i) = self
             .shown()
             .iter()
@@ -218,9 +245,10 @@ struct Transfer {
 enum Pending {
     List(usize),
     Contents(usize),
-    /// A change on a side's folder: reload both when it ends.
-    Op(&'static str),
-    Transfer,
+    /// A change to folders: what to say, and the folders to list again.
+    Op(&'static str, Vec<Loc>),
+    /// A copy or move, and the folders it changes.
+    Transfer(Vec<Loc>),
     /// Making the SSH key.
     Key,
 }
@@ -291,6 +319,9 @@ pub struct Files {
     /// Requests whose password question has asked the keyring to unlock
     /// once: a second time types it instead.
     tried_unlock: HashSet<Id>,
+    /// Requests answered with a typed password, and its server: kept only
+    /// if that request's listing works.
+    typed_for: HashMap<Id, String>,
     /// Worker questions waiting behind the one showing.
     queued: VecDeque<(Id, Ask)>,
     /// Forget pressed once on a server row.
@@ -303,6 +334,9 @@ pub struct Files {
     trash_n: usize,
     clip: Option<Clip>,
     status_tone: Tone,
+    /// What an open Delete, Rename or Compress dialog is about: the side,
+    /// its folder, the names.
+    target: Option<(usize, Loc, Vec<String>)>,
 }
 
 impl Files {
@@ -331,6 +365,7 @@ impl Files {
             asking: None,
             typed: HashMap::new(),
             tried_unlock: HashSet::new(),
+            typed_for: HashMap::new(),
             queued: VecDeque::new(),
             armed: false,
             title: String::new(),
@@ -339,6 +374,7 @@ impl Files {
             trash_n: 0,
             clip: None,
             status_tone: Tone::Info,
+            target: None,
         };
         f.retitle();
         f
@@ -381,24 +417,31 @@ impl Files {
     fn retitle(&mut self) {
         let shown = self.side().loc.show(&self.home);
         // The end of a path says more than its start.
-        let n = shown.chars().count();
-        let shown = if n > 22 {
-            let tail: String = shown.chars().skip(n - 21).collect();
-            format!("\u{2026}{tail}")
-        } else {
-            shown
-        };
-        self.title = format!("{} \u{00b7} {shown}", Files::letter(self.cur));
+        // A plain-text server says so first: it matters more than progress.
         (self.status, self.status_tone) = match (self.transfers.first(), &self.clip) {
+            _ if self.plain_here() => ("Not private".into(), Tone::Warning),
             (Some(t), _) if t.total > 0 => (format!("{}%", t.done * 100 / t.total), Tone::Info),
             (Some(_), _) => ("\u{2026}".into(), Tone::Info),
             (None, Some(c)) => {
                 let verb = if c.cut { "cut" } else { "copied" };
                 (format!("{} {verb}", c.names.len()), Tone::Info)
             }
-            (None, None) if self.plain_here() => ("Not private".into(), Tone::Warning),
             (None, None) => (String::new(), Tone::Info),
         };
+        // Room left beside the clock and the status.
+        let room = if self.status.is_empty() {
+            22
+        } else {
+            22 - self.status.chars().count().min(12)
+        };
+        let n = shown.chars().count();
+        let shown = if n > room {
+            let tail: String = shown.chars().skip(n - (room - 1)).collect();
+            format!("\u{2026}{tail}")
+        } else {
+            shown
+        };
+        self.title = format!("{} \u{00b7} {shown}", Files::letter(self.cur));
     }
 
     fn server(&self, name: &str) -> Option<&Server> {
@@ -474,18 +517,32 @@ impl Files {
 
     /// Shows `loc` on this side, from the top.
     fn go(&mut self, loc: Loc, cx: &mut Cx) {
+        self.leave(self.cur, cx);
         let s = self.side_mut();
         s.loc = loc;
         s.marks.clear();
         s.search.cancel();
         s.list.select(0);
+        s.want = None;
         if !s.loc.is_archive() {
             s.archive = None;
         }
         self.armed = false;
         self.load(self.cur, cx);
-        self.side_mut().top();
+        if self.side().state == State::Ready {
+            self.side_mut().settle();
+        }
         self.retitle();
+    }
+
+    /// A side moves on: a listing it waited for is no longer wanted.
+    fn leave(&mut self, i: usize, cx: &mut Cx) {
+        if let State::Loading(old) = self.sides[i].state {
+            self.pending.remove(&old);
+            self.drop_asks(old, cx);
+            self.send(Request::Cancel { id: old }, cx);
+            self.sides[i].state = State::Ready;
+        }
     }
 
     fn up(&mut self, cx: &mut Cx) {
@@ -533,6 +590,9 @@ impl Files {
             }
             return;
         }
+        if self.side().state != State::Ready {
+            return;
+        }
         if self.side().on_up() {
             self.up(cx);
             return;
@@ -551,17 +611,22 @@ impl Files {
                     file: Box::new(loc.clone()),
                     inner: String::new(),
                 };
-                self.side_mut().loc = inside;
-                self.side_mut().list.select(0);
-                self.side_mut().marks.clear();
-                self.side_mut().search.cancel();
+                let s = self.side_mut();
+                s.loc = inside;
+                s.list.select(0);
+                s.marks.clear();
+                s.search.cancel();
+                s.entries.clear();
+                s.all.clear();
+                s.archive = None;
+                s.want = None;
                 let id = self.id();
                 self.side_mut().state = State::Loading(id);
                 self.pending.insert(id, Pending::Contents(self.cur));
                 self.send(Request::Contents { id, archive: loc }, cx);
                 self.retitle();
             }
-            t if t.readable() => self.view_text(&e, &loc, cx),
+            t if t.readable() && e.kind != Kind::Other => self.view_text(&e, &loc, cx),
             _ => self.info(),
         }
     }
@@ -571,6 +636,11 @@ impl Files {
             cx.toast("Copy it to the card to read it");
             return;
         };
+        // A pipe or a device named .txt would block the page.
+        if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+            cx.toast("Only a plain file opens here");
+            return;
+        }
         use std::io::Read;
         let mut buf = Vec::new();
         let read = std::fs::File::open(path).and_then(|f| f.take(VIEW_MAX).read_to_end(&mut buf));
@@ -636,12 +706,14 @@ impl Files {
                 let s = &mut self.sides[i];
                 match r {
                     Ok((all, more)) => {
-                        s.entries = shape(all, sort, hidden);
+                        s.all = all;
+                        s.reshape(sort, hidden);
                         s.more = more;
                         s.state = State::Ready;
                     }
                     Err(err) => {
                         s.entries.clear();
+                        s.all.clear();
                         s.state = State::Failed(io_words(&err));
                     }
                 }
@@ -655,6 +727,7 @@ impl Files {
                 let id = self.id();
                 self.sides[i].state = State::Loading(id);
                 self.sides[i].entries.clear();
+                self.sides[i].all.clear();
                 self.pending.insert(id, Pending::List(i));
                 self.send(Request::List { id, at: loc }, cx);
             }
@@ -662,7 +735,8 @@ impl Files {
                 let (sort, hidden) = (self.sort, self.hidden);
                 let s = &mut self.sides[i];
                 if let Some(all) = &s.archive {
-                    s.entries = shape(inside(all, inner), sort, hidden);
+                    s.all = inside(all, inner);
+                    s.reshape(sort, hidden);
                     s.state = State::Ready;
                 }
             }
@@ -676,13 +750,30 @@ impl Files {
             .unwrap_or(0);
     }
 
-    fn reload_all(&mut self, cx: &mut Cx) {
+    /// Lists again the folders a change touched, and every folder on the
+    /// card (that costs nothing). The cursor stays on its name, and marks
+    /// on names still there.
+    fn reload(&mut self, touched: &[Loc], cx: &mut Cx) {
         for i in 0..2 {
+            let loc = self.sides[i].loc.clone();
+            let cheap = matches!(loc, Loc::Local(_) | Loc::Places);
+            if !cheap && !touched.contains(&loc) {
+                continue;
+            }
+            if matches!(self.sides[i].state, State::Loading(_)) {
+                continue;
+            }
             let keep = self.sides[i].current().map(|e| e.name.clone());
-            self.sides[i].marks.clear();
+            let marks = self.sides[i].marks.clone();
             self.load(i, cx);
-            if let Some(n) = keep {
-                self.sides[i].select_name(&n);
+            let s = &mut self.sides[i];
+            s.marks = marks;
+            let names: HashSet<&str> = s.entries.iter().map(|e| e.name.as_str()).collect();
+            s.marks.retain(|m| names.contains(m.as_str()));
+            match keep {
+                Some(n) => s.select_name(&n),
+                None if s.state == State::Ready => {}
+                None => s.want = None,
             }
         }
     }
@@ -690,14 +781,13 @@ impl Files {
     fn resort(&mut self) {
         let (sort, hidden) = (self.sort, self.hidden);
         for s in &mut self.sides {
-            if let Loc::Local(p) = &s.loc {
-                if let Ok((all, more)) = model::list_local(p, model::MAX_ENTRIES) {
-                    s.entries = shape(all, sort, hidden);
-                    s.more = more;
-                }
-            } else {
-                let v = std::mem::take(&mut s.entries);
-                s.entries = shape(v, sort, hidden);
+            if s.state != State::Ready {
+                continue;
+            }
+            let keep = s.current().map(|e| e.name.clone());
+            s.reshape(sort, hidden);
+            if let Some(n) = keep {
+                s.select_name(&n);
             }
         }
     }
@@ -718,6 +808,8 @@ impl Files {
         }
         if let Some((w, _)) = self.engine_watch.take() {
             cx.unwatch(w);
+            // A new worker knows no server yet.
+            self.told.clear();
         }
         if let Some(fd) = fd {
             self.engine_watch = Some((cx.watch(fd), fd));
@@ -735,6 +827,7 @@ impl Files {
             }
         }
         self.rewatch(cx);
+        self.next_ask(cx);
         self.retitle();
     }
 
@@ -746,38 +839,42 @@ impl Files {
         match (p, e) {
             (Pending::List(i), Event::Entries { entries, .. }) => {
                 if self.sides[i].state == State::Loading(id) {
-                    let mut v = std::mem::take(&mut self.sides[i].entries);
-                    v.extend(entries);
-                    self.sides[i].entries = v;
+                    self.sides[i].all.extend(entries);
                 }
             }
             (Pending::List(i), Event::Listed { .. }) => {
                 self.pending.remove(&id);
-                self.listed(id, i);
+                self.drop_asks(id, cx);
+                self.listed(id);
                 let (sort, hidden) = (self.sort, self.hidden);
                 let s = &mut self.sides[i];
                 if s.state == State::Loading(id) {
-                    s.entries = shape(std::mem::take(&mut s.entries), sort, hidden);
                     s.state = State::Ready;
-                    s.top();
+                    s.reshape(sort, hidden);
+                    s.settle();
                 }
             }
             (Pending::Contents(i), Event::Entries { entries, .. }) => {
-                self.sides[i]
-                    .archive
-                    .get_or_insert_with(Vec::new)
-                    .extend(entries);
+                if self.sides[i].state == State::Loading(id) {
+                    self.sides[i]
+                        .archive
+                        .get_or_insert_with(Vec::new)
+                        .extend(entries);
+                }
             }
             (Pending::Contents(i), Event::Listed { .. }) => {
                 self.pending.remove(&id);
                 if self.sides[i].state == State::Loading(id) {
                     self.sides[i].state = State::Ready;
+                    self.sides[i].archive.get_or_insert_with(Vec::new);
                     self.load(i, cx);
-                    self.sides[i].top();
+                    self.sides[i].settle();
                 }
             }
             (Pending::List(i) | Pending::Contents(i), Event::Error { text, .. }) => {
                 self.pending.remove(&id);
+                self.drop_asks(id, cx);
+                self.failed_password(id);
                 if self.sides[i].state == State::Loading(id) {
                     self.sides[i].state = State::Failed(text);
                 }
@@ -785,18 +882,20 @@ impl Files {
             (_, Event::Ask { ask, .. }) => self.ask(id, ask, cx),
             (Pending::List(i), Event::Resolved { path, .. }) => {
                 // "~" was the server's home: the side and its base go there.
-                let s = &mut self.sides[i];
-                for l in [&mut s.loc, &mut s.base] {
-                    if let Loc::Remote { path: p, .. } = l {
-                        if p == "~" {
-                            *p = path.clone();
+                if self.sides[i].state == State::Loading(id) {
+                    let s = &mut self.sides[i];
+                    for l in [&mut s.loc, &mut s.base] {
+                        if let Loc::Remote { path: p, .. } = l {
+                            if p == "~" {
+                                *p = path.clone();
+                            }
                         }
                     }
+                    self.retitle();
                 }
-                self.retitle();
             }
             (
-                Pending::Transfer,
+                Pending::Transfer(_),
                 Event::Progress {
                     done, total, name, ..
                 },
@@ -807,8 +906,9 @@ impl Files {
                     t.name = name;
                 }
             }
-            (Pending::Transfer, Event::Done { .. }) => {
+            (Pending::Transfer(touched), Event::Done { .. }) => {
                 self.pending.remove(&id);
+                self.drop_asks(id, cx);
                 if let Some(i) = self.transfers.iter().position(|t| t.id == id) {
                     let t = self.transfers.remove(i);
                     let past = match t.verb {
@@ -825,18 +925,19 @@ impl Files {
                     }
                 }
                 cx.keep_awake(!self.transfers.is_empty());
-                self.reload_all(cx);
+                self.reload(&touched, cx);
             }
-            (Pending::Transfer, Event::Error { text, .. }) => {
+            (Pending::Transfer(touched), Event::Error { text, .. }) => {
                 self.pending.remove(&id);
+                self.drop_asks(id, cx);
                 let shown = self.transfers.iter().any(|t| t.id == id);
                 self.transfers.retain(|t| t.id != id);
                 cx.keep_awake(!self.transfers.is_empty());
                 // Stop already said so.
                 if shown || text != "Stopped" {
-                    cx.toast_tone(Tone::Critical, &text);
+                    self.say_failed(&text, cx);
                 }
-                self.reload_all(cx);
+                self.reload(&touched, cx);
             }
             (Pending::Key, Event::Done { .. }) => {
                 self.pending.remove(&id);
@@ -847,27 +948,54 @@ impl Files {
             }
             (Pending::Key, Event::Error { text, .. }) => {
                 self.pending.remove(&id);
-                cx.toast_tone(Tone::Critical, &text);
+                self.say_failed(&text, cx);
             }
-            (Pending::Op(done), Event::Done { .. }) => {
+            (Pending::Op(done, touched), Event::Done { .. }) => {
                 self.pending.remove(&id);
+                self.drop_asks(id, cx);
                 cx.toast_tone(Tone::Ok, done);
-                self.reload_all(cx);
+                self.reload(&touched, cx);
             }
-            (Pending::Op(_), Event::Error { text, .. }) => {
+            (Pending::Op(_, touched), Event::Error { text, .. }) => {
                 self.pending.remove(&id);
-                cx.toast_tone(Tone::Critical, &text);
-                self.reload_all(cx);
+                self.drop_asks(id, cx);
+                self.say_failed(&text, cx);
+                self.reload(&touched, cx);
             }
             _ => {}
         }
     }
 
-    /// A listing on side `i` worked: a password typed for its server is
-    /// now known good. Others' wait for their own.
-    fn listed(&mut self, id: Id, i: usize) {
+    /// A failure: a toast, or a notice when the app is behind.
+    fn say_failed(&mut self, text: &str, cx: &mut Cx) {
+        if cx.in_front() {
+            cx.toast_tone(Tone::Critical, text);
+        } else {
+            cx.post("failed", "Files couldn't finish", text);
+        }
+    }
+
+    /// A request ended: its questions, showing or waiting, go with it.
+    fn drop_asks(&mut self, id: Id, cx: &mut Cx) {
+        if self.asking.as_ref().is_some_and(|a| a.id == id) {
+            self.asking = None;
+        }
+        self.queued.retain(|(q, _)| *q != id);
+        if matches!(self.view, View::Conflict { id: c, .. } if c == id) {
+            self.view = View::Browse;
+        }
+        self.next_ask(cx);
+    }
+
+    /// A listing worked. If this very request was answered with a typed
+    /// password, that password is known good now, and kept if the server
+    /// remembers.
+    fn listed(&mut self, id: Id) {
         self.tried_unlock.remove(&id);
-        let Some(srv) = self.server_of(&self.sides[i].loc).cloned() else {
+        let Some(server) = self.typed_for.remove(&id) else {
+            return;
+        };
+        let Some(srv) = self.server(&server).cloned() else {
             return;
         };
         let Some(pw) = self.typed.remove(&srv.name) else {
@@ -876,40 +1004,70 @@ impl Files {
         if srv.remember {
             let attrs = srv.attrs();
             let a: Vec<(&str, &str)> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
-            let _ = self.kr.store(&srv.label(), &a, pw.as_bytes(), true);
+            if self
+                .kr
+                .store(&srv.label(), &a, pw.as_bytes(), true)
+                .is_err()
+            {
+                eprintln!(
+                    "files: the keyring didn't keep the password for {}",
+                    srv.name
+                );
+            }
         }
         pw.into_bytes().fill(0);
     }
 
-    // ---- questions ----
-
-    /// A question from the worker. One shows at a time; the rest wait.
-    fn ask(&mut self, id: Id, ask: Ask, cx: &mut Cx) {
-        if self.asking.is_some() {
-            self.queued.push_back((id, ask));
-            return;
-        }
-        self.ask_now(id, ask, cx);
-    }
-
-    /// The next waiting question, once the last is answered.
-    fn next_ask(&mut self, cx: &mut Cx) {
-        if self.asking.is_none() {
-            if let Some((id, ask)) = self.queued.pop_front() {
-                self.ask_now(id, ask, cx);
+    /// A listing failed: a password typed for it was not good; forget it.
+    fn failed_password(&mut self, id: Id) {
+        self.tried_unlock.remove(&id);
+        if let Some(server) = self.typed_for.remove(&id) {
+            if let Some(pw) = self.typed.remove(&server) {
+                pw.into_bytes().fill(0);
             }
         }
     }
 
-    /// Answers a password question from the keyring. False when the user
-    /// has to type it; true when answered, or waiting on the keyring's
-    /// prompt.
-    fn password_from_keyring(&mut self, id: Id, ask: &Ask, srv: &Server, cx: &mut Cx) -> bool {
-        let attrs = srv.attrs();
-        let a: Vec<(&str, &str)> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    // ---- questions ----
+
+    /// A question from the worker. One shows at a time, and never over a
+    /// dialog of the user's own or a half filled form: the rest wait.
+    fn ask(&mut self, id: Id, ask: Ask, cx: &mut Cx) {
+        self.queued.push_back((id, ask));
+        self.next_ask(cx);
+    }
+
+    /// The next waiting question, when nothing else is being asked.
+    fn next_ask(&mut self, cx: &mut Cx) {
+        if self.asking.is_some() || cx.asking() {
+            return;
+        }
+        let quiet = matches!(self.view, View::Browse | View::Transfers);
+        let Some(i) = self
+            .queued
+            .iter()
+            .position(|(_, a)| quiet || !matches!(a, Ask::Conflict { .. }))
+        else {
+            return;
+        };
+        if let Some((id, ask)) = self.queued.remove(i) {
+            if !cx.in_front() {
+                cx.post("ask", "Files needs an answer", "Open Files to go on");
+            }
+            self.ask_now(id, ask, cx);
+            // Answered at once, from what is known: on to the next.
+            if self.asking.is_none() && !cx.asking() {
+                self.next_ask(cx);
+            }
+        }
+    }
+
+    /// Answers a question from the keyring item `a`. False when it has no
+    /// answer; true when answered, or waiting on the keyring's prompt.
+    fn ask_keyring(&mut self, id: Id, ask: &Ask, a: &[(&str, &str)], cx: &mut Cx) -> bool {
         // Twice at most: once, and again after an unlock.
         for _ in 0..2 {
-            match self.kr.lookup(&a) {
+            match self.kr.lookup(a) {
                 Lookup::Found(pw) => {
                     let text = pw.as_str().unwrap_or_default().to_string();
                     self.reply(id, Some(text), cx);
@@ -946,6 +1104,7 @@ impl Files {
                 let server = server.clone();
                 if !retry {
                     if let Some(pw) = self.typed.get(&server).cloned() {
+                        self.typed_for.insert(id, server.clone());
                         self.reply(id, Some(pw), cx);
                         return;
                     }
@@ -956,7 +1115,10 @@ impl Files {
                 }
                 let srv = self.server(&server).cloned();
                 if let Some(srv) = srv.as_ref().filter(|s| s.remember && !retry) {
-                    if self.password_from_keyring(id, &ask, srv, cx) {
+                    let attrs = srv.attrs();
+                    let a: Vec<(&str, &str)> =
+                        attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                    if self.ask_keyring(id, &ask, &a, cx) {
                         return;
                     }
                 }
@@ -984,20 +1146,23 @@ impl Files {
                 );
             }
             Ask::Passphrase => {
+                // The key's passphrase is the keyring's alone: unlocked if
+                // need be, never typed.
                 let a = [("xdg:schema", servers::SCHEMA), ("key", "ssh")];
-                let pw = match self.kr.lookup(&a) {
-                    Lookup::Found(s) => s.as_str().map(String::from),
-                    _ => None,
-                };
-                self.reply(id, pw, cx);
+                if !self.ask_keyring(id, &ask, &a, cx) {
+                    self.reply(id, None, cx);
+                }
                 return;
             }
             Ask::Conflict { name } => {
+                // The cursor starts on Keep both: Enter loses nothing.
+                let mut list = List::new();
+                list.select(1);
                 self.view = View::Conflict {
                     id,
                     name: name.clone(),
                     all: false,
-                    list: List::new(),
+                    list,
                 };
             }
         }
@@ -1022,10 +1187,6 @@ impl Files {
 
     // ---- actions ----
 
-    fn items(&self, names: &[String]) -> Vec<Loc> {
-        names.iter().map(|n| self.side().loc.join(n)).collect()
-    }
-
     fn in_folder(&self) -> bool {
         self.side().loc != Loc::Places && self.side().state == State::Ready
     }
@@ -1046,12 +1207,18 @@ impl Files {
         s.list.select((i + 1).min(n.saturating_sub(1)));
     }
 
+    /// Marks every row shown (a search's matches only), or clears.
     fn mark_all(&mut self) {
         let s = self.side_mut();
-        if s.marks.len() == s.entries.len() {
-            s.marks.clear();
+        let shown: BTreeSet<String> = s
+            .shown()
+            .into_iter()
+            .map(|i| s.entries[i].name.clone())
+            .collect();
+        if shown.is_subset(&s.marks) {
+            s.marks.retain(|m| !shown.contains(m));
         } else {
-            s.marks = s.entries.iter().map(|e| e.name.clone()).collect();
+            s.marks.extend(shown);
         }
     }
 
@@ -1136,11 +1303,15 @@ impl Files {
             total: 0,
             name: String::new(),
         });
+        let mut touched = vec![to.clone()];
+        if !clip.from.is_archive() {
+            touched.push(clip.from.clone());
+        }
         // Cut moves once; a copy pastes again.
         if clip.cut {
             self.clip = None;
         }
-        self.pending.insert(id, Pending::Transfer);
+        self.pending.insert(id, Pending::Transfer(touched));
         cx.keep_awake(true);
         self.send(req, cx);
     }
@@ -1155,18 +1326,24 @@ impl Files {
         }
         let what = words::what(&names);
         let for_good = self.side().loc.is_remote() || self.in_trash();
+        // The question in the title, the names in the line: a long name
+        // can't push the question out.
         let d = if for_good {
-            Dialog::confirm(&format!("Delete {what}?"), "This can't be undone.")
-                .yes("delete")
-                .danger()
-                .hold()
+            Dialog::confirm(
+                "Delete for good?",
+                &format!("{what}. This can't be undone."),
+            )
+            .yes("delete")
+            .danger()
+            .hold()
         } else {
             Dialog::confirm(
-                &format!("Move {what} to the Trash?"),
-                "Empty the Trash to free the space.",
+                "Move to the Trash?",
+                &format!("{what}. Empty the Trash to free the space."),
             )
             .yes("delete")
         };
+        self.target = Some((self.cur, self.side().loc.clone(), names));
         cx.ask(ASK_DELETE, d);
     }
 
@@ -1174,10 +1351,22 @@ impl Files {
         matches!(&self.side().loc, Loc::Local(p) if p.starts_with(self.trash()))
     }
 
-    fn op(&mut self, req_of: impl FnOnce(Id) -> Request, done: &'static str, cx: &mut Cx) {
+    fn op(
+        &mut self,
+        req_of: impl FnOnce(Id) -> Request,
+        done: &'static str,
+        touched: Vec<Loc>,
+        cx: &mut Cx,
+    ) {
         let id = self.id();
-        self.pending.insert(id, Pending::Op(done));
+        self.pending.insert(id, Pending::Op(done, touched));
         self.send(req_of(id), cx);
+    }
+
+    /// What a dialog was opened about, if the side is still there.
+    fn take_target(&mut self) -> Option<(Loc, Vec<String>)> {
+        let (side, loc, names) = self.target.take()?;
+        (self.sides[side].loc == loc).then_some((loc, names))
     }
 
     fn rename(&mut self, cx: &mut Cx) {
@@ -1188,6 +1377,7 @@ impl Files {
             return;
         };
         let d = Dialog::text("Rename", "name").value(&e.name).yes("rename");
+        self.target = Some((self.cur, self.side().loc.clone(), vec![e.name.clone()]));
         cx.ask(ASK_RENAME, d);
     }
 
@@ -1230,7 +1420,8 @@ impl Files {
             total: 0,
             name: String::new(),
         });
-        self.pending.insert(id, Pending::Transfer);
+        self.pending
+            .insert(id, Pending::Transfer(vec![here.clone()]));
         cx.keep_awake(true);
         self.send(
             Request::Extract {
@@ -1256,6 +1447,7 @@ impl Files {
         } else {
             "Archive".into()
         };
+        self.target = Some((self.cur, self.side().loc.clone(), names.clone()));
         cx.ask(
             ASK_COMPRESS,
             Dialog::text("Compress to zip", "name")
@@ -1267,6 +1459,7 @@ impl Files {
     // ---- servers ----
 
     fn open_form(&mut self, s: Server, editing: Option<usize>) {
+        self.armed = false;
         self.view = View::Server(ServerForm {
             s,
             password: None,
@@ -1433,8 +1626,9 @@ impl Files {
         self.save_servers(cx);
         let attrs = s.attrs();
         let a: Vec<(&str, &str)> = attrs.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        if let Ok((open, _)) = self.kr.search(&a) {
-            for item in open {
+        // Locked or not: the keyring asks the user before each delete.
+        if let Ok((open, shut)) = self.kr.search(&a) {
+            for item in open.into_iter().chain(shut) {
                 let _ = self.kr.delete(&item);
             }
         }
@@ -1701,7 +1895,7 @@ impl Page for Files {
             }
             View::Server(_) => Bars::top().chip(6, Chip::new("plug-zap", "Connect").main()),
             View::Transfers if !self.transfers.is_empty() => {
-                Bars::top().chip(6, Chip::new("x", "Stop"))
+                Bars::top().chip(6, Chip::new("x", "Stop").danger())
             }
             View::Key(None) => Bars::top().chip(
                 6,
@@ -1744,6 +1938,7 @@ impl Page for Files {
                 if key == Key::Soft(6) {
                     let ids: Vec<Id> = self.transfers.iter().map(|t| t.id).collect();
                     for id in ids {
+                        self.drop_asks(id, cx);
                         self.send(Request::Cancel { id }, cx);
                     }
                     self.transfers.clear();
@@ -1791,11 +1986,20 @@ impl Page for Files {
             }
             _ => {
                 self.view = View::Browse;
+                self.armed = false;
                 self.retitle();
+                // A question that waited for the form or the viewer.
+                self.next_ask(cx);
                 return false;
             }
         }
-        if self.side_mut().search.cancel() {
+        if self.side().search.active() {
+            // Back to the whole folder, the cursor on the same name.
+            let keep = self.side().current().map(|e| e.name.clone());
+            self.side_mut().search.cancel();
+            if let Some(n) = keep {
+                self.side_mut().select_name(&n);
+            }
             return false;
         }
         if !self.side().marks.is_empty() {
@@ -1810,143 +2014,9 @@ impl Page for Files {
     }
 
     fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
-        let yes = match answer {
-            Answer::Yes(t) => Some(t),
-            Answer::No => None,
-        };
-        match (id, yes) {
-            (ASK_DELETE, Some(_)) => {
-                let names = self.side().picked();
-                let items = self.items(&names);
-                let trash = !(self.side().loc.is_remote() || self.in_trash());
-                self.side_mut().marks.clear();
-                let done = if trash {
-                    "Moved to the Trash"
-                } else {
-                    "Deleted"
-                };
-                self.op(|id| Request::Delete { id, items, trash }, done, cx);
-            }
-            (ASK_RENAME, Some(name)) => {
-                if let Err(why) = model::name_ok(&name) {
-                    cx.ask(
-                        ASK_RENAME,
-                        Dialog::text("Rename", "name").value(&name).error(why),
-                    );
-                    return;
-                }
-                let Some(old) = self.side().current().map(|e| e.name.clone()) else {
-                    return;
-                };
-                if old == name {
-                    return;
-                }
-                let item = self.side().loc.join(&old);
-                self.op(|id| Request::Rename { id, item, name }, "Renamed", cx);
-            }
-            (ASK_MKDIR, Some(name)) => {
-                if let Err(why) = model::name_ok(&name) {
-                    cx.ask(
-                        ASK_MKDIR,
-                        Dialog::text("New folder", "name").value(&name).error(why),
-                    );
-                    return;
-                }
-                let at = self.side().loc.clone();
-                self.op(|id| Request::Mkdir { id, at, name }, "Folder made", cx);
-            }
-            (ASK_COMPRESS, Some(name)) => {
-                if let Err(why) = model::name_ok(&name) {
-                    cx.ask(
-                        ASK_COMPRESS,
-                        Dialog::text("Compress to zip", "name")
-                            .value(&name)
-                            .error(why),
-                    );
-                    return;
-                }
-                let names = self.side().picked();
-                let items = self.items(&names);
-                let to = self.side().loc.join(&name);
-                let id = self.id();
-                self.transfers.push(Transfer {
-                    id,
-                    verb: "Compressing",
-                    what: format!("\u{201c}{name}\u{201d}"),
-                    to: self.where_(self.cur),
-                    done: 0,
-                    total: 0,
-                    name: String::new(),
-                });
-                self.pending.insert(id, Pending::Transfer);
-                self.side_mut().marks.clear();
-                self.send(Request::Compress { id, items, to }, cx);
-            }
-            (ASK_EMPTY, Some(_)) => {
-                let trash = self.trash();
-                let items = std::fs::read_dir(&trash)
-                    .map(|rd| {
-                        rd.filter_map(Result::ok)
-                            .map(|d| Loc::Local(d.path()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                self.op(
-                    |id| Request::Delete {
-                        id,
-                        items,
-                        trash: false,
-                    },
-                    "The Trash is empty",
-                    cx,
-                );
-            }
-            (ASK_PASSWORD | ASK_HOSTKEY, text) => {
-                let Some(a) = self.asking.take() else {
-                    return;
-                };
-                if id == ASK_PASSWORD {
-                    if let (Ask::Password { server, .. }, Some(pw)) = (&a.ask, &text) {
-                        self.typed.insert(server.clone(), pw.clone());
-                    }
-                }
-                let text = match id {
-                    ASK_HOSTKEY => text.map(|_| "yes".to_string()),
-                    _ => text,
-                };
-                self.reply(a.id, text, cx);
-                self.next_ask(cx);
-            }
-            (ASK_ADDRESS..=ASK_NAME, Some(text)) => {
-                let View::Server(f) = &mut self.view else {
-                    return;
-                };
-                match id {
-                    ASK_ADDRESS => {
-                        if let Err(why) = f.s.set_address(&text) {
-                            cx.ask(
-                                ASK_ADDRESS,
-                                Dialog::text("Address", "nas.local").value(&text).error(why),
-                            );
-                        }
-                    }
-                    ASK_USER => f.s.user = text.trim().to_string(),
-                    ASK_SECRET => f.password = (!text.is_empty()).then_some(text),
-                    ASK_FOLDER => {
-                        let t = text.trim();
-                        f.s.path = if t.starts_with('/') || t == "~" {
-                            t.to_string()
-                        } else if t.is_empty() {
-                            f.s.proto.start().to_string()
-                        } else {
-                            format!("/{t}")
-                        };
-                    }
-                    _ => f.s.name = text.trim().to_string(),
-                }
-            }
-            _ => {}
-        }
+        self.answer_one(id, answer, cx);
+        // A worker question held while this dialog was open.
+        self.next_ask(cx);
         self.retitle();
     }
 
@@ -2068,19 +2138,23 @@ impl Page for Files {
         c.group("View");
         c.add(Command::choice(CMD_SORT, "Sort by", self.sort.word()));
         c.add(Command::toggle(CMD_HIDDEN, "Hidden files", self.hidden));
+        // Not while a clash waits for its answer: that page must stay.
+        let free = !matches!(self.view, View::Conflict { .. });
         c.add(
             Command::action(CMD_TRANSFERS, "Transfers")
                 .keys("t")
                 .opens()
+                .enabled(free)
                 .mode("Folder", browse && !s.search.active()),
         );
         c.group("Places");
-        c.add(Command::action(CMD_ADD, "Add server").opens());
-        c.add(Command::action(CMD_KEY, "SSH key").opens());
+        c.add(Command::action(CMD_ADD, "Add server").opens().enabled(free));
+        c.add(Command::action(CMD_KEY, "SSH key").opens().enabled(free));
         c.add(Command::action(CMD_EMPTY, "Empty the Trash"));
     }
 
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
+        self.armed = false;
         match id {
             CMD_MARK => self.mark(),
             CMD_ALL => self.mark_all(),
@@ -2165,7 +2239,11 @@ impl Page for Files {
             View::Browse => self.draw_browse(ui),
             View::Viewer { text, scroll, .. } => ui.scroll_text(scroll, text),
             View::Info { rows, list } => {
-                let r: Vec<Row> = rows.iter().map(|(k, v)| Row::info(k, v)).collect();
+                // The name whole, wrapped, above the rest.
+                if let Some((_, name)) = rows.first() {
+                    ui.note(name);
+                }
+                let r: Vec<Row> = rows.iter().skip(1).map(|(k, v)| Row::info(k, v)).collect();
                 ui.list(list, &r);
             }
             View::Server(f) => {
@@ -2219,7 +2297,12 @@ impl Page for Files {
                     ui.message("check", "Nothing under way");
                     return;
                 }
-                for t in self.transfers.iter().take(2) {
+                // One shows whole; the rest wait their turn.
+                let waiting = self.transfers.len() - 1;
+                if waiting > 0 {
+                    ui.note(&format!("{} more waiting", waiting));
+                }
+                for t in self.transfers.iter().take(1) {
                     let pct = (t.total > 0).then(|| (t.done * 100 / t.total) as u8);
                     ui.text(&format!("{} {}", t.verb, t.what));
                     ui.note(&format!("To {}", t.to));
@@ -2257,6 +2340,181 @@ impl Page for Files {
                 ];
                 ui.list(list, &rows);
             }
+        }
+    }
+}
+
+impl Files {
+    fn answer_one(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
+        let yes = match answer {
+            Answer::Yes(t) => Some(t),
+            Answer::No => None,
+        };
+        if matches!(id, ASK_DELETE | ASK_RENAME | ASK_COMPRESS) && yes.is_none() {
+            self.target = None;
+        }
+        match (id, yes) {
+            (ASK_DELETE, Some(_)) => {
+                // The names the dialog said, not what the cursor is on now.
+                let Some((loc, names)) = self.take_target() else {
+                    cx.toast("The folder changed: nothing deleted");
+                    return;
+                };
+                let items: Vec<Loc> = names.iter().map(|n| loc.join(n)).collect();
+                let trash = !(loc.is_remote() || self.in_trash());
+                self.side_mut().marks.clear();
+                let done = if trash {
+                    "Moved to the Trash"
+                } else {
+                    "Deleted"
+                };
+                self.op(
+                    |id| Request::Delete { id, items, trash },
+                    done,
+                    vec![loc],
+                    cx,
+                );
+            }
+            (ASK_RENAME, Some(name)) => {
+                if let Err(why) = model::name_ok(&name) {
+                    cx.ask(
+                        ASK_RENAME,
+                        Dialog::text("Rename", "name").value(&name).error(why),
+                    );
+                    return;
+                }
+                let Some((loc, names)) = self.take_target() else {
+                    cx.toast("The folder changed: nothing renamed");
+                    return;
+                };
+                let Some(old) = names.into_iter().next() else {
+                    return;
+                };
+                if old == name {
+                    return;
+                }
+                let item = loc.join(&old);
+                self.op(
+                    |id| Request::Rename { id, item, name },
+                    "Renamed",
+                    vec![loc],
+                    cx,
+                );
+            }
+            (ASK_MKDIR, Some(name)) => {
+                if let Err(why) = model::name_ok(&name) {
+                    cx.ask(
+                        ASK_MKDIR,
+                        Dialog::text("New folder", "name").value(&name).error(why),
+                    );
+                    return;
+                }
+                let at = self.side().loc.clone();
+                let touched = vec![at.clone()];
+                self.op(
+                    |id| Request::Mkdir { id, at, name },
+                    "Folder made",
+                    touched,
+                    cx,
+                );
+            }
+            (ASK_COMPRESS, Some(name)) => {
+                if let Err(why) = model::name_ok(&name) {
+                    cx.ask(
+                        ASK_COMPRESS,
+                        Dialog::text("Compress to zip", "name")
+                            .value(&name)
+                            .error(why),
+                    );
+                    return;
+                }
+                let Some((loc, names)) = self.take_target() else {
+                    cx.toast("The folder changed: nothing compressed");
+                    return;
+                };
+                let items: Vec<Loc> = names.iter().map(|n| loc.join(n)).collect();
+                let to = loc.join(&name);
+                let id = self.id();
+                self.transfers.push(Transfer {
+                    id,
+                    verb: "Compressing",
+                    what: format!("\u{201c}{name}\u{201d}"),
+                    to: self.where_(self.cur),
+                    done: 0,
+                    total: 0,
+                    name: String::new(),
+                });
+                self.pending.insert(id, Pending::Transfer(vec![loc]));
+                self.side_mut().marks.clear();
+                cx.keep_awake(true);
+                self.send(Request::Compress { id, items, to }, cx);
+            }
+            (ASK_EMPTY, Some(_)) => {
+                let trash = self.trash();
+                let items = std::fs::read_dir(&trash)
+                    .map(|rd| {
+                        rd.filter_map(Result::ok)
+                            .map(|d| Loc::Local(d.path()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                self.op(
+                    |id| Request::Delete {
+                        id,
+                        items,
+                        trash: false,
+                    },
+                    "The Trash is empty",
+                    vec![Loc::Local(trash)],
+                    cx,
+                );
+            }
+            (ASK_PASSWORD | ASK_HOSTKEY, text) => {
+                let Some(a) = self.asking.take() else {
+                    return;
+                };
+                if id == ASK_PASSWORD {
+                    if let (Ask::Password { server, .. }, Some(pw)) = (&a.ask, &text) {
+                        self.typed.insert(server.clone(), pw.clone());
+                        self.typed_for.insert(a.id, server.clone());
+                    }
+                }
+                let text = match id {
+                    ASK_HOSTKEY => text.map(|_| "yes".to_string()),
+                    _ => text,
+                };
+                self.reply(a.id, text, cx);
+                self.next_ask(cx);
+            }
+            (ASK_ADDRESS..=ASK_NAME, Some(text)) => {
+                let View::Server(f) = &mut self.view else {
+                    return;
+                };
+                match id {
+                    ASK_ADDRESS => {
+                        if let Err(why) = f.s.set_address(&text) {
+                            cx.ask(
+                                ASK_ADDRESS,
+                                Dialog::text("Address", "nas.local").value(&text).error(why),
+                            );
+                        }
+                    }
+                    ASK_USER => f.s.user = text.trim().to_string(),
+                    ASK_SECRET => f.password = (!text.is_empty()).then_some(text),
+                    ASK_FOLDER => {
+                        let t = text.trim();
+                        f.s.path = if t.starts_with('/') || t == "~" {
+                            t.to_string()
+                        } else if t.is_empty() {
+                            f.s.proto.start().to_string()
+                        } else {
+                            format!("/{t}")
+                        };
+                    }
+                    _ => f.s.name = text.trim().to_string(),
+                }
+            }
+            _ => {}
         }
     }
 }

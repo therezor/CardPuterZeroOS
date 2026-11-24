@@ -411,6 +411,7 @@ impl Runtime {
                 Request::Ask(id, d) => {
                     // A question the work needs answered takes over.
                     self.busy = None;
+                    self.s.asking = true;
                     self.overlay = Overlay::Dialog {
                         id,
                         owner,
@@ -474,6 +475,7 @@ impl Runtime {
             return false;
         }
         self.overlay = Overlay::None;
+        self.s.asking = false;
         self.menu_last = None;
         // The work a closed page waited on is no longer anyone's to show.
         self.busy = None;
@@ -721,6 +723,7 @@ impl Runtime {
         else {
             return;
         };
+        self.s.asking = false;
         let answer = if yes {
             Answer::Yes(d.take_text())
         } else {

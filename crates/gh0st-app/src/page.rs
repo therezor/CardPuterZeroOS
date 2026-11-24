@@ -306,6 +306,8 @@ pub(crate) struct Shared {
     /// to exit, no Close app, and its last page stays. SIGTERM and
     /// [`Cx::quit`] still end it.
     pub closable: bool,
+    /// A dialog is open, waiting for its answer.
+    pub asking: bool,
 }
 
 impl Shared {
@@ -320,6 +322,7 @@ impl Shared {
             paused: false,
             done: false,
             closable: true,
+            asking: false,
         }
     }
 
@@ -402,6 +405,17 @@ impl Cx<'_> {
     /// its held chip closes it, then [`Page::answer`] hears `id` and how.
     pub fn ask(&mut self, id: u32, dialog: Dialog) {
         self.s.requests.push(Request::Ask(id, dialog));
+    }
+
+    /// A dialog is open, or asked for: a second [`ask`](Cx::ask) now would
+    /// replace it. Hold a question that can wait until [`Page::answer`].
+    pub fn asking(&self) -> bool {
+        self.s.asking
+            || self
+                .s
+                .requests
+                .iter()
+                .any(|r| matches!(r, Request::Ask(..)))
     }
 
     /// Fires [`Page::timer`] once, `ms` from now.

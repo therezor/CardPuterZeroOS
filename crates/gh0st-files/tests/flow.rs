@@ -153,10 +153,7 @@ fn local_delete_goes_to_the_trash_and_remote_delete_is_held() {
     );
     keys(&mut d, B_TO_NAS);
     keys(&mut d, "tab\nx\ndelete");
-    assert_eq!(
-        d.dialog().map(|x| x.0),
-        Some("Delete \u{201c}x.txt\u{201d}?")
-    );
+    assert_eq!(d.dialog().map(|x| x.0), Some("Delete for good?"));
     keys(&mut d, "enter");
     assert!(d.dialog().is_some(), "Enter doesn't delete for good");
     d.keys("down 7").wait(800).keys("up 7");
@@ -495,4 +492,145 @@ fn dot_dot_heads_a_folder_and_goes_up() {
     keys(&mut d, "enter\nenter\nenter");
     assert!(d.lint().is_empty(), "{:?}", d.lint());
     let _ = log;
+}
+
+// ---- a worker that answers late, as the real one does ----
+
+/// Holds the fake's events until the test lets them go, and wakes the
+/// page through a pipe as the real worker's socket would.
+struct Late {
+    inner: Fake,
+    held: Vec<gh0st_files::engine::Event>,
+    go: Rc<std::cell::Cell<bool>>,
+    rx: std::os::fd::OwnedFd,
+    tx: std::os::fd::OwnedFd,
+}
+
+impl Late {
+    fn new(inner: Fake) -> (Late, Rc<std::cell::Cell<bool>>, std::os::fd::RawFd) {
+        let mut fds = [0; 2];
+        // SAFETY: pipe fills a two-int array.
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        // SAFETY: both fds are fresh and owned from here.
+        let (rx, tx) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        // SAFETY: fcntl on an fd we own.
+        unsafe { libc::fcntl(rx.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) };
+        let go = Rc::new(std::cell::Cell::new(false));
+        let w = tx.as_raw_fd();
+        (
+            Late {
+                inner,
+                held: Vec::new(),
+                go: go.clone(),
+                rx,
+                tx,
+            },
+            go,
+            w,
+        )
+    }
+}
+
+impl gh0st_files::engine::Engine for Late {
+    fn send(&mut self, req: Request) {
+        self.inner.send(req);
+        self.held.extend(self.inner.events());
+    }
+
+    fn events(&mut self) -> Vec<gh0st_files::engine::Event> {
+        use std::os::fd::AsRawFd;
+        let mut b = [0u8; 64];
+        // SAFETY: reads into a stack buffer of its own length.
+        while unsafe { libc::read(self.rx.as_raw_fd(), b.as_mut_ptr().cast(), b.len()) } > 0 {}
+        let _ = &self.tx;
+        if self.go.get() {
+            std::mem::take(&mut self.held)
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn fd(&self) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+        Some(self.rx.as_raw_fd())
+    }
+}
+
+/// Lets the held events go, and wakes the page.
+fn release(d: &mut Driver, go: &Rc<std::cell::Cell<bool>>, tx: std::os::fd::RawFd) {
+    go.set(true);
+    // SAFETY: writes one byte to our own pipe.
+    unsafe { libc::write(tx, b"x".as_ptr().cast(), 1) };
+    d.pump(50);
+    d.frame();
+    go.set(false);
+}
+
+#[test]
+fn a_question_waits_for_the_users_own_dialog() {
+    let h = Home::new("late-ask");
+    let mut f = fake();
+    f.first.insert(
+        "nas".into(),
+        vec![Ask::HostKey {
+            server: "nas".into(),
+            host: "nas.local".into(),
+            fingerprint: "SHA256:abc".into(),
+        }],
+    );
+    let log = f.log.clone();
+    let (late, go, tx) = Late::new(f);
+    let page = Files::with(Options {
+        home: h.home(),
+        data: Some(h.dir.join("data")),
+        engine: Box::new(late),
+        keyring: Keyring::over(None),
+    });
+    let mut d = Driver::new(page);
+    d.frame();
+    // B starts connecting to the NAS; A opens a Trash dialog meanwhile.
+    keys(&mut d, "tab\nx\nx\nx\nenter\ntab\nenter\ndelete");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Move to the Trash?"));
+    release(&mut d, &go, tx);
+    assert_eq!(
+        d.dialog().map(|x| x.0),
+        Some("Move to the Trash?"),
+        "the host key waits; Enter still means the Trash"
+    );
+    keys(&mut d, "esc");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Trust nas.local?"));
+    assert!(replies(&log).is_empty());
+}
+
+#[test]
+fn delete_acts_on_the_names_the_dialog_showed() {
+    let h = Home::new("late-del");
+    let f = fake();
+    let log = f.log.clone();
+    let (late, go, tx) = Late::new(f);
+    let page = Files::with(Options {
+        home: h.home(),
+        data: Some(h.dir.join("data")),
+        engine: Box::new(late),
+        keyring: Keyring::over(None),
+    });
+    let mut d = Driver::new(page);
+    d.frame();
+    // Music: new folder (its answer held), then b.flac and Delete.
+    keys(&mut d, "enter\nk\ntype aaa\nenter\nx\ndelete");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Move to the Trash?"));
+    // The folder is made and the list read again under the dialog.
+    std::fs::create_dir_all(h.home().join("Music/aaa")).unwrap();
+    release(&mut d, &go, tx);
+    keys(&mut d, "enter");
+    let deleted: Vec<Vec<Loc>> = log
+        .borrow()
+        .iter()
+        .filter_map(|r| match r {
+            Request::Delete { items, .. } => Some(items.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(deleted, [vec![Loc::Local(h.home().join("Music/b.flac"))]]);
 }

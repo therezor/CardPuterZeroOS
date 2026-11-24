@@ -1500,7 +1500,8 @@ pub fn text_field(
         text_in(c, f, inner, placeholder, t.c.muted);
         inner.x
     } else if masked {
-        let n = text.chars().count();
+        // As many dots as fit: a long password doesn't run off the field.
+        let n = text.chars().count().min((inner.w / 8).max(0) as usize);
         let mut x = inner.x;
         for _ in 0..n {
             c.circle(x as f32 + 3.0, (r.y + r.h / 2) as f32, 2.5, t.c.fg);

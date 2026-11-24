@@ -13,7 +13,7 @@ The screen holds one full-width list. Copy (5) or Cut (7) takes what is
 marked, or the row under the cursor, and nothing moves yet. Open any folder,
 on the card or a server, and Paste (6) brings it there: a copy, or a move
 for Cut. The top bar says what waits ("2 copied", "1 cut"); a cut item
-shows grey in its folder until it moves. A copy pastes again and again; a
+shows grey in its folder until you paste it. A copy pastes again and again; a
 cut pastes once. Pasted into its own folder, a copy takes a new name
 ("photo 2.png"). Paste is grey while nothing waits. Ctrl+C, Ctrl+X and
 Ctrl+V do the same.
@@ -48,7 +48,8 @@ not shown.
 | Key | Does |
 |---|---|
 | Enter, Right | Opens the row |
-| Esc, Left | Up a folder. Clears marks or a search first. At Places, held 0.7 s, exits |
+| Esc | Up a folder. Clears marks or a search first. At Places, held 0.7 s, exits |
+| Left | Up a folder |
 | Tab | The other side |
 | Space, 4 | Marks the row and moves down |
 | Ctrl+C, Ctrl+X, Ctrl+V | Copy, Cut, Paste |
@@ -64,7 +65,8 @@ not shown.
 
 Chips: 4 Mark, 5 Copy, 6 Paste, 7 Cut, 8 the menu. Mark takes key 4 from
 Esc, which still goes up a folder. They stay on their keys; Paste is grey
-until something waits. An empty folder shows Paste alone. Inside an
+until something waits. An empty folder shows Paste alone, when something
+waits. Inside an
 archive the keys stay put, with Paste and Cut grey. On a server's row in Places: 5 Edit, 7
 Forget, pressed twice.
 
@@ -178,9 +180,29 @@ page (gh0st-files) ──socket pair──> worker (gh0st-files --worker)
   otherwise a copy, then the delete. One transfer runs at a time. The top
   bar shows its percent, and `t` shows the file, the bytes and a Stop chip.
 - The app may run behind (`X-Gh0st-Background`), so a transfer goes on when
-  it leaves the front. It keeps the device awake while one runs and posts a
-  notice when it ends unseen.
+  it leaves the front. It keeps the device awake while one runs. Behind, a
+  question it waits on, a failure and its end each post a notice.
 - Idle, it sets no timer and wakes for nothing.
+- A worker question never opens over a dialog of the user's own: it waits
+  for that answer, so an Enter meant for one can't answer the other. A
+  Delete, Rename or Compress acts on the names its dialog showed.
+
+### What the worker refuses
+
+- **A move deletes only what arrived.** A file skipped at a clash keeps its
+  source, and so do the folders around it. Devices and pipes stay.
+- **Links inside a folder are not followed.** On the card they are made
+  again as links; going to or from a server they are left out. Only an item
+  the user picked may be a link copied through. A folder that links to
+  itself can't loop, and an archive can't reach files beside it.
+- **Replace never deletes what holds the source.** Folder onto folder
+  merges, on a copy and on a move.
+- **Names that climb out are dropped.** A server's listing with an empty
+  name, ".", "..", a slash or a NUL is a server lying.
+- **Archive names are names.** bsdtar gets them after `--`, with `*`, `?`,
+  `[` and `]` escaped, and is never given `-P`.
+- **A folder is copied whole.** The 20,000 cap is the screen's; the worker
+  lists all of it.
 
 ## Tests
 
