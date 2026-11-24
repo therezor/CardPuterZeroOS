@@ -77,7 +77,8 @@ impl Shared {
             engine: Engine::new(Options {
                 system: System::Windows,
                 latch: LatchKey::FnAlt,
-                media_keys: false,
+                // Nothing on the device acts on Fn+Q, W, E (hardware-facts.md).
+                media_keys: true,
             }),
             snippets: store::snippets(&dir),
             hosts,

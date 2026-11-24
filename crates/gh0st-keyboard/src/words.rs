@@ -85,6 +85,7 @@ Fn 1 to 0: F1 to F10. Fn O, P: F11, F12.
 Fn F Z X C: the arrows.
 Fn L, M: page up, down. Fn N: End.
 Fn Tab: Home. Fn Bksp: Delete.
+Fn Q, W, E: play or pause, previous, next.
 Fn then Alt: Win, Super or Option with the next key. Twice: alone.
 On a Mac or an iPhone, Alt is Cmd.";
 

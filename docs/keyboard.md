@@ -39,6 +39,7 @@ Esc goes back to the hosts, as everywhere in the OS. Fn+Esc sends Esc.
 | Fn and L, M, N | Page Up, Page Down, End |
 | Fn and Tab | Home (Fn+K stays the OS's app switcher) |
 | Fn and Bksp | Delete |
+| Fn and Q, W, E | play or pause, previous, next |
 | Fn and 1 to 0, O, P | F1 to F12 |
 | Fn then Alt | Win, Super, Search, or Option on a Mac, with the next key. Twice: that key alone |
 | Alt, on a Mac or an iPhone | Cmd |
