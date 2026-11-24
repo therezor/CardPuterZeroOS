@@ -132,3 +132,12 @@ fn esc_at_the_first_folder_goes_to_places_not_away() {
     assert!(!d.quit());
     assert!(answer.borrow().is_none());
 }
+
+#[test]
+fn the_chooser_is_one_pane_tab_and_the_other_side_are_not_there() {
+    let h = home("one-pane");
+    let (mut d, answer) = chooser(&h, Spec::new(Mode::Open, "Text"));
+    // Into Docs, then Tab: still Docs, and Enter picks from it.
+    keys(&mut d, "enter\ntab\nenter");
+    assert_eq!(*answer.borrow(), Some(Some(vec![h.0.join("Docs/plan.md")])));
+}

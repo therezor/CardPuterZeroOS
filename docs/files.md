@@ -230,6 +230,7 @@ runs Files as its chooser over that app: a page of its own, not the Files
 you may have open. The top bar says what it does and for whom: `Open ·
 ~/Documents` and `Text`.
 
+- One pane: no second side, no Tab, no clipboard.
 - It shows the card only: Home, Card and Downloads. No servers, no Trash,
   and archives are files.
 - The app's file types hide the rest; folders always show. With more than
