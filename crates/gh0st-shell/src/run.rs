@@ -664,6 +664,12 @@ impl Shell {
                     }
                     password::wipe(&mut input);
                 }
+                // A password the system refused stays out: if the vault took
+                // it meanwhile, the device is still locked, so is the vault.
+                if result == password::Check::Wrong && current {
+                    self.services.tell(&ToDaemon::Lock);
+                    self.keyring_open = false;
+                }
                 match result {
                     password::Check::Right => self.tries = Tries::default(),
                     // Not a try: it never checked.
@@ -925,8 +931,8 @@ impl Shell {
                     self.tries.last = password::boottime();
                     self.save_tries();
                     let input = password::chkpwd_input(&pw);
-                    password::wipe(&mut pw);
                     self.run_prompt_check(input);
+                    self.try_vault(pw);
                 }
                 self.dirty = true;
             }
@@ -985,6 +991,12 @@ impl Shell {
         let stale = j.pid != self.prompt_pid || !self.prompts.checking;
         let result = password::chkpwd_result(j.code());
         if stale {
+            // The vault opened on the same password meanwhile and the
+            // prompt went: the check still counts for the backoff.
+            if result == password::Check::Right {
+                self.tries = Tries::default();
+                self.save_tries();
+            }
             password::wipe(&mut input);
             return;
         }
@@ -1961,14 +1973,24 @@ impl Shell {
 
     /// Runs `unix_chkpwd` on what was typed. The try counts before the
     /// check, so a restart in between can't skip the wait.
-    fn check_password(&mut self, mut typed: Vec<u8>) {
+    fn check_password(&mut self, typed: Vec<u8>) {
         self.tries.fails += 1;
         self.tries.last = password::boottime();
         self.save_tries();
         let input = password::chkpwd_input(&typed);
-        password::wipe(&mut typed);
         self.check_retried = false;
         self.run_check(input);
+        self.try_vault(typed);
+    }
+
+    /// The vault's Argon2 runs while `unix_chkpwd` does, not after it. The
+    /// daemon opens an existing vault only, and only on its own tag.
+    fn try_vault(&mut self, pw: Vec<u8>) {
+        let mut m = ToDaemon::Try { pw };
+        if !self.keyring_open {
+            self.services.tell(&m);
+        }
+        m.wipe();
     }
 
     /// Starts `unix_chkpwd` on `input`, once more if it won't start. If it

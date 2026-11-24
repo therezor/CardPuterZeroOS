@@ -670,3 +670,32 @@ fn unlock_before_the_vault_was_ever_opened_opens_it() {
     );
     assert!(t.svc.unlocked() && t.dir.join("login.vault").exists());
 }
+
+#[test]
+fn try_opens_an_existing_vault_only() {
+    let mut t = T::new("try");
+    assert!(!t.svc.try_open(b"pw"), "no vault: nothing to open");
+    assert!(!t.dir.join("login.vault").exists(), "and none made");
+    t.svc.unlock(b"pw", true);
+    t.svc.lock();
+    assert!(!t.svc.try_open(b"wrong"));
+    assert!(!t.svc.unlocked());
+    assert!(t.svc.try_open(b"pw"));
+    assert!(t.svc.unlocked());
+}
+
+#[test]
+fn a_vault_made_under_another_cost_takes_ours_when_opened() {
+    let mut t = T::new("cost");
+    let path = t.dir.join("login.vault");
+    let old = gh0st_keyringd::vault::Cost { m: 128, t: 2, p: 1 };
+    let mut svc = Service::new(path.clone(), old);
+    svc.unlock(b"pw", true);
+    let head = |p: &std::path::Path| std::fs::read(p).unwrap()[9..17].to_vec();
+    assert_eq!(&head(&path)[..4], &128u32.to_le_bytes());
+    // Ours is Cost::TEST: opening rewraps under it.
+    assert_eq!(t.svc.unlock(b"pw", true), Unlock::Opened);
+    assert_eq!(&head(&path)[..4], &Cost::TEST.m.to_le_bytes());
+    t.svc.lock();
+    assert_eq!(t.svc.unlock(b"pw", true), Unlock::Opened);
+}

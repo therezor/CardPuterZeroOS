@@ -37,11 +37,12 @@ pub struct Cost {
 }
 
 impl Cost {
-    /// Unmeasured on the device: tuned there to about 1 s
-    /// (docs/hardware-facts.md).
+    /// 0.5 s on the device (docs/hardware-facts.md). Anyone with the card
+    /// can guess the same password against /etc/shadow at about 0.3 s a
+    /// try, so a slower vault would only slow the user.
     pub const DEFAULT: Cost = Cost {
-        m: 64 * 1024,
-        t: 3,
+        m: 32 * 1024,
+        t: 2,
         p: 1,
     };
     /// Fast enough for tests.
@@ -102,6 +103,10 @@ impl Vault {
         };
         v.wrap(password, cost)?;
         Ok(v)
+    }
+
+    pub fn cost(&self) -> Cost {
+        self.cost
     }
 
     /// Wraps the data key under a new password, with a new salt.

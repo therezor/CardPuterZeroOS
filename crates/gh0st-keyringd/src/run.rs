@@ -356,6 +356,11 @@ impl Daemon {
                 self.to_shell(&reply);
             }
             ToDaemon::Lock => self.svc.lock(),
+            ToDaemon::Try { pw } => {
+                if self.svc.try_open(pw) {
+                    self.to_shell(&ToShell::Unlocked);
+                }
+            }
             ToDaemon::Old { pw } => {
                 let reply = match self.svc.rewrap_from_old(pw) {
                     Unlock::Opened | Unlock::Created => ToShell::Unlocked,

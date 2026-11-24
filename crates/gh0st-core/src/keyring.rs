@@ -26,6 +26,11 @@ pub enum ToDaemon {
     Unlock {
         pw: Vec<u8>,
     },
+    /// A password still under `unix_chkpwd`: open an existing vault with
+    /// it meanwhile. Never makes one; wrong is silent.
+    Try {
+        pw: Vec<u8>,
+    },
     Lock,
     /// The old password, to rewrap the vault with the held new one.
     Old {
@@ -89,6 +94,7 @@ impl ToDaemon {
     pub fn encode(&self) -> Vec<u8> {
         match self {
             ToDaemon::Unlock { pw } => join(&[b"unlock", pw]),
+            ToDaemon::Try { pw } => join(&[b"try", pw]),
             ToDaemon::Lock => b"lock".to_vec(),
             ToDaemon::Old { pw } => join(&[b"old", pw]),
             ToDaemon::Password { id, pw } => join(&[b"password", id.to_string().as_bytes(), pw]),
@@ -103,6 +109,7 @@ impl ToDaemon {
         let id = |i: usize| -> Option<u64> { std::str::from_utf8(f.get(i)?).ok()?.parse().ok() };
         Some(match (f.first().copied()?, f.len()) {
             (b"unlock", 2) => ToDaemon::Unlock { pw: f[1].to_vec() },
+            (b"try", 2) => ToDaemon::Try { pw: f[1].to_vec() },
             (b"lock", 1) => ToDaemon::Lock,
             (b"old", 2) => ToDaemon::Old { pw: f[1].to_vec() },
             (b"password", 3) => ToDaemon::Password {
@@ -124,9 +131,10 @@ impl ToDaemon {
     /// Zeroes any password it holds.
     pub fn wipe(&mut self) {
         match self {
-            ToDaemon::Unlock { pw, .. } | ToDaemon::Old { pw } | ToDaemon::Password { pw, .. } => {
-                crate::password::wipe(pw)
-            }
+            ToDaemon::Unlock { pw, .. }
+            | ToDaemon::Try { pw }
+            | ToDaemon::Old { pw }
+            | ToDaemon::Password { pw, .. } => crate::password::wipe(pw),
             _ => {}
         }
     }

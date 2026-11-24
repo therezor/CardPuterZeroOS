@@ -264,8 +264,14 @@ impl Service {
         };
         match opened {
             Ok((v, db)) => {
+                let old_cost = v.cost() != self.cost;
                 self.vault = Some(v);
                 self.db = Some(db);
+                // Made under another cost: wrap it again under ours, now that
+                // the password is at hand.
+                if old_cost {
+                    let _ = self.change_password(password);
+                }
                 self.unlocked_now();
                 Unlock::Opened
             }
@@ -317,6 +323,32 @@ impl Service {
         for id in waiting {
             self.out.push(Out::Ask(Ask::Cancel { id }));
             self.after_unlock(id);
+        }
+    }
+
+    /// Opens an existing vault with a password nothing has checked yet, so
+    /// Argon2 runs while `unix_chkpwd` does. Never makes a vault, never
+    /// promotes `login.next`, and a wrong password is silent: the checked
+    /// `unlock` that follows decides.
+    pub fn try_open(&mut self, password: &[u8]) -> bool {
+        if self.vault.is_some() {
+            return true;
+        }
+        let Ok(file) = std::fs::read(&self.path) else {
+            return false;
+        };
+        match Vault::open(&file, password) {
+            Ok((v, db)) => {
+                let old_cost = v.cost() != self.cost;
+                self.vault = Some(v);
+                self.db = Some(db);
+                if old_cost {
+                    let _ = self.change_password(password);
+                }
+                self.unlocked_now();
+                true
+            }
+            Err(_) => false,
         }
     }
 
