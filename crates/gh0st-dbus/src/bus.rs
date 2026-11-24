@@ -3,7 +3,7 @@
 
 use std::os::fd::OwnedFd;
 
-use crate::{Conn, Message, Result, Value};
+use crate::{Conn, Kind, Message, Result, Value};
 
 pub const NAME: &str = "org.freedesktop.DBus";
 pub const PATH: &str = "/org/freedesktop/DBus";
@@ -143,9 +143,71 @@ pub fn changed(path: &str, iface: &str, props: Vec<(&str, Value)>) -> Message {
         .arg(Value::strs::<&str>([]))
 }
 
+/// Calls sent without waiting, by serial, so a loop that serves objects
+/// can match each reply when it comes. [`Conn::call`] can't be used there:
+/// the service calls back before it replies, and `call` would wait out
+/// the callback.
+pub struct Pending<T> {
+    calls: Vec<(u32, T)>,
+}
+
+impl<T> Default for Pending<T> {
+    fn default() -> Self {
+        Pending { calls: Vec::new() }
+    }
+}
+
+impl<T> Pending<T> {
+    pub fn new() -> Pending<T> {
+        Pending::default()
+    }
+
+    /// Sends `msg` and remembers `tag` for its reply.
+    pub fn send(&mut self, c: &mut Conn, msg: Message, tag: T) -> Result<u32> {
+        let serial = c.send(msg)?;
+        self.calls.push((serial, tag));
+        Ok(serial)
+    }
+
+    /// The tag of the call `msg` answers, if it is a reply or an error to
+    /// one of ours.
+    pub fn take(&mut self, msg: &Message) -> Option<T> {
+        if !matches!(msg.kind, Kind::Return | Kind::Error) {
+            return None;
+        }
+        let serial = msg.reply_serial?;
+        let i = self.calls.iter().position(|(s, _)| *s == serial)?;
+        Some(self.calls.swap_remove(i).1)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.calls.is_empty()
+    }
+
+    /// Forgets every call, as when the connection is gone.
+    pub fn clear(&mut self) {
+        self.calls.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_matches_replies_by_serial() {
+        let mut p: Pending<&str> = Pending::new();
+        p.calls.push((4, "register"));
+        p.calls.push((5, "advertise"));
+        let mut r = Message::reply(&Message::call("a.b", "/", "a.b", "C"));
+        r.reply_serial = Some(5);
+        assert_eq!(p.take(&r), Some("advertise"));
+        assert_eq!(p.take(&r), None);
+        let mut call = Message::call("a.b", "/", "a.b", "C");
+        call.reply_serial = Some(4);
+        assert_eq!(p.take(&call), None, "a call is never a reply");
+        assert!(!p.is_empty());
+    }
 
     #[test]
     fn peer_answers() {

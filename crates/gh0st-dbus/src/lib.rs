@@ -13,6 +13,7 @@ pub mod bus;
 pub mod conn;
 pub mod message;
 pub mod names;
+pub mod objects;
 pub mod sig;
 pub mod value;
 mod wire;

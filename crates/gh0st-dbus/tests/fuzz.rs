@@ -71,6 +71,74 @@ fn corpus() -> Vec<Vec<u8>> {
         .arg(Value::strs(["default", "Open"]))
         .arg(Value::props([("urgency", Value::Byte(1))]))
         .arg(Value::I32(-1)),
+        // BlueZ calling back a keyboard's GATT application and agent.
+        Message::call(
+            ":1.3",
+            "/org/gh0st/keyboard/hid/report0",
+            "org.bluez.GattCharacteristic1",
+            "ReadValue",
+        )
+        .arg(Value::props([
+            ("offset", Value::U16(0)),
+            ("mtu", Value::U16(185)),
+            (
+                "device",
+                Value::path("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"),
+            ),
+            ("link", Value::str("LE")),
+        ])),
+        Message::call(
+            ":1.3",
+            "/org/gh0st/keyboard/hid/report3",
+            "org.bluez.GattCharacteristic1",
+            "WriteValue",
+        )
+        .arg(Value::Bytes(vec![0x02]))
+        .arg(Value::props([("type", Value::str("command"))])),
+        Message::call(
+            ":1.3",
+            "/org/gh0st/keyboard/agent",
+            "org.bluez.Agent1",
+            "RequestConfirmation",
+        )
+        .arg(Value::path("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF"))
+        .arg(Value::U32(123_456)),
+        Message::call(
+            "org.bluez",
+            "/org/bluez/hci0",
+            "org.bluez.LEAdvertisingManager1",
+            "RegisterAdvertisement",
+        )
+        .arg(Value::path("/org/gh0st/keyboard/adv"))
+        .arg(Value::props::<&str>([])),
+        {
+            let mut t = gh0st_dbus::objects::Tree::new("/org/gh0st/keyboard");
+            t.add(
+                "/org/gh0st/keyboard/hid",
+                "org.bluez.GattService1",
+                vec![
+                    ("UUID", Value::str("00001812-0000-1000-8000-00805f9b34fb")),
+                    ("Primary", Value::Bool(true)),
+                    ("Includes", Value::paths::<&str>([])),
+                ],
+            );
+            t.add(
+                "/org/gh0st/keyboard/hid/map",
+                "org.bluez.GattCharacteristic1",
+                vec![
+                    ("Flags", Value::strs(["encrypt-read"])),
+                    ("Value", Value::Bytes(vec![0x05, 0x01, 0x09, 0x06])),
+                ],
+            );
+            let mut get = Message::call(
+                ":1.9",
+                "/org/gh0st/keyboard",
+                "org.freedesktop.DBus.ObjectManager",
+                "GetManagedObjects",
+            );
+            get.serial = 2;
+            t.answer(&get).expect("the tree answers")
+        },
         Message::signal("/a", "a.b", "C").arg(Value::Array(
             Ty::Array(Box::new(Ty::Variant)),
             vec![Value::Array(
