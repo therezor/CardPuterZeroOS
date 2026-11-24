@@ -27,8 +27,10 @@ names the side and its folder: `A · ~/Music`. The clipboard serves both.
 Each side's root is **Places**: Home, Card (`/`), Downloads, Trash, every
 saved server, and Add server. Side A opens at Home, side B at Places.
 
-A row shows a type icon, the name, and the size on the right; a folder
-shows a chevron instead. Folders come first. The type, from the name, picks
+Every folder starts with a ".." row: Enter on it goes up, as Esc does. A
+folder opens with the cursor on its first entry, one Up below "..". A row
+shows a type icon, the name, and the size on the right; a folder shows a
+chevron instead. Folders come first. The type, from the name, picks
 the icon and what Enter does:
 
 | Type | Icon | Enter |

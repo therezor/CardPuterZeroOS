@@ -137,11 +137,34 @@ impl Side {
         }
     }
 
+    /// A ".." row heads a folder, while no search narrows it.
+    fn up_row(&self) -> bool {
+        self.loc != Loc::Places && self.state == State::Ready && !self.search.active()
+    }
+
+    /// Rows above the entries: ".." or none.
+    fn offset(&self) -> usize {
+        usize::from(self.up_row())
+    }
+
+    /// The cursor is on "..".
+    fn on_up(&self) -> bool {
+        self.up_row() && self.list.selected() == 0
+    }
+
+    /// The cursor to the first entry, past "..", as a folder opens.
+    fn top(&mut self) {
+        let first = if self.entries.is_empty() {
+            0
+        } else {
+            self.offset()
+        };
+        self.list.select(first);
+    }
+
     fn current(&self) -> Option<&Entry> {
-        let shown = self.shown();
-        shown
-            .get(self.list.selected())
-            .and_then(|&i| self.entries.get(i))
+        let i = self.list.selected().checked_sub(self.offset())?;
+        self.shown().get(i).and_then(|&i| self.entries.get(i))
     }
 
     /// The marked names, or the one under the cursor.
@@ -165,7 +188,7 @@ impl Side {
             .iter()
             .position(|&i| self.entries[i].name == name)
         {
-            self.list.select(i);
+            self.list.select(i + self.offset());
         }
     }
 }
@@ -461,6 +484,7 @@ impl Files {
         }
         self.armed = false;
         self.load(self.cur, cx);
+        self.side_mut().top();
         self.retitle();
     }
 
@@ -507,6 +531,10 @@ impl Files {
             if let Some(p) = self.place_here() {
                 self.open_place(p, cx);
             }
+            return;
+        }
+        if self.side().on_up() {
+            self.up(cx);
             return;
         }
         let Some(e) = self.side().current().cloned() else {
@@ -731,6 +759,7 @@ impl Files {
                 if s.state == State::Loading(id) {
                     s.entries = shape(std::mem::take(&mut s.entries), sort, hidden);
                     s.state = State::Ready;
+                    s.top();
                 }
             }
             (Pending::Contents(i), Event::Entries { entries, .. }) => {
@@ -744,6 +773,7 @@ impl Files {
                 if self.sides[i].state == State::Loading(id) {
                     self.sides[i].state = State::Ready;
                     self.load(i, cx);
+                    self.sides[i].top();
                 }
             }
             (Pending::List(i) | Pending::Contents(i), Event::Error { text, .. }) => {
@@ -1011,7 +1041,7 @@ impl Files {
         if !s.marks.remove(&name) {
             s.marks.insert(name);
         }
-        let n = s.shown().len();
+        let n = s.shown().len() + s.offset();
         let i = s.list.selected();
         s.list.select((i + 1).min(n.saturating_sub(1)));
     }
@@ -2312,7 +2342,9 @@ impl Files {
             State::Ready => {}
         }
         let shown = s.shown();
+        let up = Row::text("..").icon("folder-up").plain();
         if s.entries.is_empty() {
+            ui.list(&s.list, &[up]);
             ui.message("folder-open", "Nothing here");
             return;
         }
@@ -2331,30 +2363,30 @@ impl Files {
                 }
             })
             .collect();
-        let mut rows: Vec<Row> = shown
-            .iter()
-            .zip(&sizes)
-            .map(|(&i, size)| {
-                let e = &s.entries[i];
-                let marked = s.marks.contains(&e.name);
-                let icon = match e.kind {
-                    Kind::Link => "link",
-                    _ => e.sort().icon(),
-                };
-                let row = if e.kind.is_dir() {
-                    Row::link(&e.name)
-                } else {
-                    Row::info(&e.name, size)
-                };
-                // Cut, waiting for Paste: grey until it moves.
-                let cut = self
-                    .clip
-                    .as_ref()
-                    .is_some_and(|c| c.cut && c.from == s.loc && c.names.contains(&e.name));
-                let row = row.icon(icon).marked(marked).plain();
-                if cut { row.dim() } else { row }
-            })
-            .collect();
+        let mut rows: Vec<Row> = Vec::with_capacity(shown.len() + 2);
+        if s.up_row() {
+            rows.push(up);
+        }
+        rows.extend(shown.iter().zip(&sizes).map(|(&i, size)| {
+            let e = &s.entries[i];
+            let marked = s.marks.contains(&e.name);
+            let icon = match e.kind {
+                Kind::Link => "link",
+                _ => e.sort().icon(),
+            };
+            let row = if e.kind.is_dir() {
+                Row::link(&e.name)
+            } else {
+                Row::info(&e.name, size)
+            };
+            // Cut, waiting for Paste: grey until it moves.
+            let cut = self
+                .clip
+                .as_ref()
+                .is_some_and(|c| c.cut && c.from == s.loc && c.names.contains(&e.name));
+            let row = row.icon(icon).marked(marked).plain();
+            if cut { row.dim() } else { row }
+        }));
         if s.more && !s.search.active() {
             rows.push(
                 Row::text("The rest is not shown")

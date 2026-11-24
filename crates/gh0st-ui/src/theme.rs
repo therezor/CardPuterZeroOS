@@ -1048,6 +1048,7 @@ const ICON_TINTS: &[(&str, usize)] = &[
     // Files: a folder looks the same in every list, each kind of file its own.
     ("folder", 1),
     ("folder-open", 1),
+    ("folder-up", 1),
     ("file", 2),
     ("file-text", 2),
     ("file-code", 2),

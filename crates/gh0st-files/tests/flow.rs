@@ -475,3 +475,24 @@ fn the_real_worker_copies_and_pastes() {
     let wakes = d.idle_wakes(600_000);
     assert!(wakes <= 11, "{wakes}");
 }
+
+#[test]
+fn dot_dot_heads_a_folder_and_goes_up() {
+    let h = Home::new("dotdot");
+    std::fs::create_dir_all(h.home().join("Music/empty")).unwrap();
+    let (mut d, log) = drive(&h, fake(), Keyring::over(None));
+    // Home opens on its first entry, Music; Up reaches "..".
+    keys(&mut d, "enter\nf\nf");
+    // In Music now, on "..": Enter goes back up, Music selected.
+    keys(&mut d, "enter");
+    keys(&mut d, "5");
+    assert_eq!(
+        d.toast(),
+        Some("Copied 1 item. Paste with 6"),
+        "Music is under the cursor again"
+    );
+    // An empty folder still has "..", and nothing to copy.
+    keys(&mut d, "enter\nenter\nenter");
+    assert!(d.lint().is_empty(), "{:?}", d.lint());
+    let _ = log;
+}
