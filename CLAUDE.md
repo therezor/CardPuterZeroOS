@@ -68,6 +68,12 @@ battery in `/sys/class/power_supply`. Details and sources in
   passwords in the keyring. `src/engine.rs` is what the page asks of its
   worker, `src/fake.rs` a worker for tests. `examples/mockups.rs` renders its
   screens into `mockups/files`.
+- `crates/gh0st-keyboard`: Keyboard, an SDK app with its own binary. The
+  device as a keyboard, mouse and remote for a computer or phone, over
+  Bluetooth LE (BlueZ, `src/link/ble.rs`) or USB (`gh0st-helper usb-hid
+  hold`, `src/link/usb.rs`). `src/engine.rs` turns keys into HID reports,
+  `src/link/fake.rs` stands in for both links. `examples/mockups.rs` renders
+  its screens into `mockups/keyboard`; `docs/keyboard.md` is its guide.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
   program. `gh0st update` is the update engine and `gh0st store` the
   Store's, both run as root by systemd.
@@ -98,6 +104,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   password changes and the limits.
 - `docs/files.md`: Files, its two sides, keys, servers, passwords, archives
   and the worker.
+- `docs/keyboard.md`: Keyboard, its screens and modes, the keys, Bluetooth,
+  the USB gadget and the helper's protocol.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
