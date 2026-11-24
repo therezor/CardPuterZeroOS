@@ -5,6 +5,29 @@ the screen, the keys and the files. A helper it starts, `gh0st-mediad`,
 decodes every file. A file that crashes a decoder takes the helper with it,
 never the app, and the app starts the helper again.
 
+## The app
+
+One page in five views. `cargo run -p gh0st-media --example mockups`
+draws each into `mockups/media`.
+
+| View | What it shows | Keys |
+|---|---|---|
+| Start | Camera, Pictures, Videos, Music (the XDG folders) and Home, with how much each holds | Up and Down, Enter |
+| Grid | A folder as tiles, five across: subfolders first with their cover or newest picture, then pictures, videos and songs, newest first. A folder of songs goes by name. The top bar names the tile | the arrows, Enter opens, 6 sorts by name or date, `p` starts a slideshow |
+| Viewer | A picture on the whole screen: fitted, or filling it (6), closer in steps up to its own pixels (5 and 7). Zoomed or filled, a map shows where the view is | Left and Right step through the folder; zoomed, the arrows look around. Enter shows the details |
+| Player | A video, or a moving picture that loops. Its time and a line over the buttons | Enter or 6 plays and pauses, 5 and 7 or Left and Right move 10 s. The menu has speed, the sound track, subtitles, A to B and the next picture |
+| Music | A song with its cover, title, artist and album; the folder is the queue | 6 plays and pauses, 5 and 7 the previous and next song. `q` the queue, `s` shuffle, `r` repeat |
+
+- Opened with a file (`gh0st-media PATH`, as the shell starts it for one),
+  it shows that file, and Left and Right step through its folder.
+- Music plays on behind other apps and with the screen dark. A video and a
+  slideshow pause when the app leaves the front; a video keeps the screen
+  on while it plays.
+- A file that fails shows why on its own screen. If the helper dies on a
+  file, the app starts it again and that file is marked.
+- `src/fake.rs` stands in for the helper on a host: it paints each file by
+  its name, so the mockups and `tests/flow.rs` need no decoders.
+
 ## Formats
 
 What the image's libraries decode: FFmpeg 7.1 (`libavcodec` 61,

@@ -17,6 +17,7 @@ members = [
     "crates/gh0st-camera",
     "crates/gh0st-files",
     "crates/gh0st-text",
+    "crates/gh0st-media",
     "crates/gh0st-keyboard",
 ]
 

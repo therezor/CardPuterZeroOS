@@ -63,6 +63,13 @@ battery in `/sys/class/power_supply`. Details and sources in
   container) over a socket pair and a frame ring. `src/fake.rs` stands in
   for the helper on a host. `examples/mockups.rs` renders its screens into
   `mockups/camera`.
+- `crates/gh0st-media`: Media, an SDK app with its own binary: pictures,
+  video and music. `gh0st-mediad` (`mediad/`, C++ on FFmpeg, libheif,
+  LibRaw, libwebpdemux and libass, built in the image container) decodes
+  every file. `src/fake.rs` stands in for it on a host.
+  `examples/mockups.rs` renders its screens into `mockups/media`.
+- `native/av`: the C++ both helpers share: the JPEG reader, the player,
+  the link and the frame ring.
 - `crates/gh0st-files`: Files, an SDK app with its own binary. One pane with
   two sides, archives as folders, SFTP, FTP(S) and WebDAV servers with their
   passwords in the keyring. `src/engine.rs` is what the page asks of its

@@ -331,6 +331,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gh0st-media"
+version = "0.2.0"
+dependencies = [
+ "gh0st-app",
+ "libc",
+]
+
+[[package]]
 name = "gh0st-session"
 version = "0.2.0"
 dependencies = [
