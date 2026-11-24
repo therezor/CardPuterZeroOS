@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+Comment=The card, archives and servers
+Exec=/usr/bin/gh0st-files
+Icon=gh0st:folder
+Terminal=false
+X-Gh0st-Bars=both
+X-Gh0st-Background=true

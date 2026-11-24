@@ -445,9 +445,8 @@ pub fn time_text(secs: i64) -> String {
     }
     // SAFETY: localtime_r into a local struct tm.
     let tm = unsafe {
-        let t = secs as libc::time_t;
         let mut tm: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&t, &mut tm);
+        libc::localtime_r(&(secs as _), &mut tm);
         tm
     };
     format!(
