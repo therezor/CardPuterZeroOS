@@ -23,7 +23,7 @@ use gh0st_app::gfx::{Rect, Theme};
 use gh0st_app::prelude::*;
 use gh0st_app::{Pick, PickSpec, RawKey};
 use gh0st_core::keys::{Nav, State, code};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -145,6 +145,9 @@ pub struct Options {
     pub wrap: Option<bool>,
 }
 
+/// What a measure was of: the text on screen, its version, an offset.
+type Memo = (u64, u64, u64);
+
 struct Doc {
     buf: Buffer,
     cache: Cache,
@@ -226,6 +229,14 @@ pub struct Editor {
     warm: Option<i32>,
     /// The bracket at the cursor and its pair.
     pair: Option<(u64, u64)>,
+    /// Bumped when another text comes on screen: what was measured was of
+    /// the one before.
+    shown: u64,
+    /// A line's width in columns and the cursor's column, kept while the
+    /// text stays as it was: a long wrapped line is measured once a key,
+    /// not once a row. Keyed by `shown`, the buffer's version and offset.
+    line_cols: Cell<Option<(Memo, u32)>>,
+    cursor_col: Cell<Option<(Memo, u32)>>,
     recent: Recent,
     /// The open files, by slot: the one on screen is None here.
     files: Vec<Option<Parked>>,
@@ -316,6 +327,9 @@ impl Editor {
             context: String::new(),
             warm: None,
             pair: None,
+            shown: 0,
+            line_cols: Cell::new(None),
+            cursor_col: Cell::new(None),
             recent: Recent::default(),
             files: vec![None],
             at: 0,
@@ -568,6 +582,7 @@ impl Editor {
     }
 
     fn put_file(&mut self, p: Parked) {
+        self.shown += 1;
         self.path = p.path;
         self.title = p.title;
         *self.doc.get_mut() = p.doc;
@@ -995,8 +1010,44 @@ impl Editor {
     }
 
     fn col_of(&self, off: u64) -> u32 {
-        let (start, _, line) = self.line_at(off);
-        view::col_of(&line, (off - start) as usize)
+        remember(&self.cursor_col, self.memo(off), || {
+            let (start, _, line) = self.line_at(off);
+            view::col_of(&line, (off - start) as usize)
+        })
+    }
+
+    fn memo(&self, at: u64) -> Memo {
+        (self.shown, self.doc.borrow().buf.version(), at)
+    }
+
+    /// The rows the line starting at `start` takes, and its length without
+    /// its ending, reading it only when it was not measured.
+    fn rows_of(&self, start: u64) -> (u32, u64) {
+        let mut end = {
+            let mut d = self.doc.borrow_mut();
+            let len = d.buf.len();
+            d.buf.line_end(start).unwrap_or(len)
+        };
+        if end > start
+            && self
+                .doc
+                .borrow_mut()
+                .buf
+                .bytes(end - 1..end)
+                .ok()
+                .as_deref()
+                == Some(b"\r")
+        {
+            end -= 1;
+        }
+        if !self.wrap || end - start > WRAP_MAX {
+            return (1, end - start);
+        }
+        let w = remember(&self.line_cols, self.memo(start), || {
+            let (_, _, l) = self.line_at(start);
+            view::col_of(&l, l.len())
+        });
+        (w.div_ceil(self.cols()).max(1), end - start)
     }
 
     // Moving.
@@ -1092,24 +1143,11 @@ impl Editor {
 
     /// Rows the line starting at `start` takes, its bytes and length: one
     /// unless it wraps.
-    fn segs_at(&self, start: u64) -> (u32, Vec<u8>, u64) {
-        let (s, end, line) = self.line_at(start);
-        let n = self.segs(&line, end - s);
-        (n, line, end - s)
-    }
-
-    fn segs(&self, line: &[u8], len: u64) -> u32 {
-        if !self.wrap || len > WRAP_MAX {
-            return 1;
-        }
-        view::col_of(line, line.len()).div_ceil(self.cols()).max(1)
-    }
-
     /// The row of its line the byte at `off` sits on.
     fn seg_of(&self, off: u64) -> (u64, u32) {
-        let (start, end, line) = self.line_at(off);
-        let n = self.segs(&line, end - start);
-        let col = view::col_of(&line, (off - start) as usize);
+        let start = self.doc.borrow_mut().buf.line_start(off).unwrap_or(0);
+        let (n, _) = self.rows_of(start);
+        let col = self.col_of(off);
         (start, (col / self.cols()).min(n - 1))
     }
 
@@ -1123,19 +1161,22 @@ impl Editor {
             self.top_seg = cs;
             return;
         }
+        // Rows from the top one to the cursor's, a line at a time: a long
+        // line is measured once, not once a row.
         let (mut at, mut seg, mut n) = (self.top, self.top_seg, 0);
         let len = self.doc.borrow().buf.len();
-        while (at, seg) < (cur, cs) && n < rows {
-            n += 1;
-            let (segs, _, l) = self.segs_at(at);
-            if seg + 1 < segs {
-                seg += 1;
-            } else if at + l >= len {
+        loop {
+            if at >= cur {
+                n += cs.saturating_sub(seg);
                 break;
-            } else {
-                at = self.next_line(at + l);
-                seg = 0;
             }
+            let (segs, l) = self.rows_of(at);
+            n += segs.saturating_sub(seg);
+            if n >= rows || at + l >= len {
+                break;
+            }
+            at = self.next_line(at + l);
+            seg = 0;
         }
         if n < rows {
             return;
@@ -1149,7 +1190,7 @@ impl Editor {
                 break;
             } else {
                 a = self.doc.borrow_mut().buf.line_start(a - 1).unwrap_or(0);
-                sg = self.segs_at(a).0 - 1;
+                sg = self.rows_of(a).0 - 1;
             }
         }
         self.top = a;
@@ -1175,10 +1216,10 @@ impl Editor {
                     break;
                 } else {
                     line = self.doc.borrow_mut().buf.line_start(line - 1).unwrap_or(0);
-                    seg = self.segs_at(line).0 - 1;
+                    seg = self.rows_of(line).0 - 1;
                 }
             } else {
-                let (segs, _, l) = self.segs_at(line);
+                let (segs, l) = self.rows_of(line);
                 if seg + 1 < segs {
                     seg += 1;
                 } else if line + l >= len {
@@ -1189,7 +1230,7 @@ impl Editor {
                 }
             }
         }
-        let (_, bytes, _) = self.segs_at(line);
+        let (_, _, bytes) = self.line_at(line);
         // The row's last cell, not the next row's first.
         let col = seg * cols + vcol.min(cols - 1);
         let mut to = line + view::byte_at(&bytes, col) as u64;
@@ -2447,15 +2488,30 @@ impl Page for Editor {
             }
             state = lex::lex(lang, state, &d.line, &mut d.spans);
             let on_line = self.cursor >= start && self.cursor <= end;
+            // A wrapped line is read whole, as the measures read it, so
+            // they hold for it.
+            let version = d.buf.version();
             let segs = if wraps {
-                view::col_of(&d.line, d.line.len()).div_ceil(cols).max(1)
+                remember(&self.line_cols, (self.shown, version, start), || {
+                    view::col_of(&d.line, d.line.len())
+                })
+                .div_ceil(cols)
+                .max(1)
             } else {
                 1
             };
             let cur_col = on_line.then(|| {
                 let at = (self.cursor - start).min(d.line.len() as u64) as usize;
-                view::col_of(&d.line, at)
+                if wraps {
+                    remember(&self.cursor_col, (self.shown, version, self.cursor), || {
+                        view::col_of(&d.line, at)
+                    })
+                } else {
+                    view::col_of(&d.line, at)
+                }
             });
+            // One walk over the line's cells for all its rows.
+            let mut cells = view::cells(&d.line).peekable();
             for seg in first_seg..segs {
                 if r >= rows {
                     break;
@@ -2495,12 +2551,13 @@ impl Page for Editor {
                         run.clear();
                     }
                 };
-                for cell in view::cells(&d.line) {
-                    if cell.col + cell.width <= c0 || (wraps && cell.col < c0) {
-                        continue;
-                    }
+                while let Some(&cell) = cells.peek() {
                     if cell.col >= c0 + cols || (wraps && cell.col + cell.width > c0 + cols) {
                         break;
+                    }
+                    cells.next();
+                    if cell.col + cell.width <= c0 || (wraps && cell.col < c0) {
+                        continue;
                     }
                     while si < d.spans.len() && d.spans[si].end as usize <= cell.byte {
                         si += 1;
@@ -2584,6 +2641,18 @@ impl Page for Editor {
     }
 }
 
+/// `f()`, unless `cell` holds it for `key` already.
+fn remember(cell: &Cell<Option<(Memo, u32)>>, key: Memo, f: impl FnOnce() -> u32) -> u32 {
+    if let Some((k, c)) = cell.get()
+        && k == key
+    {
+        return c;
+    }
+    let c = f();
+    cell.set(Some((key, c)));
+    c
+}
+
 /// A binary file: offset, bytes in hex, and the bytes that are text.
 /// Bytes on a row of the hex view `cols` cells wide: an offset, the bytes
 /// in hex, then as text.
@@ -2595,20 +2664,36 @@ fn hex_per(cols: usize) -> usize {
 }
 
 fn draw_hex(ui: &mut Ui, t: &Theme, area: Rect, look: Look, b: &mut Buffer, top: u64, cursor: u64) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let per = hex_per((area.w / look.cw) as usize);
     let rows = (area.h / look.ch) as usize;
     let top = top / per as u64 * per as u64;
+    let len = b.len();
+    let sel = mix(t.c.bg, t.c.accent, theme::TEXT_SELECT);
     let c = ui.canvas();
+    // On the stack: a frame asks nothing of the heap.
+    let mut row = [0u8; 16];
+    let mut off_text = [0u8; 16];
     for r in 0..rows {
         let off = top + (r * per) as u64;
-        if off >= b.len() && r > 0 {
+        if off >= len && r > 0 {
             break;
         }
-        let bytes = b.bytes(off..off + per as u64).unwrap_or_default();
+        let mut got = 0;
+        let _ = b.for_each(off..(off + per as u64).min(len), |chunk| {
+            row[got..got + chunk.len()].copy_from_slice(chunk);
+            got += chunk.len();
+            true
+        });
         let y = area.y + r as i32 * look.ch + look.base;
         let x = area.x + look.cw / 2;
-        look.font.draw(c, x, y, &format!("{off:08x}"), t.c.muted);
-        for (i, &byte) in bytes.iter().enumerate() {
+        let digits = 8.max(16 - off.leading_zeros() as usize / 4);
+        for (i, d) in off_text[..digits].iter_mut().enumerate() {
+            *d = HEX[(off >> (4 * (digits - 1 - i)) & 15) as usize];
+        }
+        let text = std::str::from_utf8(&off_text[..digits]).unwrap_or("");
+        look.font.draw(c, x, y, text, t.c.muted);
+        for (i, &byte) in row[..got].iter().enumerate() {
             let hx = x + (9 + 3 * i) as i32 * look.cw;
             let role = if byte == 0 {
                 Role::Comment
@@ -2618,23 +2703,21 @@ fn draw_hex(ui: &mut Ui, t: &Theme, area: Rect, look: Look, b: &mut Buffer, top:
             if off + i as u64 == cursor {
                 c.fill(
                     Rect::new(hx - 1, y - look.base, 2 * look.cw + 2, look.ch),
-                    mix(t.c.bg, t.c.accent, theme::TEXT_SELECT),
+                    sel,
                 );
             }
-            look.font
-                .draw(c, hx, y, &format!("{byte:02x}"), t.c.syntax(role));
+            let pair = [HEX[(byte >> 4) as usize], HEX[(byte & 15) as usize]];
+            let pair = std::str::from_utf8(&pair).unwrap_or("");
+            look.font.draw(c, hx, y, pair, t.c.syntax(role));
             let ax = x + (9 + 3 * per + 1 + i) as i32 * look.cw;
-            let ch = if byte.is_ascii_graphic() {
-                byte as char
-            } else {
-                '.'
-            };
+            let shown = [if byte.is_ascii_graphic() { byte } else { b'.' }];
             let ink = if byte.is_ascii_graphic() {
                 t.c.syntax(Role::String)
             } else {
                 t.c.muted
             };
-            look.font.draw(c, ax, y, &ch.to_string(), ink);
+            look.font
+                .draw(c, ax, y, std::str::from_utf8(&shown).unwrap_or("."), ink);
         }
     }
 }

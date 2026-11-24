@@ -262,6 +262,34 @@ fn the_end_of_a_wrapped_file_comes_into_view() {
     assert!(std::fs::read(&p).unwrap().ends_with(b"last\nZ"));
 }
 
+/// The cursor's bar shows: a column of accent below the top bar.
+fn shows_cursor(d: &mut Driver) -> bool {
+    let accent = gh0st_app::gfx::Theme::default().c.accent;
+    let f = d.frame();
+    (0..f.width()).any(|x| (20..f.height()).filter(|&y| f.get(x, y) == accent).count() >= 10)
+}
+
+#[test]
+fn typing_at_a_long_wrapped_line_s_end_keeps_the_cursor_on_screen() {
+    let mut text = b"top\n".to_vec();
+    text.extend(std::iter::repeat_n(b'w', 3000));
+    text.extend_from_slice(b"\nend\n");
+    let p = temp("wrapend.txt", &text);
+    let mut d = wrapping(&p, true);
+    assert!(shows_cursor(&mut d));
+    d.keys("fn+x\nctrl+e");
+    assert!(
+        shows_cursor(&mut d),
+        "at the line's end, rows below the top"
+    );
+    for _ in 0..4 {
+        d.keys(&format!("type {}", "v".repeat(40)));
+        assert!(shows_cursor(&mut d), "after a new row");
+    }
+    d.keys("fn+x");
+    assert!(shows_cursor(&mut d), "on the next line");
+}
+
 #[test]
 fn four_files_open_switch_and_close_one_at_a_time() {
     let a = temp("one.txt", b"one\n");

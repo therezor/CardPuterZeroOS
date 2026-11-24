@@ -24,8 +24,9 @@ pub struct Finder {
     start: u64,
     at: u64,
     wrapped: bool,
-    /// The last bytes of the chunk before, so a match across chunks counts.
-    carry: Vec<u8>,
+    /// What a step searches. Between steps it holds the last bytes of the
+    /// chunk before, so a match across chunks counts; it keeps its room.
+    window: Vec<u8>,
 }
 
 impl Finder {
@@ -42,7 +43,7 @@ impl Finder {
             start: from,
             at: from,
             wrapped: false,
-            carry: Vec::new(),
+            window: Vec::new(),
         }
     }
 
@@ -72,7 +73,7 @@ impl Finder {
             len
         };
         let end = limit.min(self.at.saturating_add(budget.max(1)));
-        let mut window = std::mem::take(&mut self.carry);
+        let mut window = std::mem::take(&mut self.window);
         let base = self.at - window.len() as u64;
         let kept = window.len();
         let r = b.nowait(|b| {
@@ -92,12 +93,13 @@ impl Finder {
             end
         };
         if let Some(i) = find(&window, &self.needle, self.fold) {
-            let hit = base + i as u64;
-            return Ok(Found::Hit(hit));
+            self.window = window;
+            return Ok(Found::Hit(base + i as u64));
         }
         self.at = end;
         let keep = window.len().min(n - 1);
-        self.carry = window[window.len() - keep..].to_vec();
+        window.drain(..window.len() - keep);
+        self.window = window;
         if waiting {
             return Ok(Found::Wait);
         }
@@ -110,7 +112,7 @@ impl Finder {
         // Round to the top; a match may straddle where it began.
         self.wrapped = true;
         self.at = 0;
-        self.carry.clear();
+        self.window.clear();
         self.start = (self.start + n as u64 - 1).min(len);
         Ok(Found::More)
     }
@@ -123,20 +125,18 @@ pub fn find(hay: &[u8], needle: &[u8], fold: bool) -> Option<usize> {
         return None;
     }
     let first = needle[0];
+    let both = fold && first.is_ascii_alphabetic();
+    // Where each case of the first byte comes next. A letter common in one
+    // case and missing in the other is looked for once, not at every
+    // candidate: that made a folded search quadratic.
+    let (mut lo, mut up) = (None, None);
     let mut i = 0;
     while i + n <= hay.len() {
-        let next = if fold && first.is_ascii_alphabetic() {
-            let lo = scan::memchr(first, &hay[i..]);
-            let up = scan::memchr(first.to_ascii_uppercase(), &hay[i..]);
-            match (lo, up) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            }
-        } else {
-            scan::memchr(first, &hay[i..])
-        };
-        let p = i + next?;
-        if p + n > hay.len() {
+        let mut p = next_at(first, hay, i, &mut lo);
+        if both {
+            p = p.min(next_at(first.to_ascii_uppercase(), hay, i, &mut up));
+        }
+        if p == usize::MAX || p + n > hay.len() {
             return None;
         }
         let w = &hay[p..p + n];
@@ -146,6 +146,19 @@ pub fn find(hay: &[u8], needle: &[u8], fold: bool) -> Option<usize> {
         i = p + 1;
     }
     None
+}
+
+/// The next `c` at or after `i`, or usize::MAX for none, kept in `at`
+/// until the search passes it.
+fn next_at(c: u8, hay: &[u8], i: usize, at: &mut Option<usize>) -> usize {
+    match *at {
+        Some(p) if p >= i => p,
+        _ => {
+            let p = scan::memchr(c, &hay[i..]).map_or(usize::MAX, |p| i + p);
+            *at = Some(p);
+            p
+        }
+    }
 }
 
 #[cfg(test)]
@@ -187,5 +200,26 @@ mod tests {
         }
         // A match straddling the start is still found on the way round.
         assert_eq!(run(&mut b, "needle", 1003, false, 5), Some(1000));
+    }
+
+    #[test]
+    fn folding_finds_what_a_plain_scan_finds() {
+        let hay = b"xLl-lL-LLzz-lLz-llZZq-LZZQ";
+        for needle in ["l", "ll", "lz", "lzz", "lzzq", "-l", "q", "zz"] {
+            let want = hay
+                .windows(needle.len())
+                .position(|w| w.eq_ignore_ascii_case(needle.as_bytes()));
+            assert_eq!(find(hay, needle.as_bytes(), true), want, "{needle}");
+        }
+    }
+
+    #[test]
+    fn a_folded_miss_reads_a_slice_once() {
+        // Every byte a candidate, the other case nowhere: each look for it
+        // once read to the end, a quadratic minute for 1 MB.
+        let hay = vec![b'l'; 1 << 20];
+        let t = std::time::Instant::now();
+        assert_eq!(find(&hay, b"lzzq", true), None);
+        assert!(t.elapsed().as_millis() < 1000, "{:?}", t.elapsed());
     }
 }
