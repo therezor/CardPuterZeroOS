@@ -112,6 +112,10 @@ per node and tries again every 4 ms, only while reports wait.
 The gadget is `1d6b:0104`, "Gh0st Keyboard" by "Gh0st", serial `gh0st`:
 nothing in it names the device or its owner.
 
+A Mac shows its Keyboard Setup Assistant for the gadget, as for any USB
+keyboard it doesn't know: pick ANSI, or close it, which means ANSI. The
+gadget driver sends no country code, and configfs has no knob for one.
+
 ## Leaving the front
 
 On Fn+K or the dark the app lets go of every key. If it may run behind
