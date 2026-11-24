@@ -351,3 +351,14 @@ fn a_second_host_stays_when_the_first_goes() {
     assert!(ble.listening(), "the laptop still listens");
     assert!(ble.send(&Report::Keyboard([0; 8])));
 }
+
+#[test]
+fn an_address_that_changes_is_told() {
+    let (mut ble, mut fake) = ready();
+    fake.device(PHONE, vec![("Address", Value::str("F8:2A:E2:48:8E:99"))]);
+    let events = pump(&mut ble, &mut fake);
+    assert!(events.contains(&Event::Moved(
+        "AA:BB:CC:DD:EE:FF".into(),
+        "F8:2A:E2:48:8E:99".into()
+    )));
+}

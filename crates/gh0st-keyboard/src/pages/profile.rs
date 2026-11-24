@@ -7,7 +7,6 @@ use gh0st_app::prelude::*;
 use crate::app::{Nav, Screen, Shared, Target};
 use crate::host::System;
 use crate::pages::{hosts::icon_of, session::Session};
-use crate::store;
 use crate::words;
 
 const RENAME: u32 = 1;
@@ -89,8 +88,9 @@ impl Screen for Profile {
 
     fn key(&mut self, s: &mut Shared, key: Key, cx: &mut Cx) -> Nav {
         if key == Key::Soft(6) {
+            let path = s.path_for(&self.address);
             if let Some(bt) = &mut s.bt {
-                bt.forget(&store::path_of(&self.address));
+                bt.forget(&path);
             }
             if s.target == Some(Target::Bt(self.address.clone())) {
                 s.release();
@@ -126,6 +126,13 @@ impl Screen for Profile {
                 s.save_hosts();
             }
             _ => {}
+        }
+        Nav::Stay
+    }
+
+    fn event(&mut self, s: &mut Shared, _: &crate::link::Event, _: &mut Cx) -> Nav {
+        if let Some(new) = s.moved_to(&self.address) {
+            self.address = new;
         }
         Nav::Stay
     }

@@ -386,6 +386,9 @@ impl Ble {
         let before = self.devices[i].clone();
         update(&mut self.devices[i], changed);
         let after = self.devices[i].clone();
+        if !before.address.is_empty() && after.address != before.address {
+            out.push(Event::Moved(before.address.clone(), after.address.clone()));
+        }
         if after.paired && !before.paired && self.pairing {
             out.push(Event::Paired(path.to_string()));
         }
@@ -576,6 +579,23 @@ impl Ble {
             .arg(Value::str(prop))
             .arg(Value::variant(v));
         self.call(m, tag);
+    }
+
+    /// The name hosts see while pairing: the adapter's alias.
+    pub fn set_name(&mut self, name: &str) {
+        self.set_adapter("Alias", Value::str(name), Call::Quiet);
+        self.name = name.to_string();
+        self.flush();
+    }
+
+    /// Trusted: BlueZ lets the host back in without asking the agent.
+    pub fn trust(&mut self, device: &str) {
+        let m = Message::call(BLUEZ, device, bus::PROPERTIES, "Set")
+            .arg(Value::str(DEVICE))
+            .arg(Value::str("Trusted"))
+            .arg(Value::variant(Value::Bool(true)));
+        self.call(m, Call::Quiet);
+        self.flush();
     }
 
     pub fn power(&mut self, on: bool) {

@@ -214,3 +214,36 @@ fn pairing_says_yes_only_on_enter() {
     d.keys("enter");
     assert_eq!(log.borrow().answers, [true]);
 }
+
+#[test]
+fn a_phone_that_paired_on_a_private_address_is_followed() {
+    // An iPhone pairs from a private address; BlueZ then gives the device
+    // its own address, on the same object.
+    let private = "58:68:08:74:3B:84";
+    let path = "/org/bluez/hci0/dev_4F_A2_48_D0_4F_AD";
+    let d = dir("moved");
+    store::save_hosts(&d, &[Host::new(private, "iPhone", System::Ios)]).unwrap();
+    let mut bt = FakeBt::new().host(path, "iPhone", "phone", true);
+    bt.devices[0].address = "F8:2A:E2:48:8E:99".into();
+    bt.queue
+        .push(Event::Moved(private.into(), "F8:2A:E2:48:8E:99".into()));
+    let log = bt.log.clone();
+    let app = App::with(
+        Box::new(bt),
+        Box::new(FakeCable::new(UsbState::Off)),
+        d.clone(),
+    )
+    .opening(Some(Target::Bt(private.into())), Open::Session(TYPE));
+    let mut drv = Driver::new(app);
+    drv.wait(50).keys("type a");
+    assert_eq!(
+        pressed(&log),
+        [(0, key::A)],
+        "typing reaches the moved host"
+    );
+    assert_eq!(
+        store::hosts(&d)[0].address,
+        "F8:2A:E2:48:8E:99",
+        "saved under its own address"
+    );
+}

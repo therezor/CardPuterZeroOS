@@ -51,6 +51,8 @@ pub struct Shared {
     radio_job: Option<Job>,
     /// Bluetooth was asked on before BlueZ said whether it is.
     want_radio: bool,
+    /// Hosts whose address changed after pairing: old, new.
+    moves: Vec<(String, String)>,
     /// Unblocks the radio; tests and mockups pass one that can't fail.
     pub unblock: fn() -> std::io::Result<()>,
 }
@@ -89,6 +91,7 @@ impl Shared {
             show_typed: true,
             radio_job: None,
             want_radio: false,
+            moves: Vec::new(),
             unblock: unblock_bluetooth,
         }
     }
@@ -191,9 +194,45 @@ impl Shared {
         self.send(&out);
     }
 
+    /// BlueZ's path for the host at `address`: the device BlueZ has with
+    /// that address, else the path it would have.
+    pub fn path_for(&self, address: &str) -> String {
+        self.device(address)
+            .map(|d| d.path.clone())
+            .unwrap_or_else(|| store::path_of(address))
+    }
+
+    /// The address a host has now, if it moved: `address` was the private
+    /// one it paired with, and BlueZ has since learned its own.
+    pub fn moved_to(&self, address: &str) -> Option<String> {
+        self.moves
+            .iter()
+            .find(|(old, _)| old == address)
+            .map(|(_, new)| new.clone())
+    }
+
+    /// A phone pairs from a private address and then gives its own: BlueZ
+    /// keeps the device and changes its address. The host follows.
+    fn moved(&mut self, from: &str, to: &str) {
+        let Some(h) = self.hosts.iter_mut().find(|h| h.address == from) else {
+            return;
+        };
+        h.address = to.to_string();
+        if self.target == Some(Target::Bt(from.to_string())) {
+            self.target = Some(Target::Bt(to.to_string()));
+        }
+        self.moves.push((from.to_string(), to.to_string()));
+        self.save_hosts();
+        self.sync_hosts();
+    }
+
     /// Tells the link which devices are the app's hosts.
     pub fn sync_hosts(&mut self) {
-        let paths = self.hosts.iter().map(Host::path).collect();
+        let paths = self
+            .hosts
+            .iter()
+            .map(|h| self.path_for(&h.address))
+            .collect();
         if let Some(bt) = &mut self.bt {
             bt.set_hosts(paths);
         }
@@ -239,7 +278,9 @@ impl Shared {
     /// keyboard. Sent when one connects and when the app comes back, not on
     /// a timer.
     pub fn battery(&mut self) {
-        let Some(b) = gh0st_app::system::battery() else { return };
+        let Some(b) = gh0st_app::system::battery() else {
+            return;
+        };
         if let Some(bt) = &mut self.bt {
             bt.battery(b.percent);
         }
@@ -250,6 +291,7 @@ impl Shared {
     fn event(&mut self, e: &Event, cx: &mut Cx) {
         match e {
             Event::Ready => self.sync_hosts(),
+            Event::Moved(from, to) => self.moved(from, to),
             Event::Power(false) if self.want_radio => self.radio_on(cx),
             Event::Power(true) => self.want_radio = false,
             Event::Leds(v) => self.leds = *v,
@@ -273,7 +315,11 @@ impl Shared {
                 }
             }
             Event::Disconnected(path) => {
-                let ours = matches!(&self.target, Some(Target::Bt(a)) if address_of(path).as_ref() == Some(a));
+                let addr = self
+                    .device_at(path)
+                    .map(|d| d.address.clone())
+                    .or_else(|| address_of(path));
+                let ours = matches!(&self.target, Some(Target::Bt(a)) if addr.as_ref() == Some(a));
                 if ours {
                     let mut out = Vec::new();
                     self.engine.release_all(&mut out);
@@ -739,12 +785,13 @@ impl Page for App {
                     bt.stop();
                 }
                 self.s.usb.stop();
-            } else if handheld
-                && let (Some(Target::Bt(a)), Some(bt)) = (&self.s.target, &mut self.s.bt)
-            {
+            } else if handheld && let Some(Target::Bt(a)) = &self.s.target {
                 // A phone gets its own keyboard back.
-                bt.reconnect(false);
-                bt.disconnect(&store::path_of(a));
+                let path = self.s.path_for(a);
+                if let Some(bt) = &mut self.s.bt {
+                    bt.reconnect(false);
+                    bt.disconnect(&path);
+                }
             }
             self.sync_watches(cx);
             return;

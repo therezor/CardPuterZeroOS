@@ -501,9 +501,10 @@ impl Screen for Session {
             UNLINK => {
                 if let Some(Target::Bt(a)) = s.target.clone() {
                     s.release();
+                    let path = s.path_for(&a);
                     if let Some(bt) = &mut s.bt {
                         bt.reconnect(false);
-                        bt.disconnect(&crate::store::path_of(&a));
+                        bt.disconnect(&path);
                     }
                     return Nav::Pop;
                 }

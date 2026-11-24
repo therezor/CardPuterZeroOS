@@ -14,6 +14,8 @@ pub const NO_BT: &str = "Bluetooth isn't working";
 pub const BT_OFF: &str = "Bluetooth off";
 pub const CONNECTED: &str = "Connected";
 pub const WAITING: &str = "Waiting";
+pub const BT_NAME: &str = "Bluetooth name";
+pub const BT_NAME_NOTE: &str = "Hosts see it while pairing.";
 pub const FORGOT: &str = "Forgotten. Pair it again to use it.";
 
 pub fn usb_note(s: crate::link::UsbState) -> &'static str {

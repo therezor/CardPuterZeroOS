@@ -229,9 +229,16 @@ impl Screen for Pair {
             }
             Event::AdvertEnded => self.phase = Phase::Ended,
             Event::Paired(path) => {
-                let Some(addr) = address_of(path) else {
+                let addr = s
+                    .device_at(path)
+                    .map(|d| d.address.clone())
+                    .filter(|a| !a.is_empty());
+                let Some(addr) = addr.or_else(|| address_of(path)) else {
                     return Nav::Stay;
                 };
+                if let Some(bt) = &mut s.bt {
+                    bt.trust(path);
+                }
                 let (name, system) = match s.device_at(path) {
                     Some(d) => (d.name.clone(), System::guess(&d.icon, &d.modalias)),
                     None => (addr.clone(), System::Windows),

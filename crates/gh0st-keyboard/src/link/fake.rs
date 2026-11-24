@@ -128,6 +128,10 @@ impl Bluetooth for FakeBt {
     fn forget(&mut self, device: &str) {
         self.devices.retain(|d| d.path != device);
     }
+    fn set_name(&mut self, name: &str) {
+        self.name = name.into();
+    }
+    fn trust(&mut self, _: &str) {}
     fn send(&mut self, r: &Report) -> bool {
         if self.connected.is_none() {
             return false;

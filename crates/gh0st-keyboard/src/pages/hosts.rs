@@ -7,7 +7,6 @@ use crate::app::{Nav, Screen, Shared, Target};
 use crate::host::System;
 use crate::link::{Advert, Event, UsbState};
 use crate::pages::{pair::Pair, profile::Profile, session::Session};
-use crate::store;
 use crate::words;
 
 const PAIR: u32 = 1;
@@ -15,6 +14,7 @@ const EDIT: u32 = 2;
 const UNLINK: u32 = 3;
 const USB_ON: u32 = 4;
 const FORGET: u32 = 5;
+const NAME: u32 = 6;
 
 pub fn icon_of(system: System) -> &'static str {
     match system {
@@ -91,9 +91,10 @@ impl Hosts {
 
     fn unlink(s: &mut Shared, address: &str) {
         s.release();
+        let path = s.path_for(address);
         if let Some(bt) = &mut s.bt {
             bt.reconnect(false);
-            bt.disconnect(&store::path_of(address));
+            bt.disconnect(&path);
         }
     }
 
@@ -102,8 +103,9 @@ impl Hosts {
             s.release();
             s.target = None;
         }
+        let path = s.path_for(address);
         if let Some(bt) = &mut s.bt {
-            bt.forget(&store::path_of(address));
+            bt.forget(&path);
         }
         s.hosts.retain(|h| h.address != address);
         s.save_hosts();
@@ -211,6 +213,11 @@ impl Screen for Hosts {
             "USB keyboard",
             s.usb.state() != UsbState::Off,
         ));
+        c.add(
+            Command::action(NAME, words::BT_NAME)
+                .opens()
+                .enabled(s.bt.is_some()),
+        );
     }
 
     fn command(&mut self, s: &mut Shared, id: u32, _: Step, cx: &mut Cx) -> Nav {
@@ -224,6 +231,20 @@ impl Screen for Hosts {
                 if let Some(a) = self.selected_host(s) {
                     Hosts::unlink(s, &a);
                 }
+                Nav::Stay
+            }
+            NAME => {
+                let name =
+                    s.bt.as_ref()
+                        .map(|b| b.name().to_string())
+                        .unwrap_or_default();
+                cx.ask(
+                    NAME,
+                    Dialog::text(words::BT_NAME, "name")
+                        .value(&name)
+                        .line(words::BT_NAME_NOTE)
+                        .yes("save"),
+                );
                 Nav::Stay
             }
             FORGET => {
@@ -243,6 +264,18 @@ impl Screen for Hosts {
             }
             _ => Nav::Stay,
         }
+    }
+
+    fn answer(&mut self, s: &mut Shared, id: u32, a: Answer, _: &mut Cx) -> Nav {
+        if let (NAME, Answer::Yes(name)) = (id, a) {
+            let name = name.trim();
+            if !name.is_empty()
+                && let Some(bt) = &mut s.bt
+            {
+                bt.set_name(name);
+            }
+        }
+        Nav::Stay
     }
 
     fn event(&mut self, s: &mut Shared, e: &Event, _: &mut Cx) -> Nav {

@@ -59,6 +59,9 @@ pub enum Event {
     },
     /// The host the user paired is bonded.
     Paired(String),
+    /// A device's address changed: a phone pairs from a private address,
+    /// then gives its own. From, to.
+    Moved(String, String),
     /// The host gave up pairing.
     PairCancelled,
     /// The advert ran out: no host came.
@@ -94,6 +97,9 @@ pub trait Bluetooth {
     fn passkey(&mut self, code: u32);
     fn disconnect(&mut self, device: &str);
     fn forget(&mut self, device: &str);
+    /// The name hosts see while pairing.
+    fn set_name(&mut self, name: &str);
+    fn trust(&mut self, device: &str);
     fn send(&mut self, r: &Report) -> bool;
     fn battery(&mut self, percent: u8);
     fn stop(&mut self);
@@ -153,6 +159,12 @@ impl Bluetooth for ble::Ble {
     }
     fn forget(&mut self, device: &str) {
         ble::Ble::forget(self, device)
+    }
+    fn set_name(&mut self, name: &str) {
+        ble::Ble::set_name(self, name)
+    }
+    fn trust(&mut self, device: &str) {
+        ble::Ble::trust(self, device)
     }
     fn send(&mut self, r: &Report) -> bool {
         ble::Ble::send(self, r)
