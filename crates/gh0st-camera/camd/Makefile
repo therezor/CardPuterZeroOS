@@ -50,8 +50,8 @@ $(O)/mp4cat: $(O)/mp4cat.o $(O)/mp4.o
 # A host check of the player against the silent stub server.
 playcheck: $(O)/playcheck
 
-$(O)/playcheck: $(addprefix $(O)/,$(addsuffix .o,playcheck player pulse_stub))
-	$(CXX) -o $@ $^ $(AV_LIBS) -pthread
+$(O)/playcheck: $(addprefix $(O)/,$(addsuffix .o,playcheck player pulse_stub still))
+	$(CXX) -o $@ $^ $(AV_LIBS) $(JPEG_LIBS) -pthread
 
 # Host checks of what reads files from elsewhere (still_check.cpp).
 check: $(O)/still_check

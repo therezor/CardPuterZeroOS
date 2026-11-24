@@ -1,5 +1,6 @@
 #include "player.h"
 #include "pulse.h"
+#include "still.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -206,6 +207,19 @@ struct Player::State {
 
     void show(AVFrame *f)
     {
+        std::vector<uint16_t> px(size_t(outW) * outH);
+        if (f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVJ420P) {
+            // The VPU's pictures sit in uncached memory: swscale reading
+            // all of a 1080p one runs at half speed. The preview's path
+            // copies only the rows it shows, then converts from cache.
+            View v{View::YUV420, f->width, f->height,
+                   {f->data[0], f->data[1], f->data[2]},
+                   {f->linesize[0], f->linesize[1], f->linesize[2]},
+                   f->color_range != AVCOL_RANGE_JPEG && f->format != AV_PIX_FMT_YUVJ420P};
+            viewTo565(v, outW, outH, px.data());
+            put(px);
+            return;
+        }
         sws = sws_getCachedContext(sws, f->width, f->height, AVPixelFormat(f->format), outW, outH,
                                    AV_PIX_FMT_RGB565LE, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws)
@@ -217,10 +231,14 @@ struct Player::State {
         int full = f->color_range == AVCOL_RANGE_JPEG || f->format == AV_PIX_FMT_YUVJ420P;
         const int *coef = sws_getCoefficients(cs);
         sws_setColorspaceDetails(sws, coef, full, coef, 1, 0, 1 << 16, 1 << 16);
-        std::vector<uint16_t> px(size_t(outW) * outH);
         uint8_t *dst[4] = {reinterpret_cast<uint8_t *>(px.data()), nullptr, nullptr, nullptr};
         int stride[4] = {outW * 2, 0, 0, 0};
         sws_scale(sws, f->data, f->linesize, 0, f->height, dst, stride);
+        put(px);
+    }
+
+    void put(std::vector<uint16_t> &px)
+    {
         std::lock_guard<std::mutex> l(mu);
         front.swap(px);
         fresh = true;

@@ -252,7 +252,11 @@ Zoom and exposure start at 1x and ±0 on every launch.
 - `player.cpp`: plays a video. One thread reads the file ahead, one decodes
   the picture (the VPU's `h264_v4l2m2m`, software when it can't) and keeps
   it on the clock, one decodes the sound and writes it to the server. A
-  late picture is dropped. A seek opens the hardware decoder again, as not
+  late picture is dropped. The VPU's pictures sit in uncached memory, so
+  they take the preview's path: the rows shown are copied out, then
+  converted from cache (swscale reading a whole 1080p picture there plays
+  at half speed). On the board: 30 fps at about a third of one core. A
+  seek opens the hardware decoder again, as not
   every build of it can flush; 60 packets with no picture move it to
   software, and software failing ends in `playerr`. Paused or at the end,
   nothing polls and the sound stream closes, so the codec sleeps. Only the
