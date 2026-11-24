@@ -24,7 +24,11 @@ fn main() {
     if what == "save" {
         opts.push(("current_name", Value::str("new.txt")));
     }
-    let member = if what == "save" { "SaveFile" } else { "OpenFile" };
+    let member = if what == "save" {
+        "SaveFile"
+    } else {
+        "OpenFile"
+    };
     let m = Message::call(
         "org.freedesktop.portal.Desktop",
         "/org/freedesktop/portal/desktop",
@@ -48,7 +52,12 @@ fn main() {
         while let Ok(Some(m)) = c.recv() {
             if m.kind == Kind::Signal && m.is("org.freedesktop.portal.Request", "Response") {
                 let code = m.body.first().and_then(Value::as_u32);
-                let uris = m.body.get(1).and_then(|r| r.get("uris")).map(Value::inner).cloned();
+                let uris = m
+                    .body
+                    .get(1)
+                    .and_then(|r| r.get("uris"))
+                    .map(Value::inner)
+                    .cloned();
                 println!("response {code:?} {uris:?}");
                 return;
             }
