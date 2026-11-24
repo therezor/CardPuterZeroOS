@@ -58,7 +58,8 @@ move out, so Copy takes 7. On a server's row in Places: 5 Edit, 7 Forget,
 pressed twice.
 
 The menu (≡) also has Compress to zip, Same folder on both sides, Sort by
-(name, size, date, type), Hidden files, Add server and Empty the Trash.
+(name, size, date, type), Hidden files, Add server, SSH key and Empty the
+Trash.
 Sort and hidden files are kept in `files.sort` and `files.hidden`.
 
 ## Asking first
@@ -77,7 +78,8 @@ Sort and hidden files are kept in `files.sort` and `files.hidden`.
 
 The server form is a list: Type, Address (`host`, `host:port` or
 `[v6]:port`), User, Password, Remember it, Folder, Name. Connect on 6 saves
-it and opens it on the current side.
+it and opens it on the current side. An SFTP server opens at the user's home
+(`~`) unless Folder says otherwise; the others open at `/`.
 
 | Type | Port | How |
 |---|---|---|
@@ -109,8 +111,11 @@ lists it under Files.
   asks the page for a secret, and gets it once.
 
 SSH has its own files in `~/.local/share/gh0st-files/ssh`, outside `~/.ssh`:
-`known_hosts`, and a key Files makes on request. The key is sealed with a
-random passphrase kept in the keyring, so the file alone opens nothing.
+`known_hosts`, and a key. The menu's SSH key makes one, ed25519, sealed with
+a random passphrase kept in the keyring, so the file alone opens nothing. It
+then shows the public half as text and a QR code, for the server's
+`authorized_keys`. When ssh needs the passphrase, Files answers from the
+keyring without asking.
 
 A server never seen before shows its key's SHA-256 fingerprint whole, in
 groups of four, before anything is sent. A key that changed is refused, and
@@ -140,13 +145,27 @@ page (gh0st-files) ──socket pair──> worker (gh0st-files --worker)
 
 - **The page** lists a local folder itself: `readdir` is quick. Everything
   that can be slow goes to the worker, so the page never blocks.
-- **The worker** is a child on a socket pair, joined to the page's loop. It
-  runs one `poll` loop, starts on first use, and exits when idle with no
-  server open. Requests and events (`src/engine.rs`) carry an id. Names
-  travel escaped, so tabs and newlines in them survive.
-- **Copies** go between any two places in 64 KB chunks with progress. A move
-  on one filesystem is a rename. One transfer runs at a time. The top bar
-  shows its percent, and `t` shows the file, the bytes and a Stop chip.
+- **The worker** is a child on a stream socket pair, joined to the page's
+  loop. It starts on the first request and ends with the app. It runs one
+  request at a time in one `poll` loop. While a request waits on the
+  network or a child, the loop keeps reading the page, so answers and Stop
+  arrive. Requests and events (`src/engine.rs`, `src/proto.rs`) carry an id,
+  one line each; fields travel escaped, so tabs and newlines in names
+  survive. Idle, it sleeps in `poll`.
+- **SFTP** is our version 3 client (`src/worker/sftp.rs`) over `ssh -s
+  sftp`, with `-F /dev/null` and Files' own known hosts and key. ssh's
+  questions go to an askpass program, which is this binary again: it
+  carries the prompt to the worker over a socket in a folder only the user
+  can open (ssh closes inherited fds, so a path is the way through). The
+  worker asks the page, and the page asks the keyring or the user.
+- **FTP, FTPS and WebDAV** run curl once a call (`src/worker/curl.rs`). FTP
+  lists with MLSD, and with LIST where a server lacks it. WebDAV lists with
+  PROPFIND, read by a small scanner that ignores namespace prefixes.
+- **Copies** go between any two places with progress: 64 KB chunks on the
+  card, 32 KB requests over SFTP, curl's own transfer elsewhere. Between two
+  servers a file waits on the card. A move on one filesystem is a rename;
+  otherwise a copy, then the delete. One transfer runs at a time. The top
+  bar shows its percent, and `t` shows the file, the bytes and a Stop chip.
 - The app may run behind (`X-Gh0st-Background`), so a transfer goes on when
   it leaves the front. It keeps the device awake while one runs and posts a
   notice when it ends unseen.
@@ -160,11 +179,19 @@ page (gh0st-files) ──socket pair──> worker (gh0st-files --worker)
   worker (`src/fake.rs`): copy and its target, the Trash, a held delete,
   Esc to Places, idle wakes, and passwords against the real Secret Service
   with no bus (kept once working, used without asking, never in the file).
+- **`tests/worker.rs`** drives the real worker binary: copies, moves and
+  conflicts, the Trash, a queued Stop, archives (one with an entry that
+  climbs out), SFTP against the system's `sftp-server` with no network, and
+  making the SSH key. With `GH0ST_FILES_SSH=user:password@host` it also runs
+  real ssh: the host-key question, a wrong password asked again, and the
+  key known the second time, as a trixie container with sshd runs it.
 - **The mockups** are fixtures: every scene in every palette under the
   design lint.
 
 ## Limits
 
 - No SMB: curl can't list an SMB folder.
+- A text file on a server opens once copied to the card.
+- An archive with a password doesn't open.
 - No editor, and no "open with": an app can't be started with a file yet.
 - The viewer reads text. Images, audio and video show their info.

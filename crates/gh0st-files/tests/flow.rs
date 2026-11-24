@@ -416,3 +416,39 @@ fn only_the_server_that_listed_keeps_its_password() {
         "pi never listed: its password isn't kept"
     );
 }
+
+/// The page with the real worker binary: Copy on the card, end to end.
+#[test]
+fn the_real_worker_copies_from_side_to_side() {
+    let h = Home::new("real");
+    std::fs::create_dir_all(h.home().join("Backup")).unwrap();
+    let exe = std::path::PathBuf::from(env!("CARGO_BIN_EXE_gh0st-files"));
+    let engine = gh0st_files::child::Child::with_exe(exe)
+        .env("HOME", &h.home().to_string_lossy())
+        .env("GH0ST_FILES_DATA", &h.dir.join("data").to_string_lossy());
+    let page = Files::with(Options {
+        home: h.home(),
+        data: Some(h.dir.join("data")),
+        engine: Box::new(engine),
+        keyring: Keyring::over(None),
+    });
+    let mut d = Driver::new(page);
+    d.frame();
+    // B: Places, then Home, then Backup. A: Music, mark b.flac, copy.
+    keys(
+        &mut d,
+        "tab\nenter\nenter\ntab\nx\nenter\nx\nspace\n6\nenter",
+    );
+    for _ in 0..50 {
+        d.pump(100);
+        if h.home().join("Backup/b.flac").exists() && d.toast().is_some() {
+            break;
+        }
+    }
+    assert_eq!(std::fs::read(h.home().join("Backup/b.flac")).unwrap(), b"b");
+    assert_eq!(d.toast(), Some("Copied 1 item"));
+    // Once done and the toast gone, nothing is left running.
+    d.wait(3000);
+    let wakes = d.idle_wakes(600_000);
+    assert!(wakes <= 11, "{wakes}");
+}

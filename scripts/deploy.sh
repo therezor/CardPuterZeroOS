@@ -72,11 +72,12 @@ if [ "${1:-}" = camera ]; then
 fi
 
 cargo build --release --target "$target" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
-    -p gh0st-store -p gh0st-keyring --manifest-path "$root/Cargo.toml"
+    -p gh0st-store -p gh0st-keyring -p gh0st-files --manifest-path "$root/Cargo.toml"
 out="$root/target/$target/release"
 
 scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" "$out/gh0st-update" "$out/gh0st-store" \
-    "$out/gh0st-keyring" "$root/packaging/applications/keyring.desktop" \
+    "$out/gh0st-keyring" "$out/gh0st-files" "$root/packaging/applications/keyring.desktop" \
+    "$root/packaging/applications/files.desktop" \
     "$root/packaging/applications/store.desktop" \
     "$root/packaging/applications/settings.desktop" \
     "$root/packaging/applications/terminal.desktop" \
@@ -97,6 +98,7 @@ remote 'set -e
     sudo install -m 755 /tmp/gh0st-update /usr/bin/gh0st-update
     sudo install -m 755 /tmp/gh0st-store /usr/bin/gh0st-store
     sudo install -m 755 /tmp/gh0st-keyring /usr/bin/gh0st-keyring
+    sudo install -m 755 /tmp/gh0st-files /usr/bin/gh0st-files
     sudo ln -sf gh0st /usr/bin/gh0st-shell
     # The keyring vault folder, outside the home folder.
     sudo install -m 644 /tmp/gh0st-keyring.tmpfiles /usr/lib/tmpfiles.d/gh0st-keyring.conf
@@ -107,7 +109,7 @@ remote 'set -e
     sudo ln -f /usr/bin/gh0st /usr/libexec/gh0st-helper
     sudo install -d /usr/share/gh0st/applications /etc/systemd/user/APPLaunch.service.d
     sudo install -m 644 /tmp/store.desktop /tmp/settings.desktop /tmp/terminal.desktop \
-        /tmp/update.desktop /tmp/keyring.desktop /usr/share/gh0st/applications/
+        /tmp/update.desktop /tmp/keyring.desktop /tmp/files.desktop /usr/share/gh0st/applications/
     cd /tmp/gh0st-update-units
     sudo install -m 644 -t /usr/lib/systemd/system gh0st-update-check.service \
         gh0st-update-daily.service gh0st-update-daily.timer gh0st-update-install.service
@@ -127,6 +129,7 @@ remote 'set -e
     sudo rm -f /usr/share/polkit-1/actions/org.cpzero.gh0st.policy
     sudo systemctl daemon-reload
     rm -rf /tmp/gh0st /tmp/gh0st-settings /tmp/gh0st-term /tmp/gh0st-update /tmp/gh0st-store \
+        /tmp/gh0st-keyring /tmp/gh0st-files /tmp/keyring.desktop /tmp/files.desktop \
         /tmp/gh0st-store-units /tmp/gh0st-palettes /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
         /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy'

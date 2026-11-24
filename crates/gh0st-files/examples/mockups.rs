@@ -257,12 +257,19 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
         scene("31-help-more", "help\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx"),
         scene("32-menu-end", "8\nf"),
         scene("33-help-places", "tab\nhelp"),
+        scene("34-ssh-key", "8\nf\nf\nf\nf\nenter"),
+        scene("35-ssh-key-made", "8\nf\nf\nf\nf\nenter"),
     ];
     for s in scenes {
         let dir = base.join(s.name);
         let h = home(&dir);
         let data = dir.join("data");
         servers::save(&data.join("servers"), &saved()).unwrap();
+        if s.name.ends_with("key-made") {
+            let pubkey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILIg9mVq2k4yH0dJ7tXo3wQ5Zr8fPq1nB6uLm2sVcT0a gh0st-files";
+            std::fs::create_dir_all(data.join("ssh")).unwrap();
+            std::fs::write(data.join("ssh/id_ed25519.pub"), pubkey).unwrap();
+        }
         let page = Files::with(Options {
             home: h,
             data: Some(data),

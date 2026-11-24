@@ -31,7 +31,10 @@ struct W {
 
 impl W {
     fn new(t: &Tmp, extra: &[(&str, &str)]) -> W {
-        let exe = PathBuf::from(env!("CARGO_BIN_EXE_gh0st-files"));
+        // GH0ST_FILES_EXE runs these where cargo didn't build them: the device.
+        let exe = std::env::var_os("GH0ST_FILES_EXE")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_gh0st-files")));
         let mut c = Child::with_exe(exe)
             .env("HOME", &t.0.join("home").to_string_lossy())
             .env("GH0ST_FILES_DATA", &t.0.join("data").to_string_lossy());
