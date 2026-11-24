@@ -122,12 +122,15 @@ build_camd() {
     for n in libcamera0.7 libcamera-dev; do
         dpkg -x "$(deb_path "$(jq -r --arg n "$n" '.rpt[] | select(.name == $n) | .url' "$LOCK")")" "$sys"
     done
+    # From clean: -MP dependency files hide a header that moved.
+    rm -rf "$WORK/camd"
     make -s -C "$SRC/crates/gh0st-camera/camd" O="$WORK/camd" SYSROOT="$sys"
 }
 
 # The media helper, against the image's ffmpeg and the libraries it loads.
 build_mediad() {
     log "media helper"
+    rm -rf "$WORK/mediad"
     make -s -C "$SRC/crates/gh0st-media/mediad" O="$WORK/mediad"
 }
 
