@@ -78,9 +78,19 @@ impl System {
         if self.apple() { "Cmd" } else { "Alt" }
     }
 
-    /// A guess from what BlueZ says of the device: its icon and modalias.
-    /// The user can change it on the host's page.
-    pub fn guess(icon: &str, modalias: &str) -> System {
+    /// A guess from what BlueZ says of the device: its name, icon and
+    /// modalias. The user can change it on the host's page.
+    pub fn guess(name: &str, icon: &str, modalias: &str) -> System {
+        let lower = name.to_lowercase();
+        if lower.contains("iphone") || lower.contains("ipad") {
+            return System::Ios;
+        }
+        if ["macbook", "imac", "mac mini", "mac pro", "mac studio"]
+            .iter()
+            .any(|m| lower.contains(m))
+        {
+            return System::Mac;
+        }
         let apple = modalias.contains("v004C") || modalias.contains("v05AC");
         match (icon, apple) {
             ("phone", true) => System::Ios,
@@ -105,12 +115,12 @@ mod tests {
 
     #[test]
     fn guesses_from_bluez() {
-        assert_eq!(
-            System::guess("phone", "bluetooth:v004Cp7213d1360"),
-            System::Ios
-        );
-        assert_eq!(System::guess("phone", ""), System::Android);
-        assert_eq!(System::guess("computer", "usb:v05ACp0000"), System::Mac);
-        assert_eq!(System::guess("computer", ""), System::Windows);
+        let g = System::guess;
+        assert_eq!(g("", "phone", "bluetooth:v004Cp7213d1360"), System::Ios);
+        assert_eq!(g("iPhone REZOR", "phone", ""), System::Ios);
+        assert_eq!(g("Pixel 9", "phone", ""), System::Android);
+        assert_eq!(g("Alex's MacBook Air", "computer", ""), System::Mac);
+        assert_eq!(g("", "computer", "usb:v05ACp0000"), System::Mac);
+        assert_eq!(g("DESKTOP-1", "computer", ""), System::Windows);
     }
 }

@@ -240,7 +240,7 @@ impl Screen for Pair {
                     bt.trust(path);
                 }
                 let (name, system) = match s.device_at(path) {
-                    Some(d) => (d.name.clone(), System::guess(&d.icon, &d.modalias)),
+                    Some(d) => (d.name.clone(), System::guess(&d.name, &d.icon, &d.modalias)),
                     None => (addr.clone(), System::Windows),
                 };
                 if s.host(&addr).is_none() {
