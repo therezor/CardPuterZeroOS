@@ -246,6 +246,14 @@ impl Media {
         }
     }
 
+    /// The helper keeps the viewed picture, up to 8 MP, for pans and
+    /// zooms: it goes once nothing shows it.
+    fn forget(&self) {
+        if matches!(self.view, View::Viewer | View::Player) {
+            self.send(&Cmd::Forget);
+        }
+    }
+
     fn id(&mut self) -> u32 {
         self.next_id = self.next_id.wrapping_add(1).max(1);
         self.next_id
@@ -366,6 +374,7 @@ impl Media {
         self.tiles = gh0st_app::Tiles::new(GRID_COLS, GRID_ROWS);
         self.tiles.set_len(self.entries.len());
         self.tiles.select(select);
+        self.forget();
         self.view = View::Grid;
         self.asks.retain(|a| !matches!(a.what, For::Tile(_)));
         self.want_tiles();
@@ -451,6 +460,9 @@ impl Media {
         // Music plays on under a still picture; a video takes the player.
         if !(self.music && e.look == Look::Picture) {
             self.stop_play();
+        }
+        if e.look == Look::Video {
+            self.forget();
         }
         self.full = Picture::default();
         self.show_info = false;
@@ -1665,6 +1677,7 @@ impl Page for Media {
                 // Another app opened this file here: Esc goes back to it.
                 if std::mem::take(&mut self.given) {
                     if self.music {
+                        self.forget();
                         cx.leave();
                     } else {
                         cx.quit();
@@ -1677,7 +1690,7 @@ impl Page for Media {
                 cx.keep_awake(false);
                 self.full = Picture::default();
                 self.asks.retain(|a| matches!(a.what, For::Tile(_)));
-                self.send(&Cmd::Forget);
+                self.forget();
                 self.view = View::Grid;
                 self.want_tiles();
                 false

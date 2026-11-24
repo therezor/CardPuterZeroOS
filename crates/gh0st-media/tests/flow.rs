@@ -235,3 +235,33 @@ fn the_grid_and_a_paused_video_rest_and_a_slideshow_keeps_awake_only_while_it_ru
     assert!(!d.awake(), "paused, the screen may go dark");
     assert!(d.idle_wakes(600_000) <= 11, "a paused video");
 }
+
+#[test]
+fn the_helper_lets_go_of_a_picture_once_nothing_shows_it() {
+    use gh0st_media::fake::forgotten;
+    use std::time::{Duration, SystemTime};
+    let h = home("forget");
+    let trip = h.join("Pictures/Trip");
+    std::fs::create_dir_all(&trip).unwrap();
+    // Newest first: the clip, then the photo.
+    for (n, age) in [("x.jpg", 60), ("y.mp4", 0)] {
+        let f = std::fs::File::create(trip.join(n)).unwrap();
+        f.set_modified(SystemTime::now() - Duration::from_secs(age))
+            .unwrap();
+    }
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "o");
+    d.answer_pick(Some(vec![trip.join("x.jpg")]));
+    d.pump(300);
+    d.frame();
+    assert_eq!(forgotten(&trip), 0, "the photo shows");
+    step(&mut d, "left");
+    assert_eq!(forgotten(&trip), 1, "the clip took the screen");
+    step(&mut d, "esc");
+    let before = forgotten(&trip);
+    step(&mut d, "right\nenter");
+    step(&mut d, "esc");
+    assert_eq!(forgotten(&trip), before + 1, "back to the grid");
+}

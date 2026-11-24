@@ -9,10 +9,23 @@ use crate::proto::{Cmd, Event, Fail, Flags, Info, Kind, PlayState, Tags};
 use gh0st_app::frames::Ring;
 use gh0st_app::rt;
 use gh0st_app::sidecar::Link;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// A picture every 40 ms while a video plays.
 const FRAME_MS: u64 = 40;
+
+/// The folder of the picture viewed last, each time the app said `forget`.
+static FORGOTTEN: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// How often the app let go of a picture it viewed in `dir`: tests check
+/// the helper is not left holding one.
+pub fn forgotten(dir: &Path) -> usize {
+    FORGOTTEN
+        .lock()
+        .map(|l| l.iter().filter(|d| d.as_path() == dir).count())
+        .unwrap_or(0)
+}
 
 struct Play {
     id: u32,
@@ -37,6 +50,7 @@ struct Fake {
     next_frame: u64,
     play: Option<Play>,
     next: Option<(u32, String)>,
+    viewed: Option<PathBuf>,
 }
 
 fn seed_of(path: &str) -> u32 {
@@ -250,6 +264,7 @@ pub fn serve(link: Link, ring: Ring) {
         next_frame: 0,
         play: None,
         next: None,
+        viewed: None,
     };
     loop {
         let now = rt::now_ms();
@@ -488,7 +503,14 @@ impl Fake {
         match cmd {
             Cmd::Hello => self.say(Event::Hello(crate::proto::VERSION.into())),
             Cmd::Quit => return false,
-            Cmd::Forget => {}
+            Cmd::Forget => {
+                let dir = self.viewed.take();
+                if let (Some(d), Ok(mut l)) =
+                    (dir.as_ref().and_then(|p| p.parent()), FORGOTTEN.lock())
+                {
+                    l.push(d.to_path_buf());
+                }
+            }
             Cmd::Probe { id, path } => match info_of(&s(&path)) {
                 Ok(info) => self.say(Event::Info { id, info }),
                 Err(why) => self.say(Event::Fail { id, why }),
@@ -508,7 +530,10 @@ impl Fake {
                 cx,
                 cy,
                 path,
-            } => self.picture(id, false, &s(&path), (w, h), zoom, (cx, cy)),
+            } => {
+                self.picture(id, false, &s(&path), (w, h), zoom, (cx, cy));
+                self.viewed = Some(path);
+            }
             Cmd::PlayOpen {
                 id,
                 w,

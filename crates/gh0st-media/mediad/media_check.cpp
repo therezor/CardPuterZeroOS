@@ -86,6 +86,28 @@ double diff(const Pic &a, const Pic &b)
     return sum / double(a.px.size());
 }
 
+// A picture with no alpha scales straight to RGB565: its colour must come
+// through as pack565 gives it, give or take swscale's dither.
+void colours()
+{
+    struct Want {
+        const char *name;
+        int r, g, b;
+    };
+    for (Want w : {Want{"tall.png", 160, 90, 40}, Want{"pano.png", 40, 160, 90}}) {
+        Stills s;
+        Pic p;
+        s.view(at(w.name), 320, 170, 1, 0.5f, 0.5f, p);
+        uint16_t got = p.empty() ? 0 : p.px[size_t(p.h / 2) * p.w + p.w / 2];
+        uint16_t want = gh0st::pack565(w.r, w.g, w.b);
+        int dr = (got >> 11) - (want >> 11), dg = ((got >> 5) & 63) - ((want >> 5) & 63),
+            db = (got & 31) - (want & 31);
+        char what[100];
+        snprintf(what, sizeof what, "%s keeps its colour: %04x for %04x", w.name, got, want);
+        expect(std::abs(dr) <= 1 && std::abs(dg) <= 1 && std::abs(db) <= 1, what);
+    }
+}
+
 // orient-N.jpg holds orient-1's pixels with tag N: shown upright, each is
 // orient-1's picture turned as N says.
 void orientations()
@@ -164,6 +186,7 @@ int main(int argc, char **argv)
     expect(t.title == "Corpus" && t.artist == "gh0st" && t.album == "Tests", "tags: " + t.title);
 
     orientations();
+    colours();
     zoomed();
     refused("bomb.png", Fail::TooBig);
     refused("truncated.png", Fail::Corrupt);
