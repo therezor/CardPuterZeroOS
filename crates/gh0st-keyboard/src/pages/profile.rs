@@ -98,6 +98,7 @@ impl Screen for Profile {
             }
             s.hosts.retain(|h| h.address != self.address);
             s.save_hosts();
+            s.sync_hosts();
             cx.toast(words::FORGOT);
             return Nav::Pop;
         }

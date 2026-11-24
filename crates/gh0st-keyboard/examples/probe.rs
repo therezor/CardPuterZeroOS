@@ -68,7 +68,17 @@ fn main() {
             println!("{:>7} ms  {e:?}", start.elapsed().as_millis());
             match e {
                 Event::Power(false) => ble.power(true),
-                Event::Ready if again => ble.reconnect(true),
+                Event::Ready if again => {
+                    // Every bonded device counts as a host here.
+                    let paired = ble
+                        .devices()
+                        .iter()
+                        .filter(|d| d.paired)
+                        .map(|d| d.path.clone())
+                        .collect();
+                    ble.set_hosts(paired);
+                    ble.reconnect(true);
+                }
                 Event::Ready => ble.pair(true),
                 Event::Power(true) => {}
                 Event::Pairing { ask, .. } => match ask {
@@ -83,7 +93,19 @@ fn main() {
                         ble.answer(false);
                     }
                 },
-                Event::Paired(_) => ble.pair(false),
+                Event::Paired(path) => {
+                    ble.set_hosts(vec![path]);
+                    ble.pair(false);
+                }
+                // A bonded host may never ask to listen again: type a few
+                // seconds after it connects either way, and see.
+                Event::Connected(_) if again && !typed => {
+                    typed = true;
+                    let mut out = Vec::new();
+                    engine::text(LINE, &mut out);
+                    queue.extend(out);
+                    next = Instant::now() + Duration::from_secs(3);
+                }
                 Event::Listening(true) if !typed => {
                     typed = true;
                     let mut out = Vec::new();

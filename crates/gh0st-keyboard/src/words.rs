@@ -13,7 +13,6 @@ pub const FORGET: &str = "Forget";
 pub const NO_BT: &str = "Bluetooth isn't working";
 pub const BT_OFF: &str = "Bluetooth off";
 pub const CONNECTED: &str = "Connected";
-pub const LINKING: &str = "Linking";
 pub const WAITING: &str = "Waiting";
 pub const FORGOT: &str = "Forgotten. Pair it again to use it.";
 
@@ -72,10 +71,6 @@ pub fn waiting_for(host: &str) -> String {
 }
 pub const WAKE_IT: &str = "Wake it and turn its Bluetooth on.";
 pub const NOT_BACK: &str = "It didn't come back. Enter tries again.";
-pub fn linking(host: &str) -> String {
-    format!("Connecting to {host}\u{2026}")
-}
-pub const LINKING_NOTE: &str = "The host is setting up the keyboard.";
 pub const SLAVE_NOTE: &str = "Slave turns off USB-A, Ethernet and the other USB-C.";
 pub const CABLE_NOTE: &str = "Use the right-hand USB-C port.";
 pub fn typing_on(host: &str) -> String {

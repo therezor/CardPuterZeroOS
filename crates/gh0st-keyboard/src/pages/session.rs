@@ -121,13 +121,7 @@ impl Session {
             },
             _ => {
                 let bt = s.bt.as_ref();
-                let linked = bt
-                    .and_then(|b| b.connected())
-                    .and_then(crate::app::address_of)
-                    .is_some_and(|a| Some(Target::Bt(a)) == s.target);
-                if linked {
-                    ("bluetooth", words::linking(name), words::LINKING_NOTE)
-                } else if bt.is_some_and(|b| b.wanted() == Advert::Reconnect) {
+                if bt.is_some_and(|b| b.wanted() == Advert::Reconnect) {
                     ("bluetooth", words::waiting_for(name), words::WAKE_IT)
                 } else {
                     ("bluetooth", words::waiting_for(name), words::NOT_BACK)

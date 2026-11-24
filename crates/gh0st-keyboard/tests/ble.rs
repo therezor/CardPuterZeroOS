@@ -14,6 +14,7 @@ const AGENT: &str = "org.bluez.Agent1";
 
 fn ready() -> (gh0st_keyboard::link::ble::Ble, fakebluez::FakeBluez) {
     let (mut ble, mut fake) = fakebluez::start(true);
+    ble.set_hosts(vec![PHONE.into()]);
     let events = pump(&mut ble, &mut fake);
     assert!(events.contains(&Event::Ready), "{events:?}");
     (ble, fake)
@@ -229,6 +230,8 @@ fn a_host_connects_listens_and_gets_reports() {
     assert_eq!(sent.len(), 2);
     let value = sent[0].body[1].get("Value").unwrap().inner();
     assert_eq!(value, &Value::Bytes(r.to_vec()));
+    // To BlueZ alone: no other program on the bus hears the keys.
+    assert_eq!(sent[0].destination.as_deref(), Some(":1.3"));
     // The host goes: the advert comes back for it.
     fake.device(PHONE, vec![("Connected", Value::Bool(false))]);
     let events = pump(&mut ble, &mut fake);
@@ -312,4 +315,39 @@ fn stop_unregisters_everything() {
     assert_eq!(fake.calls("UnregisterApplication"), [ADAPTER]);
     assert_eq!(fake.calls("UnregisterAgent"), ["/org/bluez"]);
     assert_eq!(fake.calls("UnregisterAdvertisement").len(), 1);
+}
+
+const HEADSET: &str = "/org/bluez/hci0/dev_11_22_33_44_55_66";
+const LAPTOP: &str = "/org/bluez/hci0/dev_AA_00_00_00_00_02";
+
+#[test]
+fn a_headset_is_not_a_host() {
+    let (mut ble, mut fake) = ready();
+    ble.reconnect(true);
+    pump(&mut ble, &mut fake);
+    fake.device(HEADSET, vec![("Connected", Value::Bool(true))]);
+    let events = pump(&mut ble, &mut fake);
+    assert!(events.contains(&Event::Connected(HEADSET.into())));
+    assert_eq!(ble.connected(), None, "the headset types nothing");
+    assert!(!ble.send(&Report::Keyboard([0; 8])));
+    assert!(
+        fake.calls("UnregisterAdvertisement").is_empty(),
+        "still waiting for a host"
+    );
+}
+
+#[test]
+fn a_second_host_stays_when_the_first_goes() {
+    let (mut ble, mut fake) = ready();
+    ble.set_hosts(vec![PHONE.into(), LAPTOP.into()]);
+    fake.device(PHONE, vec![("Connected", Value::Bool(true))]);
+    fake.device(LAPTOP, vec![("Connected", Value::Bool(true))]);
+    fake.call(gatt::KEYBOARD, CHAR, "StartNotify", vec![]);
+    pump(&mut ble, &mut fake);
+    fake.device(PHONE, vec![("Connected", Value::Bool(false))]);
+    let events = pump(&mut ble, &mut fake);
+    assert!(events.contains(&Event::Disconnected(PHONE.into())));
+    assert_eq!(ble.connected(), Some(LAPTOP));
+    assert!(ble.listening(), "the laptop still listens");
+    assert!(ble.send(&Report::Keyboard([0; 8])));
 }

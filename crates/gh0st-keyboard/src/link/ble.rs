@@ -74,7 +74,9 @@ pub struct Ble {
     /// The agent call that waits for the user.
     asking: Option<(Message, Ask)>,
     devices: Vec<Device>,
-    connected: Option<String>,
+    /// The paths of the app's hosts. Other devices (headphones paired in
+    /// Settings) come and go without touching the keyboard.
+    hosts: Vec<String>,
     listening: bool,
     /// The host asked for the boot protocol.
     boot: bool,
@@ -104,7 +106,7 @@ impl Ble {
             pairing: false,
             asking: None,
             devices: Vec::new(),
-            connected: None,
+            hosts: Vec::new(),
             listening: false,
             boot: false,
             dead: false,
@@ -143,8 +145,25 @@ impl Ble {
         &self.devices
     }
 
+    /// The host connected now, if any: the first of the app's hosts that
+    /// BlueZ says is connected.
     pub fn connected(&self) -> Option<&str> {
-        self.connected.as_deref()
+        self.devices
+            .iter()
+            .find(|d| d.connected && self.hosts.contains(&d.path))
+            .map(|d| d.path.as_str())
+    }
+
+    /// BlueZ has said which adapter there is and whether it is on.
+    pub fn known(&self) -> bool {
+        self.adapter.is_some()
+    }
+
+    /// The app's hosts, by BlueZ path.
+    pub fn set_hosts(&mut self, paths: Vec<String>) {
+        self.hosts = paths;
+        self.sync();
+        self.flush();
     }
 
     /// The connected host has asked for key reports: typing reaches it.
@@ -204,7 +223,6 @@ impl Ble {
             out.push(Event::Failed(why.into()));
         }
         self.dead = true;
-        self.connected = None;
         self.listening = false;
     }
 
@@ -276,9 +294,6 @@ impl Ble {
                     ..Device::default()
                 };
                 update(&mut dev, d);
-                if dev.connected {
-                    self.connected = Some(dev.path.clone());
-                }
                 self.devices.push(dev);
             }
         }
@@ -337,9 +352,10 @@ impl Ble {
                         .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(i)))
                 };
                 if gone(DEVICE) {
+                    let was = self.devices.iter().any(|d| d.path == path && d.connected);
                     self.devices.retain(|d| d.path != path);
-                    if self.connected.as_deref() == Some(path) {
-                        self.lost(path.to_string(), out);
+                    if was {
+                        self.went(path.to_string(), out);
                     }
                     out.push(Event::Devices);
                 }
@@ -375,22 +391,19 @@ impl Ble {
             out.push(Event::Paired(path.to_string()));
         }
         if after.connected && !before.connected {
-            if self.connected.is_none() {
-                self.connected = Some(path.to_string());
-            }
             out.push(Event::Connected(path.to_string()));
             self.sync();
-        } else if !after.connected && before.connected && self.connected.as_deref() == Some(path) {
-            self.lost(path.to_string(), out);
+        } else if !after.connected && before.connected {
+            self.went(path.to_string(), out);
         }
         if before != after {
             out.push(Event::Devices);
         }
     }
 
-    fn lost(&mut self, path: String, out: &mut Vec<Event>) {
-        self.connected = None;
-        if self.listening {
+    /// A device let go. Once no host is left, nobody listens.
+    fn went(&mut self, path: String, out: &mut Vec<Event>) {
+        if self.connected().is_none() && self.listening {
             self.listening = false;
             out.push(Event::Listening(false));
         }
@@ -605,7 +618,7 @@ impl Ble {
             return;
         };
         let idle = !self.registered || !self.powered;
-        let served = self.connected.is_some() && self.want == Advert::Reconnect;
+        let served = self.connected().is_some() && self.want == Advert::Reconnect;
         let want = if idle || served {
             Advert::Off
         } else {
@@ -655,7 +668,7 @@ impl Ble {
 
     /// Sends a report to the connected host. False when none listens.
     pub fn send(&mut self, r: &Report) -> bool {
-        if self.connected.is_none() || self.dead {
+        if self.connected().is_none() || self.dead {
             return false;
         }
         let path = match r {
@@ -671,11 +684,11 @@ impl Ble {
             .set(path, CHAR, "Value", Value::Bytes(value.clone()));
         // Always signal, even an equal value: two equal mouse moves are two
         // moves.
-        self.send_msg(bus::changed(
-            path,
-            CHAR,
-            vec![("Value", Value::Bytes(value))],
-        ));
+        // Sent to BlueZ alone, not broadcast: no other program on the bus
+        // can listen to the keys.
+        let mut sig = bus::changed(path, CHAR, vec![("Value", Value::Bytes(value))]);
+        sig.destination = self.bluez.clone();
+        self.send_msg(sig);
         self.flush();
         true
     }
@@ -683,7 +696,8 @@ impl Ble {
     /// The battery level hosts show, 0 to 100.
     pub fn battery(&mut self, percent: u8) {
         let v = Value::Bytes(vec![percent.min(100)]);
-        if let Some(sig) = self.tree.set(gatt::LEVEL, CHAR, "Value", v) {
+        if let Some(mut sig) = self.tree.set(gatt::LEVEL, CHAR, "Value", v) {
+            sig.destination = self.bluez.clone();
             self.send_msg(sig);
             self.flush();
         }

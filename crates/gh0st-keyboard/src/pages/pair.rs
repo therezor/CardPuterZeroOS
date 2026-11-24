@@ -239,6 +239,7 @@ impl Screen for Pair {
                 if s.host(&addr).is_none() {
                     s.hosts.insert(0, Host::new(&addr, &name, system));
                     s.save_hosts();
+                    s.sync_hosts();
                 }
                 return Nav::Replace(Box::new(Profile::new(s, &addr, true)));
             }

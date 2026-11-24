@@ -48,6 +48,8 @@ pub struct Shared {
     pub show_typed: bool,
     /// The job turning the radio on through the helper.
     radio_job: Option<Job>,
+    /// Bluetooth was asked on before BlueZ said whether it is.
+    want_radio: bool,
     /// Unblocks the radio; tests and mockups pass one that can't fail.
     pub unblock: fn() -> std::io::Result<()>,
 }
@@ -84,6 +86,7 @@ impl Shared {
             radio_ours: false,
             show_typed: true,
             radio_job: None,
+            want_radio: false,
             unblock: unblock_bluetooth,
         }
     }
@@ -136,10 +139,9 @@ impl Shared {
     /// The target is connected and takes keys.
     pub fn live(&self) -> bool {
         match &self.target {
-            Some(Target::Bt(a)) => {
-                let Some(bt) = &self.bt else { return false };
-                bt.connected().and_then(address_of).as_ref() == Some(a) && bt.listening()
-            }
+            // Connected is enough: a bonded host may keep listening from
+            // before and never say so again.
+            Some(Target::Bt(a)) => self.device(a).is_some_and(|d| d.connected),
             Some(Target::Usb) => self.usb.state() == UsbState::Connected,
             None => false,
         }
@@ -187,9 +189,23 @@ impl Shared {
         self.send(&out);
     }
 
-    /// Bluetooth on: the radio unblocked, then the adapter powered.
+    /// Tells the link which devices are the app's hosts.
+    pub fn sync_hosts(&mut self) {
+        let paths = self.hosts.iter().map(Host::path).collect();
+        if let Some(bt) = &mut self.bt {
+            bt.set_hosts(paths);
+        }
+    }
+
+    /// Bluetooth on: the radio unblocked, then the adapter powered. Asked
+    /// before BlueZ has answered, it waits for the answer.
     pub fn radio_on(&mut self, cx: &mut Cx) {
         let Some(bt) = &mut self.bt else { return };
+        if !bt.known() {
+            self.want_radio = true;
+            return;
+        }
+        self.want_radio = false;
         if bt.powered() || self.radio_job.is_some() {
             return;
         }
@@ -219,8 +235,11 @@ impl Shared {
 
     /// Bookkeeping every screen relies on, before the screen in front hears
     /// the event.
-    fn event(&mut self, e: &Event) {
+    fn event(&mut self, e: &Event, cx: &mut Cx) {
         match e {
+            Event::Ready => self.sync_hosts(),
+            Event::Power(false) if self.want_radio => self.radio_on(cx),
+            Event::Power(true) => self.want_radio = false,
             Event::Leds(v) => self.leds = *v,
             Event::Connected(path) => {
                 let Some(addr) = self.device_at(path).map(|d| d.address.clone()) else {
@@ -373,6 +392,9 @@ impl App {
     }
 
     fn go(&mut self, nav: Nav, cx: &mut Cx) {
+        if !matches!(nav, Nav::Stay) {
+            cx.redraw();
+        }
         match nav {
             Nav::Stay => {}
             Nav::Push(mut next) => {
@@ -386,7 +408,6 @@ impl App {
                 self.stack.push(next);
             }
         }
-        cx.redraw();
     }
 
     fn pop(&mut self, cx: &mut Cx) {
@@ -408,6 +429,8 @@ impl App {
         };
         let nav = f(top.as_mut(), &mut self.s, cx);
         self.go(nav, cx);
+        // A handler may have turned the USB keyboard on or off.
+        self.sync_watches(cx);
     }
 
     /// Joins every link fd to the loop, and drops the ones gone.
@@ -450,7 +473,7 @@ impl App {
 
     fn handle(&mut self, events: Vec<Event>, cx: &mut Cx) {
         for e in events {
-            self.s.event(&e);
+            self.s.event(&e, cx);
             if let Event::Failed(_) = e {
                 if let Some(mut bt) = self.s.bt.take() {
                     bt.stop();
@@ -521,6 +544,7 @@ impl Page for App {
             self.s.snippets = store::snippets(&dir);
             self.connect_bt();
         }
+        self.s.sync_hosts();
         self.s.show_typed = cx.settings().config().get_bool(SHOW_TYPED).unwrap_or(true);
         self.sync_watches(cx);
         let last = cx.settings().config().get_str(LAST).map(String::from);

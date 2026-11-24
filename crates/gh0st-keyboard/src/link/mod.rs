@@ -78,8 +78,12 @@ pub trait Bluetooth {
     fn name(&self) -> &str;
     fn powered(&self) -> bool;
     fn devices(&self) -> &[Device];
+    /// The host connected now, among those given to `set_hosts`.
     fn connected(&self) -> Option<&str>;
     fn listening(&self) -> bool;
+    /// BlueZ has answered: the adapter and its power are known.
+    fn known(&self) -> bool;
+    fn set_hosts(&mut self, paths: Vec<String>);
     fn wanted(&self) -> Advert;
     fn asking(&self) -> Option<Ask>;
     fn power(&mut self, on: bool);
@@ -115,6 +119,12 @@ impl Bluetooth for ble::Ble {
     }
     fn listening(&self) -> bool {
         ble::Ble::listening(self)
+    }
+    fn known(&self) -> bool {
+        ble::Ble::known(self)
+    }
+    fn set_hosts(&mut self, paths: Vec<String>) {
+        ble::Ble::set_hosts(self, paths)
     }
     fn wanted(&self) -> Advert {
         ble::Ble::wanted(self)

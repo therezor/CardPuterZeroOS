@@ -70,11 +70,7 @@ impl Hosts {
         let bt = s.bt.as_ref()?;
         let ours = s.target == Some(Target::Bt(address.to_string()));
         if s.device(address).is_some_and(|d| d.connected) {
-            return Some(if ours && bt.listening() {
-                (words::CONNECTED, Tone::Ok)
-            } else {
-                (words::LINKING, Tone::Info)
-            });
+            return Some((words::CONNECTED, Tone::Ok));
         }
         (ours && bt.wanted() == Advert::Reconnect).then_some((words::WAITING, Tone::Info))
     }
@@ -111,6 +107,7 @@ impl Hosts {
         }
         s.hosts.retain(|h| h.address != address);
         s.save_hosts();
+        s.sync_hosts();
         self.list.select(0);
         cx.toast(words::FORGOT);
     }

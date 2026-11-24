@@ -87,6 +87,10 @@ impl Bluetooth for FakeBt {
     fn listening(&self) -> bool {
         self.listening
     }
+    fn known(&self) -> bool {
+        true
+    }
+    fn set_hosts(&mut self, _: Vec<String>) {}
     fn wanted(&self) -> Advert {
         self.wanted.unwrap_or(Advert::Off)
     }
