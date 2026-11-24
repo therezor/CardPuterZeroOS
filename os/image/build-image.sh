@@ -152,7 +152,7 @@ step_image() {
     # shellcheck source=/dev/null
     . "$OS/image/layout.conf"
     local id=${DISK_ID#0x}
-    export PARTUUID_BOOT=$id-01 PARTUUID_ROOT=$id-02 PARTUUID_DATA=$id-03
+    export PARTUUID_BOOT=$id-01 PARTUUID_ROOT=$id-02
     local build=$WORK/build/image-$variant
     export REPORTS=$build/reports
     rm -rf "$build"
@@ -173,8 +173,7 @@ step_image() {
         --setup-hook="install -D -m 644 $OS/packages/gh0st-base/root/etc/apt/preferences.d/gh0st-deny.pref \"\$1/etc/apt/preferences.d/gh0st-deny.pref\"" \
         --customize-hook="bash ${TRACE:+-x} $OS/image/hooks/customize.sh \"\$1\"" \
         --customize-hook="sync-out /boot/firmware $build/boot" \
-        --customize-hook="sync-out /home $build/home" \
-        --customize-hook='rm -rf "$1"/boot/firmware/* "$1"/home/*' \
+        --customize-hook='rm -rf "$1"/boot/firmware/*' \
         trixie "$build/rootfs.tar" \
         "deb $snap/debian/$SNAPSHOT trixie trixie-updates main" \
         "deb $snap/debian-security/$SNAPSHOT trixie-security main" \
@@ -197,35 +196,29 @@ step_image() {
     mkfs.vfat -F 32 -n BOOT -i "$id" -C "$build/boot.vfat" $((BOOT_MIB * 1024)) >/dev/null
     mcopy -s -i "$build/boot.vfat" "$bootdir"/* ::/
 
-    log "ext4 partitions"
-    mke2fs -q -t ext4 -L rootfs -m 2 -d "$build/rootfs.tar" "$build/root.ext4" "${ROOT_MIB}M"
-    # From the directory, not a tar: the data partition's root is /home.
-    # It grows online at first boot, from 256 MiB to the whole card. At
-    # this size mke2fs picks 1 KiB blocks, whose reserved descriptors run
-    # out near 33 GiB; past that the kernel's resize corrupted the group
-    # descriptors on a 64 GB card. 4 KiB blocks, with descriptors reserved
-    # for 1 TiB, grow the common way.
-    mke2fs -q -t ext4 -T default -b 4096 -E resize=$((1 << 28)) -L data -m 1 \
-        -d "$build/home" "$build/data.ext4" "${DATA_MIB}M"
+    log "root partition"
+    # It grows online at first boot to the whole card. 4 KiB blocks with
+    # descriptors reserved for 1 TiB grow the common way. The kernel keeps
+    # the reserved share as it grows: 1% leaves root room to work when the
+    # home folder fills the card.
+    mke2fs -q -t ext4 -T default -b 4096 -E resize=$((1 << 28)) -L rootfs -m 1 \
+        -d "$build/rootfs.tar" "$build/root.ext4" "${ROOT_MIB}M"
 
     log "disk image"
     local img=$build/gh0st-$variant.img
-    local s1=$((ALIGN_MIB * 2048)) b=$((BOOT_MIB * 2048)) r=$((ROOT_MIB * 2048)) d=$((DATA_MIB * 2048))
-    truncate -s $(( (ALIGN_MIB + BOOT_MIB + ROOT_MIB + DATA_MIB) * 1024 * 1024 )) "$img"
+    local s1=$((ALIGN_MIB * 2048)) b=$((BOOT_MIB * 2048)) r=$((ROOT_MIB * 2048))
+    truncate -s $(( (ALIGN_MIB + BOOT_MIB + ROOT_MIB) * 1024 * 1024 )) "$img"
     sfdisk -q "$img" <<SFDISK
 label: dos
 label-id: $DISK_ID
 start=$s1, size=$b, type=c, bootable
 start=$((s1 + b)), size=$r, type=83
-start=$((s1 + b + r)), size=$d, type=83
 SFDISK
     dd if="$build/boot.vfat" of="$img" bs=512 seek=$s1 conv=notrunc,sparse status=none
     dd if="$build/root.ext4" of="$img" bs=512 seek=$((s1 + b)) conv=notrunc,sparse status=none
-    dd if="$build/data.ext4" of="$img" bs=512 seek=$((s1 + b + r)) conv=notrunc,sparse status=none
 
     log "pack"
     e2fsck -fn "$build/root.ext4" >/dev/null
-    e2fsck -fn "$build/data.ext4" >/dev/null
     fsck.vfat -n "$build/boot.vfat" >/dev/null
     bmaptool -q create -o "$img.bmap" "$img"
     xz -T0 -6 -f -k "$img"

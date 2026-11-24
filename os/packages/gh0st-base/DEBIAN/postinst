@@ -13,4 +13,7 @@ if [ "$1" = configure ]; then
     # with nothing to change it.
     rm -f /etc/NetworkManager/conf.d/90-gh0st-mac.conf \
         /etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf
+    # The data partition's grow unit is gone. Its card keeps the old
+    # layout, and the enable link would point at nothing.
+    rm -f /etc/systemd/system/local-fs.target.wants/gh0st-grow-data.service
 fi

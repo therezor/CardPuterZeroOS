@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+disk=/dev/mmcblk0
+stamp=/var/lib/gh0st/root-grown
+# A card from an older image keeps /home on p3, right after root, and its
+# fstab names it. It stays as it is.
+if [ ! -b "${disk}p3" ]; then
+    # The kernel takes a mounted partition's new size as long as it only
+    # grows. A rerun after a power cut finds nothing to do.
+    echo ", +" | sfdisk -q --no-reread --no-tell-kernel -N 2 "$disk"
+    partx -u -n 2 "$disk"
+    # Let udev finish the change events the write and the resize sent. A
+    # change for p2 runs after the ones already queued for it.
+    udevadm trigger --settle --action=change "${disk}p2"
+    udevadm settle
+    resize2fs "${disk}p2"
+fi
+mkdir -p "${stamp%/*}"
+touch "$stamp"

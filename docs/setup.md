@@ -109,7 +109,7 @@ package:
 Description=First-boot setup
 ConditionPathExists=/var/lib/gh0st/setup
 RequiresMountsFor=/home
-After=gh0st-grow-data.service fb_load.service dbus.service polkit.service
+After=gh0st-grow-root.service fb_load.service dbus.service polkit.service
 After=NetworkManager.service systemd-timesyncd.service
 Wants=NetworkManager.service
 StartLimitIntervalSec=0
@@ -123,7 +123,7 @@ Restart=always
 RestartSec=1
 
 [Install]
-WantedBy=multi-user.target home.mount
+WantedBy=multi-user.target
 ```
 
 **Why ExecCondition too.** systemd skips `Condition` lines on an automatic restart.

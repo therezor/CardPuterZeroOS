@@ -5,7 +5,7 @@
 Description=First-boot setup
 ConditionPathExists=/var/lib/gh0st/setup
 RequiresMountsFor=/home
-After=gh0st-grow-data.service fb_load.service dbus.service polkit.service
+After=gh0st-grow-root.service fb_load.service dbus.service polkit.service
 After=NetworkManager.service systemd-timesyncd.service
 Wants=NetworkManager.service
 # Never give up: a setup that stays dead leaves a blank device.
@@ -23,6 +23,4 @@ Restart=always
 RestartSec=1
 
 [Install]
-# home.mount too: if /home mounts late, on a retry, setup's first start
-# job has already failed, and this queues it again.
-WantedBy=multi-user.target home.mount
+WantedBy=multi-user.target

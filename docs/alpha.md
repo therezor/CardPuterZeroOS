@@ -41,8 +41,11 @@ scripts/flash.sh gh0st-release-DATE.img.xz /dev/diskN
 ## First boot
 
 Put the card in and power on. The M5Stack logo shows, then setup, within
-about 15 seconds. On the first boot the device grows its data partition to
-fill the card.
+about 15 seconds. On the first boot the device grows its one partition to
+fill the card. Cards flashed with an older alpha keep a separate home
+partition: reflash to get the space (back up your home folder first).
+Don't resize those partitions on a computer: if the home partition no
+longer mounts, the device stops at a blank screen.
 
 Setup, once:
 

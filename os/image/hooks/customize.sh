@@ -20,10 +20,11 @@ install -d -m 755 "$root/var/lib/gh0st"
 install -d -m 700 "$root/var/lib/gh0st/setup-home"
 : > "$root/var/lib/gh0st/setup"
 
+# /home shares the root filesystem. The bind mount keeps it nodev,nosuid.
 cat > "$root/etc/fstab" <<FSTAB
 PARTUUID=$PARTUUID_BOOT  /boot/firmware  vfat  noatime,fmask=0022,dmask=0022  0  2
 PARTUUID=$PARTUUID_ROOT  /               ext4  noatime,commit=60,errors=remount-ro  0  1
-PARTUUID=$PARTUUID_DATA  /home           ext4  noatime,commit=60,nodev,nosuid,x-systemd.growfs  0  2
+/home                    /home           none  bind,noatime,nodev,nosuid  0  0
 FSTAB
 
 # Only the units in our presets stay enabled. The tmpfiles timer is static,

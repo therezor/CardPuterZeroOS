@@ -80,8 +80,8 @@ pub fn memory() -> Option<(u64, u64)> {
 }
 
 /// Space used and in total on the filesystem that holds `path`, in MB.
-/// The image keeps `/home` on its own partition, which fills the card, so
-/// `/` alone shows only the system.
+/// Cards from older images keep `/home` on its own partition, which fills
+/// the card, so there `/` alone shows only the system.
 pub fn storage(path: &Path) -> Option<(u64, u64)> {
     statvfs(path).map(|st| {
         let s = space(&st);

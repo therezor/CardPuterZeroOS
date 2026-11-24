@@ -82,9 +82,9 @@ both install from it.
    snapshot.debian.org timestamp and the two local repos. Recommends are
    off, and docs, man pages and translations never unpack. The customize
    hook leaves setup's marker where a user would be, runs `systemctl
-   preset-all` and removes per-device identity. The boot and home trees come out as
-   their own trees.
-4. The FAT partition is made with `mkfs.vfat` and `mcopy`, the ext4 ones with
+   preset-all` and removes per-device identity. The boot tree comes out as
+   its own tree.
+4. The FAT partition is made with `mkfs.vfat` and `mcopy`, the ext4 one with
    `mke2fs -d` from the tar, and the disk with `sfdisk` on a sparse file. No
    loop devices.
 5. `e2fsck`, `fsck.vfat`, `bmaptool create`, `xz`, SHA-256.
@@ -164,21 +164,28 @@ masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the ch
 | Part | Type | Size | Mount |
 |---|---|---|---|
 | p1 | FAT32 | 256 MiB | `/boot/firmware` |
-| p2 | ext4 | 3 GiB | `/` |
-| p3 | ext4 | 256 MiB, grows to the end of the card | `/home` |
+| p2 | ext4 | 3 GiB, grows to the end of the card | `/` |
 
-All mount `noatime,commit=60`. The disk ID is fixed (`0x67683073`, "gh0s"),
-so every card shares PARTUUIDs.
-On first boot `gh0st-grow-data.service` grows p3, and `x-systemd.growfs`
-grows its filesystem online. The grow runs before `local-fs-pre.target`
-and waits for udev: the new size makes the card's device units flap for a
-second or two, and a check or mount of `/home` in that window is cut off.
-`gh0st-setup.service` is also wanted by `home.mount`, so a late mount still
-starts setup. `e2fsprogs` is in the image so systemd checks `/` and `/home`
-at boot and replays their journals. p3 has 4 KiB blocks and descriptors reserved
-for 1 TiB, not the 1 KiB blocks `mke2fs` picks at 256 MiB. A fake card, one
-that claims more than it holds, corrupts whatever lands past its real size
-(`docs/hardware-facts.md`). machine-id and the random seed are made by systemd.
+Both mount `noatime`, root with `commit=60`. `/home` is a folder on root,
+bind-mounted onto itself to keep it `nodev,nosuid`. One filesystem means no
+split to guess and nothing to resize by hand. 1% of root is reserved, so the
+system still has room when the home folder fills the card. The disk ID is
+fixed (`0x67683073`, "gh0s"), so every card shares PARTUUIDs.
+
+On first boot `gh0st-grow-root.service` grows p2 and then its filesystem,
+both while root is mounted: the kernel takes a mounted partition's new size
+as long as it only grows. The grow runs before `local-fs-pre.target` and
+waits for udev: the new size makes the card's device units flap for a
+second or two, and a check or mount of the boot partition in that window is
+cut off. `e2fsprogs` is in the image so systemd checks `/` at boot and
+replays its journal. Root has 4 KiB blocks and descriptors reserved for
+1 TiB. A fake card, one that claims more than it holds, corrupts whatever
+lands past its real size, system files included (`docs/hardware-facts.md`).
+
+Cards from older images keep their own `/home` partition (p3). The grow
+does nothing on a card that has one, and moving to one partition takes a
+reflash. Don't resize those partitions on a computer: a `/home` that no
+longer mounts stops the boot in emergency mode, with nothing on the panel. machine-id and the random seed are made by systemd.
 SSH host keys are made the first time SSH starts, by an `ExecStartPre`
 drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 
@@ -209,11 +216,11 @@ the CM0, for ten minutes. QEMU has no panel, keyboard, Wi-Fi or VideoCore,
 so it proves the boot path only. Its serial console stays silent with this
 device tree, so the test reads the journal off the card file afterwards.
 The image keeps no logs, so the test's own copy of the card gets a journald
-drop-in for a persistent journal first. The card is 8 GB, so p3 grows; a
+drop-in for a persistent journal first. The card is 8 GB, so root grows; a
 64 GB card stalls QEMU's slow SD emulation behind ext4's inode table
 writes, which a real card finishes in seconds. It checks: root mounted without an
-initramfs, p3 and its filesystem grown and `/home` mounted with no ext4
-errors and no emergency mode, zram on, setup started, no user
+initramfs, root and its filesystem grown once (the stamp is written),
+`/home` bind-mounted, no ext4 errors and no emergency mode, zram on, setup started, no user
 session, SSH off, multi-user reached, and no failed unit but setup and
 gh0st (no keyboard) and `fb_load` (no panel). SSH host keys made on first
 start is a device test.

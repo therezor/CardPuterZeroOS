@@ -50,7 +50,8 @@ Measured on the device unless marked.
   garbage at 33 GiB and 46 GiB, so its real capacity is between them. Data
   past that stays readable only while it is in the page cache: under memory
   pressure, the home folder (inode table at 55 GiB) came back as random bytes,
-  "Inode checksum does not match", and every login failed.
+  "Inode checksum does not match", and every login failed. With root and
+  `/home` on one partition, system files can land there too.
 - Panel timing: ST7789V on SPI0 CS0. `spi-max-frequency` is 60 MHz, but the
   400 MHz core clock divides to 50 MHz, so a full frame takes about 17.4 ms.
   The panel refreshes at 60.5 Hz by default (TE period 16.5 ms). With

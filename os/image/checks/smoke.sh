@@ -2,7 +2,7 @@
 # First-boot smoke test of the release image in QEMU's raspi3b, a Pi 3
 # close to the CM0. No panel, keyboard, Wi-Fi or VideoCore there, so it
 # proves the boot path only: kernel without initramfs, root by PARTUUID, the
-# data partition growing, zram, and first-boot setup starting. QEMU's serial
+# root partition growing, zram, and first-boot setup starting. QEMU's serial
 # console stays silent with this device tree, so the test reads the journal
 # off the card file afterwards.
 set -uo pipefail
@@ -14,7 +14,7 @@ s=$WORK/smoke
 rm -rf "$s"
 mkdir -p "$s/tree/j"
 cp --sparse=always "$build/gh0st-release.img" "$s/sd.img"
-# A power of two for QEMU; p3 grows into it. Larger cards stall QEMU's slow
+# A power of two for QEMU; root grows into it. Larger cards stall QEMU's slow
 # SD emulation behind ext4's inode table writes (SMOKE_CARD=64G to try).
 truncate -s "${SMOKE_CARD:-8G}" "$s/sd.img"
 
@@ -41,7 +41,8 @@ timeout "$secs" qemu-system-aarch64 -M raspi3b -m 1G \
 # Read the journal with the image's own journalctl.
 tar -xf "$build/rootfs.tar" -C "$s/tree" ./usr ./etc
 for l in bin sbin lib; do ln -sf "usr/$l" "$s/tree/$l"; done
-dd if="$s/sd.img" of="$s/root.ext4" bs=512 skip="$start" count=$((ROOT_MIB * 2048)) conv=sparse status=none
+# Root has grown to the end of the card.
+dd if="$s/sd.img" of="$s/root.ext4" bs=512 skip="$start" conv=sparse status=none
 debugfs -R "rdump /var/log/journal $s/tree/j" "$s/root.ext4" 2>/dev/null
 d=$(cd "$s/tree" && dirname "$(find j -name system.journal | head -1)")
 chroot "$s/tree" journalctl -D "/$d" -o short-monotonic --no-pager > "$s/journal.txt" 2>&1
@@ -51,11 +52,16 @@ expect() {
     if grep -qE "$2" "$s/journal.txt"; then printf 'ok    %s\n' "$1"; else printf 'FAIL  %s\n' "$1"; fails=$((fails + 1)); fi
 }
 expect "kernel mounted root without an initramfs" 'EXT4-fs \(mmcblk0p2\): mounted filesystem'
-expect "data partition grown" 'Finished gh0st-grow-data.service'
-expect "/home filesystem grown" 'Successfully resized "/home"'
+expect "root partition grown" 'Finished gh0st-grow-root.service'
+expect "root filesystem grown" 'EXT4-fs \(mmcblk0p2\): resized filesystem to'
 expect "root checked" 'Finished systemd-fsck-root.service'
-expect "/home checked" 'Finished systemd-fsck@dev-disk-by.*x2d03.service'
-expect "/home mounted" 'Mounted home.mount'
+expect "/home bind-mounted" 'Mounted home.mount'
+# The stamp keeps the next boot from growing again.
+if debugfs -R "stat /var/lib/gh0st/root-grown" "$s/root.ext4" 2>/dev/null | grep -q '^Inode:'; then
+    printf 'ok    grow stamp written\n'
+else
+    printf 'FAIL  no grow stamp\n'; fails=$((fails + 1))
+fi
 if grep -qE 'EXT4-fs.*(corrupt|error)|Structure needs cleaning|emergency.target' "$s/journal.txt"; then
     printf 'FAIL  filesystem errors or emergency mode\n'; fails=$((fails + 1))
 else
