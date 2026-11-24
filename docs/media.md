@@ -26,6 +26,9 @@ draws each into `mockups/media`.
   with its folder's others; Esc goes back to that folder.
 - The music queue keeps its songs whatever folder the grid shows, so
   music plays on while you look through pictures.
+- A clip of five minutes or more goes on from where it stopped, unless it
+  was near its start or end: the newest 64 places, in
+  `~/.local/share/gh0st-media/positions`.
 - Music plays on behind other apps and with the screen dark. A video and a
   slideshow pause when the app leaves the front; a video keeps the screen
   on while it plays.

@@ -181,3 +181,57 @@ fn the_chooser_opens_a_folder_or_a_file_and_nothing_picked_changes_nothing() {
     );
     assert_eq!(d.title(), "Pictures");
 }
+
+#[test]
+fn a_long_clip_goes_on_from_where_it_stopped() {
+    let h = home("resume");
+    std::fs::create_dir_all(h.join("Videos")).unwrap();
+    std::fs::write(h.join("Videos/movie night.mkv"), b"x").unwrap();
+    let film = h.join("Videos/movie night.mkv");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), Some(film.clone())));
+    d.pump(300);
+    d.frame();
+    // Play, then 30 s on; leaving keeps the place.
+    step(&mut d, "enter\n7\n7\n7");
+    step(&mut d, "esc");
+    assert!(d.quit());
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), Some(film)));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "enter");
+    assert!(
+        d.toast().is_some_and(|t| t.starts_with("From 00:3")),
+        "{:?}",
+        d.toast()
+    );
+}
+
+#[test]
+fn the_grid_and_a_paused_video_rest_and_a_slideshow_keeps_awake_only_while_it_runs() {
+    let h = home("rest");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "x\nenter");
+    d.pump(1000);
+    assert!(d.idle_wakes(600_000) <= 11, "the grid");
+    step(&mut d, "p");
+    assert!(d.awake(), "a slideshow keeps the screen on");
+    step(&mut d, "p");
+    assert!(!d.awake(), "and lets it go");
+    step(&mut d, "esc");
+    // The video, played and paused.
+    let mut d = Driver::new(Media::with(
+        Source::Fake,
+        h.clone(),
+        Some(h.join("Pictures/d.mp4")),
+    ));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "enter");
+    d.pump(1000);
+    step(&mut d, "enter");
+    d.pump(1000);
+    assert!(!d.awake(), "paused, the screen may go dark");
+    assert!(d.idle_wakes(600_000) <= 11, "a paused video");
+}

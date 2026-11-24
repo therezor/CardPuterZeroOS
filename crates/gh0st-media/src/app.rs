@@ -14,6 +14,7 @@ use crate::files::{self, Entry, Look, Place, Sort};
 use crate::helper::{Helper, Source};
 use crate::mpris;
 use crate::proto::{Cmd, Event, Fail, Flags, Info, Kind, PlayState, Tags};
+use crate::resume::Resume;
 use gh0st_app::gfx::icon::{self, IconSize};
 use gh0st_app::gfx::theme::{CARDPUTER, Metrics, ON_PICTURE, PANEL_OFF};
 use gh0st_app::gfx::{Canvas, Rect, Theme, widgets};
@@ -169,6 +170,10 @@ pub struct Media {
     /// The file on screen is one another app opened here: Esc goes back
     /// to that app, not to this one's folder.
     given: bool,
+    /// Where long clips stopped.
+    resume: Resume,
+    /// The app's own files, under the home it was given.
+    data: PathBuf,
     /// What the file chooser was asked: a file to show, or a folder.
     asked: Option<(Pick, Asked)>,
     /// The music on the session bus, while it plays.
@@ -227,6 +232,8 @@ impl Media {
             opened: file,
             quitting: false,
             given: false,
+            resume: Resume::none(),
+            data: home.join(".local/share/gh0st-media"),
             asked: None,
             mpris: None,
             music: false,
@@ -498,7 +505,11 @@ impl Media {
     }
 
     fn stop_play(&mut self) {
-        if self.play.take().is_some() {
+        if let Some(p) = self.play.take() {
+            // Where a long clip stopped, for next time.
+            if !self.music && p.bar.dur_ms > 0 {
+                self.resume.set(&p.path, p.bar.pos_ms, p.bar.dur_ms);
+            }
             self.send(&Cmd::Stop);
         }
         self.next_track = None;
@@ -510,7 +521,22 @@ impl Media {
             return;
         };
         match self.play.as_ref().map(|p| p.state) {
-            None => self.start_play(cx, e, Flags::default()),
+            None => {
+                // A long clip goes on from where it stopped.
+                let at = if self.view == View::Player {
+                    self.resume.get(&e).unwrap_or(0)
+                } else {
+                    0
+                };
+                if at > 0 {
+                    cx.toast(&format!("From {}", gh0st_app::media::clock(at)));
+                }
+                let flags = Flags {
+                    at_ms: at,
+                    ..Flags::default()
+                };
+                self.start_play(cx, e, flags)
+            }
             Some(PlayState::Playing) => {
                 self.send(&Cmd::Pause);
                 if let Some(p) = &mut self.play {
@@ -907,6 +933,9 @@ impl Media {
         p.state = state;
         if state == PlayState::Done {
             cx.keep_awake(false);
+            // Seen to the end: next time it starts over.
+            let path = p.path.clone();
+            self.resume.set(&path, dur_ms, dur_ms);
         }
     }
 
@@ -1453,6 +1482,7 @@ impl Page for Media {
     }
 
     fn start(&mut self, cx: &mut Cx) {
+        self.resume = Resume::load(self.data.join("positions"));
         self.load(cx);
         self.launch(cx);
         if let Some(p) = self.opened.take() {
@@ -1503,6 +1533,8 @@ impl Page for Media {
 
     fn stop(&mut self, cx: &mut Cx) {
         cx.unpost(NOW_PLAYING);
+        self.stop_play();
+        self.resume.save();
         self.quitting = true;
         self.save(cx);
         self.send(&Cmd::Quit);
@@ -1535,6 +1567,7 @@ impl Page for Media {
             cx.redraw();
             return;
         }
+        self.resume.save();
         // Music plays on behind; a video and a slideshow stop.
         if !self.music && self.play.is_some() {
             self.send(&Cmd::Pause);
