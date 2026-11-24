@@ -462,23 +462,31 @@ fn say(line: &str) {
 /// Keyboard app classic is off: Android, seeing a classic side, looks for a
 /// classic keyboard there and never uses the LE one.
 fn bt_classic(on: bool) -> Result<(), String> {
-    let info = Command::new("btmgmt")
-        .arg("info")
-        .output()
-        .map_err(|e| format!("btmgmt: {e}"))?;
-    let info = String::from_utf8_lossy(&info.stdout);
-    let powered = info
+    // btmgmt waits on an open stdin for more commands: give it none.
+    let mgmt = |args: &[&str]| -> Result<String, String> {
+        let out = Command::new("btmgmt")
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("btmgmt: {e}"))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(format!("btmgmt {} failed", args.join(" ")))
+        }
+    };
+    let powered = mgmt(&["info"])?
         .lines()
         .find(|l| l.trim_start().starts_with("current settings:"))
         .is_some_and(|l| l.split_whitespace().any(|w| w == "powered"));
     if powered {
-        run(&["btmgmt", "power", "off"])?;
+        mgmt(&["power", "off"])?;
     }
-    let set = run(&["btmgmt", "bredr", if on { "on" } else { "off" }]);
+    let set = mgmt(&["bredr", if on { "on" } else { "off" }]);
     if powered {
-        run(&["btmgmt", "power", "on"])?;
+        mgmt(&["power", "on"])?;
     }
-    set
+    set.map(|_| ())
 }
 
 /// Builds the USB keyboard, binds it, and holds it until stdin closes.
