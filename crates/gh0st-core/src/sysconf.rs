@@ -440,7 +440,7 @@ pub fn ip6_privacy_conf(on: bool) -> String {
 }
 
 /// Name servers for every connection, picked by name in Settings: (verb,
-/// label, servers). Neither logs who asks, by their own policies.
+/// label, servers).
 pub const DNS_PRESETS: [(&str, &str, &str); 2] = [
     (
         "cloudflare",

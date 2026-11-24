@@ -1,11 +1,13 @@
 # Camera
 
-`gh0st-camera` takes photos and video with the CardputerZero's IMX219. It is
-an SDK app: the screen, the keys, the settings and the files. A helper it
-starts, `gh0st-camd`, owns libcamera and the encoders.
+`gh0st-camera` takes photos and video with sound with the CardputerZero's
+IMX219, and its gallery plays the videos back. It is an SDK app: the screen,
+the keys, the settings and the files. A helper it starts, `gh0st-camd`,
+owns libcamera, the encoders and the player.
 
 The helper (`camd/`) takes the preview, 8 MP photos with EXIF, zoom,
-thumbnails, and 1080p30 and 720p30 video. The image ships it in place of
+thumbnails, 1080p30 and 720p30 video with AAC sound, and plays videos. The
+image ships it in place of
 M5's Camera, and migration `0003-camera` swaps them on older devices. What
 is missing is at the end.
 
@@ -49,7 +51,8 @@ What that means for the best result:
 
 ```
 gh0st-camera (Rust, static)              gh0st-camd (C++, glibc)
-  page, keys, files, settings   <-link->   libcamera, ISP, H.264, JPEG, mux
+  page, keys, files, settings   <-link->   libcamera, ISP, H.264, JPEG, AAC,
+                                            mux, player
            \                                  /
             `---- frame ring (shared memory) -'
 ```
@@ -83,7 +86,10 @@ words are ignored both ways.
 | `start`, `stop` | Open the sensor and stream; close it and free its memory |
 | `set zoom 2.0`, `set ev -0.333`, `set flicker 50`, `set quality 95` | Controls |
 | `shoot <path> [raw]` | A still to `<path>`, a DNG beside it with `raw` |
-| `rec start <path> [mic]`, `rec stop` | A recording, with sound when `mic` |
+| `rec start <path> [mic [source]]`, `rec stop` | A recording, with sound when `mic`: from `source`, or with none the helper's pick |
+| `mics` | The microphones there are |
+| `play open <path> <w> <h>` | Play a video fitted in w x h. Closes the sensor first |
+| `play pause`, `play resume`, `play seek <ms>`, `play stop` | Control it; `stop` frees the decoders and the sound stream |
 | `thumb <path> <w> <h> [zoom cx cy]` | A picture of a JPEG or an MP4, exactly w x h: fitted, or `zoom` times closer around (cx, cy), 0 to 1 across. Answered in order |
 | `quit` | Finish and exit |
 
@@ -91,10 +97,14 @@ words are ignored both ways.
 |---|---|
 | `hello 1 <sensor> <w> <h>` | The sensor and its full size |
 | `state off`, `preview`, `busy`, `rec` | What it is doing |
-| `frame <slot> <seq> <w> <h>` | A preview frame waits in the ring |
+| `frame <slot> <seq> <w> <h>` | A preview frame, or a video's picture, waits in the ring |
 | `shot ok <path> <ms>`, `shot err <path> <why>` | The still is saved, or not |
 | `rec <ms> <bytes>` | Once a second while recording |
 | `recdone <path>` | The recording is closed |
+| `nomic <why>` | The recording goes on without sound |
+| `mics <name> <description> ...` | Each microphone, as the sound server names it |
+| `play <ms> <duration ms> playing\|paused\|done` | Once a second while playing, and on each change |
+| `playerr <why>` | The video can't play; the player has stopped |
 | `thumb <path> <slot> <seq> <w> <h>` | The picture `thumb` asked for |
 | `nothumb <path>` | It could not be made: the app's next ask can go |
 | `error nocamera`, `nomem`, `busy`, `io <why>` | Why it can't go on |
@@ -134,12 +144,12 @@ picture keeps the whole height.
 - **Video.** The 16:9 picture is 302x170. Its marks sit on dark plates: the
   size top left, the time left top right, and while recording a red dot and
   the time in the middle. Bottom left, zoom and light once changed.
-- **Buttons.** Icon chips over 4 to 8: Photos, the other mode, the shutter
+- **Buttons.** Icon chips over 4 to 8: Gallery, the other mode, the shutter
   in the middle (a record dot for video, a red square while recording),
   Light, and the menu. Light opens a slider over the picture's foot; 5 and
-  7 turn into − and +, and Esc closes it. While recording, Photos and the
+  7 turn into − and +, and Esc closes it. While recording, Gallery and the
   mode wait.
-- **Photos.** The OS bars return: "Photos 2 of 12" and a grid of tiles,
+- **Gallery.** The OS bars return: "Gallery 2 of 12" and a grid of tiles,
   five across and three down, newest first, a video badge on videos. The
   arrows move, Enter opens one, Delete is held on 6.
 - **One shot.** The whole screen, fitted. 5 and 7 zoom out and in: 2x, 4x,
@@ -147,6 +157,12 @@ picture keeps the whole height.
   around a third of the view at a time and a small map shows where; at 1x,
   `z` and `c` go to the newer and older shot. Enter shows the date, size
   and pixels. Esc goes back to the grid.
+- **A video.** Its first frame with a play mark. Enter or 6 plays and
+  pauses; 5 and 7, or `z` and `c` once it plays, go back and ahead 5 s. The
+  time sits top right and a bar over the buttons shows how far it is. At
+  the end it stops on the last frame and 6 plays it again. Details and
+  Delete are in the menu, as 6 plays. Esc, or leaving the app, stops it and
+  closes the sound.
 - **How pictures come.** The app asks the helper for one picture at a
   time and it answers each, so a late answer can't land in the wrong place.
   A tile comes from the photo's own EXIF thumbnail (2 ms); the full view
@@ -156,8 +172,8 @@ picture keeps the whole height.
 
 | Key | Viewfinder | Review |
 |---|---|---|
-| Enter, Space | Take a photo; start or stop recording | Full screen |
-| 4, `p` | Photos | Back |
+| Enter, Space | Take a photo; start or stop recording | Full screen; play or pause a video |
+| 4, `p` | Gallery | Back |
 | 5, Tab | Photo or video | Zoom out (one shot) |
 | 6 | The shutter, as Enter | Delete, held |
 | 7 | Light: the slider, where 5 and 7 are − and + | Zoom in (one shot) |
@@ -167,9 +183,17 @@ picture keeps the whole height.
 | 8 | Menu | Menu |
 | Esc | Cancel the timer; held, exit | Back to the viewfinder |
 
-The menu adds quality, the video size and the mains frequency (50 or
-60 Hz, against flicker). Keep RAW and Sound join it once the helper does
-them.
+The menu adds quality, the video size, sound, the microphone and the mains
+frequency (50 or 60 Hz, against flicker). Keep RAW joins it once the helper
+writes DNG.
+
+- **Microphone.** Auto, or one the sound server lists. Auto takes a
+  plugged-in microphone (USB, Bluetooth) over the board's own. The headset
+  jack needs no choice: when something is plugged in, M5's sound driver
+  moves the board's input to the jack (`hp-present-controls` in its
+  overlay). The list is asked for only when the row is stepped, since
+  asking starts PipeWire. A picked microphone that is gone falls back to
+  Auto's.
 
 - The screen stays on while the camera is in front (`awake`), recording or
   not: framing a shot takes as long as it takes. Home, a lock or the power
@@ -195,6 +219,7 @@ them.
 | `gh0st.camera.video` | `1080`, `720` |
 | `gh0st.camera.timer` | `0`, `3`, `10` |
 | `gh0st.camera.grid`, `.raw`, `.mic` | true or false |
+| `gh0st.camera.mic_source` | a sound server source, or empty for Auto |
 | `gh0st.camera.quality` | `fine` (95), `normal` (85) |
 | `gh0st.camera.flicker` | `50`, `60` |
 
@@ -212,9 +237,24 @@ Zoom and exposure start at 1x and ±0 on every launch.
   It takes the ISP's own dmabufs, so a frame is never copied.
 - `mp4.cpp`: fragmented MP4, written by hand: an empty `moov`, then a
   `moof` and `mdat` each second, from keyframe to keyframe, on a thread of
-  its own with a sync each time. `make mp4cat` builds a host check that
-  wraps a raw H.264 file for ffprobe.
-- `rec.cpp`: a recording: the encoder and the file together.
+  its own with a sync each time. A second track holds the sound: each
+  fragment carries the sound queued by its keyframe, so nothing is cut.
+  `make mp4cat` builds a host check that wraps a raw H.264 file, and an
+  ADTS AAC file as its sound, for ffprobe.
+- `rec.cpp`: a recording: the encoder, the microphone and the file together.
+- `mic.cpp`: the microphone to AAC-LC, 48 kHz mono at 96 kb/s, with
+  libavcodec on a thread of its own, open only while recording. Each packet
+  is stamped on the monotonic clock the sensor stamps frames with, so the
+  two tracks line up; the sound's track then runs on by sample count.
+- `pulse.cpp`: sound in and out through PulseAudio's simple API, which
+  PipeWire answers, with about 100 ms buffered. `pulse_stub.cpp` stands in
+  on hosts: no microphones, and playback silent but timed.
+- `player.cpp`: plays a video. One thread reads the file ahead, one decodes
+  the picture (the VPU's `h264_v4l2m2m`, software when it can't) and keeps
+  it on the clock, one decodes the sound and writes it to the server. A
+  late picture is dropped. Only the loop thread touches the link and the
+  ring. `make playcheck` builds a host check of play, pause, seek and the
+  end.
 - `still.cpp`: JPEG from raw YUV420 (libjpeg-turbo), EXIF written by hand,
   and thumbnails decoded at 1/8 scale.
 - `link.cpp`, `ring.cpp`: the two halves of the wire, as in `src/`.
@@ -248,7 +288,7 @@ Builds:
   installed) into `os/out/camd`. `os/build.sh debs` builds it into the
   `gh0st-camera` deb.
 - `make -C crates/gh0st-camera/camd stub O=$PWD/target/camd` builds the
-  stub on any host with libjpeg-turbo.
+  stub on any host with libjpeg-turbo and ffmpeg's libraries.
 - `GH0ST_HOST=<user>@<device> scripts/deploy.sh camera` installs the app
   and the helper. The shell must send every linked app `pause`: an older
   shell stops the app without it, and the helper keeps the sensor
@@ -265,6 +305,11 @@ Builds:
   recording and leaves no wakeups; a held 6 deletes.
 - `cargo run -p gh0st-camera --example mockups` writes every screen to
   `mockups/camera`. As a test it lints each one in every palette.
+- `make -C crates/gh0st-camera/camd playcheck O=$PWD/target/camd`, then
+  `target/camd/playcheck VIDEO.mp4`, plays a file against the silent stub
+  server: its pace, a pause, a paused seek, the end and a replay.
+  `mp4cat` with an AAC file, then ffprobe, checks the two tracks' lengths
+  and that a cut file still plays.
 - `make -C crates/gh0st-camera/camd check O=$PWD/target/camd` runs host
   checks of what reads photos from elsewhere: a crafted EXIF thumbnail
   offset and a picture past 32 MP.
@@ -279,10 +324,14 @@ Builds:
 
 ## Missing
 
-- **Sound.** Video is silent: the helper takes `mic` and ignores it, so the
-  app hides the Sound row and marks video as muted. Sound means the mic to
-  AAC-LC at 48 kHz, muxed by timestamp.
-- **Unmeasured.** Ten minutes at 1080p30 (CPU, heat, card speed), the frame
+- **Unmeasured.** Sound and playback on the board: the capture's latency
+  against the picture, `h264_v4l2m2m` on this kernel and its CMA beside
+  the 64 MB, software decode at 1080p30 if it falls back, and whether the
+  jack's input carries a headset's microphone.
+- **Plain headphones.** The sound driver moves the input to the jack for
+  anything plugged in, so headphones without a microphone record silence.
+  A Built-in choice would set the codec's input back for the recording.
+- **Also unmeasured.** Ten minutes at 1080p30 (CPU, heat, card speed), the frame
   rate on the panel rather than `--sim`, and lens shading with the stock
   tuning.
 - **Not built.** DNG (the helper ignores `raw`; the app hides Keep RAW), a level from the BMI270 and EXIF orientation, shutter,

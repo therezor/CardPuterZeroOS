@@ -1,4 +1,5 @@
 #include "rec.h"
+#include "mic.h"
 #include "mp4.h"
 #include "venc.h"
 
@@ -14,12 +15,25 @@ struct Recorder::State {
     Backend &be;
     Venc venc;
     Mp4 mp4;
+    Mic mic;
+    std::deque<Mic::Packet> sound;
     std::string path;
     int frags = 0;
     int dropped = 0;
     explicit State(Backend &b) : be(b) {}
     void released(void *t) { be.release(t); }
     void unit(const uint8_t *d, size_t n, int64_t ts, bool key) { mp4.add(d, n, ts, key); }
+    // Sound joins the fragment being built. It runs a little behind the
+    // picture, and its track keeps its own time, so nothing is cut.
+    void audio()
+    {
+        mic.take(sound);
+        while (!sound.empty()) {
+            mp4.addAudio(sound.front().data.data(), sound.front().data.size(),
+                         sound.front().tsUs);
+            sound.pop_front();
+        }
+    }
 };
 
 Recorder::Recorder(Backend &be) : s_(std::make_unique<State>(be)) {}
@@ -29,7 +43,8 @@ Recorder::~Recorder()
     stop();
 }
 
-bool Recorder::start(const std::string &path, std::string &why)
+bool Recorder::start(const std::string &path, bool mic, const std::string &source,
+                     std::string &why, std::string &micWhy)
 {
     int w, h, stride;
     if (!s_->be.videoStream(w, h, stride)) {
@@ -38,12 +53,18 @@ bool Recorder::start(const std::string &path, std::string &why)
     }
     // About 94 MB a minute at 1080p, as the app counts the room left.
     int bitrate = w >= 1920 ? 12000000 : 8000000;
-    if (!s_->venc.open(w, h, stride, FPS, bitrate, why))
-        return false;
-    if (!s_->mp4.open(path, w, h, why)) {
-        s_->venc.close([this](void *t) { s_->released(t); });
+    AudioTrack track;
+    bool sound = mic && s_->mic.open(source, track, micWhy);
+    if (!s_->venc.open(w, h, stride, FPS, bitrate, why)) {
+        s_->mic.close();
         return false;
     }
+    if (!s_->mp4.open(path, w, h, sound ? &track : nullptr, why)) {
+        s_->venc.close([this](void *t) { s_->released(t); });
+        s_->mic.close();
+        return false;
+    }
+    s_->sound.clear();
     s_->path = path;
     s_->frags = 0;
     s_->dropped = 0;
@@ -81,6 +102,7 @@ bool Recorder::service()
         return false;
     s_->venc.service([this](void *t) { s_->released(t); },
                      [this](const uint8_t *d, size_t n, int64_t ts, bool k) { s_->unit(d, n, ts, k); });
+    s_->audio();
     if (s_->mp4.fragments() != s_->frags) {
         s_->frags = s_->mp4.fragments();
         return true;
@@ -96,6 +118,8 @@ void Recorder::stop()
     auto unit = [this](const uint8_t *d, size_t n, int64_t ts, bool k) { s_->unit(d, n, ts, k); };
     s_->venc.drain(500, rel, unit);
     s_->venc.close(rel);
+    s_->mic.close();
+    s_->audio();
     s_->mp4.finish();
 }
 

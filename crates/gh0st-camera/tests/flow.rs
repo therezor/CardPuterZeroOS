@@ -179,3 +179,27 @@ fn the_cpp_helper_speaks_the_same_wire() {
     drv.keys("enter").pump(1500);
     assert_eq!(count(&d, Kind::Photo), 2, "shoots again after the return");
 }
+
+#[test]
+fn a_video_plays_pauses_and_stops_in_the_gallery() {
+    let _one = serial();
+    let (mut drv, _d) = start(Source::Fake { camera: true }, "play");
+    drv.keys("tab\nenter").pump(1200);
+    drv.keys("enter").pump(150);
+    drv.keys("p").pump(200);
+    drv.keys("enter").pump(200);
+    let poster = drv.frame().pixels().to_vec();
+    drv.keys("enter").pump(1500);
+    let playing = drv.frame().pixels().to_vec();
+    assert_ne!(poster, playing, "the picture moves");
+    assert!(drv.lint().is_empty());
+    drv.keys("enter").pump(150);
+    let paused = drv.frame().pixels().to_vec();
+    drv.pump(1000);
+    assert_eq!(paused, drv.frame().pixels(), "a pause holds the picture");
+    // Paused, nothing wakes the app.
+    assert_eq!(drv.idle_wakes(5_000), 0);
+    drv.keys("esc").pump(1000);
+    // Back in the grid, nothing plays: the top bar's clock at most.
+    assert!(drv.idle_wakes(5_000) <= 1);
+}

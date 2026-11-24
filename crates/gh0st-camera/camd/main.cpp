@@ -3,6 +3,8 @@
 // a wake pipe the sensor and the JPEG worker write to, and signals.
 #include "camd.h"
 #include "link.h"
+#include "player.h"
+#include "pulse.h"
 #include "rec.h"
 #include "ring.h"
 #include "still.h"
@@ -165,7 +167,8 @@ const char *faultWord(Fault f)
 class Helper {
 public:
     Helper(int linkFd, int wakeR, int wakeW)
-        : link_(linkFd), wakeR_(wakeR), be_(makeBackend(wakeW)), worker_(wakeW), rec_(*be_)
+        : link_(linkFd), wakeR_(wakeR), be_(makeBackend(wakeW)), worker_(wakeW), rec_(*be_),
+          player_(wakeW)
     {
     }
 
@@ -259,6 +262,7 @@ private:
                 },
                 video);
         }
+        played();
         Worker::Done d;
         while (worker_.take(d)) {
             if (d.quiet)
@@ -269,6 +273,56 @@ private:
                 say({"shot", "err", d.path, d.why});
         }
         return !sig;
+    }
+
+    // A picture from the player goes to the ring like a preview frame;
+    // its time and state go to the app when they change.
+    void played()
+    {
+        int w, h;
+        if (player_.picture(playPx_, w, h) && size_t(w) * h <= ring_.slotPx()) {
+            slot_ = (slot_ + 1) % PREVIEW_SLOTS;
+            uint32_t seq = ring_.write(slot_, w, h, [&](uint16_t *dst) {
+                memcpy(dst, playPx_.data(), size_t(w) * h * 2);
+            });
+            if (seq)
+                say({"frame", std::to_string(slot_), std::to_string(seq), std::to_string(w),
+                     std::to_string(h)});
+        }
+        Player::Status s;
+        if (player_.news(s)) {
+            if (!s.error.empty()) {
+                player_.close();
+                say({"playerr", s.error});
+                return;
+            }
+            say({"play", std::to_string(s.posMs), std::to_string(s.durMs),
+                 s.ended ? "done" : s.paused ? "paused" : "playing"});
+        }
+    }
+
+    void play(const std::vector<std::string> &m)
+    {
+        auto at = [&](size_t i) { return i < m.size() ? m[i] : std::string(); };
+        const std::string verb = at(1);
+        if (verb == "open") {
+            // The sensor and the decoder don't share CMA: one at a time.
+            stopAll();
+            int w = atoi(at(3).c_str()), h = atoi(at(4).c_str());
+            std::string why;
+            if (w <= 0 || h <= 0 || size_t(w) * h > ring_.slotPx())
+                say({"playerr", "bad size"});
+            else if (!player_.open(at(2), w, h, why))
+                say({"playerr", why});
+        } else if (verb == "pause") {
+            player_.pause(true);
+        } else if (verb == "resume") {
+            player_.pause(false);
+        } else if (verb == "seek") {
+            player_.seek(strtoll(at(2).c_str(), nullptr, 10));
+        } else if (verb == "stop") {
+            player_.close();
+        }
     }
 
     // The encoder made something: a second on disk is news for the app.
@@ -283,7 +337,7 @@ private:
         }
     }
 
-    void startRec(const std::string &path)
+    void startRec(const std::string &path, bool mic, const std::string &source)
     {
         if (rec_.active())
             return;
@@ -292,9 +346,14 @@ private:
             say({"error", "io", "not in video mode"});
             return;
         }
-        if (!rec_.start(path, why)) {
+        std::string micWhy;
+        if (!rec_.start(path, mic, source, why, micWhy)) {
             say({"error", "io", why});
             return;
+        }
+        if (!micWhy.empty()) {
+            fprintf(stderr, "gh0st-camd: recording without sound: %s\n", micWhy.c_str());
+            say({"nomic", micWhy});
         }
         lostAtStart_ = be_->lostFrames();
         poster_ = true;
@@ -357,6 +416,7 @@ private:
 
     void stopAll()
     {
+        player_.close();
         endRec();
         live_ = false;
         if (open_) {
@@ -418,6 +478,7 @@ private:
                 }
             }
         } else if (verb == "start") {
+            player_.close();
             if (!live_ && openSensor())
                 startPreview();
         } else if (verb == "stop") {
@@ -441,11 +502,20 @@ private:
             endRec();
             shoot(at(1));
         } else if (verb == "rec") {
-            // Sound comes later: `mic` is taken and not yet used.
+            // `mic` and the source, empty for the one autoSource picks.
             if (at(1) == "start")
-                startRec(at(2));
+                startRec(at(2), at(3) == "mic", at(4));
             else if (at(1) == "stop")
                 endRec();
+        } else if (verb == "mics") {
+            std::vector<std::string> out{"mics"};
+            for (auto &s : sources()) {
+                out.push_back(s.name);
+                out.push_back(s.desc);
+            }
+            say(out);
+        } else if (verb == "play") {
+            play(m);
         } else if (verb == "thumb") {
             int w = atoi(at(2).c_str()), h = atoi(at(3).c_str());
             std::vector<uint16_t> px;
@@ -488,6 +558,8 @@ private:
     std::unique_ptr<Backend> be_;
     Worker worker_;
     Recorder rec_;
+    Player player_;
+    std::vector<uint16_t> playPx_;
     Mode mode_ = Mode::Photo;
     Controls ctl_;
     bool open_ = false, live_ = false, poster_ = false;

@@ -808,13 +808,16 @@ int probe(const char *dir)
         lc.completed_ = lc.gaps_ = 0;
         lc.lastTs_ = lc.sumDelta_ = lc.sumDur_ = 0;
         Recorder rec(lc);
-        std::string why, path = std::string(dir ? dir : ".") + "/probe-" +
-                                (p.mode == Mode::Video1080 ? "1080" : "720") + ".mp4";
-        if (!rec.start(path, why)) {
+        std::string why, micWhy, path = std::string(dir ? dir : ".") + "/probe-" +
+                                        (p.mode == Mode::Video1080 ? "1080" : "720") + ".mp4";
+        // With sound, as the app records: ffprobe the file for both tracks.
+        if (!rec.start(path, true, "", why, micWhy)) {
             printf("%s rec: %s\n", p.name, why.c_str());
             lc.stop();
             continue;
         }
+        if (!micWhy.empty())
+            printf("%s rec: no sound: %s\n", p.name, micWhy.c_str());
         int shown = 0;
         uint64_t convMs = 0;
         std::vector<uint16_t> px(size_t(p.w) * p.h);

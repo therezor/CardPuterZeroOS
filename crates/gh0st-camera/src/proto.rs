@@ -57,11 +57,28 @@ pub enum Cmd {
         path: String,
         raw: bool,
     },
+    /// With `mic`, sound from `source`: a server's source name, or empty
+    /// for the helper's pick (a plugged-in microphone over the board's).
     RecStart {
         path: String,
         mic: bool,
+        source: String,
     },
     RecStop,
+    /// The microphones there are, answered by `mics`.
+    Mics,
+    /// Plays a video fitted in w x h: frames as the preview's, and `play`
+    /// with its time once a second and on each change.
+    Play {
+        path: String,
+        w: u16,
+        h: u16,
+    },
+    PlayPause,
+    PlayResume,
+    /// To this many ms from the start.
+    PlaySeek(u64),
+    PlayStop,
     /// A picture of `path` (a JPEG or an MP4) in exactly w x h: fitted at
     /// zoom 1, or `zoom` times closer around (cx, cy), each 0 to 1 across
     /// the picture. Answered in order, by `thumb` or `nothumb`.
@@ -83,6 +100,24 @@ pub enum State {
     /// Taking a still: no frames until it is done.
     Busy,
     Rec,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Playing {
+    Playing,
+    Paused,
+    /// At the end, paused there. Resume plays from the start.
+    Done,
+}
+
+impl Playing {
+    fn word(self) -> &'static str {
+        match self {
+            Playing::Playing => "playing",
+            Playing::Paused => "paused",
+            Playing::Done => "done",
+        }
+    }
 }
 
 /// Why the helper can't go on.
@@ -128,6 +163,17 @@ pub enum Event {
     RecDone {
         path: String,
     },
+    /// A recording goes on without sound, and why.
+    NoMic(String),
+    /// Each microphone as (source name, description).
+    Mics(Vec<(String, String)>),
+    Play {
+        pos_ms: u64,
+        dur_ms: u64,
+        state: Playing,
+    },
+    /// The video can't play, and why. The player has stopped.
+    PlayErr(String),
     /// The picture asked for by `thumb` could not be made.
     NoThumb {
         path: String,
@@ -165,10 +211,20 @@ impl Cmd {
                 }
                 f
             }
-            Cmd::RecStart { path, mic } => {
-                v(&["rec", "start", path, if *mic { "mic" } else { "" }])
+            Cmd::RecStart { path, mic, source } => {
+                if *mic {
+                    v(&["rec", "start", path, "mic", source])
+                } else {
+                    v(&["rec", "start", path])
+                }
             }
             Cmd::RecStop => v(&["rec", "stop"]),
+            Cmd::Mics => v(&["mics"]),
+            Cmd::Play { path, w, h } => v(&["play", "open", path, &w.to_string(), &h.to_string()]),
+            Cmd::PlayPause => v(&["play", "pause"]),
+            Cmd::PlayResume => v(&["play", "resume"]),
+            Cmd::PlaySeek(ms) => v(&["play", "seek", &ms.to_string()]),
+            Cmd::PlayStop => v(&["play", "stop"]),
             Cmd::Thumb {
                 path,
                 w,
@@ -205,8 +261,19 @@ impl Cmd {
             ("rec", Some("start")) => Cmd::RecStart {
                 path: s(2)?.into(),
                 mic: s(3) == Some("mic"),
+                source: s(4).unwrap_or("").into(),
             },
             ("rec", Some("stop")) => Cmd::RecStop,
+            ("mics", _) => Cmd::Mics,
+            ("play", Some("open")) => Cmd::Play {
+                path: s(2)?.into(),
+                w: num(f.get(3))?,
+                h: num(f.get(4))?,
+            },
+            ("play", Some("pause")) => Cmd::PlayPause,
+            ("play", Some("resume")) => Cmd::PlayResume,
+            ("play", Some("seek")) => Cmd::PlaySeek(num(f.get(2))?),
+            ("play", Some("stop")) => Cmd::PlayStop,
             ("thumb", Some(p)) => Cmd::Thumb {
                 path: p.into(),
                 w: num(f.get(2))?,
@@ -246,6 +313,19 @@ impl Event {
             } => put(&[&"shot", &"err", path, e]),
             Event::Rec { ms, bytes } => put(&[&"rec", ms, bytes]),
             Event::RecDone { path } => put(&[&"recdone", path]),
+            Event::NoMic(why) => put(&[&"nomic", why]),
+            Event::Mics(all) => {
+                put(&[&"mics"]);
+                for (name, desc) in all {
+                    put(&[name, desc]);
+                }
+            }
+            Event::Play {
+                pos_ms,
+                dur_ms,
+                state,
+            } => put(&[&"play", pos_ms, dur_ms, &state.word()]),
+            Event::PlayErr(why) => put(&[&"playerr", why]),
             Event::NoThumb { path } => put(&[&"nothumb", path]),
             Event::Thumb {
                 path,
@@ -299,6 +379,25 @@ impl Event {
                 bytes: num(n(2))?,
             },
             "recdone" => Event::RecDone { path: s(1)?.into() },
+            "nomic" => Event::NoMic(s(1).unwrap_or("").into()),
+            "mics" => Event::Mics(
+                f[1..]
+                    .chunks(2)
+                    .filter(|c| c.len() == 2)
+                    .map(|c| (c[0].clone(), c[1].clone()))
+                    .collect(),
+            ),
+            "play" => Event::Play {
+                pos_ms: num(n(1))?,
+                dur_ms: num(n(2))?,
+                state: match s(3)? {
+                    "playing" => Playing::Playing,
+                    "paused" => Playing::Paused,
+                    "done" => Playing::Done,
+                    _ => return None,
+                },
+            },
+            "playerr" => Event::PlayErr(s(1).unwrap_or("").into()),
             "nothumb" => Event::NoThumb { path: s(1)?.into() },
             "thumb" => Event::Thumb {
                 path: s(1)?.into(),
@@ -344,12 +443,29 @@ mod tests {
             Cmd::RecStart {
                 path: "/v.mp4".into(),
                 mic: true,
+                source: "alsa_input.usb-Mic".into(),
+            },
+            Cmd::RecStart {
+                path: "/v.mp4".into(),
+                mic: true,
+                source: String::new(),
             },
             Cmd::RecStart {
                 path: "/v.mp4".into(),
                 mic: false,
+                source: String::new(),
             },
             Cmd::RecStop,
+            Cmd::Mics,
+            Cmd::Play {
+                path: "/v.mp4".into(),
+                w: 302,
+                h: 170,
+            },
+            Cmd::PlayPause,
+            Cmd::PlayResume,
+            Cmd::PlaySeek(65_000),
+            Cmd::PlayStop,
             Cmd::Thumb {
                 path: "/p/x.jpg".into(),
                 w: 40,
@@ -394,6 +510,18 @@ mod tests {
             Event::RecDone {
                 path: "/v.mp4".into(),
             },
+            Event::NoMic("Connection refused".into()),
+            Event::Mics(vec![
+                ("alsa_input.platform-sound".into(), "Built-in Audio".into()),
+                ("alsa_input.usb-Mic".into(), "USB Mic".into()),
+            ]),
+            Event::Mics(vec![]),
+            Event::Play {
+                pos_ms: 4_000,
+                dur_ms: 12_032,
+                state: Playing::Paused,
+            },
+            Event::PlayErr("can't read this video".into()),
             Event::NoThumb {
                 path: "/gone.jpg".into(),
             },

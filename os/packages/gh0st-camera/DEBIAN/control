@@ -4,7 +4,10 @@ Architecture: arm64
 Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: graphics
 Priority: optional
-Depends: gh0st, libcamera0.7 (= @V:libcamera0.7@), libcamera-ipa (= @V:libcamera-ipa@), libjpeg62-turbo, libstdc++6
+Depends: gh0st, libcamera0.7 (= @V:libcamera0.7@), libcamera-ipa (= @V:libcamera-ipa@), libjpeg62-turbo, libstdc++6,
+ libavformat61, libavcodec61, libavutil59, libswscale8, libswresample5, libpulse0
 Description: the Gh0st OS camera
- Photos and video with the CardputerZero's camera. gh0st-camd, its helper,
- drives libcamera; it is built against this exact libcamera.
+ Photos and video with sound from the CardputerZero's camera, and a gallery
+ that plays them. gh0st-camd, its helper, drives libcamera; it is built
+ against this exact libcamera. ffmpeg's libraries encode the sound and play
+ videos back, and libpulse reaches PipeWire.

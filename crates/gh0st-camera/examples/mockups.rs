@@ -75,18 +75,34 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
     d.keys("esc\nhelp").pump(50);
     each("08-help", &mut d);
 
+    let mut d = camera("menu-video", true);
+    d.keys("tab").pump(150);
+    d.keys("8").pump(50);
+    d.keys("x\nx\nx\nx\nx\nx\nx\nx\nx").pump(50);
+    each("08-menu-video", &mut d);
+
     let mut d = camera("review", true);
     d.keys("p").pump(300);
-    each("09-photos", &mut d);
+    each("09-gallery", &mut d);
     d.keys("c\nc\nx").pump(300);
-    each("10-photos-moved", &mut d);
+    each("10-gallery-moved", &mut d);
     d.keys("enter").pump(300);
     each("11-photo-full", &mut d);
     d.keys("7\n7\nc\nenter").pump(300);
     each("12-photo-zoomed", &mut d);
 
+    // The newest shot is a video.
+    let mut d = camera("play", true);
+    d.keys("p").pump(300);
+    d.keys("enter").pump(300);
+    each("13-video-full", &mut d);
+    d.keys("enter").pump(2300);
+    each("14-video-playing", &mut d);
+    d.keys("enter").pump(200);
+    each("15-video-paused", &mut d);
+
     let mut d = camera("lite", false);
-    each("13-no-camera", &mut d);
+    each("16-no-camera", &mut d);
 }
 
 fn main() {

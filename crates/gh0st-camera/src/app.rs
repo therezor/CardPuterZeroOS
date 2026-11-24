@@ -2,12 +2,13 @@
 //! (chips on 5 to 7, the menu on 8) and fills the rest: a 4:3 picture
 //! between two labelled rails for photos, a 16:9 one for video. Review
 //! shows what was shot, under the OS bars. docs/camera.md has the keys and
-//! the design. Photos shows every shot as a grid of tiles; Enter opens
-//! one on the whole screen, where it zooms to the photo's own pixels.
+//! the design. Gallery shows every shot as a grid of tiles; Enter opens
+//! one on the whole screen, where a photo zooms to its own pixels and a
+//! video plays.
 
 use crate::files::{self, Kind, Shot};
 use crate::helper::{Helper, Source};
-use crate::proto::{Cmd, Event, Fault, Mode, State, VideoSize};
+use crate::proto::{Cmd, Event, Fault, Mode, Playing, State, VideoSize};
 use gh0st_app::gfx::icon::{self, IconSize};
 use gh0st_app::gfx::theme::{CARDPUTER, Metrics, ON_PICTURE, PANEL_OFF, PICTURE_PLATE};
 use gh0st_app::gfx::{Canvas, Color, Rect, Theme, widgets};
@@ -23,6 +24,8 @@ pub mod key {
     pub const QUALITY: &str = "gh0st.camera.quality";
     pub const RAW: &str = "gh0st.camera.raw";
     pub const MIC: &str = "gh0st.camera.mic";
+    /// The sound server's source, or empty for Auto.
+    pub const MIC_SOURCE: &str = "gh0st.camera.mic_source";
     pub const FLICKER: &str = "gh0st.camera.flicker";
 }
 
@@ -30,16 +33,14 @@ const SHOOT: u32 = 1;
 const MODE: u32 = 2;
 const ZOOM: u32 = 3;
 const EV: u32 = 4;
-const PHOTOS: u32 = 5;
+const GALLERY: u32 = 5;
 const TIMER: u32 = 6;
 const GRID: u32 = 7;
 const QUALITY: u32 = 8;
 const RAW: u32 = 9;
-/// The helper can't write a DNG or record sound yet (docs/camera.md,
-/// Missing). Until it can, the menu doesn't offer them and video shows
-/// as silent.
+/// The helper can't write a DNG yet (docs/camera.md, Missing). Until it
+/// can, the menu doesn't offer it.
 const RAW_BUILT: bool = false;
-const SOUND_BUILT: bool = false;
 const VIDEO: u32 = 10;
 const MIC: u32 = 11;
 const FLICKER: u32 = 12;
@@ -54,6 +55,14 @@ const DOWN: u32 = 20;
 const ZOOM_OUT: u32 = 21;
 const ZOOM_IN: u32 = 22;
 const INFO: u32 = 23;
+const PLAY: u32 = 24;
+const BACK: u32 = 25;
+const AHEAD: u32 = 26;
+const MIC_SOURCE: u32 = 27;
+const DELETE: u32 = 28;
+
+/// How far the arrows and 5 and 7 move a video.
+const SEEK_MS: u64 = 5000;
 
 /// The gallery grid: columns, and rows on screen.
 const GRID_COLS: usize = 5;
@@ -132,6 +141,13 @@ struct Rec {
     ms: u64,
 }
 
+/// A video playing in the full view.
+struct Playback {
+    pos_ms: u64,
+    dur_ms: u64,
+    state: Playing,
+}
+
 /// A picture the helper drew for us.
 #[derive(Default)]
 struct Pic {
@@ -177,6 +193,12 @@ pub struct Camera {
     quality: usize,
     raw: bool,
     mic: bool,
+    /// The microphone picked, empty for Auto, and the ones there are once
+    /// asked: asking starts the sound server, so only the menu does.
+    mic_source: String,
+    mics: Option<Vec<(String, String)>>,
+    /// A step of the Microphone row waiting for that answer.
+    mic_step: Option<bool>,
     flicker60: bool,
     /// The light control is open over the picture: 5 and 7 are − and +.
     light: bool,
@@ -199,6 +221,7 @@ pub struct Camera {
     saving: bool,
     flash: bool,
     rec: Option<Rec>,
+    play: Option<Playback>,
     count: Option<(u8, Timer)>,
     free: Option<u64>,
     shots: Vec<Shot>,
@@ -229,7 +252,10 @@ impl Camera {
             grid: false,
             quality: 0,
             raw: false,
-            mic: SOUND_BUILT,
+            mic: true,
+            mic_source: String::new(),
+            mics: None,
+            mic_step: None,
             flicker60: false,
             light: false,
             frame: Pic::default(),
@@ -247,6 +273,7 @@ impl Camera {
             saving: false,
             flash: false,
             rec: None,
+            play: None,
             count: None,
             free: None,
             shots: Vec::new(),
@@ -280,7 +307,8 @@ impl Camera {
         self.grid = s.get_bool(key::GRID).unwrap_or(false);
         self.quality = (s.get_str(key::QUALITY) == Some("normal")) as usize;
         self.raw = RAW_BUILT && s.get_bool(key::RAW).unwrap_or(false);
-        self.mic = SOUND_BUILT && s.get_bool(key::MIC).unwrap_or(true);
+        self.mic = s.get_bool(key::MIC).unwrap_or(true);
+        self.mic_source = s.get_str(key::MIC_SOURCE).unwrap_or("").to_string();
         self.flicker60 = s.get_int(key::FLICKER) == Some(60);
     }
 
@@ -453,6 +481,7 @@ impl Camera {
 
     /// Shows the selected shot whole, fitted.
     fn open_full(&mut self) {
+        self.stop_play();
         self.view = View::Full;
         self.zoom_at = 0;
         self.centre = (0.5, 0.5);
@@ -492,6 +521,7 @@ impl Camera {
             self.send(Cmd::RecStart {
                 path: path.to_string_lossy().into_owned(),
                 mic: self.mic,
+                source: self.mic_source.clone(),
             });
             self.rec = Some(Rec { ms: 0 });
             return;
@@ -531,6 +561,14 @@ impl Camera {
                 self.state = s;
                 if s == State::Preview && self.phase == Phase::Starting {
                     self.phase = Phase::Live;
+                }
+            }
+            Event::Frame { slot, seq, .. } if self.play.is_some() => {
+                if let Some(h) = &self.helper {
+                    let pic = &mut self.full_pic;
+                    if let Some((w, hh)) = h.ring.read(slot, seq, &mut pic.px) {
+                        (pic.w, pic.h) = (w, hh);
+                    }
                 }
             }
             Event::Frame { slot, seq, .. } => {
@@ -585,6 +623,31 @@ impl Camera {
                 self.answered(&path, pic);
             }
             Event::NoThumb { path } => self.answered(&path, Pic::default()),
+            Event::NoMic(why) => {
+                eprintln!("gh0st-camera: no microphone: {why}");
+                cx.toast_tone(Tone::Warning, "Recording without sound");
+            }
+            Event::Mics(all) => {
+                self.mics = Some(all);
+                if let Some(fwd) = self.mic_step.take() {
+                    self.step_mic(fwd);
+                    self.save(cx);
+                }
+            }
+            Event::Play {
+                pos_ms,
+                dur_ms,
+                state,
+            } => {
+                if let Some(p) = &mut self.play {
+                    (p.pos_ms, p.dur_ms, p.state) = (pos_ms, dur_ms, state);
+                }
+            }
+            Event::PlayErr(why) => {
+                eprintln!("gh0st-camera: playing: {why}");
+                self.play = None;
+                cx.toast_tone(Tone::Critical, "Can't play this video");
+            }
             Event::Error(f) => {
                 let why = match f {
                     Fault::NoCamera => "No camera on this device",
@@ -669,7 +732,101 @@ impl Camera {
         self.want_tiles();
     }
 
+    /// Plays the video on screen, or pauses it, or plays it again.
+    fn play_pause(&mut self) {
+        let Some(s) = self.shots.get(self.tiles.at()) else {
+            return;
+        };
+        if s.kind != Kind::Video {
+            return;
+        }
+        match self.play.as_ref().map(|p| p.state) {
+            None => {
+                let m = &CARDPUTER;
+                self.send(Cmd::Play {
+                    path: s.path.to_string_lossy().into_owned(),
+                    w: m.width as u16,
+                    h: m.height as u16,
+                });
+                self.play = Some(Playback {
+                    pos_ms: 0,
+                    dur_ms: 0,
+                    state: Playing::Playing,
+                });
+            }
+            Some(Playing::Playing) => {
+                self.send(Cmd::PlayPause);
+                if let Some(p) = &mut self.play {
+                    p.state = Playing::Paused;
+                }
+            }
+            Some(Playing::Paused | Playing::Done) => {
+                self.send(Cmd::PlayResume);
+                if let Some(p) = &mut self.play {
+                    p.state = Playing::Playing;
+                }
+            }
+        }
+    }
+
+    fn seek(&mut self, ahead: bool) {
+        let Some(p) = &mut self.play else {
+            return;
+        };
+        let to = if ahead {
+            p.pos_ms + SEEK_MS
+        } else {
+            p.pos_ms.saturating_sub(SEEK_MS)
+        };
+        p.pos_ms = if p.dur_ms > 0 { to.min(p.dur_ms) } else { to };
+        let at = p.pos_ms;
+        self.send(Cmd::PlaySeek(at));
+    }
+
+    /// Ends playing; the sound stream closes with it.
+    fn stop_play(&mut self) {
+        if self.play.take().is_some() {
+            self.send(Cmd::PlayStop);
+        }
+    }
+
+    /// The video on screen, in the full view.
+    fn on_video(&self) -> bool {
+        self.view == View::Full
+            && self
+                .shots
+                .get(self.tiles.at())
+                .is_some_and(|s| s.kind == Kind::Video)
+    }
+
+    /// The Microphone row's word.
+    fn mic_label(&self) -> String {
+        if self.mic_source.is_empty() {
+            return "Auto".into();
+        }
+        let named = self.mics.as_ref().and_then(|all| {
+            all.iter()
+                .find(|(n, _)| *n == self.mic_source)
+                .map(|(_, d)| d.clone())
+        });
+        named.unwrap_or_else(|| {
+            let s = self.mic_source.trim_start_matches("alsa_input.");
+            s.split('.').next().unwrap_or(s).to_string()
+        })
+    }
+
+    /// Auto, then each microphone there is, round.
+    fn step_mic(&mut self, fwd: bool) {
+        let mut all = vec![String::new()];
+        all.extend(self.mics.iter().flatten().map(|(n, _)| n.clone()));
+        let i = all.iter().position(|n| *n == self.mic_source).unwrap_or(0);
+        let n = all.len();
+        let next = if fwd { (i + 1) % n } else { (i + n - 1) % n };
+        self.mic_source = all[next].clone();
+    }
+
     fn close_review(&mut self) {
+        self.stop_play();
         self.view = View::Finder;
         self.full_pic = Pic::default();
         self.asks.retain(|a| a.what == For::Last);
@@ -692,6 +849,7 @@ impl Camera {
             let _ = std::fs::remove_file(poster);
         }
         self.tiles_pic.remove(&s.path);
+        self.stop_play();
         self.refresh();
         if self.shots.is_empty() {
             self.close_review();
@@ -725,9 +883,8 @@ impl Camera {
         if RAW_BUILT {
             s.set_bool(key::RAW, self.raw);
         }
-        if SOUND_BUILT {
-            s.set_bool(key::MIC, self.mic);
-        }
+        s.set_bool(key::MIC, self.mic);
+        s.set_str(key::MIC_SOURCE, &self.mic_source);
         s.set_int(key::FLICKER, if self.flicker60 { 60 } else { 50 });
     }
 }
@@ -778,6 +935,25 @@ fn tile_size(m: &Metrics) -> (i32, i32) {
 fn preview_rect(t: &Theme, video: bool) -> Rect {
     let (w, h) = preview_size(&t.m, video);
     Rect::new((t.m.width - w) / 2, 0, w, h)
+}
+
+/// Where the video is: its time top right, and a bar over the buttons.
+fn draw_progress(c: &mut Canvas, t: &Theme, p: &Playback) {
+    let m = t.m.margin;
+    let label = if p.dur_ms > 0 {
+        format!("{} / {}", clock(p.pos_ms), clock(p.dur_ms))
+    } else {
+        clock(p.pos_ms)
+    };
+    let w = t.f.small_bold.measure(&label) + 10;
+    plate_text(c, t, t.m.width - m - w, t.m.margin_v, &label, ON_PICTURE);
+    if p.dur_ms == 0 {
+        return;
+    }
+    let track = Rect::new(m, foot(&t.m) - 6, t.m.width - 2 * m, 3);
+    c.fill_alpha(track, PICTURE_PLATE, 150);
+    let done = (track.w as u64 * p.pos_ms.min(p.dur_ms) / p.dur_ms) as i32;
+    c.fill(Rect::new(track.x, track.y, done, track.h), t.c.accent);
 }
 
 /// A dark plate under words drawn over the picture.
@@ -1154,15 +1330,26 @@ impl Camera {
         let y = t.m.margin_v;
         let r = plate_text(c, t, m, y, &self.context, ON_PICTURE);
         if s.kind == Kind::Video {
-            let sz = IconSize::Large as i32;
-            let cr = Rect::new(
-                (t.m.width - sz) / 2 - 6,
-                (t.m.height - sz) / 2 - 6,
-                sz + 12,
-                sz + 12,
-            );
-            plate(c, cr);
-            icon::draw(c, "video", IconSize::Large, cr.x + 6, cr.y + 6, ON_PICTURE);
+            let mark = match self.play.as_ref().map(|p| p.state) {
+                Some(Playing::Playing) => None,
+                Some(Playing::Paused) => Some("pause"),
+                Some(Playing::Done) => Some("rotate-cw"),
+                None => Some("play"),
+            };
+            if let Some(name) = mark {
+                let sz = IconSize::Large as i32;
+                let cr = Rect::new(
+                    (t.m.width - sz) / 2 - 6,
+                    (t.m.height - sz) / 2 - 6,
+                    sz + 12,
+                    sz + 12,
+                );
+                plate(c, cr);
+                icon::draw(c, name, IconSize::Large, cr.x + 6, cr.y + 6, ON_PICTURE);
+            }
+            if let Some(p) = &self.play {
+                draw_progress(c, t, p);
+            }
         }
         if self.zoom_at > 0 {
             let z = self.zoom();
@@ -1215,7 +1402,7 @@ impl Page for Camera {
     fn title(&self) -> &str {
         match self.view {
             View::Finder => "Camera",
-            _ => "Photos",
+            _ => "Gallery",
         }
     }
 
@@ -1244,12 +1431,12 @@ impl Page for Camera {
                     (true, true) => Chip::new("square", "").danger(),
                 };
                 let shutter = shutter.runs(SHOOT).disabled(!ready && !rec);
-                // 4, far left as on a phone: the photos taken. Esc is Back.
-                let photos = Chip::new("images", "").runs(PHOTOS).disabled(rec);
+                // 4, far left as on a phone: the gallery. Esc is Back.
+                let gallery = Chip::new("images", "").runs(GALLERY).disabled(rec);
                 if self.light {
                     Bars::actions()
                         .over()
-                        .chip(4, photos)
+                        .chip(4, gallery)
                         .chip(5, Chip::new("minus", "").runs(LESS))
                         .chip(6, shutter)
                         .chip(7, Chip::new("plus", "").runs(MORE))
@@ -1257,13 +1444,27 @@ impl Page for Camera {
                     let mode = if self.video { "camera" } else { "video" };
                     Bars::actions()
                         .over()
-                        .chip(4, photos)
+                        .chip(4, gallery)
                         .chip(5, Chip::new(mode, "").runs(MODE).disabled(rec))
                         .chip(6, shutter)
                         .chip(7, Chip::new("sun", "").runs(LIGHT).on(self.ev != EV_ZERO))
                 }
             }
             View::Gallery => Bars::top().chip(6, Chip::new("trash-2", "Delete").hold()),
+            View::Full if self.on_video() => {
+                // 6 plays and pauses; 5 and 7 move once it has started.
+                let main = match self.play.as_ref().map(|p| p.state) {
+                    Some(Playing::Playing) => Chip::new("pause", ""),
+                    Some(Playing::Done) => Chip::new("rotate-cw", ""),
+                    _ => Chip::new("play", ""),
+                };
+                let idle = self.play.is_none();
+                Bars::actions()
+                    .over()
+                    .chip(5, Chip::new("rewind", "").runs(BACK).disabled(idle))
+                    .chip(6, main.main().runs(PLAY))
+                    .chip(7, Chip::new("fast-forward", "").runs(AHEAD).disabled(idle))
+            }
             View::Full => {
                 let photo = self.full_px.is_some();
                 let most = self.zooms().len() - 1;
@@ -1326,6 +1527,8 @@ impl Page for Camera {
         if self.rec.take().is_some() {
             self.send(Cmd::RecStop);
         }
+        // `stop` below ends playing too; the picture stays, paused.
+        self.play = None;
         cx.keep_awake(false);
         self.send(Cmd::Stop);
     }
@@ -1372,6 +1575,7 @@ impl Page for Camera {
     fn back(&mut self, cx: &mut Cx) -> bool {
         match self.view {
             View::Full => {
+                self.stop_play();
                 self.view = View::Gallery;
                 self.info = false;
                 self.full_pic = Pic::default();
@@ -1394,7 +1598,7 @@ impl Page for Camera {
     }
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
-        if key == Key::Soft(6) && self.view != View::Finder {
+        if key == Key::Soft(6) && self.view != View::Finder && !self.on_video() {
             self.delete(cx);
         }
     }
@@ -1423,6 +1627,26 @@ impl Page for Camera {
                     .repeats(),
             );
             c.add(Command::action(FULL, "Open").keys("Enter").keys_only());
+            return;
+        }
+        if self.on_video() {
+            let (l, r) = if self.play.is_some() {
+                ("Back 5 s", "Ahead 5 s")
+            } else {
+                ("Newer", "Older")
+            };
+            c.add(Command::action(PREV, l).keys("z").keys_only().repeats());
+            c.add(Command::action(NEXT, r).keys("c").keys_only().repeats());
+            let play = match self.play.as_ref().map(|p| p.state) {
+                Some(Playing::Playing) => "Pause",
+                Some(Playing::Done) => "Play again",
+                _ => "Play",
+            };
+            c.add(Command::action(PLAY, play).keys("Enter"));
+            c.add(Command::action(BACK, "Back 5 s").keys_only());
+            c.add(Command::action(AHEAD, "Ahead 5 s").keys_only());
+            c.add(Command::action(INFO, "Details"));
+            c.add(Command::action(DELETE, "Delete"));
             return;
         }
         if self.view == View::Full {
@@ -1480,7 +1704,7 @@ impl Page for Camera {
             c.add(Command::action(LIGHT, "Light").keys_only());
         }
         c.add(
-            Command::action(PHOTOS, "Photos")
+            Command::action(GALLERY, "Gallery")
                 .keys("p")
                 .opens()
                 .enabled(!rec),
@@ -1507,9 +1731,10 @@ impl Page for Camera {
             VideoSize::Wide720 => "720p wide",
         };
         c.add(Command::choice(VIDEO, "Size", size).enabled(!rec));
-        if SOUND_BUILT {
-            c.add(Command::toggle(MIC, "Sound", self.mic).enabled(!rec));
-        }
+        c.add(Command::toggle(MIC, "Sound", self.mic).enabled(!rec));
+        c.add(
+            Command::choice(MIC_SOURCE, "Microphone", self.mic_label()).enabled(self.mic && !rec),
+        );
         c.group("Camera");
         let hz = if self.flicker60 { "60 Hz" } else { "50 Hz" };
         c.add(Command::choice(FLICKER, "Mains", hz));
@@ -1553,7 +1778,7 @@ impl Page for Camera {
                 self.send(Cmd::Set("ev".into(), EVS[self.ev].0.to_string()));
             }
             LIGHT => self.light = true,
-            PHOTOS => self.open_review(cx),
+            GALLERY => self.open_review(cx),
             TIMER => self.timer = (self.timer + 1) % TIMERS.len(),
             GRID => self.grid = !self.grid,
             QUALITY => {
@@ -1575,6 +1800,17 @@ impl Page for Camera {
                 }
             }
             MIC => self.mic = !self.mic,
+            MIC_SOURCE if self.mics.is_none() => {
+                self.mic_step = Some(fwd);
+                self.send(Cmd::Mics);
+                return;
+            }
+            MIC_SOURCE => self.step_mic(fwd),
+            PLAY => self.play_pause(),
+            BACK => self.seek(false),
+            AHEAD => self.seek(true),
+            PREV | NEXT if self.play.is_some() => self.seek(id == NEXT),
+            DELETE => self.delete(cx),
             FLICKER => {
                 self.flicker60 = !self.flicker60;
                 let hz = if self.flicker60 { "60" } else { "50" };
@@ -1627,7 +1863,7 @@ impl Page for Camera {
                 | LESS
                 | MORE
                 | LIGHT
-                | PHOTOS
+                | GALLERY
                 | PREV
                 | NEXT
                 | UP
@@ -1636,6 +1872,10 @@ impl Page for Camera {
                 | ZOOM_IN
                 | ZOOM_OUT
                 | INFO
+                | PLAY
+                | BACK
+                | AHEAD
+                | DELETE
         ) {
             self.save(cx);
         }
@@ -1668,7 +1908,28 @@ mod tests {
         cam.commands(&mut c);
         let ids: Vec<u32> = c.iter().map(Command::id).collect();
         assert_eq!(ids.contains(&RAW), RAW_BUILT);
-        assert_eq!(ids.contains(&MIC), SOUND_BUILT);
-        assert_eq!(cam.mic, SOUND_BUILT, "video without sound shows as silent");
+        assert!(ids.contains(&MIC) && ids.contains(&MIC_SOURCE));
+        assert!(cam.mic, "video has sound unless turned off");
+        assert_eq!(cam.mic_label(), "Auto");
+    }
+
+    #[test]
+    fn the_microphone_steps_from_auto_through_each_and_back() {
+        let mut cam = Camera::with(Source::Fake { camera: true }, std::env::temp_dir());
+        cam.mics = Some(vec![
+            ("alsa_input.platform-sound".into(), "Built-in Audio".into()),
+            ("alsa_input.usb-Mic.mono".into(), "USB Mic".into()),
+        ]);
+        cam.step_mic(true);
+        assert_eq!(cam.mic_label(), "Built-in Audio");
+        cam.step_mic(true);
+        assert_eq!(cam.mic_label(), "USB Mic");
+        cam.step_mic(true);
+        assert_eq!(cam.mic_label(), "Auto");
+        cam.step_mic(false);
+        assert_eq!(cam.mic_source, "alsa_input.usb-Mic.mono");
+        // Unplugged: still named, by its source.
+        cam.mics = Some(vec![]);
+        assert_eq!(cam.mic_label(), "usb-Mic");
     }
 }

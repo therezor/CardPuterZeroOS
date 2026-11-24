@@ -2,7 +2,7 @@
 //! painted landscape for a sensor. Tests, mockups and `--sim` runs use it,
 //! so nothing on a host needs libcamera. Files it "saves" hold a few bytes.
 
-use crate::proto::{Cmd, Event, Mode, State};
+use crate::proto::{Cmd, Event, Mode, Playing, State};
 use crate::ring::{PREVIEW_SLOTS, Ring, THUMB_SLOT};
 use gh0st_core::link::Link;
 use gh0st_core::rt;
@@ -11,6 +11,19 @@ use gh0st_core::rt;
 const FRAME_MS: u64 = 40;
 /// What a second of video "costs": 12 Mb/s and AAC.
 const VIDEO_BYTES_PER_S: u64 = 1_560_000;
+/// Every video it plays lasts this long.
+const PLAY_MS: u64 = 6000;
+
+/// A video playing: where it is, and since when it moves on its own.
+struct Play {
+    seed: u32,
+    w: u16,
+    h: u16,
+    pos_ms: u64,
+    /// The clock when it was at `pos_ms`, while playing.
+    since: Option<u64>,
+    told_s: u64,
+}
 
 struct Fake {
     link: Link,
@@ -25,6 +38,7 @@ struct Fake {
     rec: Option<(String, u64)>,
     next_tick: u64,
     camera: bool,
+    play: Option<Play>,
 }
 
 /// Runs until `quit` or the app hangs up. Without a `camera`, `start`
@@ -43,6 +57,7 @@ pub fn serve(link: Link, ring: Ring, camera: bool) {
         rec: None,
         next_tick: 0,
         camera,
+        play: None,
     };
     // A process helper outlives a killed app on hosts without PDEATHSIG,
     // and a datagram pair never reports the hang-up: watch the parent.
@@ -74,8 +89,12 @@ pub fn serve(link: Link, ring: Ring, camera: bool) {
                 f.next_tick += 1000;
             }
         }
+        if f.play.as_ref().is_some_and(|p| p.since.is_some()) && now >= f.next_frame {
+            f.play_frame(now);
+            f.next_frame = now + FRAME_MS;
+        }
         let mut deadline = None;
-        if f.live {
+        if f.live || f.play.as_ref().is_some_and(|p| p.since.is_some()) {
             deadline = Some(f.next_frame);
         }
         if f.rec.is_some() {
@@ -133,6 +152,7 @@ impl Fake {
             }
             Cmd::Stop => {
                 self.finish();
+                self.play = None;
                 self.live = false;
                 self.say(Event::State(State::Off));
             }
@@ -167,6 +187,62 @@ impl Fake {
                 self.finish();
                 self.say(Event::State(State::Preview));
             }
+            Cmd::Mics => self.say(Event::Mics(vec![
+                (
+                    "alsa_input.platform-sound.stereo".into(),
+                    "Built-in Audio".into(),
+                ),
+                ("alsa_input.usb-Mic.mono".into(), "USB Mic".into()),
+            ])),
+            Cmd::Play { path, w, h } => {
+                self.finish();
+                self.live = false;
+                let now = rt::now_ms();
+                // The picture fills the width at 16:9, as ours are.
+                let ph = (w as u32 * 9 / 16).min(h as u32) as u16 & !1;
+                self.play = Some(Play {
+                    seed: seed_of(&path),
+                    w,
+                    h: ph,
+                    pos_ms: 0,
+                    since: Some(now),
+                    told_s: u64::MAX,
+                });
+                self.next_frame = 0;
+                self.play_frame(now);
+            }
+            Cmd::PlayPause => {
+                let now = rt::now_ms();
+                if let Some(p) = &mut self.play {
+                    p.pos_ms = Self::pos(p, now);
+                    p.since = None;
+                }
+                self.tell(Playing::Paused);
+            }
+            Cmd::PlayResume => {
+                let now = rt::now_ms();
+                if let Some(p) = &mut self.play {
+                    if p.pos_ms >= PLAY_MS {
+                        p.pos_ms = 0;
+                    }
+                    p.since = Some(now);
+                }
+                self.tell(Playing::Playing);
+            }
+            Cmd::PlaySeek(ms) => {
+                let now = rt::now_ms();
+                let mut state = Playing::Paused;
+                if let Some(p) = &mut self.play {
+                    p.pos_ms = ms.min(PLAY_MS);
+                    if p.since.is_some() {
+                        p.since = Some(now);
+                        state = Playing::Playing;
+                    }
+                }
+                self.play_frame(now);
+                self.tell(state);
+            }
+            Cmd::PlayStop => self.play = None,
             Cmd::Thumb {
                 path,
                 w,
@@ -199,6 +275,61 @@ impl Fake {
     fn finish(&mut self) {
         if let Some((path, _)) = self.rec.take() {
             self.say(Event::RecDone { path });
+        }
+    }
+
+    fn pos(p: &Play, now: u64) -> u64 {
+        match p.since {
+            Some(t) => (p.pos_ms + now.saturating_sub(t)).min(PLAY_MS),
+            None => p.pos_ms,
+        }
+    }
+
+    fn tell(&self, state: Playing) {
+        if let Some(p) = &self.play {
+            self.say(Event::Play {
+                pos_ms: p.pos_ms,
+                dur_ms: PLAY_MS,
+                state,
+            });
+        }
+    }
+
+    /// The video's picture now: the landscape with its sun crossing the
+    /// sky as it plays. At the end it stops there.
+    fn play_frame(&mut self, now: u64) {
+        let Some(p) = &mut self.play else {
+            return;
+        };
+        let pos = Self::pos(p, now);
+        let done = pos >= PLAY_MS && p.since.is_some();
+        if p.since.is_some() {
+            p.pos_ms = pos;
+            p.since = (!done).then_some(now);
+        }
+        let (w, h, seed) = (p.w, p.h, p.seed.wrapping_add((pos / 400) as u32));
+        let second = pos / 1000;
+        let tell = second != p.told_s || done;
+        p.told_s = second;
+        let seq = self.next_seq();
+        self.slot = (self.slot + 1) % PREVIEW_SLOTS;
+        self.ring.write(self.slot, seq, w, h, |px| {
+            paint(px, w, h, 1.0, (0.5, 0.5), 0.0, seed)
+        });
+        self.say(Event::Frame {
+            slot: self.slot,
+            seq,
+            w,
+            h,
+        });
+        if tell {
+            self.tell(if done {
+                Playing::Done
+            } else if self.play.as_ref().is_some_and(|p| p.since.is_some()) {
+                Playing::Playing
+            } else {
+                Playing::Paused
+            });
         }
     }
 

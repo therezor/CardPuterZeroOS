@@ -9,7 +9,8 @@ struct Recorder::State {
 
 Recorder::Recorder(Backend &) : s_(std::make_unique<State>()) {}
 Recorder::~Recorder() = default;
-bool Recorder::start(const std::string &, std::string &why)
+bool Recorder::start(const std::string &, bool, const std::string &, std::string &why,
+                     std::string &)
 {
     why = "no video encoder on this host";
     return false;

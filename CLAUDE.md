@@ -126,7 +126,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   and `zeroize`, RustCrypto's, because crypto is never ours to write. Build
   only: `resvg`. The camera helper is C++
   because libcamera has no C API: it links libcamera and libjpeg-turbo, both
-  on the stock image already.
+  on the stock image already, and for sound and playback ffmpeg's libraries
+  (the image has them for Files) and libpulse (PipeWire's client library).
 
 ## Build and test
 
