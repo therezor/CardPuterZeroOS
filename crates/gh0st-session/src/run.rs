@@ -187,7 +187,15 @@ impl Session {
             Message::error(&m, bus::err::UNKNOWN_OBJECT, "no such object")
         };
         if !m.no_reply() {
-            self.bus.send(reply)?;
+            match self.bus.send(reply) {
+                // A reply we couldn't build is that call's loss alone.
+                Err(gh0st_dbus::Error::Invalid(why)) => {
+                    eprintln!("gh0st session: dropped a reply: {why}")
+                }
+                r => {
+                    r?;
+                }
+            }
         }
         Ok(())
     }

@@ -21,11 +21,10 @@ pub enum Answer {
 /// Shell to daemon.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ToDaemon {
-    /// The lock screen's password. `right` when `unix_chkpwd` agreed, so
-    /// a vault that refuses it was left on an old password.
+    /// A password `unix_chkpwd` agreed to, from the lock screen or a
+    /// prompt. A vault that refuses it was left on an old one.
     Unlock {
         pw: Vec<u8>,
-        right: bool,
     },
     Lock,
     /// The old password, to rewrap the vault with the held new one.
@@ -89,9 +88,7 @@ fn answer_word(a: Answer) -> &'static [u8] {
 impl ToDaemon {
     pub fn encode(&self) -> Vec<u8> {
         match self {
-            ToDaemon::Unlock { pw, right } => {
-                join(&[b"unlock", pw, if *right { b"1" } else { b"0" }])
-            }
+            ToDaemon::Unlock { pw } => join(&[b"unlock", pw]),
             ToDaemon::Lock => b"lock".to_vec(),
             ToDaemon::Old { pw } => join(&[b"old", pw]),
             ToDaemon::Password { id, pw } => join(&[b"password", id.to_string().as_bytes(), pw]),
@@ -105,10 +102,7 @@ impl ToDaemon {
         let f: Vec<&[u8]> = b.split(|&c| c == 0).collect();
         let id = |i: usize| -> Option<u64> { std::str::from_utf8(f.get(i)?).ok()?.parse().ok() };
         Some(match (f.first().copied()?, f.len()) {
-            (b"unlock", 3) => ToDaemon::Unlock {
-                pw: f[1].to_vec(),
-                right: f[2] == b"1",
-            },
+            (b"unlock", 2) => ToDaemon::Unlock { pw: f[1].to_vec() },
             (b"lock", 1) => ToDaemon::Lock,
             (b"old", 2) => ToDaemon::Old { pw: f[1].to_vec() },
             (b"password", 3) => ToDaemon::Password {
@@ -242,7 +236,6 @@ mod tests {
         for m in [
             ToDaemon::Unlock {
                 pw: b"p\tw d".to_vec(),
-                right: true,
             },
             ToDaemon::Lock,
             ToDaemon::Old {
@@ -273,7 +266,7 @@ mod tests {
         ] {
             assert_eq!(ToShell::decode(&m.encode()), Some(m));
         }
-        assert_eq!(ToDaemon::decode(b"unlock\0pw"), None);
+        assert_eq!(ToDaemon::decode(b"unlock\0pw\0x"), None);
         assert_eq!(ToDaemon::decode(b"password\0x\0pw"), None);
         assert_eq!(ToShell::decode(b""), None);
     }

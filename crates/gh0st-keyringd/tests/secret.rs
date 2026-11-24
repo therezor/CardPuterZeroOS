@@ -144,7 +144,7 @@ impl T {
             .into_iter()
             .filter_map(|o| match o {
                 Out::Ask(a) => Some(a),
-                Out::Signal(_) => None,
+                Out::Signal(_) | Out::Stale => None,
             })
             .collect()
     }
@@ -162,7 +162,7 @@ impl T {
 #[test]
 fn an_app_stores_and_reads_its_own_secret() {
     let mut t = T::new("own");
-    assert_eq!(t.svc.unlock(b"pw"), Unlock::Created);
+    assert_eq!(t.svc.unlock(b"pw", true), Unlock::Created);
     let git = caller(":1.1", "git");
     let item = t.store(&git, "github", &[("service", "github.com")], b"hunter2");
     assert_eq!(
@@ -175,7 +175,7 @@ fn an_app_stores_and_reads_its_own_secret() {
 #[test]
 fn another_app_sees_it_locked_until_approved() {
     let mut t = T::new("approve");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let git = caller(":1.1", "git");
     let item = t.store(&git, "github", &[("service", "github.com")], b"hunter2");
     let evil = caller(":1.2", "evil");
@@ -240,7 +240,7 @@ fn another_app_sees_it_locked_until_approved() {
 #[test]
 fn always_is_kept_in_the_vault() {
     let mut t = T::new("always");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let item = t.store(&caller(":1.1", "git"), "github", &[("k", "v")], b"x");
     let other = caller(":1.2", "ide");
     let prompt = t.ok(
@@ -259,7 +259,7 @@ fn always_is_kept_in_the_vault() {
     };
     t.svc.answer(id, Answer::Always);
     let mut again = Service::new(t.dir.join("login.vault"), Cost::TEST);
-    assert_eq!(again.unlock(b"pw"), Unlock::Opened);
+    assert_eq!(again.unlock(b"pw", true), Unlock::Opened);
     std::mem::swap(&mut t.svc, &mut again);
     assert_eq!(t.get(&caller(":1.9", "ide"), &item).unwrap(), b"x");
 }
@@ -267,7 +267,7 @@ fn always_is_kept_in_the_vault() {
 #[test]
 fn locked_means_locked_and_unlock_asks_the_password() {
     let mut t = T::new("lock");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let git = caller(":1.1", "git");
     let item = t.store(&git, "github", &[("service", "gh")], b"hunter2");
     t.svc.lock();
@@ -295,6 +295,9 @@ fn locked_means_locked_and_unlock_asks_the_password() {
     else {
         panic!()
     };
+    // A typo the shell let through would be refused there; here the
+    // service sees it unchecked.
+    t.svc.verified_prompts = false;
     t.svc.password(id, b"nope");
     assert!(matches!(
         t.asks().first(),
@@ -309,7 +312,7 @@ fn locked_means_locked_and_unlock_asks_the_password() {
 #[test]
 fn a_device_unlock_moves_waiting_prompts_on() {
     let mut t = T::new("wait");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let git = caller(":1.1", "git");
     let item = t.store(&git, "github", &[], b"x");
     t.svc.lock();
@@ -319,14 +322,14 @@ fn a_device_unlock_moves_waiting_prompts_on() {
         .to_string();
     t.ok(&git, &prompt, PROMPT, "Prompt", vec![Value::str("")]);
     t.asks();
-    assert_eq!(t.svc.unlock(b"pw"), Unlock::Opened);
+    assert_eq!(t.svc.unlock(b"pw", true), Unlock::Opened);
     assert!(!t.completed().unwrap().0);
 }
 
 #[test]
 fn wifi_secrets_survive_a_lock() {
     let mut t = T::new("wifi");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let nm = caller(":1.1", "networkmanager");
     t.store(
         &nm,
@@ -353,7 +356,7 @@ fn wifi_secrets_survive_a_lock() {
 #[test]
 fn replacing_another_apps_secret_is_refused() {
     let mut t = T::new("replace");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     t.store(
         &caller(":1.1", "git"),
         "github",
@@ -390,7 +393,7 @@ fn replacing_another_apps_secret_is_refused() {
 #[test]
 fn only_plain_sessions_and_sessions_are_per_connection() {
     let mut t = T::new("session");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let a = caller(":1.1", "a");
     let r = t.call(
         &a,
@@ -421,7 +424,7 @@ fn only_plain_sessions_and_sessions_are_per_connection() {
 #[test]
 fn delete_goes_through_a_prompt() {
     let mut t = T::new("delete");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let a = caller(":1.1", "a");
     let item = t.store(&a, "x", &[("k", "v")], b"x");
     let p = t.ok(&a, &item, ITEM, "Delete", vec![])[0]
@@ -436,7 +439,7 @@ fn delete_goes_through_a_prompt() {
 #[test]
 fn properties_and_aliases() {
     let mut t = T::new("props");
-    t.svc.unlock(b"pw");
+    t.svc.unlock(b"pw", true);
     let a = caller(":1.1", "a");
     let item = t.store(&a, "label", &[("k", "v")], b"x");
     let all = t.ok(
@@ -503,32 +506,64 @@ fn properties_and_aliases() {
 }
 
 #[test]
+fn only_a_verified_password_makes_a_vault() {
+    let mut t = T::new("verified");
+    assert_eq!(t.svc.unlock(b"typo", false), Unlock::Wrong);
+    assert!(!t.dir.join("login.vault").exists());
+    assert_eq!(t.svc.unlock(b"pw", true), Unlock::Created);
+}
+
+#[test]
+fn a_checked_prompt_password_the_vault_refuses_is_stale() {
+    let mut t = T::new("stale");
+    t.svc.unlock(b"old", true);
+    let a = caller(":1.1", "a");
+    let item = t.store(&a, "x", &[], b"x");
+    t.svc.lock();
+    let p = t.ok(&a, ROOT, SVC, "Unlock", vec![Value::paths([item.clone()])])[1]
+        .as_str()
+        .unwrap()
+        .to_string();
+    t.ok(&a, &p, PROMPT, "Prompt", vec![Value::str("")]);
+    let Some(Ask::Password { id, .. }) = t.asks().first().cloned() else {
+        panic!()
+    };
+    // passwd ran in a terminal: the account says "new", the vault "old".
+    t.svc.password(id, b"new");
+    assert!(t.svc.drain().iter().any(|o| matches!(o, Out::Stale)));
+    assert_eq!(t.svc.rewrap_from_old(b"old"), Unlock::Opened);
+    assert!(!t.completed().unwrap().0, "the waiting prompt went on");
+    t.svc.lock();
+    assert_eq!(t.svc.unlock(b"new", true), Unlock::Opened);
+}
+
+#[test]
 fn password_changes() {
     let mut t = T::new("passwd");
-    t.svc.unlock(b"old");
+    t.svc.unlock(b"old", true);
     t.store(&caller(":1.1", "a"), "x", &[], b"x");
     // Settings: prepare, passwd fails, abort.
     assert!(!t.svc.prepare(b"wrong", b"new"));
     assert!(t.svc.prepare(b"old", b"new"));
     assert!(t.svc.commit(false));
     t.svc.lock();
-    assert_eq!(t.svc.unlock(b"new"), Unlock::Wrong);
-    assert_eq!(t.svc.unlock(b"old"), Unlock::Opened);
+    assert_eq!(t.svc.unlock(b"new", true), Unlock::Wrong);
+    assert_eq!(t.svc.unlock(b"old", true), Unlock::Opened);
     // Prepared, then the device died before commit: the next unlock with
     // the new password promotes vault.next.
     assert!(t.svc.prepare(b"old", b"new"));
     t.svc.lock();
-    assert_eq!(t.svc.unlock(b"new"), Unlock::Opened);
+    assert_eq!(t.svc.unlock(b"new", true), Unlock::Opened);
     t.svc.lock();
-    assert_eq!(t.svc.unlock(b"old"), Unlock::Wrong);
+    assert_eq!(t.svc.unlock(b"old", true), Unlock::Wrong);
     // passwd in a terminal: the shell holds the new one, asks the old.
     t.svc.lock();
     let mut fresh = Service::new(t.dir.join("login.vault"), Cost::TEST);
-    assert_eq!(fresh.unlock(b"newer"), Unlock::Wrong);
+    assert_eq!(fresh.unlock(b"newer", true), Unlock::Wrong);
     fresh.hold_stale(b"newer");
     assert_eq!(fresh.rewrap_from_old(b"wrong"), Unlock::Wrong);
     assert_eq!(fresh.rewrap_from_old(b"new"), Unlock::Opened);
     fresh.lock();
-    assert_eq!(fresh.unlock(b"newer"), Unlock::Opened);
+    assert_eq!(fresh.unlock(b"newer", true), Unlock::Opened);
     assert_eq!(fresh.db().unwrap().collections[0].items.len(), 1);
 }

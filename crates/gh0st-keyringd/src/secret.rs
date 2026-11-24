@@ -31,6 +31,9 @@ pub const NO_SUCH_OBJECT: &str = "org.freedesktop.Secret.Error.NoSuchObject";
 pub const NM_SCHEMA: &str = "org.freedesktop.NetworkManager.Connection";
 /// Wrong passwords a prompt takes before it gives up.
 const TRIES: u32 = 5;
+/// Sessions and prompts one connection may hold.
+const MAX_SESSIONS: usize = 32;
+const MAX_PROMPTS: usize = 8;
 
 /// Who is calling.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -72,6 +75,9 @@ pub enum Answer {
 pub enum Out {
     Signal(Message),
     Ask(Ask),
+    /// A verified password didn't open the vault: it was left on an old
+    /// one. The shell asks for that.
+    Stale,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,6 +136,9 @@ pub struct Service {
     /// A password that opened the device but not the vault, kept until
     /// the old one arrives to rewrap.
     stale: Option<Locked>,
+    /// Prompt passwords come checked by `unix_chkpwd` (the shell's); off in
+    /// tests that type wrong ones on purpose.
+    pub verified_prompts: bool,
 }
 
 fn now() -> u64 {
@@ -181,6 +190,7 @@ impl Service {
             once: HashSet::new(),
             out: Vec::new(),
             stale: None,
+            verified_prompts: true,
         }
     }
 
@@ -199,8 +209,9 @@ impl Service {
 
     // ---- unlock, lock, rewrap: the shell's side ----
 
-    /// Opens the vault, or makes one if there is none.
-    pub fn unlock(&mut self, password: &[u8]) -> Unlock {
+    /// Opens the vault. Makes one if there is none, but only from a
+    /// password `unix_chkpwd` agreed to: a typo must never become the key.
+    pub fn unlock(&mut self, password: &[u8], verified: bool) -> Unlock {
         if self.vault.is_some() {
             return Unlock::Opened;
         }
@@ -208,13 +219,22 @@ impl Service {
         let file = match std::fs::read(&self.path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && !next.exists() => {
-                return self.create(password);
+                return if verified {
+                    self.create(password)
+                } else {
+                    Unlock::Wrong
+                };
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(_) => return Unlock::Broken,
         };
         let opened = match vault::Vault::open(&file, password) {
-            Ok(v) => Ok(v),
+            Ok(v) => {
+                // A change that never committed: left, it could later roll
+                // the vault back to this moment.
+                let _ = std::fs::remove_file(&next);
+                Ok(v)
+            }
             // A password change that passwd finished and we never heard of.
             Err(e) => match std::fs::read(&next)
                 .ok()
@@ -311,7 +331,7 @@ impl Service {
         let Some(new) = self.stale.take() else {
             return Unlock::Broken;
         };
-        match self.unlock(old) {
+        match self.unlock(old, false) {
             Unlock::Opened => {}
             other => {
                 self.stale = Some(new);
@@ -513,6 +533,9 @@ impl Service {
             "OpenSession" => {
                 if m.body.first().and_then(Value::as_str) != Some("plain") {
                     return Some(Message::error(m, err::NOT_SUPPORTED, "only plain sessions"));
+                }
+                if self.sessions.values().filter(|b| **b == c.bus).count() >= MAX_SESSIONS {
+                    return Some(Message::error(m, err::LIMITS, "too many sessions"));
                 }
                 self.next_session += 1;
                 let p = format!("{ROOT}/session/s{}", self.next_session);
@@ -1028,6 +1051,21 @@ impl Service {
     // ---- prompts ----
 
     fn new_prompt(&mut self, c: &Caller, action: Action) -> String {
+        // Past the cap the oldest of this connection's prompts goes.
+        let mine: Vec<u64> = {
+            let mut v: Vec<u64> = self
+                .prompts
+                .iter()
+                .filter(|(_, p)| p.caller.bus == c.bus)
+                .map(|(id, _)| *id)
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        if mine.len() >= MAX_PROMPTS {
+            self.out.push(Out::Ask(Ask::Cancel { id: mine[0] }));
+            self.complete(mine[0], true, Value::str(""));
+        }
         self.next_prompt += 1;
         let id = self.next_prompt;
         self.prompts.insert(
@@ -1144,9 +1182,16 @@ impl Service {
         if p.step != Step::Password {
             return;
         }
-        match self.unlock(pw) {
+        match self.unlock(pw, true) {
             Unlock::Opened | Unlock::Created => {
                 // unlock() moved every waiting prompt on, this one too.
+            }
+            // The shell checked it: the vault is on an old password. The
+            // prompt waits for the rewrap, which unlocks and moves it on.
+            Unlock::Wrong if self.verified_prompts => {
+                self.hold_stale(pw);
+                self.out.push(Out::Ask(Ask::Cancel { id }));
+                self.out.push(Out::Stale);
             }
             Unlock::Wrong => {
                 let Some(p) = self.prompts.get_mut(&id) else {

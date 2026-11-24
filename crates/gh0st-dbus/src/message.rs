@@ -239,6 +239,82 @@ impl Message {
         Ok(())
     }
 
+    /// The whole message's length from its first 16 bytes, however long:
+    /// a reader skips one past [`MAX_MESSAGE`] by this. Errors only when
+    /// the bytes can't be a message start, and the stream is lost.
+    pub fn frame_total(head: &[u8]) -> Result<Option<u64>> {
+        let Some(h) = head.get(..16) else {
+            return Ok(None);
+        };
+        let big = match h[0] {
+            b'l' => false,
+            b'B' => true,
+            _ => return Err(Error::Invalid("bad endian mark")),
+        };
+        if h[3] != 1 {
+            return Err(Error::Invalid("bad protocol version"));
+        }
+        let word = |at: usize| {
+            let a = [h[at], h[at + 1], h[at + 2], h[at + 3]];
+            u64::from(if big {
+                u32::from_be_bytes(a)
+            } else {
+                u32::from_le_bytes(a)
+            })
+        };
+        Ok(Some((16 + word(12)).div_ceil(8) * 8 + word(4)))
+    }
+
+    /// The header alone, from the bytes before the body: enough to answer
+    /// a call whose body we won't read. None until the header is in, or if
+    /// it isn't valid.
+    pub fn peek_header(bytes: &[u8]) -> Option<Message> {
+        let h = bytes.get(..16)?;
+        let big = h[0] == b'B';
+        let fields = {
+            let a = [h[12], h[13], h[14], h[15]];
+            (if big {
+                u32::from_be_bytes(a)
+            } else {
+                u32::from_le_bytes(a)
+            }) as usize
+        };
+        if fields > MAX_MESSAGE {
+            return None;
+        }
+        let end = 16 + fields;
+        let mut r = Reader::new(bytes.get(..end)?, big);
+        r.pos = 1;
+        let kind = match r.u8().ok()? {
+            1 => Kind::Call,
+            2 => Kind::Return,
+            3 => Kind::Error,
+            4 => Kind::Signal,
+            _ => return None,
+        };
+        let flags = r.u8().ok()?;
+        r.pos = 8;
+        let serial = r.u32().ok()?;
+        let header = r
+            .value(&Ty::Array(Box::new(Ty::Struct(vec![
+                Ty::Byte,
+                Ty::Variant,
+            ]))))
+            .ok()?;
+        let mut m = Message::new(kind);
+        m.flags = flags;
+        m.serial = serial;
+        for f in header.as_array().unwrap_or(&[]) {
+            if let (Some(Value::Byte(SENDER)), Some(Value::Str(s))) = (
+                f.as_struct().and_then(|s| s.first()),
+                f.as_struct().and_then(|s| s.get(1)).map(Value::inner),
+            ) {
+                m.sender = Some(s.clone());
+            }
+        }
+        Some(m)
+    }
+
     /// The whole message's length from its first 16 bytes, once they are
     /// in. Errors on a length past [`MAX_MESSAGE`].
     pub fn frame_len(head: &[u8]) -> Result<Option<usize>> {

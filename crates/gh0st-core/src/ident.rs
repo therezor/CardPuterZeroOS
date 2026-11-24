@@ -61,7 +61,7 @@ fn alive(pidfd: &OwnedFd) -> bool {
 pub struct Who {
     /// The app's desktop stem, or `exe:<path>` for a process outside apps.
     pub app: String,
-    /// What to call it in a prompt: its `Name=`, or the program's name.
+    /// What to call it in a prompt: its `Name=`, or the program's path.
     pub label: String,
 }
 
@@ -97,12 +97,10 @@ pub fn of_pid(pid: u32, pidfd: Option<&OwnedFd>) -> Option<Who> {
             app: stem,
         });
     }
+    // Outside apps the path is all there is to judge it by: show it whole.
     let exe = exe?;
     Some(Who {
-        label: exe
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        label: exe.display().to_string(),
         app: format!("exe:{}", exe.display()),
     })
 }

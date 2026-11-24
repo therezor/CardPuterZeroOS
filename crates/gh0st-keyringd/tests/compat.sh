@@ -77,6 +77,32 @@ assert item.unlock() is False, "unlock went through a prompt"
 assert item.get_secret() == b"shared"
 PY
 
+echo "libsecret's prompt path: secret-tool reads what python stored"
+python3 - <<'PY'
+import secretstorage
+conn = secretstorage.dbus_init()
+coll = secretstorage.get_default_collection(conn)
+coll.create_item("from python", {"made": "py"}, b"pysecret", replace=True)
+PY
+[ "$(secret-tool lookup made py)" = pysecret ] || fail "secret-tool through a prompt"
+
+echo "after a Lock call: secret-tool unlocks through a prompt"
+gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets \
+    --method org.freedesktop.Secret.Service.Lock "['/org/freedesktop/secrets/collection/login']" >/dev/null
+[ "$(secret-tool lookup made py)" = pysecret ] || fail "lookup after lock"
+
+echo "a 2 MiB call doesn't take the service down"
+python3 - <<'PY' || true
+import secretstorage
+conn = secretstorage.dbus_init()
+coll = secretstorage.get_default_collection(conn)
+try:
+    coll.create_item("huge", {"huge": "1"}, b"x" * (2 << 20))
+except Exception as e:
+    print("refused as expected:", type(e).__name__)
+PY
+[ "$(secret-tool lookup made py)" = pysecret ] || fail "the service died on a huge call"
+
 echo "another app: denied"
 start deny
 printf 'mine' | secret-tool store --label='Mine' app mine

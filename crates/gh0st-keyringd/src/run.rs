@@ -42,6 +42,7 @@ fn parse(args: &[String]) -> Option<Opts> {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--vault" => o.vault = PathBuf::from(it.next()?),
+            #[cfg(debug_assertions)]
             "--test" => o.test = true,
             _ => return None,
         }
@@ -130,7 +131,7 @@ pub fn main(args: &[String]) -> i32 {
         last_bad_prepare: None,
     };
     if let Some(pw) = d.test_pw.clone() {
-        d.svc.unlock(&pw);
+        d.svc.unlock(&pw, true);
     }
     d.to_shell(&ToShell::Ready);
     d.pump();
@@ -241,6 +242,7 @@ impl Daemon {
                         }
                     }
                     Out::Ask(a) => self.ask(a),
+                    Out::Stale => self.to_shell(&ToShell::Stale),
                 }
             }
         }
@@ -304,7 +306,7 @@ impl Daemon {
         let reply = self.svc.call(&m, &c);
         m.wipe();
         if let Some(r) = reply {
-            self.bus.send(r)?;
+            fatal(self.bus.send(r))?;
         }
         Ok(())
     }
@@ -330,15 +332,14 @@ impl Daemon {
 
     fn shell_said(&mut self, m: &ToDaemon) {
         match m {
-            ToDaemon::Unlock { pw, right } => {
-                let r = self.svc.unlock(pw);
-                let reply = match r {
+            // The shell sends only what unix_chkpwd agreed to.
+            ToDaemon::Unlock { pw } => {
+                let reply = match self.svc.unlock(pw, true) {
                     Unlock::Opened | Unlock::Created => ToShell::Unlocked,
-                    Unlock::Wrong if *right => {
+                    Unlock::Wrong => {
                         self.svc.hold_stale(pw);
                         ToShell::Stale
                     }
-                    Unlock::Wrong => ToShell::Wrong,
                     Unlock::Broken => ToShell::Broken,
                 };
                 self.to_shell(&reply);
@@ -399,6 +400,18 @@ impl Daemon {
         use std::io::Write;
         let _ = s.set_nonblocking(false);
         let _ = s.write_all(if ok { b"ok" } else { b"no" });
+    }
+}
+
+/// A message we couldn't build is that call's loss, not the daemon's.
+fn fatal<T>(r: gh0st_dbus::Result<T>) -> gh0st_dbus::Result<()> {
+    match r {
+        Ok(_) => Ok(()),
+        Err(gh0st_dbus::Error::Invalid(why)) => {
+            eprintln!("gh0st keyring: dropped a reply: {why}");
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
 }
 

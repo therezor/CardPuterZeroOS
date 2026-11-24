@@ -18,6 +18,8 @@ const MAX_PENDING: usize = 256;
 /// Bytes queued for a peer that doesn't read; past this it is dropped.
 pub const MAX_QUEUED: usize = 4 << 20;
 const READ_CHUNK: usize = 16 << 10;
+/// `fill` stops reading here until the messages in are taken.
+const HIGH_WATER: usize = 2 * crate::MAX_MESSAGE;
 
 struct Out {
     bytes: Vec<u8>,
@@ -29,6 +31,10 @@ pub struct Conn {
     fd: OwnedFd,
     auth: Option<auth::Server>,
     rbuf: Vec<u8>,
+    /// Bytes of an oversized message still to throw away.
+    discard: u64,
+    /// Messages dropped as too big or not valid: logged, never fatal.
+    pub skipped: u64,
     rfds: VecDeque<OwnedFd>,
     out: VecDeque<Out>,
     queued: usize,
@@ -61,6 +67,8 @@ impl Conn {
             fd,
             auth: None,
             rbuf: Vec::new(),
+            discard: 0,
+            skipped: 0,
             rfds: VecDeque::new(),
             out: VecDeque::new(),
             queued: 0,
@@ -178,8 +186,9 @@ impl Conn {
             };
             self.rfds.extend(fds);
             if self.rfds.len() > MAX_FDS {
-                crate::wipe(&mut chunk);
-                return Err(Error::Invalid("too many fds"));
+                // A flood of fds: drop them all. Messages that wanted them
+                // fail to decode and are skipped.
+                self.rfds.clear();
             }
             if n == 0 {
                 self.eof = true;
@@ -196,18 +205,30 @@ impl Conn {
                 if let Some(used) = used {
                     self.fds_ok = fds;
                     self.auth = None;
-                    self.rbuf.extend_from_slice(&data[used..]);
+                    self.take_in(used, n, &chunk);
                 }
             } else {
-                self.rbuf.extend_from_slice(data);
+                self.take_in(0, n, &chunk);
             }
-            if self.rbuf.len() > crate::MAX_MESSAGE * 2 {
-                crate::wipe(&mut chunk);
-                return Err(Error::Invalid("peer sends faster than we read"));
+            // Enough to work on: poll says readable again for the rest.
+            if self.rbuf.len() >= HIGH_WATER {
+                break;
             }
         }
         crate::wipe(&mut chunk);
         self.flush()
+    }
+
+    /// Bytes `from..to` of `chunk`, less what an oversized message still
+    /// owes.
+    fn take_in(&mut self, from: usize, to: usize, chunk: &[u8]) {
+        let mut data = &chunk[from..to];
+        if self.discard > 0 {
+            let n = (self.discard.min(data.len() as u64)) as usize;
+            self.discard -= n as u64;
+            data = &data[n..];
+        }
+        self.rbuf.extend_from_slice(data);
     }
 
     /// The next whole message, if one is in.
@@ -218,20 +239,70 @@ impl Conn {
         self.decode_next()
     }
 
+    /// The next message. A message too big or not valid is dropped and
+    /// counted: one peer's bad call must not cost everyone the service.
+    /// Only bytes that can't start a message are an error.
     fn decode_next(&mut self) -> Result<Option<Message>> {
         if self.auth.is_some() {
             return Ok(None);
         }
-        let Some(total) = Message::frame_len(&self.rbuf)? else {
-            return Ok(None);
-        };
-        if self.rbuf.len() < total {
-            return Ok(None);
+        loop {
+            if self.discard > 0 {
+                let n = (self.discard.min(self.rbuf.len() as u64)) as usize;
+                crate::wipe(&mut self.rbuf[..n]);
+                self.rbuf.drain(..n);
+                self.discard -= n as u64;
+                if self.discard > 0 {
+                    return Ok(None);
+                }
+            }
+            let Some(total) = Message::frame_total(&self.rbuf)? else {
+                return Ok(None);
+            };
+            if total > crate::MAX_MESSAGE as u64 {
+                // Wait for the header, so a call can be told no rather than
+                // left waiting for ever.
+                let head = Message::peek_header(&self.rbuf);
+                if head.is_none() && self.rbuf.len() < crate::MAX_MESSAGE {
+                    let fields_in = self.rbuf.len() >= 16 && {
+                        let f = u32::from_le_bytes([
+                            self.rbuf[12],
+                            self.rbuf[13],
+                            self.rbuf[14],
+                            self.rbuf[15],
+                        ]);
+                        f as usize > crate::MAX_MESSAGE
+                    };
+                    if !fields_in {
+                        return Ok(None);
+                    }
+                }
+                if let Some(h) = head {
+                    if h.kind == Kind::Call && !h.no_reply() && h.sender.is_some() {
+                        let no = Message::error(&h, crate::bus::err::LIMITS, "message too long");
+                        let _ = self.send(no);
+                    }
+                }
+                self.skipped += 1;
+                self.discard = total;
+                continue;
+            }
+            let total = total as usize;
+            if self.rbuf.len() < total {
+                return Ok(None);
+            }
+            let m = Message::decode(&self.rbuf[..total], &mut self.rfds);
+            crate::wipe(&mut self.rbuf[..total]);
+            self.rbuf.drain(..total);
+            match m {
+                Ok(m) => return Ok(Some(m)),
+                Err(_) => {
+                    self.skipped += 1;
+                    // Its fds can't be told from the next one's.
+                    self.rfds.clear();
+                }
+            }
         }
-        let m = Message::decode(&self.rbuf[..total], &mut self.rfds);
-        crate::wipe(&mut self.rbuf[..total]);
-        self.rbuf.drain(..total);
-        m.map(Some)
     }
 
     /// Queues a message and writes what the socket takes now. Returns
@@ -604,6 +675,45 @@ mod tests {
         let mut answer = [0u8; 64];
         let n = cli.read(&mut answer).unwrap();
         assert!(answer[..n].starts_with(b"OK guid\r\n"));
+    }
+
+    #[test]
+    fn an_oversized_or_bad_message_is_skipped_not_fatal() {
+        let (a, b) = pair().unwrap();
+        let mut srv = Conn::raw(b).unwrap();
+        let mut cli = UnixStream::from(a);
+        // A 3 MiB body, as the bus would pass it on.
+        let mut big = Message::signal("/x", "a.b", "Big").arg(Value::Bytes(vec![1; 3 << 20]));
+        big.sender = Some(":1.1".into());
+        let mut w = crate::wire::Writer::new();
+        w.value(&big.body[0]).unwrap();
+        let body_len = w.buf.len() as u32;
+        let small = Message::signal("/x", "a.b", "Small").encode(2).unwrap();
+        let mut head = Message::signal("/x", "a.b", "Big")
+            .arg(Value::Bytes(vec![]))
+            .encode(1)
+            .unwrap();
+        // Same header with the big body's length: header bytes, then body.
+        let hlen = head.len() - 4;
+        head.truncate(hlen);
+        head[4..8].copy_from_slice(&body_len.to_le_bytes());
+        // A properly framed message with a body that isn't valid.
+        let mut bad = Message::signal("/x", "a.b", "Bad")
+            .arg(Value::Bool(true))
+            .encode(3)
+            .unwrap();
+        let at = bad.len() - 4;
+        bad[at] = 7;
+        let writer = std::thread::spawn(move || {
+            cli.write_all(&head).unwrap();
+            cli.write_all(&w.buf).unwrap();
+            cli.write_all(&bad).unwrap();
+            cli.write_all(&small).unwrap();
+        });
+        let m = pump(&mut srv);
+        assert!(m.is("a.b", "Small"));
+        assert_eq!(srv.skipped, 2);
+        writer.join().unwrap();
     }
 
     #[test]
