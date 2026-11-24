@@ -439,6 +439,9 @@ impl Media {
         let Some(e) = self.entry().cloned() else {
             return;
         };
+        if e.look != Look::Folder {
+            cx.recent(&e.path);
+        }
         match e.look {
             Look::Folder => {
                 self.trail.push((self.dir.clone(), self.tiles.at()));

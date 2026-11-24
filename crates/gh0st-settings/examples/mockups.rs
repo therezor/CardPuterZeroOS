@@ -110,6 +110,7 @@ fn sample_state() -> State {
         sounds: true,
         clock_24h: true,
         clipboard_keep: false,
+        recent_remember: true,
         apps: vec![
             app("files.desktop", "Files", true),
             app("camera.desktop", "Camera", true),

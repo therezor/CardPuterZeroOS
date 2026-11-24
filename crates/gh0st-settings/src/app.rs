@@ -340,6 +340,7 @@ impl Settings {
         };
         s.animations = config.animations();
         s.clipboard_keep = config.get_bool(key::CLIPBOARD_KEEP).unwrap_or(false);
+        s.recent_remember = config.get_bool(key::RECENT_REMEMBER).unwrap_or(true);
         s.sounds = config.sounds();
         s.wallpaper = config.wallpaper().to_string();
         s.own_picture = crate::wallpaper::kept().is_file();
@@ -558,6 +559,10 @@ impl Settings {
             Setting::ClipboardKeep => {
                 cx.settings()
                     .set_bool(key::CLIPBOARD_KEEP, !self.state.clipboard_keep);
+            }
+            Setting::RecentRemember => {
+                cx.settings()
+                    .set_bool(key::RECENT_REMEMBER, !self.state.recent_remember);
             }
             Setting::Sounds => {
                 cx.settings().set_bool(key::SOUNDS, !self.state.sounds);
@@ -1025,6 +1030,16 @@ impl Settings {
                     let argv = ["nmcli", "--wait", "30", "connection", "up", &c.name];
                     self.run(cx, NetJob::ConnUp(c.name.clone()), &argv);
                     cx.toast("Reconnecting\u{2026}");
+                }
+            }
+            Command::ClearRecent => {
+                if self.pressed_again(&Act::Run(Command::ClearRecent)) {
+                    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+                    match home.map(|h| gh0st_core::recent::clear(&h)) {
+                        Some(Ok(())) => cx.toast_tone(Tone::Ok, "Recent files cleared"),
+                        Some(Err(e)) => cx.toast_tone(Tone::Critical, &e.to_string()),
+                        None => {}
+                    }
                 }
             }
             Command::ConnForget => {

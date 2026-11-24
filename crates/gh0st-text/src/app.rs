@@ -550,6 +550,7 @@ impl Editor {
             self.watch = Some((w, id));
         }
         self.recent.add(&path);
+        cx.recent(&path);
         self.save(cx);
     }
 
@@ -714,6 +715,7 @@ impl Editor {
         self.unpark(fresh, cx);
         if path.exists() {
             self.recent.add(path);
+            cx.recent(path);
         }
         self.leave_query();
         true
@@ -2084,6 +2086,7 @@ impl Page for Editor {
         self.recent = Recent::load(&data);
         if let Some(p) = self.path.clone().filter(|p| p.exists()) {
             self.recent.add(&p);
+            cx.recent(&p);
         }
         if self.path.is_none() {
             self.start = Some(List::new());

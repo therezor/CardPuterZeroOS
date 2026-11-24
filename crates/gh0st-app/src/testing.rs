@@ -53,8 +53,10 @@ impl Driver {
             std::process::id()
         ));
         let notices = config.with_file_name("notify");
+        let home = config.with_file_name("home");
         let mut rt = Runtime::new(Box::new(page), Some(config));
         rt.s.notices = notices;
+        rt.s.home = home;
         rt.s.closable = opts.closable;
         rt.off_device();
         rt.own_time();
@@ -195,6 +197,11 @@ impl Driver {
     }
 
     /// Memory is short (see [`Page::low_memory`](crate::Page::low_memory)).
+    /// The recent list, newest first, as the app left it.
+    pub fn recent(&self) -> Vec<std::path::PathBuf> {
+        gh0st_core::recent::list(&self.rt.s.home, gh0st_core::recent::KEEP)
+    }
+
     /// What the app has copied, as the clipboard holds it.
     pub fn clipboard(&self) -> Option<&[u8]> {
         self.rt.s.clip.local.as_deref()

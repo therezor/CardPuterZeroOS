@@ -573,3 +573,10 @@ fn low_memory_keeps_the_edits_and_the_screen() {
         b"// afn main() {\n    let x = 1;\n}\n"
     );
 }
+
+#[test]
+fn an_opened_file_goes_to_the_shared_recent_list() {
+    let p = temp("recent.txt", b"hello\n");
+    let d = open(&p, KeyModel::Modal);
+    assert_eq!(d.recent().first(), Some(&p));
+}

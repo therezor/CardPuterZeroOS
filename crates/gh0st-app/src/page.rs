@@ -406,6 +406,8 @@ pub(crate) struct Shared {
     pub notices: PathBuf,
     /// The shared clipboard.
     pub clip: crate::clipboard::Clip,
+    /// Whose recent list: the home folder, or a test's own.
+    pub home: PathBuf,
 }
 
 impl Shared {
@@ -423,6 +425,9 @@ impl Shared {
             asking: false,
             notices: crate::notify::user_dir(),
             clip: crate::clipboard::Clip::default(),
+            home: std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/tmp")),
         }
     }
 
@@ -752,6 +757,32 @@ impl Cx<'_> {
     /// is, or when this app isn't in front.
     pub fn paste(&mut self) -> Option<Vec<u8>> {
         self.s.clip.paste()
+    }
+
+    /// `path` was opened or saved here: it goes to the top of the recent
+    /// list every app shares (`recently-used.xbel`), unless Settings >
+    /// Privacy turned that off.
+    pub fn recent(&mut self, path: &Path) {
+        let remember = self
+            .s
+            .settings
+            .config()
+            .get_bool(config::key::RECENT_REMEMBER);
+        if remember == Some(false) {
+            return;
+        }
+        let mime = gh0st_core::mime::of_path(path).unwrap_or("application/octet-stream");
+        let exec = format!("gh0st-{} %u", self.s.app_id);
+        let _ = gh0st_core::recent::add(&self.s.home, path, mime, &self.s.app_id, &exec);
+    }
+
+    /// Files opened lately, by any app, newest first: what is still there.
+    pub fn recent_files(&self, n: usize) -> Vec<PathBuf> {
+        gh0st_core::recent::list(&self.s.home, n * 2)
+            .into_iter()
+            .filter(|p| p.exists())
+            .take(n)
+            .collect()
     }
 
     /// Takes back notice `tag`, posted by [`post`](Cx::post).

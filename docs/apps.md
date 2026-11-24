@@ -58,6 +58,13 @@ An entry without a field code opens no files.
   default for the file's type; Settings > Default apps picks one app for
   a whole kind (text and code, pictures, video, music, folders), or goes
   back to the built-in choice.
+- **Desktop ids.** Our entries are also in `/usr/share/applications` as
+  `gh0st-<name>.desktop`, the ids `gio` and `xdg-mime` write into
+  `mimeapps.list`. Either name picks the same app.
+- **Recent files.** Apps add what they open to
+  `~/.local/share/recently-used.xbel`, the list GTK apps keep too. The
+  newest 100 stay; other apps' entries are kept as written. Settings >
+  Privacy turns it off and clears it.
 - **Our own apps** run with the files in place of the code. A third-party
   `Exec` still runs through `sh -c`, with the code turned into `"$1"` or
   `"$@"` and the files passed after it as `sh`'s arguments, so no name is

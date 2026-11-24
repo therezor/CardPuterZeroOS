@@ -89,6 +89,8 @@ pub enum Setting {
     Ip6Privacy,
     /// What was copied stays through the lock.
     ClipboardKeep,
+    /// Apps add the files they open to the shared recent list.
+    RecentRemember,
     /// The lock screen asks for the password.
     LockPassword,
     /// How long dark before the lock asks for it.
@@ -124,6 +126,8 @@ pub enum Choice {
 /// Something Enter starts that is not a value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
+    /// Empties the shared recent list, on a second press.
+    ClearRecent,
     Join(String),
     JoinHidden,
     Device(String),

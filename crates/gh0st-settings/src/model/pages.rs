@@ -227,6 +227,8 @@ pub struct State {
     pub clock_24h: bool,
     /// The clipboard stays through the lock.
     pub clipboard_keep: bool,
+    /// Apps add what they open to the recent list.
+    pub recent_remember: bool,
     pub apps: Vec<AppRow>,
     /// Settings > Default apps, one row per kind of file.
     pub defaults: Vec<DefaultRow>,
@@ -1198,6 +1200,21 @@ pub fn privacy(s: &State) -> Vec<Item> {
             s.clipboard_keep,
             Setting::ClipboardKeep,
         ),
+        set(
+            "clock",
+            "Remember recent files",
+            s.recent_remember,
+            Setting::RecentRemember,
+        ),
+        Item {
+            danger: true,
+            ..Item::new(
+                "trash-2",
+                "Clear recent files",
+                Value::None,
+                Act::Run(Command::ClearRecent),
+            )
+        },
         Item::new(
             "hard-drive",
             "Keep logs",
@@ -2133,6 +2150,8 @@ mod tests {
                 "Send device name",
                 "IPv6 privacy address",
                 "Keep copied text when locked",
+                "Remember recent files",
+                "Clear recent files",
                 "Keep logs"
             ]
         );

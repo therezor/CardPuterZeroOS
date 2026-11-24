@@ -27,6 +27,7 @@ pub mod mime;
 pub mod notify;
 pub mod password;
 pub mod procfs;
+pub mod recent;
 pub mod rfkill;
 pub mod rt;
 pub mod script;

@@ -1152,6 +1152,13 @@ to `cx.watch` and read `changes()` in `ready`. A file's own changes show up
 as its name in its folder, so watch the folder to see an editor save by
 rename.
 
+
+### Recent files
+
+`cx.recent(path)` puts a file the app opened or saved at the top of the
+recent list every app shares (`docs/apps.md`, Opening files), unless the
+user turned that off. `cx.recent_files(n)` reads it back, newest first,
+only files still there. `Driver::recent()` reads it in a test.
 ## The device
 
 `gh0st_app::system` reads the hardware from sysfs and procfs. None of it needs

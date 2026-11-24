@@ -45,3 +45,10 @@ install -D -m 644 "$st/gh0st-store.tmpfiles" "$dest/usr/lib/tmpfiles.d/gh0st-sto
 # The keyring's vault folder (docs/keyring.md).
 install -D -m 644 "$pk/systemd/keyring/gh0st-keyring.tmpfiles" \
     "$dest/usr/lib/tmpfiles.d/gh0st-keyring.conf"
+# The same entry under freedesktop's folder, as gh0st-<name>.desktop: the
+# id gio and xdg-mime write into mimeapps.list (docs/apps.md).
+install -d "$dest/usr/share/applications"
+for f in "$dest"/usr/share/gh0st/applications/*.desktop; do
+    n=$(basename "$f")
+    ln -s "../gh0st/applications/$n" "$dest/usr/share/applications/gh0st-$n"
+done
