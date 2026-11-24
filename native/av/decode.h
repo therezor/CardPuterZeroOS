@@ -34,4 +34,23 @@ bool jpegTo565(const std::string &path, int w, int h, float zoom, float cx, floa
 // nearest-neighbour otherwise.
 void viewTo565(const View &v, int w, int h, uint16_t *out);
 
+// A JPEG's size and EXIF orientation (1 when it has none), from its
+// headers. Exactly one of `f` and `mem` is set.
+bool jpegHeader(FILE *f, const std::vector<uint8_t> *mem, int &w, int &h, int &orient);
+
+// The rectangle (sx, sy, sw, sh) of a JPEG, in its own pixels, decoded at
+// the scale that makes it ow x oh: rows above are skipped, columns cropped
+// and the DCT scaled, so only what is shown is decoded. False past
+// `maxPixels` or on a broken file.
+bool jpegRegion(FILE *f, const std::vector<uint8_t> *mem, double sx, double sy, double sw,
+                double sh, int ow, int oh, double maxPixels, Pic &out);
+
+// `src` turned and mirrored as EXIF orientation `orient` says, so it shows
+// upright.
+Pic orient(const Pic &src, int orient);
+
+// Where a rectangle of the upright picture (W x H as shown) lies in the
+// stored one, for orientation `orient`.
+void unorientRect(int orient, double W, double H, double &x, double &y, double &w, double &h);
+
 } // namespace gh0st

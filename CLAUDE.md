@@ -146,6 +146,10 @@ battery in `/sys/class/power_supply`. Details and sources in
   because libcamera has no C API: it links libcamera and libjpeg-turbo, both
   on the stock image already, and for sound and playback ffmpeg's libraries
   (the image has them for Files) and libpulse (PipeWire's client library).
+  The media helper is C++ for the same libraries, with libheif (HEIC grids
+  and rotation, which FFmpeg leaves to the caller), LibRaw (a camera RAW's
+  preview), libwebpdemux (animated WebP) and libass (subtitles). Its
+  picture, player and link code is the camera helper's, in `native/av`.
 
 ## Build and test
 

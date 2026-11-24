@@ -115,6 +115,9 @@ ff $a -c:a libvorbis $tags song.ogg
 ff $a -i cover.jpg -map 0 -map 1 -c:a flac -c:v copy -disposition:v attached_pic $tags song.flac
 ff $a -c:a pcm_s16le song.wav
 ff $a -c:a pcm_s16be song.aiff
+# Sound with no cover anywhere near it.
+mkdir -p nocover
+ff $a -c:a pcm_s16le nocover/song.wav
 mkdir -p album
 for n in 1 2 3; do
     ff -f lavfi -i sine=frequency=$((200 * n)):duration=2 -c:a libmp3lame \

@@ -34,6 +34,20 @@ struct View {
     bool limited = false;
 };
 
+// A picture for the screen: RGB565 rows, packed.
+struct Pic {
+    int w = 0, h = 0;
+    std::vector<uint16_t> px;
+    bool empty() const { return w <= 0 || h <= 0; }
+};
+
+// EXIF orientations: 1 is upright. 2 to 4 mirror or turn it half round; 5
+// to 8 turn it a quarter, so its sides swap.
+inline bool swapsSides(int orient)
+{
+    return orient >= 5 && orient <= 8;
+}
+
 inline uint16_t pack565(int r, int g, int b)
 {
     return uint16_t(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));

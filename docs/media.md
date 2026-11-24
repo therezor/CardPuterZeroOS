@@ -36,8 +36,59 @@ Why the three extra libraries:
   LibRaw finds the JPEG preview every RAW carries, which shows at once.
 - **libwebpdemux.** FFmpeg 7.1 skips the frames of an animated WebP.
 
+## The helper
+
+`crates/gh0st-media/mediad` is C++17 with a plain Makefile. It shares the
+JPEG reader, the player, the link and the ring with the camera helper:
+those are in `native/av`. The app starts it as an SDK sidecar
+(`gh0st_app::sidecar`) with its link in `GH0ST_MEDIAD_FD` and a frame ring
+of four screen-sized slots in `GH0ST_MEDIAD_RING`. Slots 0 to 2 take a
+playing video's pictures in turn; slot 3 answers asks.
+
+### Messages
+
+One message per packet, fields split by tabs, at most 512 bytes. Every ask
+carries an id, the answer names it, and a path is always the last field.
+
+| App to helper | Helper to app |
+|---|---|
+| `hello` | `hello 1` |
+| `probe ID PATH` | `info ID KIND W H DUR_MS AUDIO SUBS FORMAT VCODEC ACODEC` |
+| `tags ID PATH` | `tags ID TITLE ARTIST ALBUM TRACK DATE` |
+| `thumb ID W H PATH` | `thumb ID SLOT SEQ W H`: the middle, cut to fill W x H |
+| `view ID W H ZOOM CX CY PATH` | `view ID SLOT SEQ W H`: fitted in W x H |
+| `forget` | |
+| `quit` | |
+
+- `KIND` is `image`, `anim`, `video` or `audio`. `W` and `H` are as shown,
+  after the EXIF orientation or the video's rotation. A song's are its
+  cover's.
+- `ZOOM` 1 fits the whole picture; more is closer, up to one picture pixel
+  per screen pixel. `CX` and `CY` are where the view looks, 0 to 1 across.
+- Any ask can end in `fail ID WHY`: `unsupported`, `toobig`, `corrupt`, `io`
+  or `nomem`.
+
+### Pictures
+
+- **JPEG** decodes only what the view shows: libjpeg-turbo skips the rows
+  above, crops the columns and scales the DCT. A pan or a zoom is a new
+  decode of a few milliseconds.
+- **Everything else** decodes once into a picture of at most 8 MP, kept for
+  the file on screen: a pan or a zoom reads from it and decodes nothing.
+- A song's picture is its embedded cover, else `cover.jpg`, `folder.jpg`
+  or `front.jpg` beside it. A video's is its frame a tenth of the way in.
+- Tiles are kept in `~/.cache/gh0st-media/thumbs`, one raw RGB565 file each,
+  named by the path, the file's time and size, and the tile's size. A file
+  that failed is kept as an empty one, so it is not decoded again. Past
+  32 MB the oldest go when the helper starts.
+
 ## Limits
 
 - A picture other than JPEG is refused past 24 MP, before it is decoded:
-  a 40000x40000 PNG packs into a few kilobytes and would take 4.8 GB.
-  JPEG has no limit short of 32 MP, as it decodes at the size it is shown.
+  a 40000x40000 PNG packs into a few kilobytes and would take 4.8 GB. The
+  size comes from the file's header before a decoder sees it.
+- A JPEG decodes at the size it is shown, so it may be up to 256 MP. A
+  progressive one past what 96 MB holds is refused by libjpeg.
+- Each still has 10 seconds. A decoder that hangs ends the helper, and the
+  app starts it again and marks the file. `RLIMIT_AS` holds the helper to
+  1536 MB of address space; `GH0ST_MEDIAD_AS_MB` changes it, 0 turns it off.
