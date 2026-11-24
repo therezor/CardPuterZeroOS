@@ -29,9 +29,17 @@ impl EscHold {
     pub fn update(&mut self, now: u64, esc_down: bool) -> Decision {
         let mut d = Decision::default();
         if let Some(t) = self.terminated_at {
+            if !esc_down {
+                d.hide_hint = self.hint;
+                self.hint = false;
+            }
             if !self.killed && now.saturating_sub(t) >= KILL_GRACE_MS {
                 self.killed = true;
                 d.kill = true;
+            }
+            // An app that outlived both signals can be held for again.
+            if self.killed && !esc_down {
+                *self = EscHold::default();
             }
             return d;
         }
@@ -104,5 +112,19 @@ mod tests {
             !e.update(4500, true).terminate,
             "the clock restarted at 1800"
         );
+    }
+
+    #[test]
+    fn after_the_kill_letting_go_hides_the_hint_and_rearms() {
+        let mut e = EscHold::default();
+        e.update(0, true);
+        e.update(1500, true);
+        e.update(3000, true);
+        assert!(e.update(6000, true).kill);
+        assert!(e.hint_visible(), "still held");
+        let d = e.update(6100, false);
+        assert!(d.hide_hint && !e.hint_visible());
+        e.update(7000, true);
+        assert!(e.update(10_000, true).terminate, "a new hold works");
     }
 }
