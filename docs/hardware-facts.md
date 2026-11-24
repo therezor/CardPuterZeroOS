@@ -588,6 +588,40 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
   while recording 1080p: about 17 MB. Files decode clean in ffprobe: High
   profile, level 4.1, BT.709 limited range.
 
+## Media (`gh0st-mediad`'s `bench`, kernel `6.18.60+rpt-rpi-v8`)
+
+Clips are ffmpeg's `testsrc2` at 30 fps, 10 s each, played silent to
+302x170. The governor is schedutil, up to 1 GHz. A test pattern decodes
+faster than film, so real clips need more.
+
+| Video | Pictures/s | Dropped | CPU (one core 100%) | Peak RSS | First picture |
+|---|---|---|---|---|---|
+| H.264 480p, VPU | 29.9 | 0 | 20% | 35 MB | 92 ms |
+| H.264 720p, VPU | 29.9 | 0 | 23% | 36 MB | 127 ms |
+| H.264 1080p, VPU | 29.6 | 1 | 31% | 39 MB | 211 ms |
+| H.264 480p, software | 29.9 | 0 | 74% | 45 MB | 87 ms |
+| H.264 720p, software | 29.9 | 0 | 95% | 55 MB | 128 ms |
+| H.264 1080p, software | 29.3 | 5 | 207% | 85 MB | 336 ms |
+| HEVC 480p | 30.0 | 0 | 85% | 45 MB | 84 ms |
+| HEVC 720p | 29.8 | 2 | 126% | 58 MB | 160 ms |
+| HEVC 1080p | 27.5 | 25, one step down | 242% | 95 MB | 944 ms |
+| VP9 480p | 30.0 | 0 | 59% | 37 MB | 64 ms |
+| VP9 720p | 29.9 | 0 | 88% | 43 MB | 99 ms |
+| VP9 1080p | 29.8 | 1 | 145% | 59 MB | 174 ms |
+| AV1 480p | 30.0 | 0 | 75% | 44 MB | 63 ms |
+| AV1 720p | 30.0 | 0 | 133% | 57 MB | 66 ms |
+| AV1 1080p | 28.5 | 14 | 219% | 85 MB | 98 ms |
+
+- The VPU's buffers come out of CMA. `CmaFree` read 46 to 49 MB before
+  and, while it played, 32 MB at 480p, 19 MB at 720p and 1 to 8 MB at
+  1080p.
+- A 12000x8400 JPEG (100 MP): probe 12 ms, the fitted view 536 ms, a 4x
+  zoom 162 ms, peak 28 MB. A 1280x720 JPEG's view: 15 ms.
+- A 6000x4000 PNG (24 MP): probe 643 ms (`avformat_find_stream_info`
+  decodes it), the view 3.3 s, a zoom from the kept picture 11 ms, peak
+  115 MB. The process held 45 MB with the picture kept, 30 MB after
+  `forget`.
+
 ## Files' tools (Debian trixie arm64 container)
 
 Checked in a container with trixie's packages, not on a device.

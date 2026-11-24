@@ -1,7 +1,9 @@
 // The device's numbers for docs/media.md: plays or shows a file as the
 // helper does, on the 320x170 screen, and says how it went.
 //
-//   bench play FILE [SECONDS]   pictures a second, dropped, CPU, peak RSS
+//   bench play FILE [SECONDS] [software]
+//                               pictures a second, dropped, CPU, peak RSS;
+//                               software keeps H.264 off the VPU
 //   bench view FILE             probe and first view time, peak RSS
 //
 // Sound goes to the stub server: playing measures the picture.
@@ -48,7 +50,7 @@ static double ms(Clock::time_point a, Clock::time_point b)
     return std::chrono::duration<double, std::milli>(b - a).count();
 }
 
-static int play(const char *path, int seconds)
+static int play(const char *path, int seconds, bool software)
 {
     int wake[2];
     if (pipe2(wake, O_NONBLOCK | O_CLOEXEC) != 0)
@@ -59,6 +61,7 @@ static int play(const char *path, int seconds)
     double c0 = cpuSeconds();
     gh0st::Player::Options o;
     o.silent = true;
+    o.software = software;
     if (!p.open(path, 320, 170, o, why)) {
         printf("%s: %s\n", path, why.c_str());
         return 1;
@@ -128,9 +131,9 @@ static int view(const char *path)
 int main(int argc, char **argv)
 {
     if (argc >= 3 && !strcmp(argv[1], "play"))
-        return play(argv[2], argc > 3 ? atoi(argv[3]) : 10);
+        return play(argv[2], argc > 3 ? atoi(argv[3]) : 10, argc > 4 && !strcmp(argv[4], "software"));
     if (argc >= 3 && !strcmp(argv[1], "view"))
         return view(argv[2]);
-    fprintf(stderr, "usage: bench play FILE [SECONDS] | bench view FILE\n");
+    fprintf(stderr, "usage: bench play FILE [SECONDS] [software] | bench view FILE\n");
     return 2;
 }

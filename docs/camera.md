@@ -258,9 +258,10 @@ are in `native/av` (`docs/media.md`), and the Makefile builds them through
   late picture is dropped. The VPU's pictures sit in uncached memory, so
   they take the preview's path: the rows shown are copied out, then
   converted from cache (swscale reading a whole 1080p picture there plays
-  at half speed). On the board: 30 fps at about a third of one core. A
-  seek opens the hardware decoder again, as not
-  every build of it can flush; 60 packets with no picture move it to
+  at half speed). On the board: 30 fps at about a third of one core, and
+  29 fps on two cores when software takes over (`hardware-facts.md`,
+  Media). A seek opens the hardware decoder again, as not every build of
+  it can flush; 60 packets with no picture move it to
   software, and software failing ends in `playerr`. Paused or at the end,
   nothing polls and the sound stream closes, so the codec sleeps. Only the
   loop thread touches the link and the ring. `make playcheck` builds a host check of play, pause, seek and the
@@ -337,10 +338,11 @@ Builds:
 
 ## Missing
 
-- **Unmeasured.** Sound and playback on the board: the capture's latency
-  against the picture, `h264_v4l2m2m` on this kernel and its CMA beside
-  the 64 MB, software decode at 1080p30 if it falls back, and whether the
-  jack's input carries a headset's microphone.
+- **Unmeasured.** The capture's latency against the picture, and whether
+  the jack's input carries a headset's microphone.
+- **CMA.** The VPU's buffers for a 1080p clip take 40 to 46 MB of the 64 MB
+  pool, and a 1080p recording leaves about 17 MB free. Playing while
+  recording is untried.
 - **Plain headphones.** The sound driver moves the input to the jack for
   anything plugged in, so headphones without a microphone record silence.
   A Built-in choice would set the codec's input back for the recording.

@@ -55,7 +55,7 @@ short. `crates/gh0st-media/mediad/corpus.sh` writes a file of each kind;
 | | Animated WebP | libwebpdemux, as a silent loop |
 | Video | MP4, MOV, M4V, MKV, WebM, AVI, MPEG-TS, OGV, FLV, 3GP, WMV | libavformat |
 | | H.264 | the VPU (`h264_v4l2m2m`) up to 1080p, then software |
-| | HEVC, VP8, VP9, AV1, MPEG-2, MPEG-4, Theora, VC-1 | software, four threads |
+| | HEVC, VP8, VP9, AV1, MPEG-2, MPEG-4, Theora, VC-1 | software, two to four threads |
 | Sound | MP3, AAC and M4A, ALAC, Opus, Vorbis, FLAC, WAV, AIFF, WMA, APE, WavPack | libavcodec, through PipeWire |
 | Subtitles | SRT, ASS, WebVTT and MP4 text, in the file or a `.srt` beside it; DVD, DVB and PGS pictures | libavcodec, drawn by libass |
 
@@ -107,7 +107,7 @@ name survives. Messages may be 8 KB; one too long is refused, not cut.
 
 | App to helper | Helper to app |
 |---|---|
-| `hello` | `hello 1` |
+| `hello` | `hello 2` |
 | `probe ID PATH` | `info ID KIND W H DUR_MS AUDIO SUBS FORMAT VCODEC ACODEC` |
 | `tags ID PATH` | `tags ID TITLE ARTIST ALBUM TRACK DATE` |
 | `thumb ID W H PATH` | `thumb ID SLOT SEQ W H`: the middle, cut to fill W x H |
@@ -149,6 +149,9 @@ Playing:
   decode of a few milliseconds.
 - **Everything else** decodes once into a picture of at most 8 MP, kept for
   the file on screen: a pan or a zoom reads from it and decodes nothing.
+  Leaving the viewer sends `forget`, which drops it and gives the memory
+  back to the system. A picture with no alpha scales straight to RGB565,
+  with no full-size RGBA copy.
 - A song's picture is its embedded cover, else `cover.jpg`, `folder.jpg`
   or `front.jpg` beside it. A video's is its frame a tenth of the way in.
 - Tiles are kept in `~/.cache/gh0st-media/thumbs`, one raw RGB565 file each,
@@ -164,7 +167,13 @@ and keeps it on the clock, one decodes the sound and writes it to
 PipeWire, so the loop's thread only moves finished pictures to the ring.
 
 - H.264 decodes on the VPU (`h264_v4l2m2m`) up to 1080p; everything else in
-  software, four threads. The sound is the clock.
+  software. A software decoder gets 2 threads up to 640x480, 3 up to
+  1280x720, 4 above: each thread holds pictures of its own. The sound is
+  the clock.
+- On the board H.264, HEVC, VP9 and AV1 keep 30 fps up to 720p, measured
+  on a test pattern. At 1080p H.264 on the VPU takes a third of one core;
+  HEVC and AV1 take over two cores and drop 5 to 8% of pictures. The
+  numbers are in `hardware-facts.md`, Media.
 - When decoding falls behind, a late picture is dropped. Past a quarter
   dropped in 2 s it skips more, a step at a time: the loop filter on
   frames nothing refers to, then those frames, then half resolution where
@@ -179,6 +188,9 @@ PipeWire, so the loop's thread only moves finished pictures to the ring.
 - `make playcheck`, then `playcheck --more CORPUS`, checks sound alone, a
   turned video, a loop, A to B, a step, twice the speed and both kinds of
   subtitle.
+- `make bench` builds `bench`, which plays or shows a file as the helper
+  does and prints pictures a second, drops, CPU and peak memory.
+  `bench play FILE 10 software` keeps H.264 off the VPU.
 
 ## Limits
 

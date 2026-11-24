@@ -30,6 +30,8 @@ public:
         // beside the file after them; -1 none.
         int subs = -1;
         int64_t startMs = 0;
+        // Never the VPU: measures what software decoding keeps up with.
+        bool software = false;
     };
 
     struct Status {

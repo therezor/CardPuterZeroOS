@@ -795,7 +795,7 @@ struct Player::State {
         const AVCodec *codec = nullptr;
         // The VPU decodes H.264 up to 1080p; software is the fallback.
 #ifdef __linux__
-        if (allowHw && st->codecpar->codec_id == AV_CODEC_ID_H264)
+        if (allowHw && !opt.software && st->codecpar->codec_id == AV_CODEC_ID_H264)
             codec = avcodec_find_decoder_by_name("h264_v4l2m2m");
 #else
         (void)allowHw;
