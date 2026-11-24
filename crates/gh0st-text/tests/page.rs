@@ -338,3 +338,79 @@ fn a_new_file_saves_where_the_chooser_says() {
     assert!(d.picks().is_empty());
     assert_eq!(std::fs::read(&target).unwrap(), b"hello!");
 }
+
+fn journaled(p: &Path, data: &Path) -> Driver {
+    let opts = Options {
+        keys: Some(KeyModel::Modeless),
+        data: Some(data.to_path_buf()),
+        ..Options::default()
+    };
+    let mut d = Driver::new(Editor::open(Some(p), opts));
+    d.wait(100);
+    d
+}
+
+fn journal_dir(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("gh0st-text-jdata-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn edits_kept_when_paused_come_back_after_a_kill() {
+    let data = journal_dir("kill");
+    let p = temp("kept.txt", b"orig\n");
+    let mut d = journaled(&p, &data);
+    d.keys("type abc\nenter\nctrl+z\nctrl+y");
+    // Fn+K: the app goes behind and the journal reaches the card.
+    d.pause();
+    drop(d);
+    assert_eq!(std::fs::read(&p).unwrap(), b"orig\n", "nothing saved");
+    let mut d = journaled(&p, &data);
+    assert_eq!(d.dialog().map(|x| x.0), Some("Restore unsaved edits?"));
+    d.keys("enter\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"abc\norig\n");
+    // Saved: nothing to restore next time.
+    drop(d);
+    let d = journaled(&p, &data);
+    assert!(d.dialog().is_none());
+}
+
+#[test]
+fn edits_reach_the_card_two_seconds_after_typing() {
+    let data = journal_dir("timer");
+    let p = temp("timed.txt", b"t\n");
+    let mut d = journaled(&p, &data);
+    d.keys("type xy");
+    let j = gh0st_text::journal::path_for(&data, &p);
+    assert!(!j.exists());
+    d.wait(2100);
+    assert!(j.exists(), "written after two seconds");
+    // Undone back to the file as saved: nothing left to keep.
+    d.keys("ctrl+z");
+    d.pause();
+    assert!(!j.exists());
+}
+
+#[test]
+fn edits_to_a_file_changed_since_open_as_a_new_file() {
+    let data = journal_dir("changed");
+    let p = temp("moved.txt", b"base\n");
+    let mut d = journaled(&p, &data);
+    d.keys("type kept words");
+    d.pause();
+    drop(d);
+    std::fs::write(&p, b"someone else wrote this\n").unwrap();
+    let mut d = journaled(&p, &data);
+    assert_eq!(d.dialog().map(|x| x.0), Some("Keep the unsaved edits?"));
+    d.keys("enter");
+    // The second file holds what was typed; save it somewhere.
+    d.keys("ctrl+s");
+    let target = data.join("rescued.txt");
+    d.answer_pick(Some(vec![target.clone()]));
+    d.wait(200);
+    assert_eq!(std::fs::read(&target).unwrap(), b"kept words\n");
+    assert_eq!(std::fs::read(&p).unwrap(), b"someone else wrote this\n");
+}

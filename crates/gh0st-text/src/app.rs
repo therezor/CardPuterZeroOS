@@ -10,6 +10,7 @@
 use crate::buf::save::{self, Saver, Way};
 use crate::buf::{Buffer, Lines};
 use crate::find::{Finder, Found};
+use crate::journal::{self, Journal, Recovered};
 use crate::lex::{self, Cache, Lang, Role, Span};
 use crate::recent::Recent;
 use crate::view::{self, Glyph};
@@ -76,6 +77,7 @@ mod ask {
     pub const REPLACE: u32 = 3;
     pub const CHANGED: u32 = 4;
     pub const IN_PLACE: u32 = 5;
+    pub const RECOVER: u32 = 6;
 }
 
 /// Mode names on the Keys screen.
@@ -89,6 +91,8 @@ const SLICE_MS: u64 = 8;
 const DISK_WAIT_MS: u64 = 15;
 /// A file under this is saved in one go.
 const SAVE_AT_ONCE: u64 = 8 << 20;
+/// How long after an edit the journal reaches the card.
+const JOURNAL_MS: u64 = 2000;
 /// How far a bracket's pair is looked for.
 const PAIR_REACH: u64 = 64 << 10;
 /// Files open at once.
@@ -176,6 +180,7 @@ struct Parked {
     pan: u32,
     saved: u64,
     hit: Option<(u64, u64)>,
+    journal: Option<Journal>,
 }
 
 pub struct Editor {
@@ -230,6 +235,12 @@ pub struct Editor {
     picking: Option<(Pick, Purpose)>,
     /// With no file: the start page's list, recent files under Open.
     start: Option<List>,
+    /// The journal of the file on screen.
+    journal: Option<Journal>,
+    /// When the journal next reaches the card.
+    flush_at: Option<Timer>,
+    /// Edits found from before, waiting for the user's answer.
+    recovered: Option<Recovered>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -306,6 +317,145 @@ impl Editor {
             at: 0,
             picking: None,
             start: None,
+            journal: None,
+            flush_at: None,
+            recovered: None,
+        }
+    }
+
+    fn data_dir(&self, cx: &Cx) -> PathBuf {
+        self.opts.data.clone().unwrap_or_else(|| cx.data_dir())
+    }
+
+    /// Starts the journal of the file on screen, and asks about edits a
+    /// journal kept from before.
+    fn attach_journal(&mut self, cx: &mut Cx) {
+        let Some(p) = self.path.clone() else {
+            return;
+        };
+        if self.binary || self.read_only || self.journal.is_some() || !p.exists() {
+            return;
+        }
+        let data = self.data_dir(cx);
+        self.doc.borrow_mut().buf.keep_changes(true);
+        self.journal = Some(Journal::new(&data, &p));
+        let Some(r) = journal::read(&data, &p) else {
+            return;
+        };
+        let n = r.changes.len();
+        if r.fits(&p) {
+            cx.ask(
+                ask::RESTORE,
+                Dialog::confirm(
+                    "Restore unsaved edits?",
+                    &format!("{} closed with {n} edits not saved.", self.title),
+                )
+                .yes("restore")
+                .no("drop them"),
+            );
+        } else {
+            cx.ask(
+                ask::RECOVER,
+                Dialog::confirm(
+                    "Keep the unsaved edits?",
+                    &format!(
+                        "{} changed since. What you typed opens as a new file.",
+                        self.title
+                    ),
+                )
+                .yes("keep")
+                .no("drop them"),
+            );
+        }
+        self.recovered = Some(r);
+    }
+
+    /// The journal's answer: replays the edits, opens what was typed as a
+    /// new file, or drops them.
+    fn recover(&mut self, id: u32, yes: bool, cx: &mut Cx) {
+        let Some(r) = self.recovered.take() else {
+            return;
+        };
+        match (id, yes) {
+            (ask::RESTORE, true) => {
+                let mut d = self.doc.borrow_mut();
+                d.buf.seal();
+                for c in &r.changes {
+                    if let crate::buf::Change::Replace { at, len, bytes } = c {
+                        let _ = d.buf.replace(*at..at + len, bytes);
+                    }
+                }
+                d.buf.seal();
+                // Already in the journal: not again.
+                d.buf.take_changes();
+                let lang = d.cache.lang();
+                d.cache.clear(lang);
+                drop(d);
+                if let Some(j) = &mut self.journal {
+                    j.resume();
+                }
+                cx.toast(&format!("Restored {} edits", r.changes.len()));
+            }
+            (ask::RECOVER, true) => {
+                let typed = r.typed();
+                if let Some(j) = &mut self.journal {
+                    j.discard();
+                }
+                let name = format!("Edits to {}", self.title);
+                let mut p = Editor::open(None, self.opts.clone()).take_file();
+                p.doc.buf = Buffer::from_bytes(&typed);
+                p.title = name;
+                if self.files.len() < FILES {
+                    let cur = self.park(cx);
+                    self.files[self.at] = Some(cur);
+                    self.files.push(None);
+                    self.at = self.files.len() - 1;
+                    self.unpark(p, cx);
+                } else {
+                    cx.toast("Four files are open: the edits stay in the journal");
+                }
+            }
+            _ => {
+                if let Some(j) = &mut self.journal {
+                    j.discard();
+                }
+            }
+        }
+    }
+
+    /// Takes the changes since the last look into the journal, and has it
+    /// reach the card soon.
+    fn note_changes(&mut self, cx: &mut Cx) {
+        let changes = self.doc.borrow_mut().buf.take_changes();
+        if changes.is_empty() {
+            return;
+        }
+        let Some(j) = &mut self.journal else {
+            return;
+        };
+        for c in &changes {
+            j.add(c);
+        }
+        if self.flush_at.is_none() {
+            self.flush_at = Some(cx.after(JOURNAL_MS));
+        }
+    }
+
+    /// Writes the journal now. A file with nothing unsaved needs none.
+    fn flush_journal(&mut self, cx: &mut Cx) {
+        self.note_changes(cx);
+        if let Some(t) = self.flush_at.take() {
+            cx.cancel(t);
+        }
+        let dirty = self.dirty();
+        if let Some(j) = &mut self.journal {
+            if dirty {
+                if let Err(e) = j.flush() {
+                    cx.toast_tone(Tone::Warning, &format!("Unsaved edits not kept: {e}"));
+                }
+            } else {
+                j.discard();
+            }
         }
     }
 
@@ -398,6 +548,7 @@ impl Editor {
             pan: self.pan,
             saved: self.saved,
             hit: self.hit.take(),
+            journal: self.journal.take(),
         }
     }
 
@@ -416,11 +567,13 @@ impl Editor {
         self.pan = p.pan;
         self.saved = p.saved;
         self.hit = p.hit;
+        self.journal = p.journal;
         self.pair = None;
     }
 
     /// Stops what runs for the file on screen and takes it out.
     fn park(&mut self, cx: &mut Cx) -> Parked {
+        self.flush_journal(cx);
         self.stop_warm();
         if let Some(t) = self.index.take() {
             cx.cancel(t);
@@ -454,6 +607,7 @@ impl Editor {
         if let Some(e) = self.error.clone() {
             cx.toast_tone(Tone::Critical, &e);
         }
+        self.attach_journal(cx);
     }
 
     /// Shows open file `to`. Not while one saves.
@@ -520,6 +674,11 @@ impl Editor {
     /// Closes the file on screen, changes and all, and shows the one
     /// before it. The last one closes the app.
     fn close_file(&mut self, cx: &mut Cx) {
+        // Closed on purpose: its unsaved edits go with it.
+        if let Some(j) = &mut self.journal {
+            j.discard();
+        }
+        self.doc.borrow_mut().buf.take_changes();
         if self.files.len() <= 1 {
             cx.quit();
             return;
@@ -1283,6 +1442,10 @@ impl Editor {
                     if let Some((w, _)) = &mut self.watch {
                         w.saved();
                     }
+                    self.doc.borrow_mut().buf.take_changes();
+                    if let Some(j) = &mut self.journal {
+                        j.discard();
+                    }
                     cx.idle();
                     cx.toast_tone(Tone::Ok, "Saved");
                     return;
@@ -1360,6 +1523,7 @@ impl Editor {
         self.reveal();
         self.refresh();
         self.pair = self.find_pair();
+        self.note_changes(cx);
     }
 
     fn set_mode(&mut self, m: Mode) {
@@ -1759,7 +1923,16 @@ impl Page for Editor {
         let _ = cx;
     }
 
-    fn stop(&mut self, _cx: &mut Cx) {
+    /// Leaving the front: the journal reaches the card now, as the app may
+    /// be stopped or killed next.
+    fn front(&mut self, front: bool, cx: &mut Cx) {
+        if !front {
+            self.flush_journal(cx);
+        }
+    }
+
+    fn stop(&mut self, cx: &mut Cx) {
+        self.flush_journal(cx);
         self.stop_warm();
     }
 
@@ -1809,6 +1982,7 @@ impl Page for Editor {
         if let Some(e) = self.error.clone() {
             cx.toast_tone(Tone::Critical, &e);
         }
+        self.attach_journal(cx);
         if let Some(n) = self.opts.restore {
             cx.ask(
                 ask::RESTORE,
@@ -1824,7 +1998,10 @@ impl Page for Editor {
     }
 
     fn timer(&mut self, t: Timer, cx: &mut Cx) {
-        if self.index == Some(t) {
+        if self.flush_at == Some(t) {
+            self.flush_at = None;
+            self.flush_journal(cx);
+        } else if self.index == Some(t) {
             self.index_step(cx);
         } else if self.finder.as_ref().is_some_and(|f| f.1 == t) {
             self.find_step(cx);
@@ -1857,6 +2034,7 @@ impl Page for Editor {
                     fresh.top = fresh.doc.buf.line_start(self.top.min(len)).unwrap_or(0);
                     self.put_file(fresh);
                     self.watch = watch;
+                    self.attach_journal(cx);
                     if !self.doc.borrow().buf.lines().exact {
                         self.warm_from(0, cx);
                         self.index = Some(cx.after(0));
@@ -1946,6 +2124,11 @@ impl Page for Editor {
     }
 
     fn answer(&mut self, id: u32, a: Answer, cx: &mut Cx) {
+        if id == ask::RESTORE || id == ask::RECOVER {
+            self.recover(id, matches!(a, Answer::Yes(_)), cx);
+            self.settle(cx);
+            return;
+        }
         match (id, a) {
             // Held 7: close, the changes gone.
             (ask::QUIT, Answer::Also) => self.close_file(cx),

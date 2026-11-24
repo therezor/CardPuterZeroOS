@@ -19,6 +19,19 @@ use std::ops::Range;
 use std::path::Path;
 use undo::{Splice, Undo};
 
+/// A change to the text, as a journal keeps it: `len` bytes at `at` became
+/// `bytes`. Lost: a change too big to keep, after which a journal can't be
+/// trusted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Change {
+    Replace { at: u64, len: u64, bytes: Vec<u8> },
+    Lost,
+}
+
+/// The biggest change a journal keeps: an undo that brings back a whole
+/// big file is not one.
+const CHANGE_MAX: u64 = 8 << 20;
+
 /// Where a piece's bytes live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Src {
@@ -48,6 +61,8 @@ pub struct Buffer {
     warming: bool,
     /// Bumped by every change, so a view knows its caches are stale.
     version: u64,
+    /// Changes since the last take, while a journal wants them.
+    changes: Option<Vec<Change>>,
 }
 
 impl Buffer {
@@ -84,6 +99,7 @@ impl Buffer {
             index: Index::default(),
             warming: false,
             version: 0,
+            changes: None,
         };
         if len > 0 {
             b.pieces.push(Piece {
@@ -317,6 +333,13 @@ impl Buffer {
         let old = self.splice(at, end - at, &new);
         self.index
             .edit(at, end - at, old_nl, bytes.len() as u64, new_nl);
+        if let Some(c) = &mut self.changes {
+            c.push(Change::Replace {
+                at,
+                len: end - at,
+                bytes: bytes.to_vec(),
+            });
+        }
         self.undo.record(Splice {
             at,
             old,
@@ -402,6 +425,66 @@ impl Buffer {
         old
     }
 
+    /// Keeps a log of every change for a journal, or stops.
+    pub fn keep_changes(&mut self, on: bool) {
+        match (on, &self.changes) {
+            (true, None) => self.changes = Some(Vec::new()),
+            (false, _) => self.changes = None,
+            _ => {}
+        }
+    }
+
+    /// The changes since the last take.
+    pub fn take_changes(&mut self) -> Vec<Change> {
+        self.changes
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// Logs that `len` bytes at `at` become `pieces`, for undo and redo.
+    fn log(&mut self, at: u64, len: u64, pieces: &[Piece]) {
+        if self.changes.is_none() {
+            return;
+        }
+        let c = match self.piece_bytes(pieces) {
+            Some(bytes) => Change::Replace { at, len, bytes },
+            None => Change::Lost,
+        };
+        if let Some(log) = &mut self.changes {
+            log.push(c);
+        }
+    }
+
+    /// The bytes `pieces` hold, if they are few enough to keep.
+    fn piece_bytes(&mut self, pieces: &[Piece]) -> Option<Vec<u8>> {
+        let total: u64 = pieces.iter().map(|p| p.len).sum();
+        if total > CHANGE_MAX {
+            return None;
+        }
+        let mut out = Vec::with_capacity(total as usize);
+        for p in pieces {
+            match p.src {
+                Src::Add => {
+                    out.extend_from_slice(self.add.get(p.off as usize..(p.off + p.len) as usize)?)
+                }
+                Src::Orig(g) => {
+                    let mut off = p.off;
+                    while off < p.off + p.len {
+                        let c = self.stores.get_mut(g as usize)?.chunk(off).ok()?;
+                        if c.is_empty() {
+                            return None;
+                        }
+                        let take = c.len().min((p.off + p.len - off) as usize);
+                        out.extend_from_slice(&c[..take]);
+                        off += take as u64;
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// Ends the current undo step: the next edit starts a new one. Typing
     /// runs into one step until the cursor jumps or a command runs.
     pub fn seal(&mut self) {
@@ -413,6 +496,7 @@ impl Buffer {
         let group = self.undo.take_undo()?;
         let mut at = None;
         for s in group.splices.iter().rev() {
+            self.log(s.at, s.new_len, &s.old);
             self.splice(s.at, s.new_len, &s.old);
             self.index
                 .edit(s.at, s.new_len, s.new_nl, s.old_len, s.old_nl);
@@ -427,6 +511,7 @@ impl Buffer {
         let group = self.undo.take_redo()?;
         let mut at = None;
         for s in &group.splices {
+            self.log(s.at, s.old_len, &s.new);
             self.splice(s.at, s.old_len, &s.new);
             self.index
                 .edit(s.at, s.old_len, s.old_nl, s.new_len, s.new_nl);

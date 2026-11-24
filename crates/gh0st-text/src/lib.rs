@@ -8,6 +8,7 @@
 pub mod app;
 pub mod buf;
 pub mod find;
+pub mod journal;
 pub mod lex;
 pub mod recent;
 pub mod view;
