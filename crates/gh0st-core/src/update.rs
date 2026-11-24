@@ -466,15 +466,27 @@ pub fn shell_started_after(t: u64) -> bool {
     })
 }
 
-/// The engine holds an exclusive flock on this while it runs.
+/// The engine holds an exclusive flock on this while it runs. Root's alone
+/// (0600): a process that could open it could hold it and stall updates.
 pub fn lock_path() -> PathBuf {
     run_dir().join("lock")
 }
 
+/// What anyone may read to see the engine running: it holds an exclusive
+/// flock on this too, as long as no reader holds one. A reader that does
+/// can only make the engine look idle.
+pub fn busy_path() -> PathBuf {
+    run_dir().join("busy")
+}
+
 /// True while an engine holds the lock.
 pub fn engine_running() -> bool {
+    engine_running_at(&busy_path())
+}
+
+pub fn engine_running_at(busy: &Path) -> bool {
     use std::os::fd::AsRawFd;
-    let Ok(f) = std::fs::File::open(lock_path()) else {
+    let Ok(f) = std::fs::File::open(busy) else {
         return false;
     };
     // SAFETY: flock on a descriptor this function owns.

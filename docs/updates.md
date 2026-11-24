@@ -81,7 +81,8 @@ Only systemd runs them, as root.
    cut there can stop the device booting.
 4. Space: the download, plus what grows on disk, plus 100 MB.
 5. An interrupted dpkg (`/var/lib/dpkg/updates` not empty) is finished first
-   with `dpkg --configure -a`.
+   with `dpkg --configure -a`, keeping changed config files as the user left
+   them.
 6. `apt-get -y upgrade --with-new-pkgs` with Status-Fd progress,
    `--force-confdef --force-confold`, no prompts, and a 120 s wait for the dpkg
    lock. When the Store holds that lock, the result is "Another install is
@@ -90,6 +91,9 @@ Only systemd runs them, as root.
 8. `sync`, `apt-get clean`, then the check's listing again.
 
 SIGTERM stops a download. Once dpkg starts, the engine finishes first.
+apt or dpkg silent for 20 minutes is stuck, most likely in a maintainer
+script: the engine kills its process group, records an error and lets the
+lock go.
 
 **Migrations.** A change an update makes once on each device, then never
 again. gh0st-base ships them in `/usr/share/gh0st/migrations`, a file each,
@@ -124,7 +128,8 @@ They are read by the engine, the app, Settings and the shell
 | `/var/lib/gh0st/update/pending` | a check is owed: it was offline or metered |
 | `/var/lib/gh0st/update/migrations` | the migrations done, one a line |
 | `/run/gh0st-update/progress` | phase, percent, bytes, package, n of m. Rewritten at most 4 times a second, in tmpfs |
-| `/run/gh0st-update/lock` | the engine's flock |
+| `/run/gh0st-update/lock` | the engine's flock. 0600, so no app can hold it |
+| `/run/gh0st-update/busy` | flocked by the engine too, for apps to see it running |
 
 A tmpfiles.d entry makes the three directories at boot, so the inotify
 watches always have a target.

@@ -521,7 +521,7 @@ fn install_deb(
     }
     let deps = space_for(&sim, a)?;
     if update::dpkg_interrupted() {
-        let _ = update::run(&["dpkg", "--configure", "-a"]);
+        let _ = update::configure_pending(rep);
     }
     // What apt downloads now is the dependencies: their size, not the app's.
     rep.p.phase = Phase::Install;

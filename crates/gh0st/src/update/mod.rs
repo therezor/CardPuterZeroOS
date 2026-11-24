@@ -36,6 +36,12 @@ const SPARE_BYTES: u64 = 100_000_000;
 const PROGRESS_MS: u64 = 250;
 /// What is kept of apt's own output, for the error.
 const OUT_MAX: usize = 32 * 1024;
+/// apt or dpkg silent this long is stuck, most likely in a maintainer
+/// script: its process group is killed so the lock comes free.
+const APT_QUIET_MS: u64 = 20 * 60 * 1000;
+/// Once apt has exited, how long its pipes may stay open: a daemon a
+/// script started can hold them for good.
+const EXIT_GRACE_MS: u64 = 1000;
 
 pub(crate) static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -69,34 +75,72 @@ pub fn main(args: &[String]) -> i32 {
     }
 }
 
+const BUSY_TRIES: u32 = 20;
+
+/// The engine's lock, held for its life, and the flag apps read.
+pub(crate) struct EngineLock {
+    _lock: std::fs::File,
+    _busy: Option<std::fs::File>,
+}
+
 /// The engine's lock, held for its life. A second run waits.
-fn lock() -> std::io::Result<std::fs::File> {
-    lock_with(libc::LOCK_EX)?.ok_or_else(|| std::io::Error::other("lock busy"))
+fn lock() -> std::io::Result<EngineLock> {
+    lock_with(&update::run_dir(), libc::LOCK_EX)?.ok_or_else(|| std::io::Error::other("lock busy"))
 }
 
 /// The same lock without waiting: None while another engine holds it. The
 /// Store's engine takes it so apt never runs twice.
-pub(crate) fn try_lock() -> std::io::Result<Option<std::fs::File>> {
-    lock_with(libc::LOCK_EX | libc::LOCK_NB)
+pub(crate) fn try_lock() -> std::io::Result<Option<EngineLock>> {
+    lock_with(&update::run_dir(), libc::LOCK_EX | libc::LOCK_NB)
 }
 
-fn lock_with(op: libc::c_int) -> std::io::Result<Option<std::fs::File>> {
-    let dir = update::run_dir();
-    std::fs::create_dir_all(&dir)?;
+fn lock_with(dir: &Path, op: libc::c_int) -> std::io::Result<Option<EngineLock>> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    std::fs::create_dir_all(dir)?;
     let f = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
-        .open(update::lock_path())?;
+        .mode(0o600)
+        .open(dir.join("lock"))?;
+    // One left by an older engine may be 0644.
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    if !flock(&f, op)? {
+        return Ok(None);
+    }
+    let busy = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o644)
+        .open(dir.join("busy"))
+        .ok()
+        .filter(|b| {
+            // An app's look takes a moment; a held one only hides progress.
+            (0..BUSY_TRIES).any(|i| {
+                if i > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                flock(b, libc::LOCK_EX | libc::LOCK_NB).unwrap_or(false)
+            })
+        });
+    Ok(Some(EngineLock {
+        _lock: f,
+        _busy: busy,
+    }))
+}
+
+/// False when `LOCK_NB` found it taken.
+fn flock(f: &std::fs::File, op: libc::c_int) -> std::io::Result<bool> {
     // SAFETY: flock on a descriptor we own.
     if unsafe { libc::flock(f.as_raw_fd(), op) } != 0 {
         let e = std::io::Error::last_os_error();
         if e.kind() == std::io::ErrorKind::WouldBlock {
-            return Ok(None);
+            return Ok(false);
         }
         return Err(e);
     }
-    Ok(Some(f))
+    Ok(true)
 }
 
 pub(crate) fn now() -> u64 {
@@ -423,8 +467,7 @@ fn install_steps(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, Str
     space_ok(st)?;
     if dpkg_interrupted() {
         rep.phase(Phase::Install, "an earlier install");
-        let out = run(&["dpkg", "--configure", "-a"]).map_err(|e| (Outcome::Error, e))?;
-        drop(out);
+        configure_pending(rep).map_err(|e| (Outcome::Error, e))?;
     }
     // What this install puts in: the list, and what migrations add below.
     let mut wanted: HashSet<String> = st.packages.iter().map(|p| p.name.clone()).collect();
@@ -600,7 +643,19 @@ pub(crate) fn apt(
     program: &str,
     args: &[&str],
     rep: &mut Reporter,
+    stoppable: impl FnMut(&apt::Status) -> bool,
+) -> (Option<i32>, String) {
+    apt_within(program, args, rep, stoppable, APT_QUIET_MS)
+}
+
+/// [`apt`] with the silence that counts as stuck. No exit code when it was
+/// killed for it.
+fn apt_within(
+    program: &str,
+    args: &[&str],
+    rep: &mut Reporter,
     mut stoppable: impl FnMut(&apt::Status) -> bool,
+    quiet_ms: u64,
 ) -> (Option<i32>, String) {
     let Ok((status_r, status_w)) = pipe() else {
         return (None, "pipe failed".into());
@@ -613,7 +668,8 @@ pub(crate) fn apt(
         .env("LC_ALL", "C.UTF-8")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .process_group(0);
     // SAFETY: dup2 and close are async-signal-safe.
     unsafe {
         cmd.pre_exec(move || {
@@ -647,20 +703,41 @@ pub(crate) fn apt(
     let mut open = [true, out_pipe.is_some(), err_pipe.is_some()];
     let mut can_stop = true;
     let mut signalled = false;
+    let pgid = child.id() as i32;
+    let mut heard = gh0st_core::rt::now_ms();
+    let mut exited: Option<(u64, Option<i32>)> = None;
+    let mut stuck = false;
     while open.iter().any(|&o| o) {
         if STOP.load(Ordering::SeqCst) && can_stop && !signalled {
             // SAFETY: signalling our own child.
-            unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+            unsafe { libc::kill(pgid, libc::SIGTERM) };
             signalled = true;
+        }
+        let now = gh0st_core::rt::now_ms();
+        if exited.is_none() {
+            if let Ok(Some(s)) = child.try_wait() {
+                exited = Some((now, s.code()));
+            }
+        }
+        if exited.is_some_and(|(at, _)| now >= at + EXIT_GRACE_MS) {
+            break;
+        }
+        if exited.is_none() && now >= heard + quiet_ms {
+            // SAFETY: the child leads its own group; this kills only it.
+            unsafe { libc::kill(-pgid, libc::SIGKILL) };
+            stuck = true;
+            break;
         }
         let mut pfds: Vec<libc::pollfd> =
             fds.iter().map(|&fd| gh0st_core::rt::pollfd(fd)).collect();
-        let _ = gh0st_core::rt::wait(&mut pfds, Some(gh0st_core::rt::now_ms() + 500));
+        let until = (now + 500).min(heard + quiet_ms);
+        let _ = gh0st_core::rt::wait(&mut pfds, Some(until));
         let mut buf = [0u8; 4096];
         for (i, pfd) in pfds.iter().enumerate() {
             if !open[i] || pfd.revents == 0 {
                 continue;
             }
+            heard = gh0st_core::rt::now_ms();
             let n = match i {
                 0 => status_file.read(&mut buf),
                 1 => out_pipe.as_mut().map_or(Ok(0), |p| p.read(&mut buf)),
@@ -694,9 +771,44 @@ pub(crate) fn apt(
             }
         }
     }
-    let code = child.wait().ok().and_then(|s| s.code());
+    let code = match exited {
+        Some((_, code)) => code,
+        None => child.wait().ok().and_then(|s| s.code()),
+    };
+    if stuck {
+        // Reaped so no zombie is left; the group is dead.
+        let _ = child.wait();
+        out.push_str(&format!(
+            "\n{program} did nothing for {} min",
+            quiet_ms / 60_000
+        ));
+        rep.write(true);
+        return (None, out);
+    }
     rep.write(true);
     (code, out)
+}
+
+/// Finishes an install dpkg left half done. Unattended: a changed config
+/// file keeps the user's version rather than ask a question no one sees.
+pub(crate) fn configure_pending(rep: &mut Reporter) -> Result<(), String> {
+    let (code, out) = apt(
+        "dpkg",
+        &[
+            "--force-confdef",
+            "--force-confold",
+            "--status-fd",
+            "3",
+            "--configure",
+            "-a",
+        ],
+        rep,
+        |_| false,
+    );
+    match code {
+        Some(0) => Ok(()),
+        _ => Err(apt::failure(&out).1),
+    }
 }
 
 /// One Status-Fd line into the progress file.
@@ -968,6 +1080,76 @@ pub fn short_version(v: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn scratch_reporter(name: &str) -> Reporter {
+        let dir = std::env::temp_dir().join(format!("gh0st-apt-{name}-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        Reporter::at(dir.join("progress"), true)
+    }
+
+    #[test]
+    fn only_root_can_hold_the_lock_and_anyone_sees_it_held() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("gh0st-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // An older engine's lock, open to all.
+        std::fs::write(dir.join("lock"), "").unwrap();
+        std::fs::set_permissions(dir.join("lock"), std::fs::Permissions::from_mode(0o644)).unwrap();
+        let held = lock_with(&dir, libc::LOCK_EX | libc::LOCK_NB)
+            .unwrap()
+            .unwrap();
+        let mode = std::fs::metadata(dir.join("lock"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert!(update::engine_running_at(&dir.join("busy")));
+        assert!(
+            lock_with(&dir, libc::LOCK_EX | libc::LOCK_NB)
+                .unwrap()
+                .is_none()
+        );
+        drop(held);
+        // Another test forking at this moment holds a copy until its exec.
+        let idle = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            !update::engine_running_at(&dir.join("busy"))
+        });
+        assert!(idle);
+    }
+
+    #[test]
+    fn a_silent_run_is_killed_with_its_group() {
+        let mut rep = scratch_reporter("quiet");
+        let t = std::time::Instant::now();
+        // The grandchild keeps the pipes open: only a group kill ends it.
+        let (code, out) = apt_within(
+            "sh",
+            &["-c", "sleep 30 & sleep 30"],
+            &mut rep,
+            |_| true,
+            300,
+        );
+        assert_eq!(code, None);
+        assert!(out.contains("did nothing"), "{out}");
+        assert!(t.elapsed().as_secs() < 5, "took {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn a_daemon_holding_the_pipes_doesnt_hold_the_engine() {
+        let mut rep = scratch_reporter("daemon");
+        let t = std::time::Instant::now();
+        let (code, _) = apt_within(
+            "sh",
+            &["-c", "sleep 30 & echo done; exit 0"],
+            &mut rep,
+            |_| true,
+            60_000,
+        );
+        assert_eq!(code, Some(0));
+        assert!(t.elapsed().as_secs() < 5, "took {:?}", t.elapsed());
+    }
 
     fn pkg(name: &str, group: Group, size: u64) -> Package {
         Package {
