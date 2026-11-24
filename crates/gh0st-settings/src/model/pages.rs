@@ -229,6 +229,8 @@ pub struct State {
     pub clipboard_keep: bool,
     /// Apps add what they open to the recent list.
     pub recent_remember: bool,
+    /// Files in the recent list now.
+    pub recent_count: usize,
     pub apps: Vec<AppRow>,
     /// Settings > Default apps, one row per kind of file.
     pub defaults: Vec<DefaultRow>,
@@ -1181,7 +1183,7 @@ fn bluetooth(s: &State) -> Vec<Item> {
 /// install, and a network's own choice is on its connection page.
 pub fn privacy(s: &State) -> Vec<Item> {
     let set = |icon, label, on, what| Item::new(icon, label, Value::Toggle(on), Act::Set(what));
-    vec![
+    let mut v = vec![
         set(
             "tag",
             "Send device name",
@@ -1206,22 +1208,28 @@ pub fn privacy(s: &State) -> Vec<Item> {
             s.recent_remember,
             Setting::RecentRemember,
         ),
-        Item {
-            danger: true,
-            ..Item::new(
-                "trash-2",
-                "Clear recent files",
-                Value::None,
-                Act::Run(Command::ClearRecent),
-            )
-        },
         Item::new(
             "hard-drive",
             "Keep logs",
             Value::TextChevron(s.logs.label().into()),
             Act::Open(PageId::Choose(Choice::Logs)),
         ),
-    ]
+    ];
+    // Only with something to clear: none at first-boot setup, which shows
+    // these rows too.
+    if s.recent_count > 0 {
+        let clear = Item {
+            danger: true,
+            ..Item::new(
+                "trash-2",
+                "Clear recent files",
+                Value::Text(s.recent_count.to_string()),
+                Act::Run(Command::ClearRecent),
+            )
+        };
+        v.insert(4, clear);
+    }
+    v
 }
 
 /// The System row's word for the updates: "3 ready", "Up to date".
@@ -2151,7 +2159,6 @@ mod tests {
                 "IPv6 privacy address",
                 "Keep copied text when locked",
                 "Remember recent files",
-                "Clear recent files",
                 "Keep logs"
             ]
         );

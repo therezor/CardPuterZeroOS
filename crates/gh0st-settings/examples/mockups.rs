@@ -111,6 +111,7 @@ fn sample_state() -> State {
         clock_24h: true,
         clipboard_keep: false,
         recent_remember: true,
+        recent_count: 12,
         apps: vec![
             app("files.desktop", "Files", true),
             app("camera.desktop", "Camera", true),

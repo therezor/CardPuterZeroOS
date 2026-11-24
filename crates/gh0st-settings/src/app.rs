@@ -341,6 +341,11 @@ impl Settings {
         s.animations = config.animations();
         s.clipboard_keep = config.get_bool(key::CLIPBOARD_KEEP).unwrap_or(false);
         s.recent_remember = config.get_bool(key::RECENT_REMEMBER).unwrap_or(true);
+        s.recent_count = std::env::var_os("HOME")
+            .map(|h| {
+                gh0st_core::recent::list(std::path::Path::new(&h), gh0st_core::recent::KEEP).len()
+            })
+            .unwrap_or(0);
         s.sounds = config.sounds();
         s.wallpaper = config.wallpaper().to_string();
         s.own_picture = crate::wallpaper::kept().is_file();
@@ -1036,7 +1041,10 @@ impl Settings {
                 if self.pressed_again(&Act::Run(Command::ClearRecent)) {
                     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
                     match home.map(|h| gh0st_core::recent::clear(&h)) {
-                        Some(Ok(())) => cx.toast_tone(Tone::Ok, "Recent files cleared"),
+                        Some(Ok(())) => {
+                            self.state.recent_count = 0;
+                            cx.toast_tone(Tone::Ok, "Recent files cleared");
+                        }
                         Some(Err(e)) => cx.toast_tone(Tone::Critical, &e.to_string()),
                         None => {}
                     }
