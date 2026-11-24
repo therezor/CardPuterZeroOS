@@ -171,7 +171,9 @@ The menu adds quality, the video size and the mains frequency (50 or
 60 Hz, against flicker). Keep RAW and Sound join it once the helper does
 them.
 
-- The screen stays on while recording (`awake`), and only then.
+- The screen stays on while the camera is in front (`awake`), recording or
+  not: framing a shot takes as long as it takes. Home, a lock or the power
+  key end it.
 - A pause (Fn+K, the screen going dark, a lock) stops a recording, saves it
   and closes the sensor. The return starts the preview again.
 - Shooting stops with less than 64 MB free on the card.

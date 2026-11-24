@@ -494,7 +494,6 @@ impl Camera {
                 mic: self.mic,
             });
             self.rec = Some(Rec { ms: 0 });
-            cx.keep_awake(true);
             return;
         }
         if TIMERS[self.timer] > 0 && self.count.is_none() {
@@ -571,7 +570,6 @@ impl Camera {
             }
             Event::RecDone { .. } => {
                 self.rec = None;
-                cx.keep_awake(false);
                 self.refresh();
                 self.want_last_thumb();
             }
@@ -596,7 +594,6 @@ impl Camera {
                         eprintln!("gh0st-camera: {e}");
                         self.rec = None;
                         self.saving = false;
-                        cx.keep_awake(false);
                         cx.toast_tone(Tone::Critical, "Can't save to the card");
                         return;
                     }
@@ -652,9 +649,7 @@ impl Camera {
         self.helper = None;
         self.asking = None;
         self.asks.clear();
-        if self.rec.take().is_some() {
-            cx.keep_awake(false);
-        }
+        self.rec = None;
         if !self.quitting && !matches!(self.phase, Phase::Failed(_)) {
             self.phase = Phase::Failed("The camera stopped");
         }
@@ -1300,6 +1295,9 @@ impl Page for Camera {
     }
 
     fn start(&mut self, cx: &mut Cx) {
+        // Framing a shot takes as long as it takes: the screen stays on
+        // while the camera is in front. Home, a lock or the power key end it.
+        cx.keep_awake(true);
         self.load(cx);
         self.refresh();
         self.launch(cx);
@@ -1315,6 +1313,7 @@ impl Page for Camera {
 
     fn front(&mut self, front: bool, cx: &mut Cx) {
         if front {
+            cx.keep_awake(true);
             if self.view == View::Finder {
                 self.restart();
             }
@@ -1326,8 +1325,8 @@ impl Page for Camera {
         // `recdone`: the helper finishes the file on its own.
         if self.rec.take().is_some() {
             self.send(Cmd::RecStop);
-            cx.keep_awake(false);
         }
+        cx.keep_awake(false);
         self.send(Cmd::Stop);
     }
 

@@ -70,23 +70,31 @@ fn esc_cancels_the_timer_without_leaving() {
 }
 
 #[test]
-fn the_screen_stays_on_only_while_recording() {
+fn the_screen_stays_on_while_the_camera_is_in_front() {
     let _one = serial();
     let (mut drv, d) = start(Source::Fake { camera: true }, "awake");
+    drv.pump(100);
+    assert!(drv.awake(), "framing a shot");
     drv.keys("tab").pump(100);
-    assert!(!drv.awake());
     drv.keys("enter").pump(100);
     assert!(drv.awake());
     drv.keys("enter").pump(150);
     // A board is slower to hear the helper stop.
     for _ in 0..20 {
-        if !drv.awake() {
+        if count(&d, Kind::Video) == 1 {
             break;
         }
         drv.pump(50);
     }
-    assert!(!drv.awake());
+    assert!(
+        drv.awake(),
+        "a recording ended, the camera is still in front"
+    );
     assert_eq!(count(&d, Kind::Video), 1);
+    drv.pause();
+    assert!(!drv.awake(), "behind another app");
+    drv.resume();
+    assert!(drv.awake());
 }
 
 #[test]
