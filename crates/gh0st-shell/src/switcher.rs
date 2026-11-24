@@ -352,7 +352,7 @@ impl Switcher {
             None => (to, 0),
         };
         let old = c.set_clip(widgets::body(t));
-        widgets::card_selection(c, t, frame);
+        widgets::selection(c, t, frame);
         // One card past each edge, so a scroll never shows a gap.
         for slot in -1..=self.geo.per as i32 {
             let index = self.top as i32 + slot;

@@ -823,15 +823,6 @@ pub fn selection(c: &mut Canvas, t: &Theme, r: Rect) {
     c.pane(r, t.m.radius_large, t.c.surface);
 }
 
-/// The switcher's selected card: a pane on an `accent` foot, as the dock's
-/// mark above it. Cards are large and sit on a picture, where a dark foot
-/// is hard to see.
-pub fn card_selection(c: &mut Canvas, t: &Theme, r: Rect) {
-    let under = Rect::new(r.x, r.y + t.m.lift + 1, r.w, r.h);
-    c.round_rect(under, t.m.radius_large, t.c.accent);
-    c.pane(r, t.m.radius_large, t.c.surface);
-}
-
 /// What a grid tile or list row shows for one app.
 pub struct AppItem<'a> {
     pub label: &'a str,

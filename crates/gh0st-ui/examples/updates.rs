@@ -877,7 +877,7 @@ fn n_switcher(t: &Theme) -> Canvas {
             paused: false,
         };
         if i == 1 {
-            widgets::card_selection(&mut c, t, r);
+            widgets::selection(&mut c, t, r);
         }
         widgets::card_content(&mut c, t, r, &cd, i == 1);
     }
