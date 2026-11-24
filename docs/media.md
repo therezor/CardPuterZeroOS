@@ -60,6 +60,25 @@ carries an id, the answer names it, and a path is always the last field.
 | `forget` | |
 | `quit` | |
 
+Playing:
+
+| App to helper | Helper to app |
+|---|---|
+| `play open ID W H FLAGS PATH` | `frame SLOT SEQ W H` for each picture, `play ID POS DUR STATE DROPPED SLOW` each second and on a change |
+| `play next ID PATH` | opens the next track now; it plays the moment this one ends, and `play` then names it |
+| `play pause`, `play resume`, `play stop` | |
+| `play seek MS`, `play step` | a step shows the next picture while paused |
+| `play speed PERCENT` | 50 to 200, the sound at its own pitch |
+| `play ab A B`, `play ab off` | A to B over and over |
+| `play tracks AUDIO SUBS` | opens it again where it was, with those tracks |
+| | `slow ID STEP` once decoding skips more to keep up; `playerr ID WHY` |
+
+- `FLAGS` is a comma list, or empty: `loop`, `silent`, `paused`,
+  `audio=N`, `subs=N` (a `.srt` beside the file counts after the file's
+  own) and `at=MS`. A GIF, an APNG or an animated WebP always loops,
+  silent.
+- `STATE` is `playing`, `paused` or `done`. `DROPPED` counts pictures
+  dropped for being late.
 - `KIND` is `image`, `anim`, `video` or `audio`. `W` and `H` are as shown,
   after the EXIF orientation or the video's rotation. A song's are its
   cover's.
@@ -81,6 +100,30 @@ carries an id, the answer names it, and a path is always the last field.
   named by the path, the file's time and size, and the tile's size. A file
   that failed is kept as an empty one, so it is not decoded again. Past
   32 MB the oldest go when the helper starts.
+
+### Playing
+
+The player is the camera's (`native/av/player.cpp`), built here with
+speed and subtitles. One thread reads the file, one decodes the picture
+and keeps it on the clock, one decodes the sound and writes it to
+PipeWire, so the loop's thread only moves finished pictures to the ring.
+
+- H.264 decodes on the VPU (`h264_v4l2m2m`) up to 1080p; everything else in
+  software, four threads. The sound is the clock.
+- When decoding falls behind, a late picture is dropped. Past a quarter
+  dropped in 2 s it skips more, a step at a time: the loop filter on
+  frames nothing refers to, then those frames, then half resolution where
+  the codec has it, then all but key frames, and says `slow` once.
+- Sound alone plays with no picture thread. A video's display matrix turns
+  its picture upright.
+- Speed runs the sound through libavfilter's `atempo`; subtitles are drawn
+  by libass onto each picture, at 1.6 times libass's size so a line stays
+  readable on 170 rows. Picture subtitles (DVD, DVB, PGS) are scaled with
+  the video.
+- An animated WebP plays through libwebpdemux on a thread of its own.
+- `make playcheck`, then `playcheck --more CORPUS`, checks sound alone, a
+  turned video, a loop, A to B, a step, twice the speed and both kinds of
+  subtitle.
 
 ## Limits
 

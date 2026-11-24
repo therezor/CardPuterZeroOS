@@ -2,10 +2,14 @@
 // app shows, so a file that crashes a decoder takes this process with it,
 // never the app. One poll loop: the app's link, a wake pipe the player
 // writes to, and signals. docs/media.md has the protocol.
+#include "anim.h"
 #include "cache.h"
 #include "link.h"
+#include "player.h"
 #include "ring.h"
 #include "stills.h"
+
+#include <memory>
 
 #include <cerrno>
 #include <csignal>
@@ -47,10 +51,64 @@ void onSignal(int)
     errno = e;
 }
 
+bool has(const std::string &flags, const char *word)
+{
+    std::string w = word;
+    size_t at = 0;
+    while (at <= flags.size()) {
+        size_t end = flags.find(',', at);
+        if (end == std::string::npos)
+            end = flags.size();
+        if (flags.compare(at, end - at, w) == 0)
+            return true;
+        at = end + 1;
+    }
+    return false;
+}
+
+// `name=N` in a comma list, or `none`.
+long valueOf(const std::string &flags, const char *name, long none)
+{
+    std::string key = std::string(name) + "=";
+    size_t at = flags.find(key);
+    if (at == std::string::npos || (at > 0 && flags[at - 1] != ','))
+        return none;
+    return strtol(flags.c_str() + at + key.size(), nullptr, 10);
+}
+
+// What plays: a file through the player, or an animated WebP.
+struct Playing {
+    std::string id;
+    std::unique_ptr<gh0st::Player> player;
+    std::unique_ptr<Anim> anim;
+    int w = 0, h = 0;
+    gh0st::Player::Options opt;
+    std::string path;
+    int slow = 0;
+
+    bool picture(std::vector<uint16_t> &px, int &pw, int &ph)
+    {
+        return player ? player->picture(px, pw, ph) : anim && anim->picture(px, pw, ph);
+    }
+    bool news(gh0st::Player::Status &st)
+    {
+        return player ? player->news(st) : anim && anim->news(st);
+    }
+    void pause(bool on)
+    {
+        if (player)
+            player->pause(on);
+        else if (anim)
+            anim->pause(on);
+    }
+};
 
 class Helper {
 public:
-    Helper(int link, int wakeR) : link_(link), wakeR_(wakeR), cache_(ThumbCache::defaultDir()) {}
+    Helper(int link, int wakeR, int wakeW)
+        : link_(link), wakeR_(wakeR), wakeW_(wakeW), cache_(ThumbCache::defaultDir())
+    {
+    }
 
     bool init(int ringFd)
     {
@@ -74,6 +132,7 @@ public:
                     sig = sig || memchr(buf, 's', size_t(n));
                 if (sig)
                     return 0;
+                played();
             }
             std::vector<std::string> m;
             while (link_.recv(m))
@@ -86,6 +145,147 @@ public:
 
 private:
     void say(const std::vector<std::string> &f) { link_.send(f); }
+
+    // Opens `path` to play as `id`, fitted in w x h, as `flags` say:
+    // loop, silent, paused, audio=N, subs=N, at=MS.
+    std::unique_ptr<Playing> start(const std::string &id, int w, int h, const std::string &flags,
+                                   const std::string &path, std::string &why)
+    {
+        auto p = std::make_unique<Playing>();
+        p->id = id;
+        p->w = w;
+        p->h = h;
+        p->path = path;
+        Info info;
+        Fail f = stills_.probe(path, info);
+        if (f != Fail::None) {
+            why = failWord(f);
+            return nullptr;
+        }
+        bool paused = has(flags, "paused");
+        if (info.codec == Codec::WebpAnim) {
+            p->anim = std::make_unique<Anim>(wakeW_);
+            if (!p->anim->open(path, w, h, paused, why))
+                return nullptr;
+            return p;
+        }
+        gh0st::Player::Options &o = p->opt;
+        o.orient = info.orient;
+        o.loop = has(flags, "loop") || info.kind == Kind::Anim;
+        o.silent = has(flags, "silent") || info.kind == Kind::Anim;
+        o.paused = paused;
+        o.audio = int(valueOf(flags, "audio", -1));
+        o.subs = int(valueOf(flags, "subs", -1));
+        o.startMs = valueOf(flags, "at", 0);
+        p->player = std::make_unique<gh0st::Player>(wakeW_);
+        if (!p->player->open(path, w, h, o, why))
+            return nullptr;
+        return p;
+    }
+
+    // A picture from what plays goes to the ring; its time and state go to
+    // the app when they change.
+    void played()
+    {
+        if (!cur_)
+            return;
+        int w, h;
+        if (cur_->picture(playPx_, w, h) && size_t(w) * h <= ring_.slotPx()) {
+            slot_ = (slot_ + 1) % PLAY_SLOTS;
+            uint32_t seq = ring_.write(slot_, uint16_t(w), uint16_t(h), [&](uint16_t *dst) {
+                memcpy(dst, playPx_.data(), size_t(w) * h * 2);
+            });
+            if (seq)
+                say({"frame", std::to_string(slot_), std::to_string(seq), std::to_string(w),
+                     std::to_string(h)});
+        }
+        gh0st::Player::Status s;
+        if (!cur_->news(s))
+            return;
+        if (!s.error.empty()) {
+            std::string id = cur_->id;
+            cur_.reset();
+            say({"playerr", id, s.error});
+            return;
+        }
+        if (s.ended && next_) {
+            // The next track was opened and waits on its first picture.
+            cur_ = std::move(next_);
+            cur_->pause(false);
+            say({"play", cur_->id, "0", "0", "playing", "0", "0"});
+            return;
+        }
+        if (s.slow > cur_->slow) {
+            cur_->slow = s.slow;
+            say({"slow", cur_->id, std::to_string(s.slow)});
+        }
+        say({"play", cur_->id, std::to_string(s.posMs), std::to_string(s.durMs),
+             s.ended ? "done" : s.paused ? "paused" : "playing", std::to_string(s.dropped),
+             std::to_string(s.slow)});
+    }
+
+    void play(const std::vector<std::string> &m)
+    {
+        auto at = [&](size_t i) { return i < m.size() ? m[i] : std::string(); };
+        const std::string verb = at(1);
+        if (verb == "open" && m.size() >= 7) {
+            next_.reset();
+            cur_.reset();
+            int w = atoi(at(3).c_str()), h = atoi(at(4).c_str());
+            std::string why;
+            if (!fits(w, h)) {
+                say({"playerr", at(2), "bad size"});
+                return;
+            }
+            cur_ = start(at(2), w, h, at(5), m.back(), why);
+            if (!cur_)
+                say({"playerr", at(2), why});
+            return;
+        }
+        if (verb == "next" && m.size() >= 4 && cur_) {
+            std::string why;
+            next_ = start(at(2), cur_->w, cur_->h, "paused", m.back(), why);
+            return;
+        }
+        if (!cur_)
+            return;
+        gh0st::Player *p = cur_->player.get();
+        if (verb == "pause") {
+            cur_->pause(true);
+        } else if (verb == "resume") {
+            cur_->pause(false);
+        } else if (verb == "seek") {
+            if (p)
+                p->seek(strtoll(at(2).c_str(), nullptr, 10));
+            else if (cur_->anim)
+                cur_->anim->restart();
+        } else if (verb == "stop") {
+            next_.reset();
+            cur_.reset();
+        } else if (verb == "step" && p) {
+            p->step();
+        } else if (verb == "speed" && p) {
+            p->speed(atoi(at(2).c_str()));
+        } else if (verb == "ab" && p) {
+            if (at(2) == "off")
+                p->repeat(0, 0);
+            else
+                p->repeat(strtoll(at(2).c_str(), nullptr, 10), strtoll(at(3).c_str(), nullptr, 10));
+        } else if (verb == "tracks" && p) {
+            // Other tracks: the file opens again where it was.
+            gh0st::Player::Options o = cur_->opt;
+            o.audio = atoi(at(2).c_str());
+            o.subs = atoi(at(3).c_str());
+            o.startMs = p->position();
+            std::string why;
+            cur_->opt = o;
+            if (!p->open(cur_->path, cur_->w, cur_->h, o, why)) {
+                std::string id = cur_->id;
+                cur_.reset();
+                say({"playerr", id, why});
+            }
+        }
+    }
 
     void fail(const std::string &id, Fail f) { say({"fail", id, failWord(f)}); }
 
@@ -190,15 +390,20 @@ private:
                  strtof(at(5).c_str(), nullptr), strtof(at(6).c_str(), nullptr), path);
         } else if (verb == "forget") {
             stills_.forget();
+        } else if (verb == "play") {
+            play(m);
         }
         return true;
     }
 
     gh0st::Link link_;
     gh0st::Ring ring_;
-    int wakeR_;
+    int wakeR_, wakeW_;
     Stills stills_;
     ThumbCache cache_;
+    std::unique_ptr<Playing> cur_, next_;
+    std::vector<uint16_t> playPx_;
+    uint32_t slot_ = 0;
 };
 
 int envFd(const char *name)
@@ -255,7 +460,7 @@ int main()
     sigaction(SIGHUP, &sa, nullptr);
     signal(SIGPIPE, SIG_IGN);
 
-    Helper h(link, wake[0]);
+    Helper h(link, wake[0], wake[1]);
     if (!h.init(ring)) {
         fprintf(stderr, "gh0st-mediad: GH0ST_MEDIAD_RING is not a frame ring\n");
         return 2;

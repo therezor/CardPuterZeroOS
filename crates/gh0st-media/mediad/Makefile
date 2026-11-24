@@ -12,7 +12,8 @@ NATIVE ?= $(abspath ../../../native/av)
 VPATH = $(NATIVE)
 CXX ?= c++
 CXXFLAGS ?= -O2
-CXXFLAGS += -std=c++17 -Wall -Wextra -MMD -MP -I. -I$(NATIVE)
+# Speed and subtitles in the shared player (native/av/player.cpp).
+CXXFLAGS += -std=c++17 -Wall -Wextra -MMD -MP -I. -I$(NATIVE) -DGH0ST_PLAYER_EXTRAS
 LIBS := libjpeg libavformat libavcodec libavfilter libswscale libswresample libavutil \
 	libheif libraw libwebpdemux libwebp libass
 DEP_CFLAGS ?= $(shell pkg-config --cflags $(LIBS) 2>/dev/null)
@@ -20,7 +21,7 @@ DEP_LIBS ?= $(shell pkg-config --libs $(LIBS) 2>/dev/null)
 PULSE_CFLAGS ?= $(shell pkg-config --cflags libpulse-simple 2>/dev/null)
 PULSE_LIBS ?= $(shell pkg-config --libs libpulse-simple libpulse 2>/dev/null)
 
-common := main link ring decode stills cache player
+common := main link ring decode stills cache player anim
 
 all: $(O)/gh0st-mediad
 
