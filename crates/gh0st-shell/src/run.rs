@@ -1038,7 +1038,6 @@ impl Shell {
         let _ = notify::post(&notify::user_dir(), &n);
     }
 
-    /// Shows the next question when nothing else is in the way.
     /// Acts on the next portal request once nothing else is under way.
     /// Only the app in front, or a program it started, may ask.
     fn maybe_portal(&mut self, now: u64) {
@@ -1046,7 +1045,7 @@ impl Shell {
             || self.pending.is_some()
             || !self.held.is_empty()
             || self.screen == Screen::Prompt
-            || matches!(self.screen, Screen::Locked | Screen::Off)
+            || self.locked()
         {
             return;
         }
@@ -1103,6 +1102,8 @@ impl Shell {
         }
     }
 
+    /// Shows the next question when nothing else is in the way. Over an
+    /// app, it parks the app first; never over the lock screen or the dark.
     fn maybe_prompt(&mut self, now: u64) {
         if self.screen == Screen::Prompt {
             if self.prompts.is_empty() && self.pending.is_none() {
@@ -1113,7 +1114,7 @@ impl Shell {
         if self.prompts.is_empty()
             || self.pending.is_some()
             || !self.held.is_empty()
-            || matches!(self.screen, Screen::Locked | Screen::Off)
+            || self.locked()
         {
             return;
         }
@@ -3649,6 +3650,11 @@ impl Shell {
         self.display.suspend();
         t.state = tasks::State::Front;
         t.used = now;
+        // Back from the lock or the dark: the lock is over. Left Locked, the
+        // screen would hold every question the app asks.
+        if self.screen == Screen::Locked {
+            self.screen = Screen::Home;
+        }
         t.mem_kb = None;
         t.keeps_on = false;
         let pgid = t.pgid;

@@ -1019,7 +1019,6 @@ impl Portal {
     }
 }
 
-/// The file an fd we were handed names.
 /// Moves the file `fd` names to the Trash, if the name still is that file.
 fn trash_fd(fd: &std::os::fd::OwnedFd) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -1041,6 +1040,7 @@ fn trash_fd(fd: &std::os::fd::OwnedFd) -> bool {
     same && gh0st_core::trash::put(Path::new(&home), &path).is_ok()
 }
 
+/// The file an fd we were handed names.
 fn fd_path(fd: &std::os::fd::OwnedFd) -> Option<PathBuf> {
     use std::os::fd::AsRawFd;
     let p = std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).ok()?;
