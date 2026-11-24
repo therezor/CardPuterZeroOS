@@ -65,7 +65,7 @@ not shown.
 Chips: 4 Mark, 5 Copy, 6 Paste, 7 Cut, 8 the menu. Mark takes key 4 from
 Esc, which still goes up a folder. They stay on their keys; Paste is grey
 until something waits. An empty folder shows Paste alone. Inside an
-archive: 4 Mark and 6 Copy. On a server's row in Places: 5 Edit, 7
+archive the keys stay put, with Paste and Cut grey. On a server's row in Places: 5 Edit, 7
 Forget, pressed twice.
 
 The menu (≡) also has Mark, Clear the clipboard, Compress to zip, Same folder on both sides, Sort by

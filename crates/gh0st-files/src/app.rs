@@ -1489,9 +1489,8 @@ impl Files {
         let archive = self.side().loc.is_archive();
         match n {
             4 => self.mark(),
-            // Inside an archive Copy stands alone, on 6.
-            6 if archive => self.take(false, cx),
             5 => self.take(false, cx),
+            6 | 7 if archive => {}
             6 => self.paste(cx),
             7 => self.take(true, cx),
             _ => {}
@@ -1668,10 +1667,16 @@ impl Page for Files {
                 let marked = s.current().is_some_and(|e| s.marks.contains(&e.name));
                 let mark = Chip::new("check", "Mark").on(marked);
                 if s.loc.is_archive() {
+                    // The same keys as in a folder; nothing pastes into an
+                    // archive or leaves it by Cut.
                     return if s.entries.is_empty() {
                         Bars::top()
                     } else {
-                        Bars::top().chip(4, mark).chip(6, copy)
+                        Bars::top()
+                            .chip(4, mark)
+                            .chip(5, copy)
+                            .chip(6, Chip::new("corner-down-left", "Paste").disabled(true))
+                            .chip(7, Chip::new("x", "Cut").disabled(true))
                     };
                 }
                 let paste = Chip::new("corner-down-left", "Paste");
