@@ -19,6 +19,7 @@ which the device has none of.
 | `Account` | 1 | The user's name, after the user's yes |
 | `Trash` | 1 | `TrashFile` moves a file to the Trash |
 | `Wallpaper` | 1 | Sets the wallpaper, after the user's yes over the picture itself |
+| `MemoryMonitor` | 1 | `LowMemoryWarning` when memory runs short |
 
 ## Requests
 
@@ -132,6 +133,15 @@ answers `1` done, `0` not: a folder on another drive has no Trash here.
   shows the picture, and home and the lock share one wallpaper.
 - Always is kept with Account's, in `~/.local/state/gh0st/portal-always`,
   one `what<TAB>app` a line.
+
+## MemoryMonitor
+
+PSI triggers on `/proc/pressure/memory` wake the loop when tasks stall on
+memory. In a 2 s window: 140 ms of some tasks stalled sends level `50`, 300
+ms sends `100`, and 300 ms of all tasks stalled sends `255`. Each sends
+`LowMemoryWarning(y level)` to everyone on the bus, and the shell sends
+`lowmem <level>` to every linked app (`sdk.md`, Low memory). The image
+turns PSI on with `psi=1`; without it the monitor is quiet.
 
 ## Who may ask
 

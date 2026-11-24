@@ -9,6 +9,7 @@ use gh0st_core::link::Link;
 use gh0st_dbus::{Conn, Kind, Message, Value, bus};
 
 use crate::inhibit::{self, Inhibit};
+use crate::memory::{self, Memory};
 use crate::notify::{self, Notifications};
 use crate::portal::{self, Portal};
 use crate::settings::{self, Settings};
@@ -25,6 +26,7 @@ struct Session {
     inhibit: Inhibit,
     portal: Portal,
     settings: Settings,
+    memory: Memory,
     /// config.json's folder, for SettingChanged.
     #[cfg(target_os = "linux")]
     config_watch: Option<gh0st_core::status::Watch>,
@@ -104,6 +106,7 @@ pub fn main(args: &[String]) -> i32 {
         inhibit: Inhibit::default(),
         portal,
         settings: Settings::new(&config),
+        memory: Memory::open(),
         #[cfg(target_os = "linux")]
         config_watch: config
             .parent()
@@ -133,6 +136,8 @@ impl Session {
             if let Some(l) = &self.link {
                 fds.push(gh0st_core::rt::pollfd(l.fd()));
             }
+            let pressure_at = fds.len();
+            fds.extend(self.memory.pollfds());
             let job_at = self.portal.job_fd().map(|fd| {
                 fds.push(gh0st_core::rt::pollfd(fd));
                 fds.len() - 1
@@ -144,6 +149,13 @@ impl Session {
             });
             if gh0st_core::rt::wait(&mut fds, None).is_err() {
                 continue;
+            }
+            let fired: Vec<bool> = fds[pressure_at..pressure_at + self.memory.len()]
+                .iter()
+                .map(|p| p.revents & libc::POLLPRI != 0)
+                .collect();
+            if let Some(level) = self.memory.level(&fired) {
+                self.low_memory(level);
             }
             if job_at.is_some_and(|i| fds[i].revents != 0) {
                 self.portal.job_done();
@@ -262,6 +274,15 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Memory is short: every listener on the bus hears it, and the shell
+    /// tells its apps.
+    fn low_memory(&mut self, level: u8) {
+        if let Err(e) = self.bus.send(memory::warning(level)) {
+            eprintln!("gh0st session: bus: {e}");
+        }
+        self.say(&["lowmem", &level.to_string()]);
     }
 
     /// Under `--test` there is no shell: `GH0ST_NOTIFY_PRESS` presses the

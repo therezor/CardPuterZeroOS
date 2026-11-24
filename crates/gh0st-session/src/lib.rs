@@ -5,6 +5,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod inhibit;
+pub mod memory;
 pub mod notify;
 pub mod portal;
 pub mod run;

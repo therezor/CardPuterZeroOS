@@ -165,6 +165,7 @@ Shell to app:
 | `hello` `2` | The protocol version, sent first |
 | `open` path | Open this file: another app opened it here. The app is in front |
 | `action` tag id | Action `id` of this app's notice `tag` was picked in the notifications |
+| `lowmem` level | Memory is short: 50 low, 100 medium, 255 critical. Drop caches. Sent to every linked app, in front or behind |
 | `content` x y w h | The rect the app may draw in, sent at start and after every `bars` change |
 | `theme` name | The palette changed. Redraw with it |
 | `redraw` | The shell drew over the content. Redraw all of it |

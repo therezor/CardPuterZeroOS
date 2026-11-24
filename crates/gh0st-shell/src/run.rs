@@ -798,6 +798,11 @@ impl Shell {
                             self.ask_account(id, pid.parse().unwrap_or(0), app);
                         }
                     }
+                    Some("lowmem") => {
+                        if let Some(level) = m.get(1) {
+                            self.low_memory(level);
+                        }
+                    }
                     Some("wallpaper") => {
                         if let [_, id, pid, app, path] = m.as_slice() {
                             let path = link::path_of(path);
@@ -919,6 +924,19 @@ impl Shell {
             }
             _ => {
                 self.services.say_session(&["wallpaper", id, "deny"]);
+            }
+        }
+    }
+
+    /// Memory is short: every app that speaks the link hears it, in front
+    /// or behind.
+    fn low_memory(&mut self, level: &str) {
+        if self.debug {
+            eprintln!("gh0st shell: low memory {level}");
+        }
+        for t in self.tasks.iter() {
+            if let Some(l) = t.link.as_ref().filter(|_| t.link_v >= 2) {
+                l.send(&["lowmem", level]);
             }
         }
     }

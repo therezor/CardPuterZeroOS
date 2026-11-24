@@ -48,8 +48,13 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.OpenURI version | grep -q 'uint32 5' \
     || fail "OpenURI version"
+for v in Settings:2 Inhibit:3 Account:1 Trash:1 Wallpaper:1 MemoryMonitor:1; do
+    gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+        --method org.freedesktop.DBus.Properties.Get "org.freedesktop.portal.${v%:*}" version \
+        | grep -q "uint32 ${v#*:}" || fail "${v%:*} version"
+done
 gdbus introspect --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
-    | grep -q 'SaveFiles' || fail "introspection"
+    | grep -q 'LowMemoryWarning' || fail "introspection"
 
 echo "portal: OpenFile through a Gio client, as libportal asks"
 cat >"$work/pick.py" <<'PY'

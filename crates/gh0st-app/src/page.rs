@@ -118,6 +118,14 @@ pub trait Page {
         let _ = (tag, action, cx);
     }
 
+    /// Memory is short: `level` is 50 low, 100 medium, 255 critical, as
+    /// the portal's MemoryMonitor says it. Drop what can be built again:
+    /// caches, thumbnails, decoded pictures. Every page on the stack hears
+    /// it, the one on top first, in front or not.
+    fn low_memory(&mut self, level: u8, cx: &mut Cx) {
+        let _ = (level, cx);
+    }
+
     /// The answer to [`Cx::pick`]: the paths picked, or None when the user
     /// gave up or no chooser was there.
     fn picked(&mut self, pick: Pick, paths: Option<Vec<PathBuf>>, cx: &mut Cx) {

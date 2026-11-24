@@ -337,6 +337,13 @@ impl Runtime {
         self.call_quiet(0, now, |p, cx| p.notice_action(tag, id, cx));
     }
 
+    /// Memory is short: every page hears it, top first.
+    pub fn low_memory(&mut self, level: u8, now: u64) {
+        for i in (0..self.stack.len()).rev() {
+            self.call_quiet(i, now, |p, cx| p.low_memory(level, cx));
+        }
+    }
+
     /// Hands `files` to the page on top.
     pub fn opened(&mut self, files: Vec<PathBuf>, now: u64) {
         let top = self.stack.len().saturating_sub(1);

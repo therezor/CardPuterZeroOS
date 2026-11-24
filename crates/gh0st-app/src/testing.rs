@@ -191,6 +191,12 @@ impl Driver {
         self
     }
 
+    /// Memory is short (see [`Page::low_memory`](crate::Page::low_memory)).
+    pub fn low_memory(&mut self, level: u8) -> &mut Driver {
+        self.rt.low_memory(level, self.now);
+        self
+    }
+
     /// The notifications panel ran action `id` of notice `tag`.
     pub fn notice_action(&mut self, tag: &str, id: &str) -> &mut Driver {
         self.rt.notice_action(tag, id, self.now);

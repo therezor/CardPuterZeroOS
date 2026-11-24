@@ -236,6 +236,11 @@ fn main_loop(
                             rt_.notice_action(tag, id, now);
                         }
                     }
+                    Some("lowmem") => {
+                        if let Some(level) = m.get(1).and_then(|v| v.parse().ok()) {
+                            rt_.low_memory(level, now);
+                        }
+                    }
                     Some("open") => {
                         let files: Vec<PathBuf> = m[1..]
                             .iter()

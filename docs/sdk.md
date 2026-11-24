@@ -922,6 +922,33 @@ Every page hears `Page::front(false)` when the app leaves the front, and
 right after, so `front(false)` is where it lets go of a device, such as a
 camera, and finishes a file it was writing.
 
+### Low memory
+
+The device has 512 MB. When memory runs short, every page hears
+`Page::low_memory(level, cx)`: 50 low, 100 medium, 255 critical. Drop
+what can be built again, such as caches and decoded pictures. A page behind
+others hears it too. `Driver::low_memory(level)` sends it in a test.
+
+```rust
+use gh0st_app::{Cx, Page, Ui};
+
+struct Viewer {
+    thumbs: Vec<Vec<u16>>,
+}
+
+impl Page for Viewer {
+    fn title(&self) -> &str {
+        "Viewer"
+    }
+
+    fn draw(&self, _: &mut Ui) {}
+
+    fn low_memory(&mut self, _level: u8, _cx: &mut Cx) {
+        self.thumbs = Vec::new();
+    }
+}
+```
+
 ### Notifications
 
 A notice outlives the toast: it waits in the shell's notifications until the

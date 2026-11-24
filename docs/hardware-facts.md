@@ -116,6 +116,10 @@ Measured on the device unless marked.
 - `/sys/kernel/security/lsm` lists `capability` only: no Landlock, no Yama
   (`/proc/sys/kernel/yama` is missing). The shell and the keyring make
   themselves non-dumpable instead.
+- `CONFIG_PSI=y` with `CONFIG_PSI_DEFAULT_DISABLED=y`: no
+  `/proc/pressure/memory` until `psi=1` is on the command line. The stock
+  line has `cgroup_disable=memory`, so memcg events are out too. Whether
+  unprivileged triggers with a 2 s window work there is not checked yet.
 - `user.max_user_namespaces` is 1494. `unshare -Ur` and `unshare -Urm` work
   as UID 1000; inside, `/dev/fb_lcd` and `/dev/input` open and a tmpfs
   mounts.
