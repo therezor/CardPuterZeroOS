@@ -72,11 +72,13 @@ if [ "${1:-}" = camera ]; then
 fi
 
 cargo build --release --target "$target" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
-    -p gh0st-store -p gh0st-keyring -p gh0st-files --manifest-path "$root/Cargo.toml"
+    -p gh0st-store -p gh0st-keyring -p gh0st-files -p gh0st-keyboard --manifest-path "$root/Cargo.toml"
 out="$root/target/$target/release"
 
 scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" "$out/gh0st-update" "$out/gh0st-store" \
-    "$out/gh0st-keyring" "$out/gh0st-files" "$root/packaging/applications/keyring.desktop" \
+    "$out/gh0st-keyring" "$out/gh0st-files" "$out/gh0st-keyboard" \
+    "$root/packaging/applications/keyring.desktop" \
+    "$root/packaging/applications/keyboard.desktop" \
     "$root/packaging/applications/files.desktop" \
     "$root/packaging/applications/store.desktop" \
     "$root/packaging/applications/settings.desktop" \
@@ -99,6 +101,7 @@ remote 'set -e
     sudo install -m 755 /tmp/gh0st-store /usr/bin/gh0st-store
     sudo install -m 755 /tmp/gh0st-keyring /usr/bin/gh0st-keyring
     sudo install -m 755 /tmp/gh0st-files /usr/bin/gh0st-files
+    sudo install -m 755 /tmp/gh0st-keyboard /usr/bin/gh0st-keyboard
     sudo ln -sf gh0st /usr/bin/gh0st-shell
     # The keyring vault folder, outside the home folder.
     sudo install -m 644 /tmp/gh0st-keyring.tmpfiles /usr/lib/tmpfiles.d/gh0st-keyring.conf
@@ -109,7 +112,8 @@ remote 'set -e
     sudo ln -f /usr/bin/gh0st /usr/libexec/gh0st-helper
     sudo install -d /usr/share/gh0st/applications /etc/systemd/user/APPLaunch.service.d
     sudo install -m 644 /tmp/store.desktop /tmp/settings.desktop /tmp/terminal.desktop \
-        /tmp/update.desktop /tmp/keyring.desktop /tmp/files.desktop /usr/share/gh0st/applications/
+        /tmp/update.desktop /tmp/keyring.desktop /tmp/files.desktop /tmp/keyboard.desktop \
+        /usr/share/gh0st/applications/
     cd /tmp/gh0st-update-units
     sudo install -m 644 -t /usr/lib/systemd/system gh0st-update-check.service \
         gh0st-update-daily.service gh0st-update-daily.timer gh0st-update-install.service

@@ -210,6 +210,8 @@ pub(crate) struct Runtime {
     spent: Option<u16>,
     /// The chip whose key is down, and that key: drawn pressed.
     pressed: Option<(u16, u8)>,
+    /// The top page heard `covered` for what covers it now.
+    covered: bool,
     bar: Bar,
     palette: String,
     pub dirty: bool,
@@ -244,6 +246,7 @@ impl Runtime {
             hold: None,
             spent: None,
             pressed: None,
+            covered: false,
             bar: Bar::new(),
             palette,
             dirty: true,
@@ -426,6 +429,7 @@ impl Runtime {
             }
         }
         self.retheme();
+        self.check_cover(now);
     }
 
     /// Follows `gh0st.palette`, so a change to it shows at once.
@@ -529,12 +533,31 @@ impl Runtime {
         if let Some(k) = self.kb.event(code, value, now) {
             self.key(&k, now);
         }
+        self.check_cover(now);
     }
 
     /// Held keys that are due to repeat.
     pub fn repeat(&mut self, now: u64) {
         while let Some(k) = self.kb.repeat_due(now) {
             self.key(&k, now);
+        }
+    }
+
+    /// Tells the top page once when Help, the menu, a dialog or the busy
+    /// card comes over it: keys, releases too, go there until it closes.
+    fn check_cover(&mut self, now: u64) {
+        let over =
+            !matches!(self.overlay, Overlay::None) || self.busy.as_ref().is_some_and(|b| b.shown);
+        if !over {
+            self.covered = false;
+            return;
+        }
+        if self.covered {
+            return;
+        }
+        self.covered = true;
+        if let Some(top) = self.stack.len().checked_sub(1) {
+            self.call_quiet(top, now, |p, cx| p.covered(cx));
         }
     }
 
@@ -1151,6 +1174,7 @@ impl Runtime {
                 self.dirty = true;
             }
         }
+        self.check_cover(now);
         // A toast stays while its hold lasts.
         if self.toast.as_ref().is_some_and(|t| t.until <= now) && self.hold.is_none() {
             self.toast = None;
@@ -1546,6 +1570,9 @@ mod tests {
             fn command(&mut self, id: u32, _: Step, _: &mut Cx) {
                 self.log.borrow_mut().push(format!("command {id}"));
             }
+            fn covered(&mut self, _: &mut Cx) {
+                self.log.borrow_mut().push("covered".into());
+            }
         }
 
         fn probe(typing: bool, raw: bool) -> (Driver, Log) {
@@ -1653,14 +1680,21 @@ mod tests {
         #[test]
         fn eight_opens_the_menu_and_fn_h_help_and_esc_steps_back() {
             let (mut d, log) = probe(false, false);
+            let keys = |log: &Log| -> Vec<String> {
+                log.borrow()
+                    .iter()
+                    .filter(|l| *l != "covered")
+                    .cloned()
+                    .collect()
+            };
             d.keys("8\n5");
-            assert!(log.borrow().is_empty(), "5 is the menu's now");
+            assert!(keys(&log).is_empty(), "5 is the menu's now");
             d.keys("8\n5");
-            assert_eq!(*log.borrow(), ["Soft(5)"], "8 closed the menu");
+            assert_eq!(keys(&log), ["Soft(5)"], "8 closed the menu");
             d.keys("8\nesc\n5");
-            assert_eq!(log.borrow().len(), 2, "Esc closed the menu");
+            assert_eq!(keys(&log).len(), 2, "Esc closed the menu");
             d.keys("help\n8\nesc\n5");
-            assert_eq!(log.borrow().len(), 3, "help, then the menu, then back");
+            assert_eq!(keys(&log).len(), 3, "help, then the menu, then back");
             assert!(!d.quit());
         }
 
@@ -1706,6 +1740,21 @@ mod tests {
             );
             d.keys("esc");
             assert_eq!(d.toast(), Some("Hold to exit"));
+        }
+
+        #[test]
+        fn a_page_hears_once_when_help_or_the_menu_covers_it() {
+            let covered = |log: &Log| log.borrow().iter().filter(|l| *l == "covered").count();
+            let (mut d, log) = probe(false, true);
+            d.keys("help");
+            assert_eq!(covered(&log), 1);
+            d.keys("x\nhelp");
+            assert_eq!(covered(&log), 1, "keys over Help, then Help closes");
+            d.keys("help");
+            assert_eq!(covered(&log), 2, "a second time is told again");
+            let (mut d, log) = probe(false, false);
+            d.keys("8");
+            assert_eq!(covered(&log), 1);
         }
 
         #[test]

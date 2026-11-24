@@ -18,6 +18,8 @@
 //!     gh0st-helper dns auto|SERVERS              password
 //!     gh0st-helper rfkill bluetooth|wlan on|off
 //!     gh0st-helper usb-power on|off
+//!     gh0st-helper usb-hid hold                  until stdin closes
+//!     gh0st-helper bt-classic on|off
 //!     gh0st-helper wifi-powersave on|off
 //!     gh0st-helper hotspot on|off
 //!     gh0st-helper hotspot name NAME
@@ -36,6 +38,11 @@
 //!     gh0st-helper store-upgrade [--mirror auto|github|china]          password
 //!     gh0st-helper user-create NAME              setup only, the new password
 //!     gh0st-helper setup-finish                  setup only
+//!
+//! `usb-hid hold` builds the Keyboard app's USB gadget, prints `node NAME
+//! PATH` for each function and `state WORD` as the host takes it, and
+//! takes it down when stdin closes. The app keeps the pipe, so however it
+//! ends, the host sees the keyboard unplugged and lets go of every key.
 //!
 //! A password verb reads the user's password as one line on stdin (see
 //! `auth`). `hotspot password` reads the hotspot's new password the same way. A setup verb runs only for root while setup's marker exists
@@ -107,6 +114,10 @@ pub enum Verb {
     Rfkill(Radio, bool),
     /// The built-in Ethernet chip may suspend.
     UsbPower(bool),
+    /// The Keyboard app's USB gadget, held while stdin is open.
+    UsbHid,
+    /// Classic Bluetooth (BR/EDR) on or off; LE stays on.
+    BtClassic(bool),
     WifiPowersave(bool),
     Hotspot(bool),
     HotspotName(String),
@@ -169,6 +180,11 @@ impl Verb {
             | Verb::HotspotPassword
             | Verb::HotspotSecurity(_)
             | Verb::UsbPower(_)
+            // A keyboard that needs a cable and the side switch, typing
+            // only what the app that holds it sends.
+            | Verb::UsbHid
+            // The radio the user already turned on, one half of it.
+            | Verb::BtClassic(_)
             | Verb::Power(_)
             | Verb::UserCreate(_)
             | Verb::SetupFinish
@@ -217,6 +233,8 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["rfkill", "bluetooth", s] => Verb::Rfkill(Radio::Bluetooth, on(s)?),
         ["rfkill", "wlan", s] => Verb::Rfkill(Radio::Wlan, on(s)?),
         ["usb-power", s] => Verb::UsbPower(on(s)?),
+        ["usb-hid", "hold"] => Verb::UsbHid,
+        ["bt-classic", s] => Verb::BtClassic(on(s)?),
         ["wifi-powersave", s] => Verb::WifiPowersave(on(s)?),
         ["hotspot", "name", n] if hotspot::valid_name(n) => Verb::HotspotName(n.to_string()),
         ["hotspot", "password"] => Verb::HotspotPassword,
@@ -432,6 +450,110 @@ fn set_swappiness(n: u32) -> Result<(), String> {
 }
 
 /// The rule for later boots and replugs, then the chip now.
+/// Writes a line for the app, never failing: a closed stdout must not stop
+/// the helper before it takes the gadget down.
+fn say(line: &str) {
+    // SAFETY: a write from a buffer of its own length.
+    unsafe { libc::write(1, line.as_ptr().cast(), line.len()) };
+}
+
+/// Classic Bluetooth on or off. Turning it off needs the radio off, so a
+/// powered radio restarts; turning it on doesn't. While a phone pairs with the
+/// Keyboard app classic is off: Android, seeing a classic side, looks for a
+/// classic keyboard there and never uses the LE one.
+fn bt_classic(on: bool) -> Result<(), String> {
+    use gh0st_core::btmgmt::Mgmt;
+    let e = |e: std::io::Error| format!("bluetooth: {e}");
+    let m = Mgmt::open().map_err(e)?;
+    // Classic comes back on a powered radio, so nothing connected drops;
+    // it goes off only on one that is off.
+    let powered = m.powered(0).map_err(e)?;
+    if on || !powered {
+        return m.set_bredr(0, on).map_err(e);
+    }
+    m.set_powered(0, false).map_err(e)?;
+    let set = m.set_bredr(0, false).map_err(e);
+    m.set_powered(0, true).map_err(e)?;
+    set
+}
+
+/// Builds the USB keyboard, binds it, and holds it until stdin closes.
+fn usb_hid_hold() -> Result<(), String> {
+    use gh0st_core::hidgadget::{self, Real};
+    let _ = run(&["modprobe", "libcomposite"]);
+    if !Path::new(hidgadget::CONFIGFS).exists() {
+        run(&["mount", "-t", "configfs", "none", "/sys/kernel/config"])?;
+    }
+    let root = hidgadget::root();
+    let mut fs = Real;
+    // One left by a helper that was killed.
+    hidgadget::teardown(&mut fs, &root);
+    let udc = hidgadget::udc(Path::new(hidgadget::UDC_CLASS)).ok_or("no USB device controller")?;
+    let up = hidgadget::build(&mut fs, &root).and_then(|_| hidgadget::bind(&mut fs, &root, &udc));
+    if let Err(e) = up {
+        hidgadget::teardown(&mut fs, &root);
+        return Err(format!("usb gadget: {e}"));
+    }
+    // The nodes are the user's alone, not every member of a group's.
+    let uid: Option<u32> = std::env::var("PKEXEC_UID")
+        .ok()
+        .and_then(|u| u.parse().ok());
+    for (name, node) in hidgadget::nodes(&root, Path::new(hidgadget::HIDG_CLASS)) {
+        if let (Some(uid), Ok(c)) = (uid, CString::new(node.as_os_str().as_encoded_bytes())) {
+            // SAFETY: chown and chmod on a path we own as root.
+            unsafe {
+                libc::chown(c.as_ptr(), uid, u32::MAX);
+                libc::chmod(c.as_ptr(), 0o600);
+            }
+        }
+        say(&format!("node {name} {}\n", node.display()));
+    }
+    let state = std::fs::File::open(Path::new(hidgadget::UDC_CLASS).join(&udc).join("state"))
+        .map_err(|e| format!("udc state: {e}"))?;
+    let mut last = String::new();
+    loop {
+        let mut buf = [0u8; 64];
+        let n = state.read_at(&mut buf, 0).unwrap_or(0);
+        let now = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+        if now != last {
+            say(&format!("state {now}\n"));
+            last = now;
+        }
+        // sysfs wakes a poller with POLLPRI when the state changes.
+        use std::os::fd::AsRawFd;
+        let mut fds = [
+            libc::pollfd {
+                fd: 0,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: state.as_raw_fd(),
+                events: libc::POLLPRI | libc::POLLERR,
+                revents: 0,
+            },
+        ];
+        // SAFETY: two pollfds on our stack.
+        let r = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+        if r < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            break;
+        }
+        if fds[0].revents != 0 {
+            let mut sink = [0u8; 64];
+            // SAFETY: a read into a buffer of its own length.
+            let got = unsafe { libc::read(0, sink.as_mut_ptr().cast(), sink.len()) };
+            if got <= 0 {
+                break;
+            }
+        }
+    }
+    hidgadget::teardown(&mut fs, &root);
+    Ok(())
+}
+
 fn usb_power(save: bool) -> Result<(), String> {
     write_conf(sysconf::USB_POWER_RULE, &sysconf::usb_power_rule(save))?;
     let value = if save { "auto" } else { "on" };
@@ -840,6 +962,8 @@ fn act(v: Verb) -> Result<(), String> {
         Verb::SetupFinish => setup_finish(),
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
         Verb::UsbPower(on) => usb_power(on),
+        Verb::UsbHid => usb_hid_hold(),
+        Verb::BtClassic(on) => bt_classic(on),
         Verb::WifiPowersave(on) => {
             write_nm(
                 sysconf::NM_POWERSAVE_DROPIN,
@@ -1012,7 +1136,7 @@ pub fn main(args: &[String]) -> i32 {
              regdom XX | cpu balanced|power-saver|performance | hostname NAME | swap MB | \
              swap-comp zstd|lz4|lzo-rle | swappiness 0..200 | set-time EPOCH | ntp on|off | \
              dhcp-hostname on|off | \
-             ip6-privacy on|off | dns auto|SERVERS | rfkill bluetooth|wlan on|off | usb-power on|off | \
+             ip6-privacy on|off | dns auto|SERVERS | rfkill bluetooth|wlan on|off | usb-power on|off | usb-hid hold | bt-classic on|off | \
              wifi-powersave on|off | hotspot on|off | hotspot name NAME | hotspot password | \
              hotspot security wpa3|mixed | power off|reboot | update-check | update-install | \
              update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
@@ -1062,6 +1186,22 @@ mod tests {
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn bt_classic_takes_on_or_off() {
+        assert_eq!(parse(&args("bt-classic off")), Some(Verb::BtClassic(false)));
+        assert!(!Verb::BtClassic(true).gated());
+        assert_eq!(parse(&args("bt-classic")), None);
+    }
+
+    #[test]
+    fn usb_hid_holds_and_asks_no_password() {
+        let v = parse(&args("usb-hid hold"));
+        assert_eq!(v, Some(Verb::UsbHid));
+        assert!(!Verb::UsbHid.gated());
+        assert_eq!(parse(&args("usb-hid")), None);
+        assert_eq!(parse(&args("usb-hid hold now")), None);
     }
 
     #[test]

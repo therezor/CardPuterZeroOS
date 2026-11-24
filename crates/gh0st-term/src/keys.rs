@@ -2,7 +2,7 @@
 
 use crate::vt::Modes;
 use gh0st_app::{KeyState, RawKey};
-use gh0st_core::keys::code;
+use gh0st_core::keys::{code, os_key};
 
 const F1: u16 = 59;
 const F11: u16 = 87;
@@ -12,25 +12,6 @@ const END: u16 = 107;
 const PAGEDOWN: u16 = 109;
 const INSERT: u16 = 110;
 pub const HELP: u16 = 138;
-
-/// Keys the OS acts on. A program never sees them: Fn+K opens the
-/// switcher, Help opens the app menu, the rest are volume, brightness, media
-/// and screenshots.
-fn os_key(c: u16) -> bool {
-    matches!(
-        c,
-        code::HOME
-            | HELP
-            | code::MUTE
-            | code::VOLUMEDOWN
-            | code::VOLUMEUP
-            | code::BRIGHTNESSDOWN
-            | code::BRIGHTNESSUP
-            | code::SYSRQ
-            | code::PRINT
-            | 163..=166
-    )
-}
 
 /// xterm's modifier parameter: 1 plus Shift 1, Alt 2, Ctrl 4.
 fn mods(k: &RawKey) -> u8 {

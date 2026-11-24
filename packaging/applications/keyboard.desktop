@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Keyboard
+Comment=Type on a computer or phone
+Exec=/usr/bin/gh0st-keyboard
+Icon=gh0st:keyboard
+Terminal=false
+X-Gh0st-Bars=both
+X-Gh0st-Background=true

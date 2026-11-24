@@ -131,7 +131,7 @@ step_debs() {
     log "cargo build"
     cargo build -q --release --frozen --target aarch64-unknown-linux-musl \
         --manifest-path "$SRC/Cargo.toml" -p gh0st -p gh0st-settings -p gh0st-term -p gh0st-update \
-        -p gh0st-store -p gh0st-camera -p gh0st-keyring
+        -p gh0st-store -p gh0st-camera -p gh0st-keyring -p gh0st-keyboard
     build_camd
     log "debs"
     rm -rf "$WORK/repo-ours"

@@ -155,6 +155,13 @@ pub trait Page {
         let _ = (id, step, cx);
     }
 
+    /// Help, the menu, a dialog or the busy card has come over the page.
+    /// Keys go there until it closes, releases too, so a page that passes
+    /// held keys on (a terminal, a remote keyboard) lets go of them here.
+    fn covered(&mut self, cx: &mut Cx) {
+        let _ = cx;
+    }
+
     /// The app came to the front (true) or went behind another (false).
     /// Every open page hears it. An app not allowed to run in the
     /// background is stopped right after, so let go of a device or finish a
