@@ -33,6 +33,7 @@ fn pages() -> Vec<PageId> {
         PageId::CountryZones,
         PageId::Hotspot,
         PageId::Pictures,
+        PageId::NetInfo,
         PageId::Choose(Choice::Palette),
     ]
 }

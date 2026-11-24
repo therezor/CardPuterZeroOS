@@ -425,6 +425,37 @@ impl Settings {
         Some((item.act.clone(), item.value.clone()))
     }
 
+    /// Opens page `id` over the one in front, asking first for what it
+    /// shows.
+    fn open(&mut self, id: PageId, cx: &mut Cx) {
+        if matches!(id, PageId::TimeZone(_)) && self.state.zones.is_empty() {
+            self.run(cx, NetJob::Zones, &["timedatectl", "list-timezones"]);
+        }
+        if let PageId::Conn(name) = &id {
+            self.query_conn(cx, name);
+        }
+        if matches!(id, PageId::Hotspot | PageId::HotspotQr) {
+            self.query_hotspot(cx);
+        }
+        if id == PageId::NetInfo {
+            self.query_net(cx, false);
+        }
+        if matches!(id, PageId::System | PageId::Advanced | PageId::Swap) {
+            self.query_advanced(cx);
+        }
+        self.stack.push((id, Cursor::default()));
+        self.refresh(cx);
+        // A picker opens on the option in use.
+        let here = match &self.view.body {
+            Body::List(items) => items.iter().position(|i| i.icon == Some("check")),
+            Body::Info(_) | Body::Qr { .. } => None,
+        };
+        if let Some(i) = here {
+            self.cursor_mut().selected = i;
+            self.refresh(cx);
+        }
+    }
+
     /// Enter on a row.
     fn activate(&mut self, cx: &mut Cx) {
         let Some((mut act, value)) = self.selected_act() else {
@@ -436,34 +467,7 @@ impl Settings {
             act = Act::Open(PageId::Choose(Choice::Palette));
         }
         match act {
-            Act::Open(id) => {
-                if matches!(id, PageId::TimeZone(_)) && self.state.zones.is_empty() {
-                    self.run(cx, NetJob::Zones, &["timedatectl", "list-timezones"]);
-                }
-                if let PageId::Conn(name) = &id {
-                    self.query_conn(cx, name);
-                }
-                if matches!(id, PageId::Hotspot | PageId::HotspotQr) {
-                    self.query_hotspot(cx);
-                }
-                if id == PageId::NetInfo {
-                    self.query_net(cx, false);
-                }
-                if matches!(id, PageId::System | PageId::Advanced | PageId::Swap) {
-                    self.query_advanced(cx);
-                }
-                self.stack.push((id, Cursor::default()));
-                self.refresh(cx);
-                // A picker opens on the option in use.
-                let here = match &self.view.body {
-                    Body::List(items) => items.iter().position(|i| i.icon == Some("check")),
-                    Body::Info(_) | Body::Qr { .. } => None,
-                };
-                if let Some(i) = here {
-                    self.cursor_mut().selected = i;
-                    self.refresh(cx);
-                }
-            }
+            Act::Open(id) => self.open(id, cx),
             Act::Set(s) => match value {
                 Value::Toggle(_) => self.apply(&s, 0, cx),
                 _ => self.apply(&s, 1, cx),
@@ -2156,6 +2160,11 @@ impl Page for Settings {
                 c.add(cmd.keys(spec).keys_only());
             }
         }
+        // The addresses, a key away from any page: what one most often
+        // comes to Settings to read.
+        if self.embed.is_none() && self.top().0 != PageId::NetInfo {
+            c.add(gh0st_app::Command::action(NET_INFO, "Network details").opens());
+        }
         // Setup's menu: no shell runs yet to power off from.
         if self.embed.is_some() {
             c.group("Setup");
@@ -2164,6 +2173,11 @@ impl Page for Settings {
     }
 
     fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
+        if id == NET_INFO {
+            self.open(PageId::NetInfo, cx);
+            self.flush(cx);
+            return;
+        }
         if id == POWER_OFF {
             self.run_command(Command::PowerOff, cx);
             self.flush(cx);
@@ -2382,6 +2396,9 @@ const PAGE_KEYS: u32 = 100;
 
 /// Setup's Power off, in its menu.
 const POWER_OFF: u32 = 90;
+
+/// Network details, in the menu of every page.
+const NET_INFO: u32 = 91;
 
 /// NetworkManager's config files' text, in the order it reads them.
 fn nm_files() -> Vec<String> {
