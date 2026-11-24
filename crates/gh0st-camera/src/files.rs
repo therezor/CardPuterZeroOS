@@ -107,14 +107,14 @@ pub fn list(dir: &Path) -> Vec<Shot> {
     v
 }
 
-/// Free MB on the card that holds `dir`, or its nearest parent that exists.
+/// MB the camera can still write on the card that holds `dir`, or its
+/// nearest parent that exists.
 pub fn free_mb(dir: &Path) -> Option<u64> {
     let mut p = dir;
     while !p.exists() {
         p = p.parent()?;
     }
-    let (used, total) = gh0st_app::system::storage(p)?;
-    Some(total.saturating_sub(used))
+    gh0st_app::system::writable_mb(p)
 }
 
 /// "1.2k" photos, or "42 min" of video, as the rail shows it.

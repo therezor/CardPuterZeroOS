@@ -83,17 +83,45 @@ pub fn memory() -> Option<(u64, u64)> {
 /// The image keeps `/home` on its own partition, which fills the card, so
 /// `/` alone shows only the system.
 pub fn storage(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    // SAFETY: statvfs fills a zeroed struct for a NUL-terminated path.
-    let st = unsafe {
-        let mut st: libc::statvfs = std::mem::zeroed();
-        (libc::statvfs(c.as_ptr(), &mut st) == 0).then_some(st)
-    }?;
+    statvfs(path).map(|st| {
+        let s = space(&st);
+        (s.used, s.total)
+    })
+}
+
+/// MB a user process can still write on the filesystem that holds `path`.
+/// Root's reserved blocks don't count: a write past them fails.
+pub fn writable_mb(path: &Path) -> Option<u64> {
+    statvfs(path).map(|st| space(&st).avail)
+}
+
+struct Space {
+    used: u64,
+    total: u64,
+    avail: u64,
+}
+
+// The field types differ between libcs: u64 on one, u32 on another.
+#[allow(clippy::unnecessary_cast)]
+fn space(st: &libc::statvfs) -> Space {
     let block = st.f_frsize as u64;
     let total = st.f_blocks as u64 * block;
     let free = st.f_bfree as u64 * block;
-    Some(((total - free) >> 20, total >> 20))
+    Space {
+        used: total.saturating_sub(free) >> 20,
+        total: total >> 20,
+        avail: (st.f_bavail as u64 * block) >> 20,
+    }
+}
+
+fn statvfs(path: &Path) -> Option<libc::statvfs> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: statvfs fills a zeroed struct for a NUL-terminated path.
+    unsafe {
+        let mut st: libc::statvfs = std::mem::zeroed();
+        (libc::statvfs(c.as_ptr(), &mut st) == 0).then_some(st)
+    }
 }
 
 /// The running kernel's release, as `uname -r` prints it.
@@ -131,5 +159,17 @@ mod tests {
             design_mah: Some(1750),
         };
         assert_eq!(b.health(), Some(96));
+    }
+
+    #[test]
+    fn reserved_blocks_are_not_writable() {
+        // SAFETY: statvfs is plain integers; zero is a valid value.
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        st.f_frsize = 4096;
+        st.f_blocks = 256 * 1024; // 1 GB
+        st.f_bfree = 64 * 1024; // 256 MB free to root
+        st.f_bavail = 61 * 1024; // 244 MB free to the user
+        let s = space(&st);
+        assert_eq!((s.used, s.total, s.avail), (768, 1024, 244));
     }
 }
