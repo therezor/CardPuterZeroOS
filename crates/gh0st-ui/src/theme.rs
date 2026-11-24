@@ -1177,6 +1177,15 @@ pub const QR_QUIET: i32 = 2;
 pub const TERM_DIM: u8 = 140;
 /// The terminal's underline and bar cursors, and its scroll mark, in px.
 pub const TERM_CURSOR_W: i32 = 2;
+
+/// The editor: how strongly a selection, a find match and the cursor's
+/// line tint the page, out of 255. A selection and a match take the accent
+/// and warning colours, the cursor's line `surface`.
+pub const TEXT_SELECT: u8 = 90;
+pub const TEXT_MATCH: u8 = 120;
+pub const TEXT_LINE: u8 = 150;
+/// Space between the editor's line numbers and its text, in px.
+pub const TEXT_GUTTER_GAP: i32 = 4;
 pub const TERM_MARK_W: i32 = 2;
 
 /// A terminal zoom level: a face, its bold if baked, and Nerd Font icons
