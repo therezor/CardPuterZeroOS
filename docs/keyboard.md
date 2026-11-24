@@ -66,6 +66,19 @@ HID over GATT through BlueZ, on the system bus as the user. No root.
   discoverable with the name while pairing, nameless for a bonded host to
   come back, for 2 minutes. None runs while a host is connected.
 - The agent shows pairing codes and refuses pairing outside the Pair screen.
+- Classic Bluetooth (BR/EDR) is off while the Pair screen is open
+  (`gh0st-helper bt-classic off`, then `on`, through the kernel's management
+  socket). Android, seeing a classic side on a device it pairs with over LE,
+  looks for a classic keyboard there and never starts the LE one. Pairing
+  with classic off makes it an LE keyboard for good; classic comes back
+  after. The switch restarts the radio, which drops classic connections.
+- A phone pairs from a private address and then gives its own; BlueZ keeps
+  the device and changes its address. The host follows the change, so a
+  host is always saved under its own address.
+- A computer comes back by itself when the keyboard advertises. A phone
+  waits for a tap on the keyboard in its Bluetooth settings, and the
+  waiting screen says so.
+- An iPhone uses the mouse only with AssistiveTouch on.
 - One host types at a time. Picking another lets go of the first.
 - Devices paired in Settings, such as headphones, are not hosts: the app
   never disconnects them.
