@@ -439,17 +439,6 @@ pub fn ip6_privacy_conf(on: bool) -> String {
     format!("{NM_HEADER}[connection]\nipv6.ip6-privacy={v}\n")
 }
 
-/// Name servers for every connection, picked by name in Settings: (verb,
-/// label, servers).
-pub const DNS_PRESETS: [(&str, &str, &str); 2] = [
-    (
-        "cloudflare",
-        "Cloudflare",
-        "1.1.1.1,1.0.0.1,2606:4700:4700::1111",
-    ),
-    ("quad9", "Quad9", "9.9.9.9,149.112.112.112,2620:fe::fe"),
-];
-
 /// glibc reads three name servers (`MAXNS`).
 pub const DNS_MAX: usize = 3;
 
@@ -468,14 +457,6 @@ pub fn dns_servers(list: &str) -> Option<String> {
 /// the place of what each network offers, and of a server a profile names.
 pub fn dns_conf(servers: &str) -> String {
     format!("# Settings > Network > DNS.\n[global-dns-domain-*]\nservers={servers}\n")
-}
-
-/// The preset these servers are, by label.
-pub fn dns_preset(servers: &str) -> Option<&'static str> {
-    DNS_PRESETS
-        .iter()
-        .find(|(_, _, s)| *s == servers)
-        .map(|(_, label, _)| *label)
 }
 
 /// Wi-Fi power saving for every connection: 3 on, 2 off. It applies from
@@ -817,10 +798,6 @@ mod tests {
             "1.1.1.1,2.2.2.2,3.3.3.3,4.4.4.4",
         ] {
             assert_eq!(dns_servers(bad), None, "{bad}");
-        }
-        for (_, label, servers) in DNS_PRESETS {
-            assert_eq!(dns_servers(servers).as_deref(), Some(servers));
-            assert_eq!(dns_preset(servers), Some(label));
         }
         let p = nm_privacy(&[dns_conf("9.9.9.9")]);
         assert_eq!(p.dns, "9.9.9.9");

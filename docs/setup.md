@@ -184,7 +184,7 @@ are in `crates/gh0st/src/helper.rs`, the text in `gh0st_core::sysconf`.
 | `ntp on\|off` | the user's password | Gated. `timedatectl set-ntp` |
 | `dhcp-hostname on\|off` | the user's password | Gated. `90-gh0st-dhcp-hostname.conf` |
 | `ip6-privacy on\|off` | the user's password | Gated. `90-gh0st-ip6-privacy.conf` |
-| `dns auto\|SERVERS` | the user's password | Gated. Settings > Network > DNS. Up to three IPv4 or IPv6 addresses as NetworkManager's global DNS in `90-gh0st-dns.conf`, which replaces what every network offers; `auto` removes it |
+| `dns auto\|SERVERS` | the user's password | Gated. Settings > Network > DNS: Automatic, or Custom with the servers typed under it (1.1.1.1 offered). Up to three IPv4 or IPv6 addresses as NetworkManager's global DNS in `90-gh0st-dns.conf`, which replaces what every network offers; `auto` removes it |
 | `update-auto on\|off` | the user's password | Gated. Enables or disables `gh0st-update-daily.timer` |
 
 The network verbs each write one whole file in `/etc/NetworkManager/conf.d`, which

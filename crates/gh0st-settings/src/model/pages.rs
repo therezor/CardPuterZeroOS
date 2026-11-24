@@ -583,7 +583,6 @@ pub fn build(id: &PageId, s: &State) -> Page {
                 Choice::Compression => "Compression",
                 Choice::Swappiness => "Swappiness",
                 Choice::Palette => "Palette",
-                Choice::Dns => "DNS",
             },
             Body::List(options(s, *c)),
             vec![],
@@ -798,24 +797,37 @@ fn hotspot_qr(s: &State) -> Body {
     }
 }
 
-/// What the global DNS row shows.
+/// The servers as the page shows them, or "Automatic".
 pub fn dns_label(dns: &str) -> String {
     if dns.is_empty() {
-        return "Automatic".into();
+        "Automatic".into()
+    } else {
+        dns.replace(',', ", ")
     }
-    sysconf::dns_preset(dns).map_or_else(|| dns.replace(',', ", "), str::to_string)
 }
 
-/// DNS for every connection, then one row per device. Wi-Fi opens the
+/// DNS for every connection: Automatic or Custom, and the servers under
+/// it, as a connection's IPv4 and its fields. Then one row per device. Wi-Fi opens the
 /// Wi-Fi page, where its networks and their settings live. A cable opens
 /// its connection: the active one, or with no cable, the saved profile.
 fn network(s: &State) -> Vec<Item> {
+    let custom = !s.nm.dns.is_empty();
     let dns = Item::new(
         "globe",
         "DNS",
-        Value::TextChevron(dns_label(&s.nm.dns)),
-        Act::Open(PageId::Choose(Choice::Dns)),
+        Value::Choice(if custom { "Custom" } else { "Automatic" }.into()),
+        Act::Set(Setting::Dns),
     );
+    let servers = if custom {
+        Item::new(
+            "",
+            "Servers",
+            Value::TextChevron(dns_label(&s.nm.dns)),
+            Act::Run(Command::DnsServers),
+        )
+    } else {
+        Item::new("", "Servers", Value::Off("the network's"), Act::None)
+    };
     let devices = s.ifaces.iter().map(|i| {
         let wifi = i.name.starts_with("wl");
         if i.connection == hotspot::CONN {
@@ -857,7 +869,7 @@ fn network(s: &State) -> Vec<Item> {
             danger: false,
         }
     });
-    std::iter::once(dns).chain(devices).collect()
+    [dns, servers].into_iter().chain(devices).collect()
 }
 
 fn conn(s: &State, name: &str) -> Vec<Item> {
@@ -1423,26 +1435,6 @@ fn options(s: &State, c: Choice) -> Vec<Item> {
                 )
             })
             .collect(),
-        Choice::Dns => {
-            let custom = !s.nm.dns.is_empty() && sysconf::dns_preset(&s.nm.dns).is_none();
-            let mut v = vec![row(
-                "Automatic".into(),
-                "The network's",
-                "auto".into(),
-                s.nm.dns.is_empty(),
-            )];
-            for (verb, label, servers) in sysconf::DNS_PRESETS {
-                let first = servers.split(',').next().unwrap_or(servers);
-                v.push(row(label.into(), first, verb.into(), s.nm.dns == servers));
-            }
-            let note = if custom {
-                s.nm.dns.as_str()
-            } else {
-                "Type them"
-            };
-            v.push(row("Custom".into(), note, "custom".into(), custom));
-            v
-        }
         Choice::Palette => s
             .palettes
             .iter()
@@ -1678,7 +1670,7 @@ mod tests {
             ..Iface::default()
         }];
         let p = build(&PageId::Network, &s);
-        assert_eq!(p.item(1).unwrap().act, Act::Open(PageId::Hotspot));
+        assert_eq!(p.item(2).unwrap().act, Act::Open(PageId::Hotspot));
     }
 
     #[test]
@@ -1700,31 +1692,28 @@ mod tests {
         s.conns = vec![("Wired connection 1".into(), "802-3-ethernet".into())];
         let p = build(&PageId::Network, &s);
         let dns = p.item(0).unwrap();
-        assert_eq!(dns.act, Act::Open(PageId::Choose(Choice::Dns)));
-        assert_eq!(dns.value, Value::TextChevron("Automatic".into()));
-        assert_eq!(p.item(1).unwrap().act, Act::Open(PageId::Wifi));
+        assert_eq!(dns.act, Act::Set(Setting::Dns));
+        assert_eq!(dns.value, Value::Choice("Automatic".into()));
+        assert_eq!(p.item(1).unwrap().act, Act::None, "no servers to type");
+        assert_eq!(p.item(2).unwrap().act, Act::Open(PageId::Wifi));
         assert_eq!(
-            p.item(2).unwrap().act,
+            p.item(3).unwrap().act,
             Act::Open(PageId::Conn("Wired connection 1".into()))
         );
     }
 
     #[test]
-    fn dns_for_every_connection_names_its_choice() {
+    fn custom_dns_shows_its_servers_and_a_connection_s_gives_way() {
         let mut s = state();
-        let checked = |s: &State| {
-            let p = build(&PageId::Choose(Choice::Dns), s);
-            (0..p.len())
-                .find(|&i| p.item(i).unwrap().icon == Some("check"))
-                .map(|i| p.item(i).unwrap().label.clone())
-        };
-        assert_eq!(checked(&s).as_deref(), Some("Automatic"));
-        s.nm.dns = sysconf::DNS_PRESETS[1].2.into();
-        assert_eq!(checked(&s).as_deref(), Some("Quad9"));
-        assert_eq!(dns_label(&s.nm.dns), "Quad9");
-        s.nm.dns = "192.168.1.1".into();
-        assert_eq!(checked(&s).as_deref(), Some("Custom"));
-        assert_eq!(dns_label(&s.nm.dns), "192.168.1.1");
+        s.nm.dns = "1.1.1.1,2606:4700:4700::1111".into();
+        let p = build(&PageId::Network, &s);
+        assert_eq!(p.item(0).unwrap().value, Value::Choice("Custom".into()));
+        let servers = p.item(1).unwrap();
+        assert_eq!(
+            servers.value,
+            Value::TextChevron("1.1.1.1, 2606:4700:4700::1111".into())
+        );
+        assert_eq!(servers.act, Act::Run(Command::DnsServers));
         // A connection's own DNS gives way to it.
         s.conn = Some(Conn {
             name: "HomeNet".into(),

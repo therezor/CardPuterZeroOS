@@ -664,33 +664,6 @@ impl Settings {
                 }
                 HelperCall::new(&["swappiness", word], format!("Swappiness: {word}"))
             }
-            Choice::Dns => {
-                let now = &s.nm.dns;
-                if word == "custom" {
-                    return self.ask(
-                        Dialog::Text {
-                            title: "DNS servers".into(),
-                            placeholder: "1.1.1.1, 9.9.9.9",
-                            text: now.replace(',', ", "),
-                            masked: false,
-                            secret: false,
-                        },
-                        Ask::Dns,
-                    );
-                }
-                let servers = match word {
-                    "auto" => "",
-                    w => match sysconf::DNS_PRESETS.iter().find(|(v, ..)| *v == w) {
-                        Some((_, _, servers)) => servers,
-                        None => return,
-                    },
-                };
-                if servers == now {
-                    return;
-                }
-                self.set_dns(cx, servers);
-                return;
-            }
             // Not gated: the SDK follows the key and redraws in it.
             Choice::Palette => {
                 if word != s.palette {
@@ -765,6 +738,10 @@ impl Settings {
                     self.update_conn(|c| c.autoconnect = !c.autoconnect);
                 }
             }
+            // Custom asks for the servers first, offering one to start
+            // from; Automatic goes back to each network's.
+            Setting::Dns if self.state.nm.dns.is_empty() => self.ask_dns("1.1.1.1"),
+            Setting::Dns => self.set_dns(cx, ""),
             Setting::ConnMethod => {
                 if let Some(c) = self.open_conn() {
                     if c.manual {
@@ -950,6 +927,10 @@ impl Settings {
             // The shell brings Updates up over Settings, and Settings back
             // when it closes.
             Command::OpenUpdates => cx.open("update"),
+            Command::DnsServers => {
+                let now = self.state.nm.dns.replace(',', ", ");
+                self.ask_dns(&now);
+            }
             Command::SetPicture(name) => {
                 let Some(src) = crate::wallpaper::pictures_dir().map(|d| d.join(&name)) else {
                     return;
@@ -1244,7 +1225,6 @@ impl Settings {
             Ask::Dns => match sysconf::dns_servers(&text) {
                 Some(list) if list == self.state.nm.dns => {}
                 Some(list) => self.set_dns(cx, &list),
-                None if text.trim().is_empty() => self.set_dns(cx, ""),
                 None => {
                     let why = format!("Up to {} IP addresses", sysconf::DNS_MAX);
                     self.reject(cx, &why, Ask::Dns, &text);
@@ -1310,6 +1290,19 @@ impl Settings {
         let mut call = HelperCall::new(&["swap", &mb.to_string()], done);
         call.restart = true;
         self.helper_call(cx, call);
+    }
+
+    fn ask_dns(&mut self, text: &str) {
+        self.ask(
+            Dialog::Text {
+                title: "DNS servers".into(),
+                placeholder: "1.1.1.1, 9.9.9.9",
+                text: text.into(),
+                masked: false,
+                secret: false,
+            },
+            Ask::Dns,
+        );
     }
 
     /// `servers` empty takes each network's again.

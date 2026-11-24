@@ -370,11 +370,26 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                     ),
                 ),
                 ("network", s(PageId::Network, 0)),
-                ("dns", s(PageId::Choose(Choice::Dns), 2)),
-                ("dns-custom", {
+                (
+                    "dns-custom",
+                    scene(
+                        &t,
+                        &st,
+                        PageId::Network,
+                        0,
+                        Some(Dialog::Text {
+                            title: "DNS servers".into(),
+                            placeholder: "1.1.1.1, 9.9.9.9",
+                            text: "1.1.1.1".into(),
+                            masked: false,
+                            secret: false,
+                        }),
+                    ),
+                ),
+                ("network-custom-dns", {
                     let mut st = sample_state();
-                    st.nm.dns = "192.168.1.1".into();
-                    scene(&t, &st, PageId::Choose(Choice::Dns), 3, None)
+                    st.nm.dns = "1.1.1.1,9.9.9.9".into();
+                    scene(&t, &st, PageId::Network, 1, None)
                 }),
                 ("connection", s(PageId::Conn("HomeNet".into()), 1)),
                 ("wifi-end", s(PageId::Wifi, 6)),

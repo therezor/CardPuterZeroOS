@@ -95,6 +95,8 @@ pub enum Setting {
     WifiPowersave,
     Hotspot,
     HotspotSecurity,
+    /// DNS for every connection: Automatic, or the servers typed below.
+    Dns,
 }
 
 /// A value picked on its own page, each option with a note. The gated
@@ -107,8 +109,6 @@ pub enum Choice {
     Compression,
     Swappiness,
     Palette,
-    /// Name servers for every connection: the network's, a preset, typed.
-    Dns,
 }
 
 /// Something Enter starts that is not a value.
@@ -139,6 +139,8 @@ pub enum Command {
     OpenUpdates,
     HotspotName,
     HotspotPassword,
+    /// Type the DNS servers for every connection.
+    DnsServers,
     /// Crop a picture in ~/Pictures, by file name, to the wallpaper.
     SetPicture(String),
 }
@@ -446,7 +448,7 @@ pub fn chips(
 pub fn icon(id: &PageId) -> &'static str {
     match id {
         PageId::Wifi | PageId::Conn(_) => "wifi",
-        PageId::Network | PageId::Choose(Choice::Dns) => "network",
+        PageId::Network => "network",
         PageId::Bluetooth => "bluetooth",
         PageId::Display => "sun",
         PageId::Sound => "volume-2",

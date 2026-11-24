@@ -14,27 +14,24 @@ fn tap(name: &str) -> String {
 
 fn keys() -> String {
     let down = tap("down");
+    let right = tap("right");
     [
         "wait 500\n",
         // Root: Wi-Fi, Hotspot, then Network. DNS is its first row.
         &down,
         &down,
         "enter\nwait 500\n",
-        "enter\nwait 300\n",
-        // Automatic, Cloudflare, then Quad9.
-        &down,
-        &down,
-        "enter\nwait 600\n",
-        // Custom: an address with a shell word after it is refused, then
-        // a plain one goes.
-        "enter\nwait 300\n",
-        &down,
-        &down,
-        &down,
-        "enter\nwait 300\n",
+        // Custom offers 1.1.1.1 to start from: Enter takes it.
+        &right,
+        "wait 300\nenter\nwait 600\n",
+        // Again, typed: a shell word after an address is refused, then two
+        // plain ones go.
+        &right,
+        "wait 300\n",
+        &"backspace\n".repeat(7),
         "type 1.1.1.1;reboot\nenter\nwait 400\n",
-        &"backspace\n".repeat(16),
-        "type 192.168.1.1\nenter\nwait 600\n",
+        &"backspace\n".repeat(14),
+        "type 9.9.9.9, 1.0.0.1\nenter\nwait 600\n",
     ]
     .concat()
 }
@@ -91,11 +88,7 @@ fn a_dns_pick_runs_the_helper_and_a_bad_address_never_does() {
         .lines()
         .filter_map(|l| l.strip_prefix("argv: /usr/libexec/gh0st-helper "))
         .collect();
-    assert_eq!(
-        helper,
-        ["dns 9.9.9.9,149.112.112.112,2620:fe::fe", "dns 192.168.1.1"],
-        "{log}"
-    );
+    assert_eq!(helper, ["dns 1.1.1.1", "dns 9.9.9.9,1.0.0.1"], "{log}");
     assert!(!log.contains("reboot"), "{log}");
     let _ = std::fs::remove_dir_all(&d);
 }
