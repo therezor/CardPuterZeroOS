@@ -671,7 +671,7 @@ fn chip_on(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32, shad
 /// The action bar: a tab over each of keys 4 to 8 that has one, underlined
 /// along the screen's bottom edge right above its key. No fill behind them.
 pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
-    crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
+    lint_chips(chips);
     c.clear(hint_rect(t), t.c.bg);
     action_chips(c, t, chips, false);
 }
@@ -679,8 +679,22 @@ pub fn action_bar(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
 /// The action bar over a picture: nothing behind the chips, so the
 /// picture shows whole. Each chip casts a shadow instead.
 pub fn action_bar_over(c: &mut Canvas, t: &Theme, chips: &[Chip; 5]) {
-    crate::lint::chips([1, 2, 3].map(|i| !chips[i].is_empty()));
+    lint_chips(chips);
     action_chips(c, t, chips, true);
+}
+
+/// A dialog's held yes stands alone on 7, as design.md puts it: the
+/// placement rule is for a page's own chips.
+fn lint_chips(chips: &[Chip; 5]) {
+    let on = [1, 2, 3].map(|i| !chips[i].is_empty());
+    let held_yes = on == [false, false, true]
+        && matches!(
+            chips[3].look,
+            Look::Danger | Look::DangerMain | Look::Hold(_)
+        );
+    if !held_yes {
+        crate::lint::chips(on);
+    }
 }
 
 fn action_chips(c: &mut Canvas, t: &Theme, chips: &[Chip; 5], shadow: bool) {

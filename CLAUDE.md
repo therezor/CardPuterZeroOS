@@ -63,6 +63,11 @@ battery in `/sys/class/power_supply`. Details and sources in
   container) over a socket pair and a frame ring. `src/fake.rs` stands in
   for the helper on a host. `examples/mockups.rs` renders its screens into
   `mockups/camera`.
+- `crates/gh0st-files`: Files, an SDK app with its own binary. One pane with
+  two sides, archives as folders, SFTP, FTP(S) and WebDAV servers with their
+  passwords in the keyring. `src/engine.rs` is what the page asks of its
+  worker, `src/fake.rs` a worker for tests. `examples/mockups.rs` renders its
+  screens into `mockups/files`.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
   program. `gh0st update` is the update engine and `gh0st store` the
   Store's, both run as root by systemd.
@@ -91,6 +96,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   and its tests.
 - `docs/keyring.md`: the keyring and session services, the vault, prompts,
   password changes and the limits.
+- `docs/files.md`: Files, its two sides, keys, servers, passwords, archives
+  and the worker.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and

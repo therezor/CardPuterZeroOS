@@ -15,6 +15,7 @@ members = [
     "crates/gh0st-update",
     "crates/gh0st-store",
     "crates/gh0st-camera",
+    "crates/gh0st-files",
 ]
 
 [workspace.package]

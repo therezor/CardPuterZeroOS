@@ -1,0 +1,27 @@
+[package]
+name = "gh0st-files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Files for the CardputerZero: the card, archives and servers, a gh0st app"
+
+[[bin]]
+name = "gh0st-files"
+path = "src/main.rs"
+
+[dependencies]
+gh0st-app.workspace = true
+gh0st-core.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+# The real Secret Service behind the keyring in tests, with no bus.
+gh0st-dbus.workspace = true
+gh0st-keyringd.workspace = true
+
+# The mockups double as fixtures: `cargo test` draws every scene under the
+# design lint.
+[[example]]
+name = "mockups"
+test = true

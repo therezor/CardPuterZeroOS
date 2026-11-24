@@ -1045,6 +1045,17 @@ const ICON_TINTS: &[(&str, usize)] = &[
     ("hard-drive", 2),
     ("usb", 4),
     ("square-terminal", 0),
+    // Files: a folder looks the same in every list, each kind of file its own.
+    ("folder", 1),
+    ("folder-open", 1),
+    ("file", 2),
+    ("file-text", 2),
+    ("file-code", 2),
+    ("file-image", 0),
+    ("file-music", 4),
+    ("file-video", 3),
+    ("file-archive", 5),
+    ("link", 1),
 ];
 
 /// Light and shade mixed into a fill so it reads as lit from above: a

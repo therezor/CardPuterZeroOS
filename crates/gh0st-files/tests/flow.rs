@@ -1,0 +1,326 @@
+//! Files driven by keys over a fixture home and the fake worker: what it
+//! asks the worker, what it keeps in the keyring, and that it sleeps.
+
+use gh0st_app::secret::{Keyring, Lookup, Wire};
+use gh0st_app::testing::Driver;
+use gh0st_dbus::Message;
+use gh0st_files::app::{Files, Options};
+use gh0st_files::engine::{Ask, Request};
+use gh0st_files::fake::Fake;
+use gh0st_files::model::{Entry, Loc};
+use gh0st_files::servers::{self, Proto, Server};
+use gh0st_keyringd::secret::{Answer, Ask as KrAsk, Caller, Out, Service};
+use gh0st_keyringd::vault::Cost;
+use std::cell::RefCell;
+use std::os::fd::RawFd;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+struct Home {
+    dir: PathBuf,
+}
+
+impl Drop for Home {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+impl Home {
+    fn new(name: &str) -> Home {
+        let dir =
+            std::env::temp_dir().join(format!("gh0st-files-flow-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let h = dir.join("home");
+        std::fs::create_dir_all(h.join("Music")).unwrap();
+        std::fs::write(h.join("Music/a.flac"), b"a").unwrap();
+        std::fs::write(h.join("Music/b.flac"), b"b").unwrap();
+        std::fs::write(h.join("Music/c.flac"), b"c").unwrap();
+        let mut nas = Server::new(Proto::Sftp);
+        nas.name = "nas".into();
+        nas.host = "nas.local".into();
+        nas.user = "me".into();
+        servers::save(&dir.join("data/servers"), &[nas]).unwrap();
+        Home { dir }
+    }
+
+    fn home(&self) -> PathBuf {
+        self.dir.join("home")
+    }
+}
+
+fn fake() -> Fake {
+    Fake::new().folder(
+        "nas",
+        "/",
+        vec![Entry::dir("backup"), Entry::file("x.txt", 3)],
+    )
+}
+
+fn drive(h: &Home, f: Fake, kr: Keyring) -> (Driver, Rc<RefCell<Vec<Request>>>) {
+    let log = f.log.clone();
+    let page = Files::with(Options {
+        home: h.home(),
+        data: Some(h.dir.join("data")),
+        engine: Box::new(f),
+        keyring: kr,
+    });
+    let mut d = Driver::new(page);
+    d.frame();
+    (d, log)
+}
+
+/// Each key, then a frame, as the device draws after every event.
+fn keys(d: &mut Driver, script: &str) {
+    for line in script.lines() {
+        d.keys(line);
+        d.frame();
+    }
+}
+
+// Places on side B: Home, Card, Trash, nas, Add server.
+const B_TO_NAS: &str = "tab\nx\nx\nx\nenter\ntab";
+
+#[test]
+fn copy_sends_the_marked_files_to_the_other_side() {
+    let h = Home::new("copy");
+    let (mut d, log) = drive(&h, fake(), Keyring::over(None));
+    keys(&mut d, B_TO_NAS);
+    // Music, then mark a and c.
+    keys(&mut d, "enter\nspace\nx\nspace\n6");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Copy 2 items?"));
+    keys(&mut d, "enter");
+    let music = Loc::Local(h.home().join("Music"));
+    let copy = log
+        .borrow()
+        .iter()
+        .find_map(|r| match r {
+            Request::Copy {
+                items, to, remove, ..
+            } => Some((items.clone(), to.clone(), *remove)),
+            _ => None,
+        })
+        .expect("a copy");
+    assert_eq!(copy.0, vec![music.join("a.flac"), music.join("c.flac")]);
+    assert_eq!(
+        copy.1,
+        Loc::Remote {
+            server: "nas".into(),
+            path: "/".into()
+        }
+    );
+    assert!(!copy.2);
+    assert_eq!(d.toast(), Some("Copied 2 items"));
+    assert!(d.lint().is_empty(), "{:?}", d.lint());
+}
+
+#[test]
+fn local_delete_goes_to_the_trash_and_remote_delete_is_held() {
+    let h = Home::new("delete");
+    let (mut d, log) = drive(&h, fake(), Keyring::over(None));
+    keys(&mut d, "enter\ndelete\nenter");
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|r| matches!(r, Request::Delete { trash: true, .. }))
+    );
+    keys(&mut d, B_TO_NAS);
+    keys(&mut d, "tab\nx\ndelete");
+    assert_eq!(
+        d.dialog().map(|x| x.0),
+        Some("Delete \u{201c}x.txt\u{201d}?")
+    );
+    keys(&mut d, "enter");
+    assert!(d.dialog().is_some(), "Enter doesn't delete for good");
+    d.keys("down 7").wait(800).keys("up 7");
+    d.frame();
+    assert!(
+        log.borrow()
+            .iter()
+            .any(|r| matches!(r, Request::Delete { trash: false, .. }))
+    );
+}
+
+#[test]
+fn esc_climbs_to_places_and_tab_keeps_each_side() {
+    let h = Home::new("nav");
+    let (mut d, _) = drive(&h, fake(), Keyring::over(None));
+    keys(&mut d, "enter");
+    keys(&mut d, "esc");
+    keys(&mut d, "esc");
+    assert!(!d.quit());
+    assert!(d.lint().is_empty());
+    keys(&mut d, "tab\ntab\nenter");
+    keys(&mut d, "x\nx\nx\nx\nenter");
+    assert_eq!(d.dialog(), None);
+}
+
+#[test]
+fn an_idle_folder_never_wakes() {
+    let h = Home::new("idle");
+    let (mut d, _) = drive(&h, fake(), Keyring::over(None));
+    keys(&mut d, "enter");
+    let wakes = d.idle_wakes(600_000);
+    assert!(wakes <= 11, "{wakes}: the clock's minute and nothing more");
+}
+
+// ---- the keyring ----
+
+struct World {
+    svc: Service,
+    signals: Vec<Message>,
+    serial: u32,
+    dir: PathBuf,
+}
+
+impl Drop for World {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+struct Local {
+    w: Rc<RefCell<World>>,
+    me: Caller,
+}
+
+impl Wire for Local {
+    fn call(&mut self, mut m: Message) -> Result<Message, String> {
+        let mut w = self.w.borrow_mut();
+        w.serial += 1;
+        m.serial = w.serial;
+        m.sender = Some(self.me.bus.clone());
+        let r = w.svc.call(&m, &self.me).ok_or("no reply")?;
+        for _ in 0..8 {
+            let outs = w.svc.drain();
+            if outs.is_empty() {
+                break;
+            }
+            for o in outs {
+                match o {
+                    Out::Ask(KrAsk::Password { id, .. }) => w.svc.password(id, b"pw"),
+                    Out::Ask(KrAsk::Approve { id, .. }) => w.svc.answer(id, Answer::Once),
+                    Out::Signal(s) => w.signals.push(s),
+                    _ => {}
+                }
+            }
+        }
+        match r.error_name {
+            Some(e) => Err(e),
+            None => Ok(r),
+        }
+    }
+
+    fn incoming(&mut self) -> Vec<Message> {
+        std::mem::take(&mut self.w.borrow_mut().signals)
+    }
+
+    fn fd(&self) -> Option<RawFd> {
+        None
+    }
+}
+
+fn keyring(name: &str) -> (Rc<RefCell<World>>, Keyring) {
+    let dir = std::env::temp_dir().join(format!("gh0st-files-kr-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut svc = Service::new(dir.join("login.vault"), Cost::TEST);
+    svc.unlock(b"pw", true);
+    let w = Rc::new(RefCell::new(World {
+        svc,
+        signals: Vec::new(),
+        serial: 0,
+        dir,
+    }));
+    let me = Caller {
+        bus: ":1.7".into(),
+        app: "files".into(),
+        label: "Files".into(),
+    };
+    let kr = Keyring::over(Some(Box::new(Local { w: w.clone(), me })));
+    (w, kr)
+}
+
+fn nas_attrs() -> Vec<(&'static str, String)> {
+    let mut nas = Server::new(Proto::Sftp);
+    nas.host = "nas.local".into();
+    nas.user = "me".into();
+    nas.attrs().to_vec()
+}
+
+fn asks_password(f: &mut Fake) {
+    f.first.insert(
+        "nas".into(),
+        vec![Ask::Password {
+            server: "nas".into(),
+            retry: false,
+        }],
+    );
+}
+
+fn replies(log: &Rc<RefCell<Vec<Request>>>) -> Vec<Option<String>> {
+    log.borrow()
+        .iter()
+        .filter_map(|r| match r {
+            Request::Reply { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_typed_password_is_kept_once_it_works() {
+    let h = Home::new("typed");
+    let (w, kr) = keyring("typed");
+    let mut f = fake();
+    asks_password(&mut f);
+    let (mut d, log) = drive(&h, f, kr);
+    keys(&mut d, "tab\nx\nx\nx\nenter");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Password for me"));
+    keys(&mut d, "type s3cret\nenter");
+    assert_eq!(replies(&log), [Some("s3cret".to_string())]);
+    // The listing worked: the password is in the keyring, not in a file.
+    let (_, mut check) = (w.clone(), {
+        let me = Caller {
+            bus: ":1.8".into(),
+            app: "files".into(),
+            label: "Files".into(),
+        };
+        Keyring::over(Some(Box::new(Local { w: w.clone(), me })))
+    });
+    let a = nas_attrs();
+    let a: Vec<(&str, &str)> = a.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    match check.lookup(&a) {
+        Lookup::Found(s) => assert_eq!(s.as_bytes(), b"s3cret"),
+        other => panic!("{other:?}"),
+    }
+    let file = std::fs::read_to_string(h.dir.join("data/servers")).unwrap();
+    assert!(!file.contains("s3cret"));
+}
+
+#[test]
+fn a_kept_password_connects_without_asking() {
+    let h = Home::new("kept");
+    let (_w, mut kr) = keyring("kept");
+    let a = nas_attrs();
+    let a: Vec<(&str, &str)> = a.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    kr.store("nas (SFTP)", &a, b"hunter2", true).unwrap();
+    let mut f = fake();
+    asks_password(&mut f);
+    let (mut d, log) = drive(&h, f, kr);
+    keys(&mut d, "tab\nx\nx\nx\nenter");
+    assert_eq!(d.dialog(), None, "no question");
+    assert_eq!(replies(&log), [Some("hunter2".to_string())]);
+}
+
+#[test]
+fn no_keyring_asks_every_time() {
+    let h = Home::new("nokr");
+    let mut f = fake();
+    asks_password(&mut f);
+    let (mut d, log) = drive(&h, f, Keyring::over(None));
+    keys(&mut d, "tab\nx\nx\nx\nenter");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Password for me"));
+    keys(&mut d, "esc");
+    assert_eq!(replies(&log), [None]);
+}
