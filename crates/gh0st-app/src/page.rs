@@ -395,6 +395,8 @@ pub(crate) struct Shared {
     pub closable: bool,
     /// A dialog is open, waiting for its answer.
     pub asking: bool,
+    /// Where notices go: the user's folder, or a test's own.
+    pub notices: PathBuf,
 }
 
 impl Shared {
@@ -410,6 +412,7 @@ impl Shared {
             done: false,
             closable: true,
             asking: false,
+            notices: crate::notify::user_dir(),
         }
     }
 
@@ -688,7 +691,7 @@ impl Cx<'_> {
             time: crate::notify::now_secs(),
             ..Default::default()
         };
-        if let Err(e) = crate::notify::post(&crate::notify::user_dir(), &n) {
+        if let Err(e) = crate::notify::post(&self.s.notices, &n) {
             eprintln!("gh0st app: notice {tag}: {e}");
         }
     }
@@ -713,14 +716,14 @@ impl Cx<'_> {
             file: extra.file,
             ..Default::default()
         };
-        if let Err(e) = crate::notify::post(&crate::notify::user_dir(), &n) {
+        if let Err(e) = crate::notify::post(&self.s.notices, &n) {
             eprintln!("gh0st app: notice {tag}: {e}");
         }
     }
 
     /// Takes back notice `tag`, posted by [`post`](Cx::post).
     pub fn unpost(&mut self, tag: &str) {
-        let _ = crate::notify::remove(&crate::notify::user_dir(), &self.s.app_id, tag);
+        let _ = crate::notify::remove(&self.s.notices, &self.s.app_id, tag);
     }
 
     /// Asks the shell for a system sound, for an event the SDK can't see:

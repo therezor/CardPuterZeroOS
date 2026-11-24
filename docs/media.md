@@ -32,6 +32,11 @@ draws each into `mockups/media`.
 - Music plays on behind other apps and with the screen dark. A video and a
   slideshow pause when the app leaves the front; a video keeps the screen
   on while it plays.
+- Behind another app, music has a Now playing notice with Pause (Play
+  once paused) and Next as chips. It follows the song, and goes when Media
+  is back in front.
+- When memory runs short (`sdk.md`, Low memory), the helper drops the
+  picture it keeps for pan and zoom, unless it is on screen.
 - A file that fails shows why on its own screen. If the helper dies on a
   file, the app starts it again and that file is marked.
 - `src/fake.rs` stands in for the helper on a host: it paints each file by

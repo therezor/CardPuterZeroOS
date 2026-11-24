@@ -130,8 +130,10 @@ impl Journal {
         !self.pending.is_empty()
     }
 
-    /// Writes what is pending and makes it last: fsync.
-    pub fn flush(&mut self) -> io::Result<()> {
+    /// Writes what is pending. `durable` waits until it is on the card;
+    /// otherwise the card starts writing and the loop goes on, which costs
+    /// 5 to 13 ms less a flush there.
+    pub fn flush(&mut self, durable: bool) -> io::Result<()> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -169,7 +171,11 @@ impl Journal {
         }
         if let Some(f) = &mut self.file {
             f.write_all(&self.pending)?;
-            f.sync_data()?;
+            if durable {
+                f.sync_data()?;
+            } else {
+                start_writeback(f);
+            }
         }
         self.pending.clear();
         Ok(())
@@ -274,6 +280,19 @@ fn crc32(data: &[u8]) -> u32 {
     !c
 }
 
+/// Starts writing `f`'s dirty pages to the card without waiting for them.
+#[cfg(target_os = "linux")]
+fn start_writeback(f: &File) {
+    use std::os::fd::AsRawFd;
+    // SAFETY: an open fd and the whole file's range.
+    unsafe {
+        libc::sync_file_range(f.as_raw_fd(), 0, 0, libc::SYNC_FILE_RANGE_WRITE);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_writeback(_: &File) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,7 +321,7 @@ mod tests {
         let mut j = Journal::new(&d, &f);
         j.add(&edit(0, 0, b"X"));
         j.add(&edit(3, 2, b""));
-        j.flush().unwrap();
+        j.flush(true).unwrap();
         let r = read(&d, &f).unwrap();
         assert_eq!(r.changes, [edit(0, 0, b"X"), edit(3, 2, b"")]);
         assert!(r.fits(&f));
@@ -319,7 +338,7 @@ mod tests {
         let mut j = Journal::new(&d, &f);
         j.add(&edit(0, 0, b"first"));
         j.add(&edit(0, 0, b"second"));
-        j.flush().unwrap();
+        j.flush(true).unwrap();
         let p = path_for(&d, &f);
         let len = std::fs::metadata(&p).unwrap().len();
         std::fs::OpenOptions::new()
@@ -335,7 +354,7 @@ mod tests {
         let mut j = Journal::new(&d, &f);
         j.resume(r.good);
         j.add(&edit(5, 0, b"third"));
-        j.flush().unwrap();
+        j.flush(true).unwrap();
         assert_eq!(
             read(&d, &f).unwrap().changes,
             [edit(0, 0, b"first"), edit(5, 0, b"third")]
@@ -349,13 +368,13 @@ mod tests {
         std::fs::write(&f, b"one").unwrap();
         let mut j = Journal::new(&d, &f);
         j.add(&edit(0, 0, b"typed"));
-        j.flush().unwrap();
+        j.flush(true).unwrap();
         std::fs::write(&f, b"one and more").unwrap();
         let r = read(&d, &f).unwrap();
         assert!(!r.fits(&f));
         assert_eq!(r.typed(), b"typed\n");
         j.add(&Change::Lost);
-        j.flush().unwrap();
+        j.flush(true).unwrap();
         assert!(read(&d, &f).is_none());
     }
 }

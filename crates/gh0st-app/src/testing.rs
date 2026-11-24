@@ -52,7 +52,9 @@ impl Driver {
             "gh0st-app-test-{}-{n}/config.json",
             std::process::id()
         ));
+        let notices = config.with_file_name("notify");
         let mut rt = Runtime::new(Box::new(page), Some(config));
+        rt.s.notices = notices;
         rt.s.closable = opts.closable;
         rt.off_device();
         rt.own_time();
@@ -195,6 +197,11 @@ impl Driver {
     pub fn low_memory(&mut self, level: u8) -> &mut Driver {
         self.rt.low_memory(level, self.now);
         self
+    }
+
+    /// The notices the app has up now, as the shell would read them.
+    pub fn notices(&self) -> Vec<crate::notify::Notice> {
+        crate::notify::read_dir(&self.rt.s.notices, false)
     }
 
     /// The notifications panel ran action `id` of notice `tag`.

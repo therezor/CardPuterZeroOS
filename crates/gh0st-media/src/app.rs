@@ -20,7 +20,7 @@ use gh0st_app::gfx::theme::{CARDPUTER, Metrics, ON_PICTURE, PANEL_OFF};
 use gh0st_app::gfx::{Canvas, Rect, Theme, widgets};
 use gh0st_app::media::{AskQueue, Picture, PictureView, SeekBar, plate, plate_text};
 use gh0st_app::prelude::*;
-use gh0st_app::{Pick, PickSpec};
+use gh0st_app::{Pick, PickSpec, Post};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -178,6 +178,9 @@ pub struct Media {
     asked: Option<(Pick, Asked)>,
     /// The music on the session bus, while it plays.
     mpris: Option<(mpris::Mpris, Watch)>,
+    /// The Now playing notice as posted: title, artist, playing. It is
+    /// written again only when one of them changes.
+    posted: Option<(String, String, bool)>,
     /// What plays is the music queue: it plays on behind the grid, behind
     /// pictures and behind other apps.
     music: bool,
@@ -236,6 +239,7 @@ impl Media {
             data: home.join(".local/share/gh0st-media"),
             asked: None,
             mpris: None,
+            posted: None,
             music: false,
         }
     }
@@ -677,6 +681,7 @@ impl Media {
     /// Owns the MPRIS name while music plays, and tells clients what
     /// changed. Lets it go when the music stops.
     fn sync_mpris(&mut self, cx: &mut Cx) {
+        self.now_playing(cx);
         let on = self.music && self.play.is_some();
         let s = self.mpris_state();
         match (&mut self.mpris, on) {
@@ -694,6 +699,42 @@ impl Media {
             }
             (None, false) => {}
         }
+    }
+
+    /// The Now playing notice while music plays behind another app, with
+    /// Pause or Play, and Next, as chips.
+    fn now_playing(&mut self, cx: &mut Cx) {
+        let playing = self.play.as_ref().map(|p| p.state == PlayState::Playing);
+        let want = match playing {
+            Some(on) if self.music && !cx.in_front() => {
+                let (title, artist) = match &self.tags {
+                    Some(t) => (t.title.clone(), t.artist.clone()),
+                    None => (String::new(), String::new()),
+                };
+                let path = self.track_path().unwrap_or_default();
+                Some((mpris::title_of(&title, &path), artist, on))
+            }
+            _ => None,
+        };
+        if want == self.posted {
+            return;
+        }
+        match &want {
+            Some((title, artist, on)) => {
+                let toggle = if *on {
+                    ("pause", "Pause")
+                } else {
+                    ("play", "Play")
+                };
+                let extra = Post {
+                    actions: vec![toggle, ("next", "Next")],
+                    ..Post::default()
+                };
+                cx.post_with(NOW_PLAYING, title, artist, extra);
+            }
+            None => cx.unpost(NOW_PLAYING),
+        }
+        self.posted = want;
     }
 
     /// A remote's button: the music queue, whatever is on screen.
@@ -1543,8 +1584,31 @@ impl Page for Media {
         cx.redraw();
     }
 
+    /// The helper's kept picture is the one big thing: it goes unless it
+    /// is on screen.
+    fn low_memory(&mut self, _level: u8, _cx: &mut Cx) {
+        if self.view != View::Viewer {
+            self.send(&Cmd::Forget);
+        }
+    }
+
+    fn notice_action(&mut self, tag: &str, action: &str, cx: &mut Cx) {
+        if tag != NOW_PLAYING {
+            return;
+        }
+        let c = match action {
+            "pause" => mpris::Control::Pause,
+            "play" => mpris::Control::Play,
+            "next" => mpris::Control::Next,
+            _ => return,
+        };
+        self.remote(c, cx);
+        self.sync_mpris(cx);
+    }
+
     fn stop(&mut self, cx: &mut Cx) {
         cx.unpost(NOW_PLAYING);
+        self.posted = None;
         self.stop_play();
         self.resume.save();
         self.quitting = true;
@@ -1553,24 +1617,7 @@ impl Page for Media {
     }
 
     fn front(&mut self, front: bool, cx: &mut Cx) {
-        if self.music && self.play.is_some() {
-            if front {
-                cx.unpost(NOW_PLAYING);
-            } else {
-                let (title, artist) = match &self.tags {
-                    Some(t) => (t.title.clone(), t.artist.clone()),
-                    None => (String::new(), String::new()),
-                };
-                let title = if title.is_empty() {
-                    self.current()
-                        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-                        .unwrap_or_else(|| "Music".into())
-                } else {
-                    title
-                };
-                cx.post(NOW_PLAYING, &title, &artist);
-            }
-        }
+        self.now_playing(cx);
         if front {
             // The folder may have changed meanwhile.
             if self.view == View::Grid {

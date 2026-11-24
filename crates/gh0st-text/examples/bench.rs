@@ -229,15 +229,16 @@ fn main() -> std::io::Result<()> {
         });
     }
     let t = Instant::now();
-    j.flush()?;
+    j.flush(true)?;
     let first_flush = ms(t);
     j.add(&gh0st_text::buf::Change::Replace {
         at: 40,
         len: 0,
         bytes: b"y".to_vec(),
     });
+    // As the 2 s timer does while typing: the card starts, the loop goes on.
     let t = Instant::now();
-    j.flush()?;
+    j.flush(false)?;
     let next_flush = ms(t);
     j.discard();
 
@@ -265,7 +266,7 @@ fn main() -> std::io::Result<()> {
         (lexed as f64 / 1048576.0) / (lex_ms / 1000.0),
         lexed >> 10
     );
-    println!("journal fsync     first {first_flush:.2} ms, then {next_flush:.2} ms");
+    println!("journal           new {first_flush:.2} ms, typing {next_flush:.2} ms");
     println!("max RSS           {} kB", rss_kb());
     drop(b);
     page(path.as_ref(), &jdir, mid + 1)?;

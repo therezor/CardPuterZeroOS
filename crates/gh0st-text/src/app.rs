@@ -97,8 +97,9 @@ const JOURNAL_MS: u64 = 2000;
 const PAIR_REACH: u64 = 64 << 10;
 /// Files open at once.
 pub const FILES: usize = 4;
-/// Lines longer than this never wrap: they scroll sideways.
-const WRAP_MAX: u64 = 64 << 10;
+/// Lines longer than this never wrap: they scroll sideways. A key on a
+/// wrapped 64 KB line took 20 ms on the device.
+const WRAP_MAX: u64 = 16 << 10;
 /// One step of indent when the file's own can't be told.
 const INDENT: &[u8] = b"    ";
 
@@ -156,6 +157,16 @@ struct Doc {
 }
 
 impl Doc {
+    /// Lets go of what is read again on demand: blocks, lexer states and
+    /// scratch lines. Edits stay.
+    fn shrink(&mut self) {
+        self.buf.shrink();
+        let lang = self.cache.lang();
+        self.cache.clear(lang);
+        self.spans = Vec::new();
+        self.line = Vec::new();
+    }
+
     fn empty() -> Doc {
         Doc {
             buf: Buffer::from_bytes(b""),
@@ -460,7 +471,12 @@ impl Editor {
     }
 
     /// Writes the journal now. A file with nothing unsaved needs none.
+    /// `durable` waits for the card: on pause, park and stop.
     fn flush_journal(&mut self, cx: &mut Cx) {
+        self.write_journal(cx, true);
+    }
+
+    fn write_journal(&mut self, cx: &mut Cx, durable: bool) {
         self.note_changes(cx);
         if let Some(t) = self.flush_at.take() {
             cx.cancel(t);
@@ -468,7 +484,7 @@ impl Editor {
         let dirty = self.dirty();
         if let Some(j) = &mut self.journal {
             if dirty {
-                if let Err(e) = j.flush() {
+                if let Err(e) = j.flush(durable) {
                     cx.toast_tone(Tone::Warning, &format!("Unsaved edits not kept: {e}"));
                 }
             } else {
@@ -2026,6 +2042,14 @@ impl Page for Editor {
         }
     }
 
+    fn low_memory(&mut self, _level: u8, cx: &mut Cx) {
+        self.doc.borrow_mut().shrink();
+        for p in self.files.iter_mut().flatten() {
+            p.doc.shrink();
+        }
+        cx.redraw();
+    }
+
     fn stop(&mut self, cx: &mut Cx) {
         self.flush_journal(cx);
         self.stop_warm();
@@ -2095,7 +2119,7 @@ impl Page for Editor {
     fn timer(&mut self, t: Timer, cx: &mut Cx) {
         if self.flush_at == Some(t) {
             self.flush_at = None;
-            self.flush_journal(cx);
+            self.write_journal(cx, false);
         } else if self.index == Some(t) {
             self.index_step(cx);
         } else if self.finder.as_ref().is_some_and(|f| f.1 == t) {

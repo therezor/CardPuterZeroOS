@@ -25,6 +25,9 @@ cargo run --release -p gh0st-text --example bench -- FILE   # timings
   there and try again 15 ms later, so the card's pace and its stalls never
   freeze the page. The reader dies with the editor.
 - A file with a NUL in its first 64 KB opens as hex, read only.
+- When memory runs short (`sdk.md`, Low memory), every open file lets its
+  blocks and lexer marks go; they are read again as the screen needs them.
+  Edits stay.
 - With no file, the page offers Open a file, New file and the files opened
   lately, newest first. The list is Text's own, 20 paths in its data
   folder.
@@ -65,17 +68,20 @@ cargo run --release -p gh0st-text --example bench -- FILE   # timings
 ## Wrap
 
 Wrap long lines, in the menu, breaks a line into rows the screen's width;
-it is kept. Up and down move by rows. A line over 64 KB never wraps: it
+it is kept. Up and down move by rows. A line over 16 KB never wraps: it
 scrolls sideways, as all lines do with wrap off.
 
 ## Unsaved edits
 
 Each edit is kept in a journal in Text's data folder, one per file, so a
-crash, a kill or a flat battery loses at most two seconds of typing.
+crash or a kill loses at most two seconds of typing.
 
-- The journal is written two seconds after an edit, when Text goes behind
-  and when it closes, then synced to the card. Saving, or undoing back to
-  the file as saved, deletes it.
+- The journal is written two seconds after an edit, and the card starts
+  writing it without the loop waiting. When Text goes behind, switches
+  files or closes, it waits until the journal is on the card; a low
+  battery's shutdown closes it that way too. Pulling the power can lose
+  what the file system had not committed, a few seconds more.
+- Saving, or undoing back to the file as saved, deletes it.
 - Each record carries its length and a CRC. A record cut short by a crash
   is dropped, and only it.
 - Opened again, the file offers to restore the edits when it is unchanged

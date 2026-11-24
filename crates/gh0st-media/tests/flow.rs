@@ -145,6 +145,46 @@ fn music_plays_on_through_other_folders() {
 }
 
 #[test]
+fn behind_another_app_the_music_has_a_notice_with_pause_and_next() {
+    let h = songs("notice");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "x\nx\nx\nenter\nenter\nenter");
+    assert!(d.notices().is_empty(), "none while in front");
+    d.pause().pump(100);
+    let n = d.notices();
+    assert_eq!(n.len(), 1);
+    let ids: Vec<&str> = n[0].actions.iter().map(|(i, _)| i.as_str()).collect();
+    assert_eq!(ids, ["pause", "next"]);
+    d.notice_action("playing", "pause").pump(100);
+    assert_eq!(
+        d.notices()[0].actions[0].0,
+        "play",
+        "the chip turns to Play"
+    );
+    let title = d.notices()[0].title.clone();
+    d.notice_action("playing", "next").pump(300);
+    assert_ne!(d.notices()[0].title, title, "the next song");
+    d.resume().pump(100);
+    assert!(d.notices().is_empty(), "gone in front");
+}
+
+#[test]
+fn low_memory_keeps_the_picture_on_screen() {
+    let h = home("lowmem");
+    let mut d = Driver::new(Media::with(
+        Source::Fake,
+        h.clone(),
+        Some(h.join("Pictures/a.jpg")),
+    ));
+    d.pump(300);
+    let before = d.frame().pixels().to_vec();
+    d.low_memory(255).pump(300);
+    assert_eq!(d.frame().pixels(), &before[..]);
+}
+
+#[test]
 fn the_chooser_opens_a_folder_or_a_file_and_nothing_picked_changes_nothing() {
     let h = songs("pick");
     let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));

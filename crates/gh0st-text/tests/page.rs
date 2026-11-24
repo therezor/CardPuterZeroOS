@@ -553,3 +553,23 @@ fn nothing_wakes_while_reading_or_editing_once_the_journal_is_written() {
     let wakes = d.idle_wakes(600_000);
     assert!(wakes <= 11, "Edit: {wakes}");
 }
+
+#[test]
+fn low_memory_keeps_the_edits_and_the_screen() {
+    let p = temp("lowmem.rs", b"fn main() {\n    let x = 1;\n}\n");
+    let mut d = open(&p, KeyModel::Modeless);
+    d.keys("type // a");
+    d.wait(100);
+    let before = d.frame().pixels().to_vec();
+    d.low_memory(255).wait(100);
+    assert_eq!(
+        d.frame().pixels(),
+        &before[..],
+        "read again, drawn the same"
+    );
+    d.keys("ctrl+s").wait(100);
+    assert_eq!(
+        std::fs::read(&p).unwrap(),
+        b"// afn main() {\n    let x = 1;\n}\n"
+    );
+}
