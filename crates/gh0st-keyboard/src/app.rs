@@ -11,7 +11,8 @@ use gh0st_app::{Answer, Job, JobEvent, RawKey, Step, Timer, Watch};
 use crate::engine::{Engine, LatchKey, Options};
 use crate::hid::report::Report;
 use crate::host::System;
-use crate::link::{Bluetooth, Cable, Device, Event, NoCable, UsbState};
+use crate::link::usb::{self, Usb};
+use crate::link::{Bluetooth, Cable, Device, Event, UsbState};
 use crate::pages::hosts::Hosts;
 use crate::store::{self, Host, Snippet};
 use crate::words;
@@ -354,17 +355,20 @@ pub struct App {
     /// Bluetooth from the system bus, made again after a stop.
     real: bool,
     opening: Option<(Option<Target>, Open)>,
+    /// Runs only while USB reports wait for the host.
+    usb_tick: Option<Timer>,
 }
 
 impl App {
     /// The app on the device: BlueZ on the system bus, and the USB cable.
     pub fn new() -> App {
         App {
-            s: Shared::new(None, Box::new(NoCable), PathBuf::new()),
+            s: Shared::new(None, Box::new(Usb::new()), PathBuf::new()),
             stack: vec![Box::new(Hosts::new())],
             watches: Vec::new(),
             real: true,
             opening: None,
+            usb_tick: None,
         }
     }
 
@@ -378,6 +382,7 @@ impl App {
             watches: Vec::new(),
             real: false,
             opening: None,
+            usb_tick: None,
         }
     }
 
@@ -433,8 +438,21 @@ impl App {
         self.sync_watches(cx);
     }
 
-    /// Joins every link fd to the loop, and drops the ones gone.
+    /// Joins every link fd to the loop, and drops the ones gone. Also
+    /// hands a new helper to the SDK and runs the USB queue's timer only
+    /// while reports wait.
     fn sync_watches(&mut self, cx: &mut Cx) {
+        if let Some(pid) = self.s.usb.spawned() {
+            cx.adopt(pid);
+        }
+        match (self.s.usb.waiting(), self.usb_tick) {
+            (true, None) => self.usb_tick = Some(cx.every(usb::TICK_MS)),
+            (false, Some(t)) => {
+                cx.cancel(t);
+                self.usb_tick = None;
+            }
+            _ => {}
+        }
         let mut want: Vec<RawFd> = self
             .s
             .bt
@@ -655,7 +673,18 @@ impl Page for App {
     }
 
     fn timer(&mut self, timer: Timer, cx: &mut Cx) {
+        if self.usb_tick == Some(timer) {
+            self.s.usb.tick();
+            self.sync_watches(cx);
+            return;
+        }
         self.with_top(cx, |t, s, cx| t.timer(s, timer, cx));
+    }
+
+    fn exited(&mut self, pid: i32, code: Option<i32>, cx: &mut Cx) {
+        let mut events = Vec::new();
+        self.s.usb.exited(pid, code, &mut events);
+        self.handle(events, cx);
     }
 
     fn job(&mut self, job: Job, e: JobEvent, cx: &mut Cx) {

@@ -5,6 +5,7 @@
 pub mod ble;
 pub mod fake;
 pub mod gatt;
+pub mod usb;
 
 use std::os::fd::RawFd;
 
@@ -192,22 +193,15 @@ pub trait Cable {
     fn enable(&mut self, on: bool);
     fn send(&mut self, r: &Report) -> bool;
     fn stop(&mut self);
-}
-
-/// The USB keyboard where there is none yet: always off.
-pub struct NoCable;
-
-impl Cable for NoCable {
-    fn fds(&self) -> Vec<RawFd> {
-        Vec::new()
-    }
-    fn ready(&mut self, _: RawFd, _: &mut Vec<Event>) {}
-    fn state(&self) -> UsbState {
-        UsbState::Off
-    }
-    fn enable(&mut self, _: bool) {}
-    fn send(&mut self, _: &Report) -> bool {
+    /// Tries queued reports again.
+    fn tick(&mut self) {}
+    /// Reports wait for the host: `tick` soon.
+    fn waiting(&self) -> bool {
         false
     }
-    fn stop(&mut self) {}
+    /// A child just started, for the SDK to reap.
+    fn spawned(&mut self) -> Option<i32> {
+        None
+    }
+    fn exited(&mut self, _: i32, _: Option<i32>, _: &mut Vec<Event>) {}
 }
