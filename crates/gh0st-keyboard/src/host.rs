@@ -91,6 +91,28 @@ impl System {
         {
             return System::Mac;
         }
+        // Phones that give no icon still give their name.
+        const ANDROID: [&str; 16] = [
+            "android",
+            "pixel",
+            "galaxy",
+            "poco",
+            "redmi",
+            "xiaomi",
+            "oneplus",
+            "moto",
+            "nokia",
+            "oppo",
+            "vivo",
+            "realme",
+            "honor",
+            "huawei",
+            "xperia",
+            "nothing phone",
+        ];
+        if ANDROID.iter().any(|b| lower.contains(b)) {
+            return System::Android;
+        }
         let apple = modalias.contains("v004C") || modalias.contains("v05AC");
         match (icon, apple) {
             ("phone", true) => System::Ios,
@@ -119,6 +141,7 @@ mod tests {
         assert_eq!(g("", "phone", "bluetooth:v004Cp7213d1360"), System::Ios);
         assert_eq!(g("iPhone REZOR", "phone", ""), System::Ios);
         assert_eq!(g("Pixel 9", "phone", ""), System::Android);
+        assert_eq!(g("POCO X7 Pro", "", ""), System::Android);
         assert_eq!(g("Alex's MacBook Air", "computer", ""), System::Mac);
         assert_eq!(g("", "computer", "usb:v05ACp0000"), System::Mac);
         assert_eq!(g("DESKTOP-1", "computer", ""), System::Windows);

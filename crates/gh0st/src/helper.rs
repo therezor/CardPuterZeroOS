@@ -457,22 +457,23 @@ fn say(line: &str) {
     unsafe { libc::write(1, line.as_ptr().cast(), line.len()) };
 }
 
-/// Classic Bluetooth on or off. The controller must be off to change it,
-/// so it goes off and back on, if it was on. While a phone pairs with the
+/// Classic Bluetooth on or off. Turning it off needs the radio off, so a
+/// powered radio restarts; turning it on doesn't. While a phone pairs with the
 /// Keyboard app classic is off: Android, seeing a classic side, looks for a
 /// classic keyboard there and never uses the LE one.
 fn bt_classic(on: bool) -> Result<(), String> {
     use gh0st_core::btmgmt::Mgmt;
     let e = |e: std::io::Error| format!("bluetooth: {e}");
     let m = Mgmt::open().map_err(e)?;
+    // Classic comes back on a powered radio, so nothing connected drops;
+    // it goes off only on one that is off.
     let powered = m.powered(0).map_err(e)?;
-    if powered {
-        m.set_powered(0, false).map_err(e)?;
+    if on || !powered {
+        return m.set_bredr(0, on).map_err(e);
     }
-    let set = m.set_bredr(0, on).map_err(e);
-    if powered {
-        m.set_powered(0, true).map_err(e)?;
-    }
+    m.set_powered(0, false).map_err(e)?;
+    let set = m.set_bredr(0, false).map_err(e);
+    m.set_powered(0, true).map_err(e)?;
     set
 }
 
