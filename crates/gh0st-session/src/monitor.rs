@@ -132,12 +132,17 @@ impl Network {
         if bus::add_match(&mut c, &rule).is_err() {
             return;
         }
+        // A bus without NetworkManager knows nothing: the status stays
+        // unknown, as with no bus.
         let get = Message::call(NM, NM_PATH, bus::PROPERTIES, "GetAll").arg(Value::str(NM));
-        if let Ok(r) = c.call(get, 1000) {
-            if let Some(props) = r.body.first() {
-                self.nm.apply(props);
-            }
-        }
+        let Some(props) = c
+            .call(get, 1000)
+            .ok()
+            .and_then(|r| r.body.into_iter().next())
+        else {
+            return;
+        };
+        self.nm.apply(&props);
         self.conn = Some(c);
     }
 

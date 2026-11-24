@@ -2082,8 +2082,7 @@ impl Page for Editor {
             .opts
             .wrap
             .unwrap_or_else(|| s.get_bool(key::WRAP).unwrap_or(false));
-        let data = self.opts.data.clone().unwrap_or_else(|| cx.data_dir());
-        self.recent = Recent::load(&data);
+        self.recent = Recent::from(cx.recent_files(crate::recent::MAX * 3));
         if let Some(p) = self.path.clone().filter(|p| p.exists()) {
             self.recent.add(&p);
             cx.recent(&p);

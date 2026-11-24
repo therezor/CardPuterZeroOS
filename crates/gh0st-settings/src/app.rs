@@ -2174,7 +2174,7 @@ impl Settings {
         }
         // Skip pressed while this ran: the step is closing, so don't start
         // jobs it would only kill.
-        if self.net_again && !self.asking_net() {
+        if self.net_again && !self.asking_net() && cx.in_front() {
             self.net_again = false;
             self.query_net(cx, false);
         }
@@ -2201,14 +2201,21 @@ impl Page for Settings {
 
     /// A cable out, Wi-Fi joined, an address renewed: the Network row,
     /// Wi-Fi and Network details read again. Once at a time: a change while
-    /// nmcli answers asks again after.
+    /// nmcli answers asks again after. Behind another app, once it is back.
     fn network_changed(&mut self, cx: &mut Cx) {
         if self.embed.is_some() {
             return;
         }
-        if self.asking_net() {
+        if self.asking_net() || !cx.in_front() {
             self.net_again = true;
         } else {
+            self.query_net(cx, false);
+        }
+    }
+
+    fn front(&mut self, front: bool, cx: &mut Cx) {
+        if front && self.net_again && !self.asking_net() {
+            self.net_again = false;
             self.query_net(cx, false);
         }
     }

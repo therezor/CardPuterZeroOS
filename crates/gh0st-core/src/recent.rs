@@ -16,6 +16,10 @@ pub fn path(home: &Path) -> PathBuf {
     home.join(".local/share/recently-used.xbel")
 }
 
+/// Other history of opened files that Clear takes with it, under home:
+/// where Media's long clips stopped.
+const ALSO: [&str; 1] = [".local/share/gh0st-media/positions"];
+
 /// One `<bookmark>` as written, with what we read from it.
 struct Mark {
     href: String,
@@ -91,10 +95,12 @@ pub fn list(home: &Path, n: usize) -> Vec<PathBuf> {
 
 /// Now, as the list writes times: UTC, ISO 8601.
 fn now_iso() -> String {
-    let (secs, micros) = std::time::SystemTime::now()
+    let d = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| (d.as_secs() as libc::time_t, d.subsec_micros()))
-        .unwrap_or((0, 0));
+        .unwrap_or_default();
+    let micros = d.subsec_micros();
+    // The type is gmtime_r's own: musl is changing its width.
+    let secs = d.as_secs() as _;
     // SAFETY: gmtime_r into a local struct tm.
     let tm = unsafe {
         let mut tm: libc::tm = std::mem::zeroed();
@@ -157,8 +163,11 @@ pub fn add(home: &Path, file: &Path, mime: &str, app: &str, exec: &str) -> std::
     write(&list, &marks)
 }
 
-/// Every entry goes, ours and other apps'.
+/// Every entry goes, ours and other apps', and the history in [`ALSO`].
 pub fn clear(home: &Path) -> std::io::Result<()> {
+    for f in ALSO {
+        let _ = std::fs::remove_file(home.join(f));
+    }
     let list = path(home);
     if !list.exists() {
         return Ok(());

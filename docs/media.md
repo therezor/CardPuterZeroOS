@@ -28,7 +28,8 @@ draws each into `mockups/media`.
   music plays on while you look through pictures.
 - A clip of five minutes or more goes on from where it stopped, unless it
   was near its start or end: the newest 64 places, in
-  `~/.local/share/gh0st-media/positions`.
+  `~/.local/share/gh0st-media/positions`. Only while Settings > Privacy
+  lets apps remember recent files; its Clear removes them.
 - Music plays on behind other apps and with the screen dark. A video and a
   slideshow pause when the app leaves the front; a video keeps the screen
   on while it plays.

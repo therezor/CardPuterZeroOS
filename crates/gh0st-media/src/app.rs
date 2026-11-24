@@ -1538,7 +1538,13 @@ impl Page for Media {
     }
 
     fn start(&mut self, cx: &mut Cx) {
-        self.resume = Resume::load(self.data.join("positions"));
+        // Where clips stopped is history too: kept only while Settings
+        // lets apps remember.
+        self.resume = if cx.remembers_recent() {
+            Resume::load(self.data.join("positions"))
+        } else {
+            Resume::none()
+        };
         self.load(cx);
         self.launch(cx);
         if let Some(p) = self.opened.take() {

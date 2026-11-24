@@ -759,16 +759,21 @@ impl Cx<'_> {
         self.s.clip.paste()
     }
 
+    /// Settings > Privacy lets apps remember what was opened: the recent
+    /// list, and history like where a clip stopped.
+    pub fn remembers_recent(&self) -> bool {
+        self.s
+            .settings
+            .config()
+            .get_bool(config::key::RECENT_REMEMBER)
+            != Some(false)
+    }
+
     /// `path` was opened or saved here: it goes to the top of the recent
     /// list every app shares (`recently-used.xbel`), unless Settings >
     /// Privacy turned that off.
     pub fn recent(&mut self, path: &Path) {
-        let remember = self
-            .s
-            .settings
-            .config()
-            .get_bool(config::key::RECENT_REMEMBER);
-        if remember == Some(false) {
+        if !self.remembers_recent() {
             return;
         }
         let mime = gh0st_core::mime::of_path(path).unwrap_or("application/octet-stream");

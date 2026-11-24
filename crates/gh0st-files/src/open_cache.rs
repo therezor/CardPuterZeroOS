@@ -17,13 +17,23 @@ pub fn slot(home: &Path, key: &str) -> PathBuf {
     root(home).join(format!("{:016x}", fnv64(key)))
 }
 
-/// A copy already there, the size the source says: open it as it is.
-pub fn fresh(file: &Path, size: u64) -> bool {
-    std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.len() == size)
+/// A copy already there, the size and time the source says: open it as
+/// it is.
+pub fn fresh(file: &Path, size: u64, mtime: i64) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.len() == size && m.mtime() == mtime)
 }
 
-/// Read only, for the app that opens it.
-pub fn seal(file: &Path) {
+/// Read only, for the app that opens it, with the source's time so a
+/// later look can tell it is the same.
+pub fn seal(file: &Path, mtime: i64) {
+    if let (Ok(f), Ok(secs)) = (
+        std::fs::File::options().write(true).open(file),
+        u64::try_from(mtime),
+    ) {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let _ = f.set_modified(t);
+    }
     let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o444));
 }
 
@@ -90,8 +100,9 @@ mod tests {
             "a key keeps its folder"
         );
         let f = slot(&home, "new").join("f");
-        assert!(fresh(&f, 100) && !fresh(&f, 99));
-        seal(&f);
+        seal(&f, 1_700_000_000);
+        assert!(fresh(&f, 100, 1_700_000_000));
+        assert!(!fresh(&f, 99, 1_700_000_000) && !fresh(&f, 100, 1_700_000_001));
         let mode = std::fs::metadata(&f).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o444);
         std::fs::remove_dir_all(&home).unwrap();

@@ -28,9 +28,10 @@ cargo run --release -p gh0st-text --example bench -- FILE   # timings
 - When memory runs short (`sdk.md`, Low memory), every open file lets its
   blocks and lexer marks go; they are read again as the screen needs them.
   Edits stay.
-- With no file, the page offers Open a file, New file and the files opened
-  lately, newest first. The list is Text's own, 20 paths in its data
-  folder.
+- With no file, the page offers Open a file, New file and the text files
+  opened lately, newest first: 20 from the recent list every app shares
+  (`apps.md`, Opening files). Settings > Privacy turns it off and clears
+  it.
 - Bytes stay as they were: text that is not UTF-8 shows as `?` in red and
   saves unchanged, CR LF stays CR LF, and a missing final newline stays
   missing.

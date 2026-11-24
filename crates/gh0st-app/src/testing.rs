@@ -44,8 +44,18 @@ impl Driver {
         Driver::with(page, Options::default())
     }
 
+    /// As [`new`](Driver::new), with the recent list kept in `home`: two
+    /// Drivers given the same one see it as two runs of an app would.
+    pub fn in_home(page: impl Page + 'static, home: &std::path::Path) -> Driver {
+        Driver::start(page, Options::default(), Some(home.to_path_buf()))
+    }
+
     /// As [`new`](Driver::new), run as [`run_with`](crate::run_with) runs it.
     pub fn with(page: impl Page + 'static, opts: Options) -> Driver {
+        Driver::start(page, opts, None)
+    }
+
+    fn start(page: impl Page + 'static, opts: Options, home: Option<std::path::PathBuf>) -> Driver {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let config = std::env::temp_dir().join(format!(
@@ -53,7 +63,7 @@ impl Driver {
             std::process::id()
         ));
         let notices = config.with_file_name("notify");
-        let home = config.with_file_name("home");
+        let home = home.unwrap_or_else(|| config.with_file_name("home"));
         let mut rt = Runtime::new(Box::new(page), Some(config));
         rt.s.notices = notices;
         rt.s.home = home;

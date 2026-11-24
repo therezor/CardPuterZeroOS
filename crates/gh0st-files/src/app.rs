@@ -284,8 +284,8 @@ enum Pending {
     /// Making the SSH key.
     Key,
     /// A copy of a file on a server or in an archive, to open once it is
-    /// here.
-    Fetch(PathBuf),
+    /// here, and the source's time.
+    Fetch(PathBuf, i64),
 }
 
 struct ServerForm {
@@ -981,7 +981,7 @@ impl Files {
     fn fetch_open(&mut self, e: &Entry, loc: &Loc, cx: &mut Cx) {
         let dir = open_cache::slot(&self.home, &format!("{loc:?}"));
         let file = dir.join(&e.name);
-        if open_cache::fresh(&file, e.size) {
+        if open_cache::fresh(&file, e.size, e.mtime) {
             cx.open_file(&file);
             return;
         }
@@ -1018,7 +1018,7 @@ impl Files {
             total: e.size,
             name: e.name.clone(),
         });
-        self.pending.insert(id, Pending::Fetch(file));
+        self.pending.insert(id, Pending::Fetch(file, e.mtime));
         cx.keep_awake(true);
         self.send(request, cx);
     }
@@ -1287,7 +1287,7 @@ impl Files {
                 }
             }
             (
-                Pending::Transfer(_) | Pending::Fetch(_),
+                Pending::Transfer(_) | Pending::Fetch(..),
                 Event::Progress {
                     done, total, name, ..
                 },
@@ -1331,15 +1331,15 @@ impl Files {
                 }
                 self.reload(&touched, cx);
             }
-            (Pending::Fetch(file), Event::Done { .. }) => {
+            (Pending::Fetch(file, mtime), Event::Done { .. }) => {
                 self.pending.remove(&id);
                 self.drop_asks(id, cx);
                 self.transfers.retain(|t| t.id != id);
                 cx.keep_awake(!self.transfers.is_empty());
-                open_cache::seal(&file);
+                open_cache::seal(&file, mtime);
                 cx.open_file(&file);
             }
-            (Pending::Fetch(file), Event::Error { text, .. }) => {
+            (Pending::Fetch(file, _), Event::Error { text, .. }) => {
                 self.pending.remove(&id);
                 self.drop_asks(id, cx);
                 let shown = self.transfers.iter().any(|t| t.id == id);

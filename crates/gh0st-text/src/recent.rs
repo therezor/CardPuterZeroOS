@@ -1,34 +1,31 @@
-//! Files opened lately, newest first. Text's own list for now: one path a
-//! line in its data folder. A list shared with other apps can stand in
-//! behind the same calls.
+//! Text's start page lists the text files in the recent list every app
+//! shares (`gh0st_core::recent`, through `cx.recent`), newest first. What
+//! Settings turns off or clears there is gone here too.
 
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-/// Paths kept.
+/// Paths shown.
 pub const MAX: usize = 20;
 
 #[derive(Default)]
 pub struct Recent {
-    file: Option<PathBuf>,
     list: Vec<PathBuf>,
 }
 
+/// A file the editor opens as text, not as hex.
+fn is_text(p: &Path) -> bool {
+    gh0st_core::mime::of_path(p).is_ok_and(|m| gh0st_core::mime::is_a(m, "text/plain"))
+}
+
 impl Recent {
-    /// The list kept in `dir`.
-    pub fn load(dir: &Path) -> Recent {
-        let file = dir.join("recent");
-        let list = std::fs::read(&file)
-            .unwrap_or_default()
-            .split(|&b| b == b'\n')
-            .filter(|l| l.first() == Some(&b'/'))
-            .map(|l| PathBuf::from(OsStr::from_bytes(l)))
-            .take(MAX)
-            .collect();
+    /// The text files among `shared`, newest first.
+    pub fn from(shared: Vec<PathBuf>) -> Recent {
         Recent {
-            file: Some(file),
-            list,
+            list: shared
+                .into_iter()
+                .filter(|p| is_text(p))
+                .take(MAX)
+                .collect(),
         }
     }
 
@@ -36,36 +33,18 @@ impl Recent {
         &self.list
     }
 
-    /// `p` goes first. Only absolute paths with no newline are kept.
+    /// `p` goes first, for this run; `cx.recent` keeps it for the next.
     pub fn add(&mut self, p: &Path) {
-        let b = p.as_os_str().as_bytes();
-        if !p.is_absolute() || b.contains(&b'\n') {
+        if !p.is_absolute() {
             return;
         }
         self.list.retain(|q| q != p);
         self.list.insert(0, p.to_path_buf());
         self.list.truncate(MAX);
-        self.save();
     }
 
     pub fn remove(&mut self, p: &Path) {
         self.list.retain(|q| q != p);
-        self.save();
-    }
-
-    fn save(&self) {
-        let Some(file) = &self.file else {
-            return;
-        };
-        let mut out = Vec::new();
-        for p in &self.list {
-            out.extend_from_slice(p.as_os_str().as_bytes());
-            out.push(b'\n');
-        }
-        let tmp = file.with_extension("new");
-        if std::fs::write(&tmp, &out).is_ok() {
-            let _ = std::fs::rename(&tmp, file);
-        }
     }
 }
 
@@ -74,22 +53,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn newest_first_once_each_and_kept() {
+    fn text_files_only_newest_first_once_each() {
         let d = std::env::temp_dir().join(format!("gh0st-text-recent-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        let mut r = Recent::load(&d);
-        r.add(Path::new("/a"));
-        r.add(Path::new("/b"));
-        r.add(Path::new("/a"));
+        let (a, b, pic) = (d.join("a.txt"), d.join("b.rs"), d.join("p.png"));
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"fn main() {}").unwrap();
+        std::fs::write(&pic, b"\x89PNG\r\n\x1a\n").unwrap();
+        let mut r = Recent::from(vec![b.clone(), pic, a.clone()]);
+        assert_eq!(r.list(), [b.clone(), a.clone()]);
+        r.add(&a);
         r.add(Path::new("relative"));
-        r.add(Path::new("/odd\nname"));
-        assert_eq!(r.list(), [PathBuf::from("/a"), PathBuf::from("/b")]);
-        let again = Recent::load(&d);
-        assert_eq!(again.list(), r.list());
-        for i in 0..30 {
-            r.add(Path::new(&format!("/f{i}")));
-        }
-        assert_eq!(r.list().len(), MAX);
+        assert_eq!(r.list(), [a, b]);
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

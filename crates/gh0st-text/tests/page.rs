@@ -325,7 +325,7 @@ fn fresh(dir: &Path) -> Driver {
         data: Some(dir.to_path_buf()),
         ..Options::default()
     };
-    let mut d = Driver::new(Editor::open(None, opts));
+    let mut d = Driver::in_home(Editor::open(None, opts), &dir.join("home"));
     d.wait(100);
     d
 }

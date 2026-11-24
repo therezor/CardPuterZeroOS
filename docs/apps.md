@@ -64,7 +64,8 @@ An entry without a field code opens no files.
 - **Recent files.** Apps add what they open to
   `~/.local/share/recently-used.xbel`, the list GTK apps keep too. The
   newest 100 stay; other apps' entries are kept as written. Settings >
-  Privacy turns it off and clears it.
+  Privacy turns it off, and its Clear empties it with where Media's clips
+  stopped.
 - **Our own apps** run with the files in place of the code. A third-party
   `Exec` still runs through `sh -c`, with the code turned into `"$1"` or
   `"$@"` and the files passed after it as `sh`'s arguments, so no name is
