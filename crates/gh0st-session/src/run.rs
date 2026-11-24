@@ -331,13 +331,24 @@ impl Session {
             return;
         };
         // GH0ST_PORTAL_APPROVE answers the user's yes or no questions.
-        if let (Some(verb @ ("account" | "wallpaper")), Some(id), Some(a)) = (
+        // A screenshot is the GH0ST_PORTAL_ANSWER file; a colour is orange.
+        if let (Some(verb @ ("account" | "wallpaper" | "shot" | "color")), Some(id), Some(a)) = (
             f.first().map(String::as_str),
             f.get(1),
             std::env::var_os("GH0ST_PORTAL_APPROVE"),
         ) {
             let a = a.to_string_lossy().into_owned();
-            self.portal.shell_said(&[verb.to_string(), id.clone(), a]);
+            let mut said = vec![verb.to_string(), id.clone()];
+            match verb {
+                "color" => said.extend(["ok", "255", "128", "0"].map(String::from)),
+                "shot" => {
+                    let file = std::env::var_os("GH0ST_PORTAL_ANSWER").unwrap_or_default();
+                    said.push(a);
+                    said.push(gh0st_core::link::path_field(std::path::Path::new(&file)));
+                }
+                _ => said.push(a),
+            }
+            self.portal.shell_said(&said);
             return;
         }
         if let (Some(verb), Some(id)) = (f.first(), f.get(1).and_then(|i| i.parse().ok())) {

@@ -301,8 +301,25 @@ fn ask(t: &Theme, origin: Origin, kind: Kind, typed: usize, checking: bool, wron
         typed,
         checking,
         wrong,
+        at: (236, 66),
     };
     let mut c = grounded(t, true);
+    // A screenshot or a colour is asked over the frozen screen: here, the
+    // terminal.
+    match a.origin {
+        Origin::Portal(_, "shot") => {
+            let b = wallpaper::frozen(&terminal(t), &t.c, t.m.bar_h as usize, t.m.hint_h as usize);
+            c.set_backdrop(Some(b));
+        }
+        Origin::Portal(_, "color") => {
+            let px = terminal(t).pixels().to_vec();
+            c.set_backdrop(Some(std::rc::Rc::new(gh0st_ui::canvas::Backdrop {
+                frost: std::rc::Rc::new(px.clone()),
+                back: px,
+            })));
+        }
+        _ => {}
+    }
     // The wallpaper an app asks for shows behind its question, unfrosted.
     if let Origin::Portal(_, "wallpaper") = a.origin {
         let (w, h) = (t.m.width as usize, t.m.height as usize);
@@ -450,6 +467,31 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                         app: "Media".into(),
                         what: "make this your wallpaper".into(),
                     },
+                    0,
+                    false,
+                    false,
+                ),
+            ),
+            (
+                "prompt-screenshot",
+                ask(
+                    &t,
+                    Origin::Portal(3, "shot"),
+                    Kind::Approve {
+                        app: "Chat".into(),
+                        what: String::new(),
+                    },
+                    0,
+                    false,
+                    false,
+                ),
+            ),
+            (
+                "prompt-color",
+                ask(
+                    &t,
+                    Origin::Portal(4, "color"),
+                    Kind::PickColor,
                     0,
                     false,
                     false,

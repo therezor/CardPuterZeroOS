@@ -22,6 +22,24 @@ pub const OWN: &str = "picture";
 /// `gh0st.wallpaper` for no picture: the palette's `bg`.
 pub const OFF: &str = "off";
 
+/// What a canvas shows, as a picture to bake: a frozen screen behind a
+/// question about it.
+pub fn picture_of(c: &crate::canvas::Canvas) -> Picture {
+    let px = c
+        .pixels()
+        .iter()
+        .map(|&p| {
+            let [r, g, b] = to_rgb8(p);
+            [r as f32, g as f32, b as f32]
+        })
+        .collect();
+    Picture {
+        w: c.width() as usize,
+        h: c.height() as usize,
+        px,
+    }
+}
+
 /// Where the crop of the user's picture lives, beside config.json.
 pub fn picture_path(config_dir: &Path) -> std::path::PathBuf {
     config_dir.join("wallpaper.png")
@@ -418,14 +436,7 @@ pub fn bake(pic: &Picture, p: &Palette, bar: usize, foot: usize) -> Baked {
     let lock_keep = fit_keep(&pic.px, to, &[(p.fg, LOCK_RATIO), muted], LOCK_MAX);
     let mut lock = dim(lock_keep);
     scrims(&mut lock, w, h, to, bar, foot, LOCK_HALO);
-    let s = f3(p.surface);
-    let blurred = blur(&pic.px, w, h, FROST_R);
-    let frost_keep = fit_keep(&blurred, s, &[(p.fg, FROST_RATIO), muted], FROST_KEEP);
-    let frost: Vec<[f32; 3]> = blurred
-        .into_iter()
-        .map(|c| lerp3(s, c, frost_keep))
-        .collect();
-    let frost = Rc::new(to565(&frost, w));
+    let frost = frost_of(pic, p);
     Baked {
         home: Rc::new(Backdrop {
             back: to565(&home, w),
@@ -436,6 +447,33 @@ pub fn bake(pic: &Picture, p: &Palette, bar: usize, foot: usize) -> Baked {
             frost,
         }),
     }
+}
+
+/// The frost panes show: the picture blurred and pulled toward `surface`
+/// until text on it reads.
+fn frost_of(pic: &Picture, p: &Palette) -> Rc<Vec<Color>> {
+    let s = f3(p.surface);
+    let blurred = blur(&pic.px, pic.w, pic.h, FROST_R);
+    let keep = fit_keep(
+        &blurred,
+        s,
+        &[(p.fg, FROST_RATIO), (p.muted, MUTED_RATIO)],
+        FROST_KEEP,
+    );
+    let frost: Vec<[f32; 3]> = blurred.into_iter().map(|c| lerp3(s, c, keep)).collect();
+    Rc::new(to565(&frost, pic.w))
+}
+
+/// A frozen screen to ask a question over: as it was, with scrims under
+/// the bars so they read, and a frost for the card.
+pub fn frozen(c: &crate::canvas::Canvas, p: &Palette, bar: usize, foot: usize) -> Rc<Backdrop> {
+    let pic = picture_of(c);
+    let mut back = pic.px.clone();
+    scrims(&mut back, pic.w, pic.h, f3(p.bg), bar, foot, 0.0);
+    Rc::new(Backdrop {
+        back: to565(&back, pic.w),
+        frost: frost_of(&pic, p),
+    })
 }
 
 /// Bumped when the bake changes, so an old cache is never shown.

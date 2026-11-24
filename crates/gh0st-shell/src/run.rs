@@ -245,8 +245,11 @@ struct Shell {
     canvas: Canvas,
     /// Home's and the lock's picture, baked; none when it is off.
     wall: Option<wallpaper::Baked>,
-    /// A wallpaper an app asked for, shown behind its question.
+    /// A wallpaper an app asked for, or the frozen screen, shown behind
+    /// its question.
     preview: Option<(u64, wallpaper::Baked)>,
+    /// The frozen screen a portal question is about.
+    shot: Option<(u64, Canvas)>,
     /// What `wall` was baked from: the setting, the palette, the file's age.
     wall_from: Option<(String, &'static str, Option<std::time::SystemTime>)>,
     display: Box<dyn Display>,
@@ -584,8 +587,10 @@ impl Shell {
             config,
             wall: None,
             preview: None,
+            shot: None,
             wall_from: None,
         };
+        s.prompts.size = (s.t.m.width, s.t.m.height);
         s.set_animations();
         s.rebake();
         s.boot_restore();
@@ -803,6 +808,13 @@ impl Shell {
                             self.low_memory(level);
                         }
                     }
+                    Some(v @ ("shot" | "color")) => {
+                        if let [_, id, pid, app, rest @ ..] = m.as_slice() {
+                            let verb = if v == "shot" { "shot" } else { "color" };
+                            let quiet = rest.first().is_some_and(|q| q == "quiet");
+                            self.ask_screen(verb, id, pid.parse().unwrap_or(0), app, quiet);
+                        }
+                    }
                     Some("wallpaper") => {
                         if let [_, id, pid, app, path] = m.as_slice() {
                             let path = link::path_of(path);
@@ -814,6 +826,9 @@ impl Shell {
                             if let Ok(n) = id.parse() {
                                 self.prompts.cancel_portal(n);
                                 self.drop_preview(n);
+                                if self.shot.as_ref().is_some_and(|(i, _)| *i == n) {
+                                    self.shot = None;
+                                }
                             }
                             self.portal.retain(|a| match a {
                                 PortalAsk::Pick { id: i, .. } | PortalAsk::Open { id: i, .. } => {
@@ -948,15 +963,30 @@ impl Shell {
         }
     }
 
-    /// The answer to a portal's question.
+    /// The answer to a portal's question. A screenshot is saved now, and
+    /// its path goes with the answer.
     fn answer_portal(&mut self, id: u64, verb: &str, answer: Answer) {
-        let word = match answer {
+        let mut word = match answer {
             Answer::Once => "once",
             Answer::Always => "always",
             Answer::Deny => "deny",
         };
         self.drop_preview(id);
-        self.services.say_session(&[verb, &id.to_string(), word]);
+        let shot = self.shot.take().filter(|(i, _)| *i == id);
+        let mut fields = vec![verb.to_string(), id.to_string()];
+        if verb == "shot" && answer != Answer::Deny {
+            match shot.map(|(_, c)| save_screenshot(&c)) {
+                Some(Ok(p)) => fields.push(link::path_field(&p)),
+                Some(Err(e)) => {
+                    self.toast(format!("Screenshot failed: {e}"));
+                    word = "fail";
+                }
+                None => word = "fail",
+            }
+        }
+        fields.insert(2, word.to_string());
+        let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
+        self.services.say_session(&fields);
     }
 
     /// `gh0st session` relays an inhibit as the app's `awake`. `pid:N` is a
@@ -1220,6 +1250,30 @@ impl Shell {
                 }
                 if let Some(mut old) = self.prompt_input.take() {
                     password::wipe(&mut old);
+                }
+                self.prompts.done();
+                self.dirty = true;
+            }
+            prompt::Action::Color(origin, (x, y)) => {
+                if let Origin::Portal(id, _) = origin {
+                    let picked = self
+                        .shot
+                        .take()
+                        .filter(|(i, _)| *i == id)
+                        .map(|(_, c)| gh0st_ui::color::to_rgb8(c.get(x, y)));
+                    let id = id.to_string();
+                    match picked {
+                        Some([r, g, b]) => self.services.say_session(&[
+                            "color",
+                            &id,
+                            "ok",
+                            &r.to_string(),
+                            &g.to_string(),
+                            &b.to_string(),
+                        ]),
+                        None => self.services.say_session(&["color", &id, "deny"]),
+                    };
+                    self.drop_preview(origin_id(&origin));
                 }
                 self.prompts.done();
                 self.dirty = true;
@@ -2889,8 +2943,13 @@ impl Shell {
 
     /// Saves what the panel shows. Over an app, without the shell's overlays.
     fn screenshot(&mut self) -> std::io::Result<PathBuf> {
+        save_screenshot(&self.grab())
+    }
+
+    /// What the panel shows. Over an app, without the shell's overlays.
+    fn grab(&mut self) -> Canvas {
         if !self.app_front() {
-            return save_screenshot(&self.canvas);
+            return self.canvas.clone();
         }
         let mut shot = Canvas::new(self.t.m.width, self.t.m.height);
         self.display.read_into(&mut shot);
@@ -2898,7 +2957,60 @@ impl Shell {
             // An overlay is up: its saved pixels are the app's.
             shot = o.under().clone();
         }
-        save_screenshot(&shot)
+        shot
+    }
+
+    /// An app asks for a screenshot (`quiet`: the user said Always) or a
+    /// colour from the screen. The screen is frozen now, as the app left
+    /// it, and the question shows over it.
+    fn ask_screen(&mut self, verb: &'static str, id: &str, pid: i32, app: &str, quiet: bool) {
+        let front = self.tasks.front().map(|t| t.pgid);
+        let allowed = front.is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g));
+        let Ok(n) = id.parse::<u64>() else {
+            return;
+        };
+        if !allowed {
+            self.services.say_session(&[verb, id, "deny"]);
+            return;
+        }
+        let shot = self.grab();
+        if quiet {
+            self.shot = Some((n, shot));
+            return self.answer_portal(n, verb, Answer::Once);
+        }
+        let m = self.t.m;
+        let ground = if verb == "color" {
+            // Colours as they are: no dimming, no frost.
+            let px = shot.pixels().to_vec();
+            let b = Rc::new(gh0st_ui::canvas::Backdrop {
+                frost: Rc::new(px.clone()),
+                back: px,
+            });
+            wallpaper::Baked {
+                home: b.clone(),
+                lock: b,
+            }
+        } else {
+            let b = wallpaper::frozen(&shot, &self.t.c, m.bar_h as usize, m.hint_h as usize);
+            wallpaper::Baked {
+                home: b.clone(),
+                lock: b,
+            }
+        };
+        self.preview = Some((n, ground));
+        self.shot = Some((n, shot));
+        let kind = match verb {
+            "color" => Kind::PickColor,
+            _ => Kind::Approve {
+                app: app.into(),
+                what: String::new(),
+            },
+        };
+        self.prompts.push(Ask {
+            origin: Origin::Portal(n, verb),
+            kind,
+        });
+        self.light_for_question();
     }
 
     fn on_key(&mut self, k: Key, now: u64) {
@@ -3827,9 +3939,7 @@ impl Shell {
             _ => Some(0),
         };
         let previewing = match (&self.preview, self.prompts.current()) {
-            (Some((id, b)), Some(a)) if a.origin == Origin::Portal(*id, "wallpaper") => {
-                Some(b.home.clone())
-            }
+            (Some((id, b)), Some(a)) if origin_id(&a.origin) == *id => Some(b.home.clone()),
             _ => None,
         };
         let ground = self.wall.as_ref().and_then(|w| match self.screen {
@@ -3861,6 +3971,7 @@ impl Shell {
                         typed: self.prompts.typed(),
                         checking: self.prompts.checking,
                         wrong: self.prompts.wrong,
+                        at: self.prompts.at(),
                     };
                     prompt::draw(&mut self.canvas, &t, &status, &v);
                 }
@@ -4195,6 +4306,14 @@ fn desktop_first_token_runs(cmd: &str) -> bool {
     cmd.split_whitespace()
         .next()
         .is_some_and(|p| gh0st_core::desktop::is_executable(Path::new(p)))
+}
+
+/// A portal question's id; 0 for any other.
+fn origin_id(o: &Origin) -> u64 {
+    match o {
+        Origin::Portal(id, _) => *id,
+        _ => 0,
+    }
 }
 
 fn screenshot_message(r: std::io::Result<PathBuf>) -> String {

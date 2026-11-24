@@ -34,8 +34,16 @@ pub enum Origin {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Password { reason: String, retry: bool },
-    Approve { app: String, what: String },
+    Password {
+        reason: String,
+        retry: bool,
+    },
+    Approve {
+        app: String,
+        what: String,
+    },
+    /// A crosshair over the frozen screen; Enter picks the colour under it.
+    PickColor,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,6 +65,8 @@ pub enum Action {
     Answer(Origin, Answer),
     /// Esc: no answer.
     Dismiss(Origin),
+    /// The colour under this point was picked.
+    Color(Origin, (i32, i32)),
 }
 
 #[derive(Default)]
@@ -69,6 +79,10 @@ pub struct Prompts {
     pub wrong: bool,
     /// The front question, and when it was first drawn.
     seen: Option<(Origin, u64)>,
+    /// The colour picker's crosshair; None is the middle.
+    at: Option<(i32, i32)>,
+    /// The screen's size, for the crosshair.
+    pub size: (i32, i32),
 }
 
 impl Prompts {
@@ -134,7 +148,13 @@ impl Prompts {
         self.reset();
     }
 
+    /// Where the colour picker's crosshair is.
+    pub fn at(&self) -> (i32, i32) {
+        self.at.unwrap_or((self.size.0 / 2, self.size.1 / 2))
+    }
+
     fn reset(&mut self) {
+        self.at = None;
         self.checking = false;
         self.wrong = false;
         self.clear();
@@ -176,6 +196,23 @@ impl Prompts {
             let o = a.origin.clone();
             return Action::Dismiss(o);
         }
+        // The crosshair moves at once, held keys repeating; Shift steps 10.
+        if a.kind == Kind::PickColor {
+            let step = if k.shift { 10 } else { 1 };
+            let (x, y) = self.at();
+            let to = match k.code {
+                code::UP => (x, y - step),
+                code::DOWN => (x, y + step),
+                code::LEFT => (x - step, y),
+                code::RIGHT => (x + step, y),
+                _ => (x, y),
+            };
+            if to != (x, y) {
+                let (w, h) = self.size;
+                self.at = Some((to.0.clamp(0, w - 1), to.1.clamp(0, h - 1)));
+                return Action::Redraw;
+            }
+        }
         // Not drawn yet, or only just: only Esc counts.
         let armed = self
             .seen
@@ -199,6 +236,12 @@ impl Prompts {
                     Some('7') => Action::Answer(a.origin.clone(), Answer::Always),
                     _ => Action::None,
                 }
+            }
+            Kind::PickColor => {
+                if k.is(code::ENTER) && k.state == State::Press {
+                    return Action::Color(a.origin.clone(), self.at());
+                }
+                Action::None
             }
             Kind::Password { .. } => {
                 if self.checking {
@@ -261,13 +304,21 @@ pub struct View<'a> {
     pub typed: usize,
     pub checking: bool,
     pub wrong: bool,
+    /// The colour picker's crosshair.
+    pub at: (i32, i32),
 }
+
+/// The crosshair: a gap around the point, then an arm each way.
+const RETICLE_GAP: i32 = 3;
+const RETICLE_ARM: i32 = 8;
 
 /// The top bar's icon and title over a question from `origin`.
 pub fn bar(origin: &Origin) -> (&'static str, &'static str) {
     match origin {
         Origin::Portal(_, "account") => ("user", "Your name"),
         Origin::Portal(_, "wallpaper") => ("images", "Wallpaper"),
+        Origin::Portal(_, "shot") => ("camera", "Screenshot"),
+        Origin::Portal(_, "color") => ("palette", "Pick a colour"),
         _ => ("key-round", "Keyring"),
     }
 }
@@ -281,7 +332,9 @@ impl View<'_> {
             }
             (_, Kind::Password { .. }) => "Unlock the keyring",
             (Origin::Portal(_, "wallpaper"), _) => "Use as wallpaper?",
+            (Origin::Portal(_, "shot"), _) => "Share this screenshot?",
             (_, Kind::Approve { .. }) => "Allow access?",
+            (_, Kind::PickColor) => "Pick a colour",
         }
     }
 }
@@ -327,6 +380,11 @@ fn wrap(f: gh0st_ui::font::Font, s: &str, w: i32, max: usize) -> Vec<String> {
 
 /// The prompt over the shell's ground: the top bar, a card, and keys.
 pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
+    if v.ask.kind == Kind::PickColor {
+        return draw_picker(c, t, v.at);
+    }
+    let all = c.bounds();
+    c.clear(all, t.c.bg);
     widgets::status_bar(c, t, status);
     let area = widgets::body(t);
     let w = t.m.width - 2 * t.m.dialog_margin;
@@ -344,7 +402,7 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
             None,
         ),
         (_, Kind::Password { reason, .. }) => (wrap(t.f.small, reason, inner, 2), true, None),
-        (Origin::Portal(_, "wallpaper"), Kind::Approve { app, .. }) => (
+        (Origin::Portal(_, "wallpaper" | "shot"), Kind::Approve { app, .. }) => (
             wrap(t.f.body, &format!("{app} asks."), inner, 1),
             false,
             None,
@@ -354,6 +412,7 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
             false,
             None,
         ),
+        (_, Kind::PickColor) => (Vec::new(), false, None),
     };
     let note = if v.checking {
         Some("Checking\u{2026}")
@@ -379,7 +438,7 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
     let room = Rect::new(area.x, area.y, area.w, t.m.height - bottom_bar - area.y);
     // The wallpaper asked about is behind the question: keep it in view.
     let y = match v.ask.origin {
-        Origin::Portal(_, "wallpaper") => room.y + (room.h - h).max(0),
+        Origin::Portal(_, "wallpaper" | "shot") => room.y + (room.h - h).max(0),
         _ => room.y + (room.h - h).max(0) / 2,
     };
     let r = Rect::new(t.m.dialog_margin, y, w, h);
@@ -442,6 +501,60 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
         };
         widgets::action_bar(c, t, &[none, once, none, always, none]);
     }
+}
+
+/// The frozen screen, whole, with a crosshair and what is under it: a
+/// swatch, its hex, and the keys. The card keeps away from the crosshair.
+fn draw_picker(c: &mut Canvas, t: &Theme, at: (i32, i32)) {
+    let all = c.bounds();
+    c.clear(all, t.c.bg);
+    let under = c.get(at.0, at.1);
+    let ink = if gh0st_ui::color::luminance(under) > 0.5 {
+        t.c.bg
+    } else {
+        t.c.fg
+    };
+    let (x, y) = at;
+    let (g, a) = (RETICLE_GAP, RETICLE_GAP + RETICLE_ARM);
+    c.hline(x - a, x - g, y, ink);
+    c.hline(x + g, x + a, y, ink);
+    c.vline(x, y - a, y - g, ink);
+    c.vline(x, y + g, y + a, ink);
+    let [r, gr, b] = gh0st_ui::color::to_rgb8(under);
+    let hex = format!("#{r:02X}{gr:02X}{b:02X}");
+    let hints = [
+        Hint {
+            key: "Enter",
+            label: "pick",
+        },
+        Hint {
+            key: "Esc",
+            label: "cancel",
+        },
+    ];
+    let pad = t.m.card_inset;
+    let sw = t.m.pill_h;
+    let text_w = t.f.body.measure(&hex);
+    let w = pad + sw + pad + text_w + pad + widgets::key_row_w(t, &hints) + pad;
+    let h = sw + 2 * pad;
+    let top = all.y + t.m.dialog_margin;
+    let bottom = all.bottom() - h - t.m.dialog_margin;
+    let card_y = if y > all.h / 2 { top } else { bottom };
+    let card = Rect::new((all.w - w) / 2, card_y, w, h);
+    c.round_rect(card, t.m.radius, t.c.surface);
+    c.stroke_round_rect(card, t.m.radius, t.c.border);
+    let swatch = Rect::new(card.x + pad, card.y + pad, sw, sw);
+    c.round_rect(swatch, t.m.radius_small, under);
+    c.stroke_round_rect(swatch, t.m.radius_small, t.c.border);
+    let tx = swatch.right() + pad;
+    widgets::text_in(
+        c,
+        t.f.body,
+        Rect::new(tx, swatch.y, text_w, sw),
+        &hex,
+        t.c.fg,
+    );
+    widgets::key_row(c, t, tx + text_w + pad, swatch.y, &hints);
 }
 
 #[cfg(test)]
@@ -560,6 +673,36 @@ mod tests {
             Action::Answer(Origin::Portal(4, "account"), Answer::Once)
         );
         assert_eq!(p.key(&key(30, Some('a')), T), Action::None);
+    }
+
+    #[test]
+    fn the_colour_crosshair_moves_at_once_and_enter_picks() {
+        let mut p = Prompts::default();
+        p.size = (320, 170);
+        p.push(Ask {
+            origin: Origin::Portal(5, "color"),
+            kind: Kind::PickColor,
+        });
+        p.seen(1000);
+        assert_eq!(p.at(), (160, 85));
+        assert_eq!(p.key(&key(code::LEFT, None), 1001), Action::Redraw);
+        let mut shifted = key(code::DOWN, None);
+        shifted.shift = true;
+        p.key(&shifted, 1001);
+        assert_eq!(p.at(), (159, 95));
+        for _ in 0..400 {
+            p.key(&key(code::RIGHT, None), 1001);
+        }
+        assert_eq!(p.at(), (319, 95), "kept on the screen");
+        assert_eq!(
+            p.key(&key(code::ENTER, None), 1001),
+            Action::None,
+            "not armed"
+        );
+        assert_eq!(
+            p.key(&key(code::ENTER, None), T),
+            Action::Color(Origin::Portal(5, "color"), (319, 95))
+        );
     }
 
     #[test]

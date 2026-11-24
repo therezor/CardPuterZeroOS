@@ -48,7 +48,7 @@ gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/fr
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.OpenURI version | grep -q 'uint32 5' \
     || fail "OpenURI version"
-for v in Settings:2 Inhibit:3 Account:1 Trash:1 Wallpaper:1 MemoryMonitor:1; do
+for v in Settings:2 Inhibit:3 Account:1 Trash:1 Wallpaper:1 MemoryMonitor:1 Screenshot:2; do
     gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
         --method org.freedesktop.DBus.Properties.Get "org.freedesktop.portal.${v%:*}" version \
         | grep -q "uint32 ${v#*:}" || fail "${v%:*} version"
@@ -213,6 +213,34 @@ out=$(timeout 15 python3 "$work/fd.py" wallpaper "$work/files/pic.png") || fail 
 [ -s "$work/.config/cardputerzero/wallpaper.png" ] || fail "no wallpaper kept"
 grep -q '"wallpaper": *"picture"' "$work/.config/cardputerzero/config.json" || fail "wallpaper setting"
 ls "$work/.cache/gh0st/" 2>/dev/null | grep -q wallpaper && fail "a fitted picture was left behind"
+
+echo "portal: Screenshot and PickColor answer through their requests"
+cat >"$work/screen.py" <<'PY'
+import sys
+from gi.repository import Gio, GLib
+bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+me = bus.get_unique_name()[1:].replace(".", "_")
+path = "/org/freedesktop/portal/desktop/request/%s/s1" % me
+got = {}
+loop = GLib.MainLoop()
+def response(conn, sender, obj, iface, sig, params):
+    got["r"] = params.unpack()
+    loop.quit()
+bus.signal_subscribe(None, "org.freedesktop.portal.Request", "Response", path, None,
+                     Gio.DBusSignalFlags.NONE, response)
+bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+              "org.freedesktop.portal.Screenshot", sys.argv[1],
+              GLib.Variant("(sa{sv})", ("", {"handle_token": GLib.Variant("s", "s1")})),
+              None, Gio.DBusCallFlags.NONE, -1, None)
+GLib.timeout_add(5000, loop.quit)
+loop.run()
+code, results = got["r"]
+print(code, results.get("uri") or results.get("color"))
+PY
+out=$(timeout 10 python3 "$work/screen.py" Screenshot) || fail "Screenshot: $out"
+echo "$out" | grep -q "^0 file://.*/a%20note.txt$" || fail "Screenshot answer: $out"
+out=$(timeout 10 python3 "$work/screen.py" PickColor) || fail "PickColor: $out"
+echo "$out" | grep -q "^0 (1.0, 0.50" || fail "PickColor answer: $out"
 
 echo "gh0st open and xdg-open: a file through OpenURI"
 timeout 10 "$GH0ST" open "$work/files/a note.txt" || fail "gh0st open"

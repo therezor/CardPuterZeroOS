@@ -20,6 +20,7 @@ which the device has none of.
 | `Trash` | 1 | `TrashFile` moves a file to the Trash |
 | `Wallpaper` | 1 | Sets the wallpaper, after the user's yes over the picture itself |
 | `MemoryMonitor` | 1 | `LowMemoryWarning` when memory runs short |
+| `Screenshot` | 2 | `Screenshot` after the user's yes over the frozen screen; `PickColor` with a crosshair |
 
 ## Requests
 
@@ -134,6 +135,19 @@ answers `1` done, `0` not: a folder on another drive has no Trash here.
 - Always is kept with Account's, in `~/.local/state/gh0st/portal-always`,
   one `what<TAB>app` a line.
 
+## Screenshot
+
+- `Screenshot(s parent, a{sv})`: the shell freezes the screen as the app
+  left it, without its own overlays, and asks "Share this screenshot?" over
+  it, Once on 5 or Always on 7. A yes saves it to `~/Pictures/Screenshots`
+  and answers `uri`. Always is kept with Account's; the next one is saved
+  without asking. `interactive` and `modal` are taken and ignored.
+- `PickColor(s parent, a{sv})`: the frozen screen, whole, with a crosshair
+  in the middle. The arrows move it, Shift steps 10. A card shows the
+  colour under it and its hex, away from the crosshair. Enter answers
+  `color` as `(ddd)` from 0 to 1; Esc answers `1`. Picking is the user's
+  yes: there is no question first.
+
 ## MemoryMonitor
 
 PSI triggers on `/proc/pressure/memory` wake the loop when tasks stall on
@@ -148,7 +162,8 @@ turns PSI on with `psi=1`; without it the monitor is quiet.
 The shell decides, as it does for the keyring's questions:
 
 - Only the app in front, or a program it started, gets a chooser, opens
-  an app, or asks the user about their name or the wallpaper. Anything
+  an app, or asks the user about their name, the wallpaper, a screenshot
+  or a colour. Anything
   running behind gets `2`, or `1` for those questions.
 - Not while the device is locked or dark: the request waits.
 - The caller is parked as Fn+K parks it, and comes back when the chooser or

@@ -28,6 +28,8 @@ const ACCOUNT_VERSION: u32 = 1;
 const SESSION: &str = "org.freedesktop.portal.Session";
 pub const TRASH: &str = "org.freedesktop.portal.Trash";
 const TRASH_VERSION: u32 = 1;
+pub const SCREENSHOT: &str = "org.freedesktop.portal.Screenshot";
+const SCREENSHOT_VERSION: u32 = 2;
 pub const WALLPAPER: &str = "org.freedesktop.portal.Wallpaper";
 const WALLPAPER_VERSION: u32 = 1;
 pub const SESSION_ROOT: &str = "/org/freedesktop/portal/desktop/session";
@@ -108,6 +110,12 @@ enum Kind {
     Monitor {
         session: String,
     },
+    /// A screenshot, after the user's yes over the frozen screen.
+    Shot {
+        app: String,
+    },
+    /// A colour the user picks from the frozen screen.
+    Color,
     /// A wallpaper, fitted to the screen at `tmp` before the user says yes.
     Wallpaper {
         app: String,
@@ -406,6 +414,26 @@ impl Portal {
             };
             return Message::reply(m).arg(Value::U32(ok as u32));
         }
+        if m.interface.as_deref() == Some(SCREENSHOT) {
+            let (kind, verb) = match m.member.as_deref() {
+                Some("Screenshot") => (Kind::Shot { app: app.into() }, "shot"),
+                Some("PickColor") => (Kind::Color, "color"),
+                _ => return Message::error(m, bus::err::UNKNOWN_METHOD, "no such method"),
+            };
+            let quiet = verb == "shot" && self.remembered("shot", app);
+            return match self.new_request(m, sender, kind) {
+                Some((id, rp)) => {
+                    let (id, pid) = (id.to_string(), pid.to_string());
+                    let mut line = vec![verb, &id, &pid, app];
+                    if quiet {
+                        line.push("quiet");
+                    }
+                    self.shell(&line);
+                    Message::reply(m).arg(Value::path(rp))
+                }
+                None => Message::error(m, bus::err::LIMITS, "too many requests"),
+            };
+        }
         if m.interface.as_deref() == Some(WALLPAPER) {
             return self.wallpaper_call(m, sender, pid, app);
         }
@@ -660,6 +688,62 @@ impl Portal {
         self.out.push(Out::Shell(fields.to_vec()));
     }
 
+    /// The user's answer about a screenshot: once or always with the saved
+    /// file's path, deny, or fail.
+    fn shot_answer(&mut self, id: u64, answer: &str, path: Option<&String>) {
+        let Some(r) = self.reqs.iter().find(|r| r.id == id) else {
+            return;
+        };
+        let Kind::Shot { app } = &r.kind else {
+            return;
+        };
+        let code = match (answer, path) {
+            ("once" | "always", Some(p)) => {
+                if answer == "always" {
+                    self.keep("shot", &app.clone());
+                }
+                let uri = gh0st_core::uri::from_path(&gh0st_core::link::path_of(p));
+                let at = self.reqs.iter().position(|r| r.id == id);
+                if let Some(r) = at.map(|i| self.reqs.remove(i)) {
+                    self.respond(
+                        &r.sender,
+                        &r.path,
+                        RESPONSE_OK,
+                        vec![("uri", Value::str(uri))],
+                    );
+                }
+                return;
+            }
+            ("deny", _) => RESPONSE_CANCELLED,
+            _ => RESPONSE_OTHER,
+        };
+        self.finish(id, code);
+    }
+
+    /// The colour the user picked, as 0 to 255 a channel, or deny.
+    fn color_answer(&mut self, id: u64, answer: &str, rgb: Option<&[String]>) {
+        let Some(at) = self.reqs.iter().position(|r| r.id == id) else {
+            return;
+        };
+        if !matches!(self.reqs[at].kind, Kind::Color) {
+            return;
+        }
+        let c: Option<Vec<f64>> = rgb.and_then(|v| {
+            v.iter()
+                .map(|x| x.parse::<u8>().ok().map(|n| f64::from(n) / 255.0))
+                .collect()
+        });
+        match (answer, c) {
+            ("ok", Some(c)) if c.len() == 3 => {
+                let r = self.reqs.remove(at);
+                let color = Value::Struct(c.into_iter().map(Value::F64).collect());
+                self.respond(&r.sender, &r.path, RESPONSE_OK, vec![("color", color)]);
+            }
+            ("deny", _) => self.finish(id, RESPONSE_CANCELLED),
+            _ => self.finish(id, RESPONSE_OTHER),
+        }
+    }
+
     /// The user's answer about a wallpaper: once, always or deny.
     fn wallpaper_answer(&mut self, id: u64, answer: &str) {
         let Some(r) = self.reqs.iter().find(|r| r.id == id) else {
@@ -846,11 +930,13 @@ impl Portal {
         let Some(id) = fields.get(1).and_then(|v| v.parse::<u64>().ok()) else {
             return;
         };
-        if verb == "account" || verb == "wallpaper" {
+        if matches!(verb, "account" | "wallpaper" | "shot" | "color") {
             let answer = fields.get(2).map(String::as_str).unwrap_or("deny");
             return match verb {
                 "account" => self.account_answer(id, answer),
-                _ => self.wallpaper_answer(id, answer),
+                "wallpaper" => self.wallpaper_answer(id, answer),
+                "shot" => self.shot_answer(id, answer, fields.get(3)),
+                _ => self.color_answer(id, answer, fields.get(3..6)),
             };
         }
         let Some(at) = self.reqs.iter().position(|r| r.id == id) else {
@@ -969,6 +1055,7 @@ fn properties(m: &Message) -> Message {
         NOTIFICATION => NOTIFICATION_VERSION,
         INHIBIT => INHIBIT_VERSION,
         TRASH => TRASH_VERSION,
+        SCREENSHOT => SCREENSHOT_VERSION,
         WALLPAPER => WALLPAPER_VERSION,
         crate::memory::IFACE => crate::memory::VERSION,
         ACCOUNT => ACCOUNT_VERSION,
@@ -991,6 +1078,7 @@ fn introspect() -> String {
     const INHIBIT_XML: &str = r#"<interface name="org.freedesktop.portal.Inhibit"><method name="Inhibit"><arg type="s" direction="in"/><arg type="u" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="CreateMonitor"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="QueryEndResponse"><arg type="o" direction="in"/></method><signal name="StateChanged"><arg type="o"/><arg type="a{sv}"/></signal><property name="version" type="u" access="read"/></interface>"#;
     const ACCOUNT_XML: &str = r#"<interface name="org.freedesktop.portal.Account"><method name="GetUserInformation"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     const TRASH_XML: &str = r#"<interface name="org.freedesktop.portal.Trash"><method name="TrashFile"><arg type="h" direction="in"/><arg type="u" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
+    const SCREENSHOT_XML: &str = r#"<interface name="org.freedesktop.portal.Screenshot"><method name="Screenshot"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="PickColor"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     const WALLPAPER_XML: &str = r#"<interface name="org.freedesktop.portal.Wallpaper"><method name="SetWallpaperURI"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><method name="SetWallpaperFile"><arg type="s" direction="in"/><arg type="h" direction="in"/><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method><property name="version" type="u" access="read"/></interface>"#;
     bus::introspect(
         &[
@@ -1000,6 +1088,7 @@ fn introspect() -> String {
             INHIBIT_XML,
             ACCOUNT_XML,
             TRASH_XML,
+            SCREENSHOT_XML,
             WALLPAPER_XML,
             crate::memory::XML,
             crate::settings::XML,
@@ -1290,6 +1379,59 @@ mod tests {
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
         assert!(shell_lines(&mut p).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_screenshot_and_a_colour_come_from_the_shell() {
+        let dir = std::env::temp_dir().join(format!("gh0st-shot-portal-{}", std::process::id()));
+        let mut p = Portal {
+            remember: Some(dir.join("always")),
+            ..Portal::default()
+        };
+        let shot = || {
+            call(
+                SCREENSHOT,
+                "Screenshot",
+                vec![Value::str(""), Value::props::<&str>([])],
+            )
+        };
+        p.call(&shot(), ME, Some(300), "Chat");
+        assert_eq!(shell_lines(&mut p), [["shot", "1", "300", "Chat"]]);
+        let saved = gh0st_core::link::path_field(Path::new("/home/u/Pictures/Screenshots/a b.png"));
+        p.shell_said(&["shot".into(), "1".into(), "always".into(), saved]);
+        let r = responses(&mut p);
+        assert_eq!(r[0].1, RESPONSE_OK);
+        assert_eq!(
+            r[0].2.get("uri").map(Value::inner).and_then(Value::as_str),
+            Some("file:///home/u/Pictures/Screenshots/a%20b.png")
+        );
+        // Always: the shell takes the next one without asking.
+        p.call(&shot(), ME, Some(300), "Chat");
+        assert_eq!(shell_lines(&mut p), [["shot", "2", "300", "Chat", "quiet"]]);
+        p.shell_said(&["shot".into(), "2".into(), "fail".into()]);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OTHER);
+
+        let pick = call(
+            SCREENSHOT,
+            "PickColor",
+            vec![Value::str(""), Value::props::<&str>([])],
+        );
+        p.call(&pick, ME, Some(300), "Chat");
+        assert_eq!(shell_lines(&mut p), [["color", "3", "300", "Chat"]]);
+        let said = ["color", "3", "ok", "255", "0", "51"].map(String::from);
+        p.shell_said(&said);
+        let r = responses(&mut p);
+        let c = r[0].2.get("color").map(Value::inner).unwrap();
+        assert_eq!(
+            c,
+            &Value::Struct(vec![Value::F64(1.0), Value::F64(0.0), Value::F64(0.2)])
+        );
+        p.call(&pick, ME, Some(300), "Chat");
+        p.out.clear();
+        p.shell_said(&["color".into(), "4".into(), "deny".into()]);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
+        assert_eq!(p.open(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
