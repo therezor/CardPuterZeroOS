@@ -114,6 +114,7 @@ fn busy_label(kind: &NetJob) -> Option<&'static str> {
             Some("Applying\u{2026}")
         }
         NetJob::Wallpaper => Some("Fitting the picture\u{2026}"),
+        NetJob::KeyringPrepare | NetJob::Password { .. } => Some("Changing the password\u{2026}"),
         _ => None,
     }
 }
@@ -152,7 +153,13 @@ enum NetJob {
     /// The image boots with Wi-Fi blocked: setup's network step unblocks it,
     /// then turns it on.
     WifiUnblock,
-    Password,
+    /// `gh0st keyring prepare`: the vault wraps its key for the new
+    /// password first, so it opens with whichever one passwd leaves.
+    KeyringPrepare,
+    /// `passwd`; `keyring` when the vault is waiting to commit.
+    Password {
+        keyring: bool,
+    },
     ConnQuery,
     /// A profile change; reconnect after it when the profile is in use.
     ConnModify {
@@ -201,6 +208,8 @@ pub struct Settings {
     answering: Option<Dialog>,
     /// Why, under the field of the dialog about to show.
     dialog_error: Option<String>,
+    /// The current and new password while the keyring prepares.
+    passwd_pending: Option<(String, String)>,
 }
 
 impl Settings {
@@ -215,6 +224,7 @@ impl Settings {
             was_armed: None,
             answering: None,
             dialog_error: None,
+            passwd_pending: None,
             asked: false,
             jobs: HashMap::new(),
             backlight: Backlight::find(Path::new("/sys/class/backlight")),
@@ -1170,11 +1180,22 @@ impl Settings {
                     });
                     self.reject(cx, why, Ask::PasswordNew(std::mem::take(&mut cur)), "");
                 } else {
-                    // passwd as the user: it checks the current password
-                    // itself, so no root helper can be asked to set one.
-                    let mut input = format!("{cur}\n{new}\n{new}\n");
-                    self.run_with(cx, NetJob::Password, &["passwd"], input.as_bytes());
+                    // The keyring first, then passwd as the user: it checks
+                    // the current password itself, so no root helper can
+                    // be asked to set one.
+                    let mut input = format!("{cur}\n{new}\n");
+                    self.run_with(
+                        cx,
+                        NetJob::KeyringPrepare,
+                        &["gh0st", "keyring", "prepare"],
+                        input.as_bytes(),
+                    );
                     wipe(&mut input);
+                    if let Some((mut a, mut b)) = self.passwd_pending.take() {
+                        wipe(&mut a);
+                        wipe(&mut b);
+                    }
+                    self.passwd_pending = Some((cur.clone(), new.clone()));
                 }
                 wipe(&mut cur);
                 wipe(&mut new);
@@ -1908,15 +1929,37 @@ impl Settings {
                 self.stack.retain(|(p, _)| !matches!(p, PageId::Conn(_)));
                 requery = true;
             }
-            NetJob::Password => said(
-                cx,
-                ok,
-                &if ok {
-                    "Password changed".to_string()
-                } else {
-                    password_failure(&out)
-                },
-            ),
+            NetJob::KeyringPrepare => {
+                // Whatever the keyring said, passwd goes on: a vault left on
+                // the old password asks for it at the next unlock.
+                if let Some((mut cur, mut new)) = self.passwd_pending.take() {
+                    let mut input = format!("{cur}\n{new}\n{new}\n");
+                    self.run_with(
+                        cx,
+                        NetJob::Password { keyring: ok },
+                        &["passwd"],
+                        input.as_bytes(),
+                    );
+                    wipe(&mut input);
+                    wipe(&mut cur);
+                    wipe(&mut new);
+                }
+            }
+            NetJob::Password { keyring } => {
+                if *keyring {
+                    let job = cx.spawn(&["gh0st", "keyring", "commit", if ok { "1" } else { "0" }]);
+                    self.track(cx, job, NetJob::Ignore);
+                }
+                said(
+                    cx,
+                    ok,
+                    &if ok {
+                        "Password changed".to_string()
+                    } else {
+                        password_failure(&out)
+                    },
+                )
+            }
             NetJob::BtDevice(done) => {
                 said(cx, ok, &if ok { done.clone() } else { bt::failure(&out) });
                 self.query_bt(cx);

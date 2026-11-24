@@ -15,7 +15,7 @@ use crate::ident;
 use crate::secret::{self, Ask, Caller, Out, Service, Unlock};
 use crate::vault::Cost;
 
-const USAGE: &str = "usage: gh0st keyring [--vault PATH] [--test]";
+const USAGE: &str = "usage: gh0st keyring [--vault PATH] | prepare | commit 1|0";
 /// Settings clients at once; more wait in the backlog.
 const MAX_CLIENTS: usize = 4;
 /// A wrong old password costs this long before the next try.
@@ -68,6 +68,11 @@ struct Daemon {
 }
 
 pub fn main(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("prepare") => return prepare(),
+        Some("commit") => return commit(args.get(1).map(String::as_str)),
+        _ => {}
+    }
     let Some(opts) = parse(args) else {
         eprintln!("{USAGE}");
         return 2;
@@ -420,6 +425,38 @@ fn to_secret(a: Answer) -> secret::Answer {
         Answer::Once => secret::Answer::Once,
         Answer::Always => secret::Answer::Always,
         Answer::Deny => secret::Answer::Deny,
+    }
+}
+
+/// `gh0st keyring prepare`: the old and new password, a line each on
+/// stdin. Exit 0 when the daemon wrapped the key for the new one, 1 when
+/// it said no, 3 when no keyring runs (nothing to keep in step).
+fn prepare() -> i32 {
+    let Some(path) = socket_path().filter(|p| p.exists()) else {
+        return 3;
+    };
+    let mut input = Vec::new();
+    let _ = std::io::stdin().take(4096).read_to_end(&mut input);
+    let mut lines = input.split(|&b| b == b'\n');
+    let (old, new) = (
+        lines.next().unwrap_or_default(),
+        lines.next().unwrap_or_default(),
+    );
+    let ok = !new.is_empty() && request(&path, &[b"prepare", old, new]);
+    gh0st_core::password::wipe(&mut input);
+    if ok { 0 } else { 1 }
+}
+
+/// `gh0st keyring commit 1|0`: passwd took the new password, or didn't.
+fn commit(arg: Option<&str>) -> i32 {
+    let Some(path) = socket_path().filter(|p| p.exists()) else {
+        return 3;
+    };
+    let yes: &[u8] = if arg == Some("1") { b"1" } else { b"0" };
+    if request(&path, &[b"commit", yes]) {
+        0
+    } else {
+        1
     }
 }
 
