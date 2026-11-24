@@ -55,7 +55,9 @@ An entry without a field code opens no files.
   user's default in `~/.config/mimeapps.list`, then apps added there, then
   apps that declare it, ours before the rest. The first is the default; all
   of them make the Open-with list. Files' Open with, Always writes the
-  default.
+  default for the file's type; Settings > Default apps picks one app for
+  a whole kind (text and code, pictures, video, music, folders), or goes
+  back to the built-in choice.
 - **Our own apps** run with the files in place of the code. A third-party
   `Exec` still runs through `sh -c`, with the code turned into `"$1"` or
   `"$@"` and the files passed after it as `sh`'s arguments, so no name is

@@ -21,6 +21,8 @@ fn pages() -> Vec<PageId> {
         PageId::Sound,
         PageId::Appearance,
         PageId::Apps,
+        PageId::DefaultApps,
+        PageId::DefaultFor(0),
         PageId::System,
         PageId::TimeZone(None),
         PageId::Advanced,

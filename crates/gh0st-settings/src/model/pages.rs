@@ -111,6 +111,19 @@ pub struct Device {
     pub connected: bool,
 }
 
+/// One kind of file on the Default apps page.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DefaultRow {
+    pub label: &'static str,
+    pub icon: &'static str,
+    /// The app's name, or empty when nothing opens it.
+    pub app: String,
+    /// The user picked it, not the built-in order.
+    pub picked: bool,
+    /// (`.desktop` file, name, the one now).
+    pub choices: Vec<(String, String, bool)>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AppRow {
     pub file: String,
@@ -213,6 +226,8 @@ pub struct State {
     pub sounds: bool,
     pub clock_24h: bool,
     pub apps: Vec<AppRow>,
+    /// Settings > Default apps, one row per kind of file.
+    pub defaults: Vec<DefaultRow>,
     pub wifi_on: bool,
     pub wifi_busy: Option<String>,
     pub networks: Vec<Network>,
@@ -594,6 +609,68 @@ pub fn build(id: &PageId, s: &State) -> Page {
         PageId::CountryZones => ("Time zone", Body::List(country_zones(s)), vec![]),
         PageId::Advanced => ("Advanced", Body::List(advanced(s)), vec![]),
         PageId::Swap => ("Swap", Body::List(swap(s)), vec![]),
+        PageId::DefaultApps => (
+            "Default apps",
+            Body::List(
+                s.defaults
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| {
+                        let value = if d.app.is_empty() {
+                            "None".to_string()
+                        } else {
+                            d.app.clone()
+                        };
+                        Item::new(
+                            d.icon,
+                            d.label,
+                            Value::TextChevron(value),
+                            Act::Open(PageId::DefaultFor(i)),
+                        )
+                    })
+                    .collect(),
+            ),
+            vec![],
+        ),
+        PageId::DefaultFor(i) => {
+            let d = s.defaults.get(*i).cloned().unwrap_or_default();
+            let mut items: Vec<Item> = d
+                .choices
+                .iter()
+                .map(|(file, name, now)| Item {
+                    icon: Some(if *now { "check" } else { "" }),
+                    label: name.clone(),
+                    value: Value::None,
+                    act: Act::Run(Command::SetDefault(*i, file.clone())),
+                    danger: false,
+                })
+                .collect();
+            if d.picked {
+                items.push(Item::new(
+                    "rotate-cw",
+                    "Built-in choice",
+                    Value::None,
+                    Act::Run(Command::ResetDefault(*i)),
+                ));
+            }
+            if items.is_empty() {
+                items.push(Item::new(
+                    "info",
+                    "No app opens these",
+                    Value::None,
+                    Act::None,
+                ));
+            }
+            (
+                if d.label.is_empty() {
+                    "Default apps"
+                } else {
+                    d.label
+                },
+                Body::List(items),
+                vec![],
+            )
+        }
         PageId::Choose(c) => (
             match c {
                 Choice::GpuMem => "GPU memory",
@@ -686,6 +763,7 @@ fn root(s: &State) -> Vec<Item> {
             s.apps.iter().filter(|a| a.shown).count().to_string(),
             PageId::Apps,
         ),
+        link("file", "Default apps", String::new(), PageId::DefaultApps),
         link("settings", "System", String::new(), PageId::System),
         link("shield", "Privacy", s.logs.label().into(), PageId::Privacy),
         link("info", "About", String::new(), PageId::About),
@@ -1670,7 +1748,7 @@ mod tests {
     #[test]
     fn root_links_every_page_and_shows_the_network() {
         let p = build(&PageId::Root, &state());
-        assert_eq!(p.len(), 11);
+        assert_eq!(p.len(), 12);
         assert_eq!(
             p.item(0).unwrap().value,
             Value::TextChevron("HomeNet".into())

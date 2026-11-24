@@ -226,6 +226,94 @@ pub fn defaults(list: &MimeApps) -> Vec<(String, String)> {
     out
 }
 
+/// A kind of file the user picks one app for, as Settings > Default apps
+/// shows them.
+pub struct Category {
+    pub label: &'static str,
+    pub icon: &'static str,
+    /// The type whose default the row shows.
+    pub sample: &'static str,
+    /// The types a pick is written for.
+    of: fn(&str) -> bool,
+}
+
+pub const CATEGORIES: [Category; 5] = [
+    Category {
+        label: "Text and code",
+        icon: "file-code",
+        sample: "text/plain",
+        of: |m| m != mime::BINARY && mime::is_a(m, mime::TEXT),
+    },
+    Category {
+        label: "Pictures",
+        icon: "file-image",
+        sample: "image/png",
+        of: |m| m.starts_with("image/"),
+    },
+    Category {
+        label: "Video",
+        icon: "file-video",
+        sample: "video/mp4",
+        of: |m| m.starts_with("video/"),
+    },
+    Category {
+        label: "Music",
+        icon: "file-music",
+        sample: "audio/mpeg",
+        of: |m| m.starts_with("audio/"),
+    },
+    Category {
+        label: "Folders",
+        icon: "folder",
+        sample: mime::DIR,
+        of: |m| m == mime::DIR,
+    },
+];
+
+impl Category {
+    /// Every type a pick here is written for.
+    pub fn types(&self) -> Vec<&'static str> {
+        let mut v: Vec<&'static str> = mime::known().into_iter().filter(|m| (self.of)(m)).collect();
+        if (self.of)(self.sample) && !v.contains(&self.sample) {
+            v.push(self.sample);
+        }
+        v
+    }
+
+    /// The app its files open with now.
+    pub fn default<'a>(&self, apps: &'a [App], list: &MimeApps) -> Option<&'a App> {
+        default_for(apps, list, self.sample)
+    }
+
+    /// The apps that open its files.
+    pub fn choices<'a>(&self, apps: &'a [App], list: &MimeApps) -> Vec<&'a App> {
+        all_for(apps, list, self.sample)
+    }
+
+    /// The user picked the app, not the built-in order.
+    pub fn picked(&self, list: &MimeApps) -> bool {
+        !list.get(DEFAULTS, self.sample).is_empty()
+    }
+
+    /// Makes `app_file` the default for every type here.
+    pub fn set(&self, path: &Path, app_file: &str) -> std::io::Result<()> {
+        let mut list = MimeApps::load(path);
+        for m in self.types() {
+            list.set(DEFAULTS, m, &[app_file]);
+        }
+        list.save(path)
+    }
+
+    /// Back to the built-in order for every type here.
+    pub fn reset(&self, path: &Path) -> std::io::Result<()> {
+        let mut list = MimeApps::load(path);
+        for m in self.types() {
+            list.set(DEFAULTS, m, &[]);
+        }
+        list.save(path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,6 +430,40 @@ mod tests {
             fresh.to_string(),
             "[Default Applications]\na/b=x.desktop;\n"
         );
+    }
+
+    #[test]
+    fn a_category_pick_covers_its_types_and_resets() {
+        let d = std::env::temp_dir().join(format!("gh0st-cat-{}", std::process::id()));
+        let p = d.join("mimeapps.list");
+        let apps = [
+            app(
+                "text.desktop",
+                "/usr/bin/gh0st-text %f",
+                &["text/plain", "application/json"],
+                true,
+            ),
+            app("ed.desktop", "/opt/ed %f", &["text/plain"], false),
+        ];
+        let text = &CATEGORIES[0];
+        assert!(text.types().contains(&"text/rust") && text.types().contains(&"application/json"));
+        assert!(!text.types().contains(&"image/png"));
+        text.set(&p, "ed.desktop").unwrap();
+        let list = MimeApps::load(&p);
+        assert!(text.picked(&list));
+        // Even JSON, which Text names itself, goes to the pick.
+        assert_eq!(
+            default_for(&apps, &list, "application/json").map(|a| a.file.as_str()),
+            Some("ed.desktop")
+        );
+        text.reset(&p).unwrap();
+        let list = MimeApps::load(&p);
+        assert!(!text.picked(&list));
+        assert_eq!(
+            text.default(&apps, &list).map(|a| a.file.as_str()),
+            Some("text.desktop")
+        );
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

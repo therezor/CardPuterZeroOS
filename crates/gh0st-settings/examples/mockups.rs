@@ -16,6 +16,61 @@ use gh0st_settings::model::pages::{
 use gh0st_settings::model::{self, Choice, Cursor, Dialog, PageId};
 use std::path::PathBuf;
 
+/// Default apps as on a device with Text, Media, Files and one Store editor.
+fn default_rows() -> Vec<gh0st_settings::model::pages::DefaultRow> {
+    use gh0st_settings::model::pages::DefaultRow;
+    let row = |label, icon, app: &str, picked, choices: &[(&str, &str, bool)]| DefaultRow {
+        label,
+        icon,
+        app: app.into(),
+        picked,
+        choices: choices
+            .iter()
+            .map(|(f, n, h)| (f.to_string(), n.to_string(), *h))
+            .collect(),
+    };
+    vec![
+        row(
+            "Text and code",
+            "file-code",
+            "Quick Notes",
+            true,
+            &[
+                ("notes.desktop", "Quick Notes", true),
+                ("text.desktop", "Text", false),
+            ],
+        ),
+        row(
+            "Pictures",
+            "file-image",
+            "Media",
+            false,
+            &[("media.desktop", "Media", true)],
+        ),
+        row(
+            "Video",
+            "file-video",
+            "Media",
+            false,
+            &[("media.desktop", "Media", true)],
+        ),
+        row(
+            "Music",
+            "file-music",
+            "Media",
+            false,
+            &[("media.desktop", "Media", true)],
+        ),
+        row(
+            "Folders",
+            "folder",
+            "Files",
+            false,
+            &[("files.desktop", "Files", true)],
+        ),
+    ]
+}
+
 fn sample_state() -> State {
     let net = |ssid: &str, bars, secure, known, active| Network {
         ssid: ssid.into(),
@@ -62,6 +117,7 @@ fn sample_state() -> State {
             app("store.desktop", "Store", true),
             app("zclaw.desktop", "ZClaw", false),
         ],
+        defaults: default_rows(),
         wifi_on: true,
         wifi_busy: None,
         profiles: vec!["HomeNet".into()],
@@ -345,6 +401,8 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                 ("palette", s(PageId::Choose(Choice::Palette), 5)),
                 ("pictures", s(PageId::Pictures, 1)),
                 ("apps", s(PageId::Apps, 0)),
+                ("default-apps", s(PageId::DefaultApps, 0)),
+                ("default-for", s(PageId::DefaultFor(0), 1)),
                 (
                     "apps-move",
                     scene(

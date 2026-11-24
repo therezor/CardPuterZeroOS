@@ -366,6 +366,7 @@ impl Settings {
             (pin.unwrap_or(usize::MAX), a.name.to_lowercase())
         });
         s.apps = rows;
+        s.defaults = default_rows(&config);
         s.about = about();
         s.logs = logs_level();
         s.updates = gh0st_core::update::State::load();
@@ -941,6 +942,23 @@ impl Settings {
             Command::DnsServers => {
                 let now = self.state.nm.dns.replace(',', ", ");
                 self.ask_dns(&now);
+            }
+            Command::SetDefault(i, file) => {
+                if let Some(c) = gh0st_core::handlers::CATEGORIES.get(i) {
+                    match c.set(&gh0st_core::handlers::list_path(), &file) {
+                        Ok(()) => {
+                            self.back(cx);
+                        }
+                        Err(e) => cx.toast_tone(Tone::Critical, &e.to_string()),
+                    }
+                }
+            }
+            Command::ResetDefault(i) => {
+                if let Some(c) = gh0st_core::handlers::CATEGORIES.get(i) {
+                    if let Err(e) = c.reset(&gh0st_core::handlers::list_path()) {
+                        cx.toast_tone(Tone::Critical, &e.to_string());
+                    }
+                }
             }
             Command::SetPicture(name) => {
                 let Some(src) = crate::wallpaper::pictures_dir().map(|d| d.join(&name)) else {
@@ -2657,4 +2675,35 @@ mod tests {
         assert_eq!(parse_volume("Volume: 0.65 [MUTED]\n"), Some((65, true)));
         assert_eq!(parse_volume("nope"), None);
     }
+}
+
+/// Settings > Default apps: each kind of file, the app it opens with, and
+/// the apps it could.
+fn default_rows(config: &gh0st_core::config::Config) -> Vec<crate::model::pages::DefaultRow> {
+    use gh0st_core::handlers::{CATEGORIES, MimeApps, list_path};
+    let apps = apps::openers(&Dirs::from_env(), config);
+    let list = MimeApps::load(&list_path());
+    CATEGORIES
+        .iter()
+        .map(|c| {
+            let now = c.default(&apps, &list).map(|a| a.file.clone());
+            crate::model::pages::DefaultRow {
+                label: c.label,
+                icon: c.icon,
+                app: c
+                    .default(&apps, &list)
+                    .map(|a| a.entry.name.clone())
+                    .unwrap_or_default(),
+                picked: c.picked(&list),
+                choices: c
+                    .choices(&apps, &list)
+                    .into_iter()
+                    .map(|a| {
+                        let here = now.as_deref() == Some(a.file.as_str());
+                        (a.file.clone(), a.entry.name.clone(), here)
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
 }

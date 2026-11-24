@@ -50,6 +50,10 @@ pub enum PageId {
     HotspotQr,
     /// PNGs in ~/Pictures, to make one the wallpaper.
     Pictures,
+    /// Which app opens each kind of file.
+    DefaultApps,
+    /// The apps for one kind, by its index in `handlers::CATEGORIES`.
+    DefaultFor(usize),
     /// Every interface's addresses, MAC and link, to read.
     NetInfo,
 }
@@ -134,6 +138,10 @@ pub enum Command {
     SetCountry(String),
     /// An option of a choice, in the helper's word: "64", "power-saver".
     Choose(Choice, String),
+    /// Kind `0` opens with app `1` (a `.desktop` file name) from now on.
+    SetDefault(usize, String),
+    /// Kind `0` opens with the built-in pick again.
+    ResetDefault(usize),
     DeviceName,
     /// Type the zram swap size in MB.
     SwapSize,
@@ -468,7 +476,9 @@ pub fn icon(id: &PageId) -> &'static str {
         PageId::Sound => "volume-2",
         PageId::Appearance => "palette",
         PageId::Pictures => "images",
-        PageId::Apps | PageId::App(_) => "layout-grid",
+        PageId::Apps | PageId::App(_) | PageId::DefaultApps | PageId::DefaultFor(_) => {
+            "layout-grid"
+        }
         PageId::System | PageId::Advanced | PageId::Swap => "cpu",
         PageId::TimeZone(_) | PageId::CountryZones => "clock",
         PageId::Country(_) => "globe",

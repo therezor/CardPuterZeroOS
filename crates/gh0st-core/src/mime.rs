@@ -695,6 +695,19 @@ pub fn of_path(path: &Path) -> std::io::Result<&'static str> {
         .unwrap_or(if looks_like_text(&head) { TEXT } else { BINARY }))
 }
 
+/// Every type the table names, once each.
+pub fn known() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = EXT
+        .iter()
+        .chain(NAMES)
+        .chain(SUFFIXES)
+        .map(|(_, m)| *m)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// The direct parents of `mime`, the implicit ones last.
 pub fn parents(mime: &str) -> impl Iterator<Item = &'static str> + '_ {
     let listed = PARENTS
