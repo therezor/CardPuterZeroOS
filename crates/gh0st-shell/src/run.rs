@@ -21,10 +21,11 @@ use gh0st_core::child::{self, Devices, Stopped};
 use gh0st_core::config::{self, Config};
 use gh0st_core::esc::EscHold;
 use gh0st_core::evdev;
+use gh0st_core::handlers;
 use gh0st_core::job::{self, Job};
 use gh0st_core::keyring::{Answer, ToDaemon, ToShell};
 use gh0st_core::keys::{self, Key, Keyboard, State, code};
-use gh0st_core::link::Link;
+use gh0st_core::link::{self, Link};
 use gh0st_core::notify::{self, Dismissed, Notice};
 use gh0st_core::password::{self, Account, Tries};
 use gh0st_core::rfkill;
@@ -128,8 +129,8 @@ enum Pending {
     Pause,
     Resume(String),
     /// The app in front asked for another over the link: pause it, then
-    /// bring this one up.
-    Open(String),
+    /// bring this one up, opening these files.
+    Open(String, Vec<PathBuf>),
 }
 
 /// What a watched fd says changed. Only Linux has the watches.
@@ -336,9 +337,11 @@ struct Shell {
     panel_back: Screen,
     /// The toast is this notice, drawn with its app's picture.
     toast_notice: Option<notices::Row>,
-    /// (opened, opener): an app opened over another over the link. When
-    /// it closes, the opener comes back.
-    return_to: Option<(String, String)>,
+    /// (opened, opener), innermost last: an app opened over another over
+    /// the link. When it closes, the opener comes back, and so on down.
+    return_to: Vec<(String, String)>,
+    /// Every app that opens files, hidden ones too.
+    openers: Vec<App>,
     home_armed: bool,
     swallow_release: Option<u16>,
     rescan_at: Option<u64>,
@@ -520,7 +523,8 @@ impl Shell {
             panel: Panel::default(),
             panel_back: Screen::Home,
             toast_notice: None,
-            return_to: None,
+            return_to: Vec::new(),
+            openers: Vec::new(),
             home_armed: false,
             swallow_release: None,
             rescan_at: None,
@@ -1166,6 +1170,8 @@ impl Shell {
         let terminal_ok = desktop_first_token_runs(&self.terminal);
         self.apps = apps::scan(&self.dirs, &self.config, &self.pins);
         self.apps.retain(|a| !a.entry.terminal || terminal_ok);
+        self.openers = apps::openers(&self.dirs, &self.config);
+        self.openers.retain(|a| !a.entry.terminal || terminal_ok);
         let apps = std::mem::take(&mut self.apps);
         let entries = apps.iter().map(|a| self.entry_for(a)).collect();
         self.apps = apps;
@@ -1425,7 +1431,7 @@ impl Shell {
                 match self.pending.take() {
                     Some(Pending::Pause) => self.pause_front(now),
                     Some(Pending::Resume(id)) => self.resume(&id, now),
-                    Some(Pending::Open(id)) => self.open_over_front(&id, now),
+                    Some(Pending::Open(id, files)) => self.open_over_front(&id, &files, now),
                     None => {}
                 }
             }
@@ -1485,6 +1491,9 @@ impl Shell {
                 self.back = Back::Home;
             }
         }
+        // A link in the chain whose opener left can't lead back.
+        self.return_to
+            .retain(|(_, opener)| !gone.iter().any(|t| t.id == *opener));
         if gone.iter().any(|t| t.state == tasks::State::Front) {
             if self.pending == Some(Pending::Pause) {
                 self.pending = None;
@@ -1496,10 +1505,18 @@ impl Shell {
             self.take_screen();
             self.sound(Sound::Close);
             // An app opened over another goes back to it.
-            if let Some((opened, opener)) = self.return_to.take() {
-                let back = gone.iter().any(|t| t.id == opened)
-                    && self.tasks.get(&opener).is_some_and(|t| t.resumable());
-                if back {
+            let front_gone: Vec<&str> = gone
+                .iter()
+                .filter(|t| t.state == tasks::State::Front)
+                .map(|t| t.id.as_str())
+                .collect();
+            if let Some(at) = self
+                .return_to
+                .iter()
+                .rposition(|(opened, _)| front_gone.contains(&opened.as_str()))
+            {
+                let (_, opener) = self.return_to.remove(at);
+                if self.tasks.get(&opener).is_some_and(|t| t.resumable()) {
                     self.pending = Some(Pending::Resume(opener));
                 }
             }
@@ -2064,16 +2081,28 @@ impl Shell {
         let mut slept = false;
         let mut open = None;
         let mut sounds = Vec::new();
+        let mut open_file: Option<(Option<String>, PathBuf)> = None;
         if let Some(t) = self.tasks.iter_mut().find(|t| t.pgid == pgid) {
             let front = t.state == tasks::State::Front;
             while let Some(m) = t.link.as_ref().and_then(|l| l.recv()) {
                 match m.first().map(String::as_str) {
-                    Some("hello") => t.linked = true,
+                    Some("hello") => {
+                        t.linked = true;
+                        t.link_v = m.get(1).and_then(|v| v.parse().ok()).unwrap_or(1);
+                    }
                     Some("toast") => toasts.extend(m.get(1).cloned()),
                     // Only the app in front may bring another up.
                     Some("open") if front => open = m.get(1).cloned(),
                     Some("sound") if front => {
                         sounds.extend(m.get(1).and_then(|n| Sound::from_name(n)))
+                    }
+                    Some("open-file") if front => {
+                        open_file = m.get(1).map(|p| (None, link::path_of(p)));
+                    }
+                    Some("open-with") if front => {
+                        if let (Some(app), Some(p)) = (m.get(1), m.get(2)) {
+                            open_file = Some((Some(app.clone()), link::path_of(p)));
+                        }
                     }
                     Some("awake") => {
                         let on = m.get(1).is_some_and(|v| v == "1");
@@ -2104,6 +2133,9 @@ impl Shell {
         for s in sounds {
             self.app_sound(s);
         }
+        if let Some((app, path)) = open_file {
+            self.open_file(app.as_deref(), path);
+        }
         // What an app says stays private while the device is locked.
         if self.locked() {
             return;
@@ -2116,31 +2148,95 @@ impl Shell {
     /// An app in front asked, over the link, for app `name`.
     fn open_request(&mut self, name: &str) {
         let Some(app) = self.apps.iter().find(|a| a.answers_to(name)) else {
+            self.toast(format!("Can't find {name}"));
             return;
         };
         let front = self.tasks.front().map(|t| t.id.clone());
         if front.is_some() && front.as_deref() != Some(app.file.as_str()) {
-            self.pending = Some(Pending::Open(app.file.clone()));
+            self.pending = Some(Pending::Open(app.file.clone(), Vec::new()));
         }
     }
 
-    /// Pauses the app in front and brings up app `id` over it; when `id`
-    /// closes, the first comes back.
-    fn open_over_front(&mut self, id: &str, now: u64) {
-        let Some(app) = self.apps.iter().find(|a| a.file == id).cloned() else {
+    /// The app in front asked to open `path`, in `app` or in the app its
+    /// type opens with. A running target that speaks link version 2 gets
+    /// the file; one that doesn't is left alone, so nothing it holds is
+    /// lost.
+    fn open_file(&mut self, app: Option<&str>, path: PathBuf) {
+        let target = match app {
+            Some(name) => match self.openers.iter().find(|a| a.answers_to(name)) {
+                Some(a) => a.clone(),
+                None => return self.toast(format!("Can't find {name}")),
+            },
+            None => {
+                let Ok(mime) = gh0st_core::mime::of_path(&path) else {
+                    return self.toast("That file is gone".to_string());
+                };
+                let list = handlers::MimeApps::load(&handlers::list_path());
+                match handlers::default_for(&self.openers, &list, mime) {
+                    Some(a) => a.clone(),
+                    None => return self.toast("No app opens this file".to_string()),
+                }
+            }
+        };
+        let running = self.tasks.get(&target.file);
+        if running.is_some_and(|t| t.link_v < 2) {
+            return self.toast(format!("Close {} to open this file", target.entry.name));
+        }
+        let front = self.tasks.front().map(|t| t.id.clone());
+        if front.as_deref() == Some(target.file.as_str()) {
+            // The app in front opens it itself.
+            self.hand_files(&target.file, &[path]);
+            return;
+        }
+        if front.is_some() {
+            self.pending = Some(Pending::Open(target.file.clone(), vec![path]));
+        }
+    }
+
+    /// Sends `open` for each file to a running app on link version 2.
+    fn hand_files(&mut self, id: &str, files: &[PathBuf]) {
+        let Some(t) = self.tasks.get(id) else {
+            return;
+        };
+        let Some(l) = t.link.as_ref().filter(|_| t.link_v >= 2) else {
+            return;
+        };
+        for f in files {
+            if !l.send(&["open", &link::path_field(f)]) {
+                let name = t.name.clone();
+                self.toast(format!("{name} didn't take the file"));
+                return;
+            }
+        }
+    }
+
+    /// Pauses the app in front and brings up app `id` over it, opening
+    /// `files`; when `id` closes, the first comes back.
+    fn open_over_front(&mut self, id: &str, files: &[PathBuf], now: u64) {
+        let app = self
+            .apps
+            .iter()
+            .chain(&self.openers)
+            .find(|a| a.file == id)
+            .cloned();
+        let Some(app) = app else {
             return;
         };
         match self.park_front(now) {
             Ok(opener) => {
-                self.return_to = Some((app.file.clone(), opener));
+                self.return_to.retain(|(opened, _)| opened != id);
+                self.return_to.push((app.file.clone(), opener));
                 match self.tasks.get(id).map(|t| t.state) {
                     Some(tasks::State::Closing { .. }) => {
-                        self.return_to = None;
+                        self.return_to.pop();
                         self.take_screen();
                         self.toast(format!("{} is closing", app.entry.name));
                     }
-                    Some(_) => self.resume(id, now),
-                    None => self.launch(&app),
+                    Some(_) => {
+                        self.resume(id, now);
+                        self.hand_files(id, files);
+                    }
+                    None => self.launch(&app, files),
                 }
             }
             Err(Some(name)) => self.toast(format!("{name} can't be paused")),
@@ -2280,7 +2376,7 @@ impl Shell {
                 self.toast(format!("{} is closing", app.entry.name))
             }
             Some(_) => self.pending = Some(Pending::Resume(app.file.clone())),
-            None => self.launch(&app),
+            None => self.launch(&app, &[]),
         }
     }
 
@@ -2458,6 +2554,9 @@ impl Shell {
 
     fn toast(&mut self, text: impl Into<String>) {
         let text = text.into();
+        if self.debug {
+            eprintln!("gh0st shell: toast {text}");
+        }
         self.level = None;
         self.toast_notice = None;
         if self.app_front() {
@@ -2911,15 +3010,15 @@ impl Shell {
             }
             None => {
                 self.sound(Sound::Open);
-                self.launch(&app);
+                self.launch(&app, &[]);
             }
         }
     }
 
     /// Starts `app` in front. The shell lets go of the panel and keyboard
     /// until the app is paused or gone.
-    fn launch(&mut self, app: &App) {
-        let argv = child::argv(app, &self.terminal, &[]);
+    fn launch(&mut self, app: &App, files: &[PathBuf]) {
+        let argv = child::argv(app, &self.terminal, files);
         let fb_path = self.display.device();
         let kb_path = self.input.path();
         let dev = Devices {
@@ -2938,7 +3037,7 @@ impl Shell {
         // The app holds its own copy now.
         drop(app_end);
         if let Some(l) = &link {
-            l.send(&["hello", "1"]);
+            l.send(&["hello", &link::VERSION.to_string()]);
         }
         let pgid = match spawned {
             Ok(p) => p,
@@ -2971,6 +3070,7 @@ impl Shell {
             mem_kb: None,
             link,
             linked: false,
+            link_v: 0,
             background: app.entry.background,
             quiet: false,
             awake: false,

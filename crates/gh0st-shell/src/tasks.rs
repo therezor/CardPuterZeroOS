@@ -49,6 +49,8 @@ pub struct Task {
     pub link: Option<Link>,
     /// The app answered `hello`: it speaks the link.
     pub linked: bool,
+    /// The link version its `hello` gave. Version 2 takes files.
+    pub link_v: u32,
     /// `X-Gh0st-Background` in its `.desktop` file.
     pub background: bool,
     /// Running behind and told to `pause`: it draws nothing and reads no
@@ -247,6 +249,7 @@ mod tests {
             mem_kb: None,
             link: None,
             linked: false,
+            link_v: 0,
             background: false,
             quiet: false,
             awake: false,
