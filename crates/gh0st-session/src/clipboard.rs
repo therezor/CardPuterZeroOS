@@ -1,6 +1,7 @@
 //! `org.gh0st.Clipboard`: one clipboard every app shares. What was copied,
-//! by type, just under 1 MiB. Only the app in front, or a program it started,
-//! may set it or read it: an app behind can't watch what the user copies.
+//! by type, up to 1 MiB less 4 KiB. Only the app in front, or a program it
+//! started, may set it or read it: an app behind can't watch what the user
+//! copies.
 //! The shell names the app in front; on lock it clears the clipboard
 //! unless Settings keeps it.
 

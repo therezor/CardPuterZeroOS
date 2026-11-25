@@ -149,15 +149,18 @@ out=$(timeout 10 python3 "$work/look.py" "$work/.config/cardputerzero/config.jso
 echo "$out" | grep -q "org.freedesktop.appearance" || fail "SettingChanged: $out"
 
 echo "portal: Inhibit keeps the caller awake until it leaves"
+# ScreenSaver's test above wrote awake lines too: count the new ones.
+on=$(grep -c '^awake pid:[0-9]* 1$' "$work/out" || true)
+off=$(grep -c '^awake pid:[0-9]* 0$' "$work/out" || true)
 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
     --method org.freedesktop.portal.Inhibit.Inhibit '' 8 '{}' | grep -q request || fail "Inhibit"
 i=0
-until grep -q '^awake pid:[0-9]* 0$' "$work/out"; do
+until [ "$(grep -c '^awake pid:[0-9]* 0$' "$work/out")" -gt "$off" ]; do
     i=$((i + 1))
     [ $i -lt 40 ] || fail "Inhibit never ended"
     sleep 0.05
 done
-grep -q '^awake pid:[0-9]* 1$' "$work/out" || fail "Inhibit never began"
+[ "$(grep -c '^awake pid:[0-9]* 1$' "$work/out")" -gt "$on" ] || fail "Inhibit never began"
 
 echo "portal: Account answers after the user's yes"
 cat >"$work/account.py" <<'PY'

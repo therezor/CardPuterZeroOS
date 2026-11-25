@@ -18,9 +18,9 @@ use crate::settings::{self, Settings};
 
 /// Where the session daemon finds its end of the shell's socket pair.
 pub const ENV: &str = "GH0ST_SESSION_FD";
-/// Past this many bytes waiting for the bus, no calls are read: a caller
-/// that floods us with calls and never reads must not grow the queue to
-/// the point Conn gives up on the bus.
+/// Past this many bytes queued for the bus, calls wait unread. A caller
+/// that floods us and never reads can't grow the queue to where Conn gives
+/// up.
 const BACKED_UP: usize = gh0st_dbus::conn::MAX_QUEUED / 2;
 
 /// A caller as the bus first named it.

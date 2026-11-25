@@ -122,9 +122,9 @@ impl Who {
     }
 }
 
-/// Whether the program at `exe` is root's and only root may change it,
-/// and the path names, here, the very file process `pid` runs: a mount in
-/// the process's own namespace can't lend it an installed name.
+/// Whether the program at `exe` is root's, in a folder only root writes.
+/// The path must name, in our namespace, the very file the process runs:
+/// a mount of its own can't lend it an installed name.
 fn installed(proc_dir: &Path, exe: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     let root_only = |m: &std::fs::Metadata| m.uid() == 0 && m.mode() & 0o022 == 0;

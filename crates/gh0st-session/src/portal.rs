@@ -371,7 +371,7 @@ impl Question {
 }
 
 impl Portal {
-    /// Ids start at a random point: the shell may still hold a question
+    /// Ids start at a random point. The shell may still hold a question
     /// from a session that died, and its answer must not reach a new
     /// request.
     pub fn seed_ids(&mut self) {
@@ -1104,7 +1104,7 @@ impl Portal {
 }
 
 /// A regular file at `p`, opened for reading. A FIFO or a device would
-/// block the loop or wake hardware, so neither is opened: the path is
+/// block the loop or wake hardware, so neither is opened. The path is
 /// checked first, and the file again once open.
 fn open_regular(p: &Path) -> Option<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -1772,6 +1772,25 @@ mod tests {
                 .as_u32(),
             Some(0)
         );
+    }
+
+    #[test]
+    fn a_new_session_starts_its_ids_somewhere_else() {
+        let first = |p: &mut Portal| {
+            p.call(
+                &open_file(Value::props::<&str>([])),
+                ME,
+                Some(1),
+                &who("A"),
+                None,
+            );
+            shell_lines(p)[0][1].parse::<u64>().unwrap()
+        };
+        let (mut a, mut b) = (Portal::default(), Portal::default());
+        a.seed_ids();
+        b.seed_ids();
+        let (a, b) = (first(&mut a), first(&mut b));
+        assert!(a > 1 && b > 1 && a != b, "{a} {b}");
     }
 
     #[test]

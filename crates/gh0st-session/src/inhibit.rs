@@ -33,8 +33,8 @@ pub fn key(who: &Who, pid: Option<i32>, shell: i32) -> Option<String> {
 }
 
 /// What the shell was told is awake. It keeps one flag a task, so it hears
-/// a key only as the first of its holds starts or the last ends, from
-/// ScreenSaver and the portal together.
+/// a key only as its first hold starts or its last ends. ScreenSaver's and
+/// the portal's count together.
 #[derive(Default)]
 pub struct Told(HashSet<String>);
 
