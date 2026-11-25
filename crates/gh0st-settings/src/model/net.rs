@@ -411,11 +411,11 @@ mod tests {
 
     #[test]
     fn colons_in_a_value_stay_as_nmcli_prints_them() {
-        let out = "GENERAL.DEVICE:lan0\nGENERAL.TYPE:ethernet\nGENERAL.HWADDR:C2:2D:AB:49:13:5E\nIP6.ADDRESS[1]:fd56:18a6:a0a3::ed3/128\nIP6.ADDRESS[2]:fe80::df63:e932:b73e:3b8c/64\n";
+        let out = "GENERAL.DEVICE:eth0\nGENERAL.TYPE:ethernet\nGENERAL.HWADDR:C2:2D:AB:49:13:5E\nIP6.ADDRESS[1]:fd56:18a6:a0a3::ed3/128\nIP6.ADDRESS[2]:fe80::df63:e932:b73e:3b8c/64\n";
         let d = parse_devices(out);
         assert_eq!(d[0].mac, "c2:2d:ab:49:13:5e");
         let dns =
-            parse_devices("GENERAL.DEVICE:lan0\nIP6.DNS[1]:fd56:18a6:a0a3::1\nIP4.DOMAIN[1]:lan\n");
+            parse_devices("GENERAL.DEVICE:eth0\nIP6.DNS[1]:fd56:18a6:a0a3::1\nIP4.DOMAIN[1]:lan\n");
         assert_eq!(dns[0].dns6, ["fd56:18a6:a0a3::1"]);
         assert_eq!(dns[0].domain, "lan");
         assert_eq!(d[0].ipv6, ["fd56:18a6:a0a3::ed3/128"]);

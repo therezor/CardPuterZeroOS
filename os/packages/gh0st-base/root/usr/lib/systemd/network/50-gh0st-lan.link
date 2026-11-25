@@ -2,9 +2,10 @@
 # own: it gets a random one, and with it a new enx name, at every plug, as
 # when the side switch goes to Slave and back. NetworkManager's stable
 # address mixes in the name, so a fixed name keeps the address, and the
-# DHCP lease, the same.
+# DHCP lease, the same. The name is stock's: stock apps such as Ethernet
+# Tester and AP Tool look for eth0.
 [Match]
 Property=ID_VENDOR_ID=0fe6 ID_MODEL_ID=9900
 
 [Link]
-Name=lan0
+Name=eth0

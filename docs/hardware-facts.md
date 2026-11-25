@@ -65,8 +65,9 @@ From M5's documentation and device tree (Sources, below), not measured.
   chip (CoreChips `0fe6:9900`) has no address of its own and takes a random
   one at every plug. Its `enx` name followed it, and NetworkManager's stable
   wired address mixes in the name, so every plug got a new IP. The image
-  names it `lan0` (`50-gh0st-lan.link`): the address and the lease now stay
-  the same across plugs and boots.
+  names it `eth0` (`50-gh0st-lan.link`), stock's name, which stock apps
+  look for: the address and the lease now stay the same across plugs and
+  boots.
 - First boot of the Gh0st OS image (kernel `6.18.60+rpt-rpi-v8`, stock
   firmware), read off the card: userspace in 6.5 s, 9.3 s in all.
   vc4 takes DRM minor 0, the panel minor 1 at 8.5 s; `fb_load` waits for
@@ -158,7 +159,7 @@ From M5's documentation and device tree (Sources, below), not measured.
 - A pulse client on `native-nomic` lists no source; recording the sink's
   monitor fails with a protocol error. pipewire-pulse takes the socket from
   systemd's socket unit like `native`.
-- A CoreChips USB Ethernet adapter (`r8152`, `0fe6:9900`) has no address of
+- The CoreChips SR9900A Ethernet chip (`0fe6:9900`) has no address of
   its own: it comes up as `enx4adbd2912288`, a locally administered MAC,
   with NetworkManager's "Wired connection 1". Its stable-id is now fixed
   (`50-gh0st.conf`) so the lease survives a replug.
