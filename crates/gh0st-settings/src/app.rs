@@ -27,7 +27,9 @@ use std::path::{Path, PathBuf};
 use gh0st_app::helper::{self, Outcome};
 
 const HELPER: &str = helper::PATH;
-const LOGGING_DIR: &str = "/etc/systemd/journald.conf.d";
+/// Where journald looks for config, the folder that wins a shared file name
+/// first.
+const JOURNALD_DIRS: [&str; 4] = ["etc", "run", "usr/local/lib", "usr/lib"];
 const GOVERNOR: &str = "/sys/devices/system/cpu/cpufreq/policy0/scaling_governor";
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 
@@ -2609,20 +2611,40 @@ fn page_rows(t: &Theme, view: &View) -> usize {
     }
 }
 
-/// The logging level now: the last `Storage=` journald reads wins, as
-/// journald itself decides.
+/// The logging level now, as journald runs it.
 fn logs_level() -> Logs {
-    let mut files: Vec<std::path::PathBuf> = vec!["/etc/systemd/journald.conf".into()];
-    if let Ok(rd) = std::fs::read_dir(LOGGING_DIR) {
-        let mut drop_ins: Vec<_> = rd
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "conf"))
-            .collect();
-        drop_ins.sort();
-        files.extend(drop_ins);
+    match journald_storage(Path::new("/")).as_str() {
+        "none" => Logs::Off,
+        "volatile" => Logs::Ram,
+        "persistent" => Logs::Persistent,
+        _ if Path::new("/var/log/journal").is_dir() => Logs::Persistent,
+        _ => Logs::Ram,
+    }
+}
+
+/// The `Storage=` journald reads under `root`: the first main file found,
+/// then every drop-in by file name, where a file in an earlier folder hides
+/// one of the same name in a later. The last `Storage=` read wins. The
+/// image sets `none` in `/usr/lib`, so `/etc` alone isn't enough.
+fn journald_storage(root: &Path) -> String {
+    let main = JOURNALD_DIRS
+        .iter()
+        .map(|d| root.join(d).join("systemd/journald.conf"))
+        .find(|p| p.is_file());
+    let mut drop_ins = std::collections::BTreeMap::new();
+    for d in JOURNALD_DIRS.iter().rev() {
+        let Ok(rd) = std::fs::read_dir(root.join(d).join("systemd/journald.conf.d")) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "conf") {
+                drop_ins.insert(e.file_name(), p);
+            }
+        }
     }
     let mut storage = String::from("auto");
-    for f in files {
+    for f in main.into_iter().chain(drop_ins.into_values()) {
         if let Ok(s) = std::fs::read_to_string(f) {
             for l in s.lines() {
                 if let Some(v) = l.trim().strip_prefix("Storage=") {
@@ -2631,13 +2653,7 @@ fn logs_level() -> Logs {
             }
         }
     }
-    match storage.as_str() {
-        "none" => Logs::Off,
-        "volatile" => Logs::Ram,
-        "persistent" => Logs::Persistent,
-        _ if Path::new("/var/log/journal").is_dir() => Logs::Persistent,
-        _ => Logs::Ram,
-    }
+    storage
 }
 
 fn password_failure(out: &str) -> String {
@@ -2844,5 +2860,35 @@ mod tests {
         assert_eq!(parse_volume("Volume: 0.40\n"), Some((40, false)));
         assert_eq!(parse_volume("Volume: 0.65 [MUTED]\n"), Some((65, true)));
         assert_eq!(parse_volume("nope"), None);
+    }
+
+    /// The image turns logs off in `/usr/lib`; Settings writes a later
+    /// name in `/etc`.
+    #[test]
+    fn journald_storage_reads_every_folder_by_file_name() {
+        let root = std::env::temp_dir().join(format!("gh0st-journald-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let put = |p: &str, storage: &str| {
+            let p = root.join(p);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, format!("[Journal]\nStorage={storage}\n")).unwrap();
+        };
+        assert_eq!(journald_storage(&root), "auto");
+        put("etc/systemd/journald.conf", "persistent");
+        put("usr/lib/systemd/journald.conf.d/50-gh0st.conf", "none");
+        assert_eq!(journald_storage(&root), "none");
+        put(
+            "etc/systemd/journald.conf.d/zz-gh0st-logging.conf",
+            "volatile",
+        );
+        assert_eq!(journald_storage(&root), "volatile");
+        put("etc/systemd/journald.conf.d/50-gh0st.conf", "persistent");
+        put("run/systemd/journald.conf.d/zz-gh0st-logging.conf", "none");
+        assert_eq!(
+            journald_storage(&root),
+            "volatile",
+            "/etc hides /run's file of the same name"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
