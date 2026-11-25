@@ -1858,12 +1858,10 @@ impl Shell {
                 .iter()
                 .find(|t| t.pgid == pid && t.sandboxed && now < t.started + EARLY_EXIT_MS)
                 .filter(|_| libc::WIFEXITED(status) && libc::WEXITSTATUS(status) != 0)
-                .map(|t| t.name.clone());
+                .map(|t| (t.id.clone(), t.name.clone()));
             self.tasks.exited(pid);
-            if let Some(name) = early {
-                self.toast(format!(
-                    "{name} closed as it opened. Its sandbox may be why: Settings > Apps"
-                ));
+            if let Some((id, name)) = early {
+                sandbox_hint(&id, &name);
             }
             if let Some((_, j)) = self.jobs.iter_mut().find(|(_, j)| j.pid == pid) {
                 j.exited(status);
@@ -4379,6 +4377,29 @@ impl Shell {
 }
 
 /// `gh0st audio VERB [PGID]` as a child, since pactl can take a while.
+/// Says, as a notice that stays, that app `id` may have failed for want of
+/// what its sandbox keeps out. Enter opens Settings.
+fn sandbox_hint(id: &str, name: &str) {
+    let stem = id.strip_suffix(".desktop").unwrap_or(id);
+    let tag: String = stem
+        .chars()
+        .map(|c| match c.to_ascii_lowercase() {
+            c @ ('a'..='z' | '0'..='9' | '-' | '_') => c,
+            _ => '_',
+        })
+        .collect();
+    let n = Notice {
+        app: "settings".into(),
+        tag: format!("sandbox-{tag}"),
+        title: format!("{name} closed as it opened"),
+        body: format!("Its sandbox may be why. Settings > Apps > {name} turns Isolation off."),
+        tone: notify::Tone::Warning,
+        time: notify::now_secs(),
+        ..Notice::default()
+    };
+    let _ = notify::post(&notify::user_dir(), &n);
+}
+
 /// A sandboxed app that fails sooner than this after its start gets a
 /// hint that its sandbox may be why.
 const EARLY_EXIT_MS: u64 = 5000;
