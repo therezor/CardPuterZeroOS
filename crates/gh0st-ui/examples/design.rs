@@ -412,7 +412,7 @@ fn chip_states(t: &Theme) -> Canvas {
         [
             (l("check", "Join", Look::Disabled), "off"),
             (l("search", "Find", Look::Pressed), "down"),
-            (l("square", "Stop", Look::Danger), "danger"),
+            (l("arrow-right", "Next", Look::MainPressed), "down"),
             (l("check", "Join", Look::Busy), "busy"),
             (menu(), "icon"),
         ],

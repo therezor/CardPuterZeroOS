@@ -232,12 +232,12 @@ alone; a chip with no word, the menu's ≡, shows its icon.
 | State | Looks | For |
 |---|---|---|
 | normal | plain word, a muted bar | most actions |
-| main, on | accent word, an accent bar | the page's main action, or a toggle that is on |
+| main, on | accent word, a bar in the text colour (white on a dark palette) | the page's main action, or a toggle that is on |
 | danger | red word, a red bar | Forget, Stop, Close |
 | danger, held | the bar runs the chip's width and fills red | Erase, close all apps: hold it 0.7 s |
 | armed | red word, a thicker red bar | pressed once, press again |
 | disabled | faint word, a `border` bar | can't be used now; the key does nothing |
-| pressed | the bar thickens, the word drops a row | while its key is down |
+| pressed | the bar turns accent; nothing moves | while its key is down |
 | busy | the word and "…", muted | working: no second press |
 
 Rows change the chips. On a choice row, 5 and 7 read Prev and Next and z and

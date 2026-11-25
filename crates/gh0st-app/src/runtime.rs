@@ -1640,7 +1640,11 @@ impl Runtime {
                         _ if self.pressed.is_some_and(|p| p.1 == n)
                             && !matches!(c.look, Look::Danger | Look::DangerMain) =>
                         {
-                            Look::Pressed
+                            if matches!(c.look, Look::Main | Look::On) {
+                                Look::MainPressed
+                            } else {
+                                Look::Pressed
+                            }
                         }
                         _ => c.look,
                     };

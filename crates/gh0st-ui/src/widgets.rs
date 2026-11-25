@@ -531,6 +531,9 @@ pub enum Look {
     Disabled,
     /// While its key is down.
     Pressed,
+    /// A main or on chip while its key is down: as Pressed, keeping its
+    /// accent word.
+    MainPressed,
     /// Held to confirm, filling red: 0 to 100.
     Hold(u8),
     /// Working: no second press.
@@ -613,9 +616,9 @@ fn chip_ink(c: &mut Canvas, t: &Theme, r: Rect, ch: &Chip, ink: Color, icon_ink:
 }
 
 /// One chip: its word over a short bar, centred on `cx` over its key, no
-/// fill behind. The bar says what the word is: muted for most, accent for
-/// the main action, red for danger. Pressed, the bar thickens and the word
-/// drops a row, as a key does. `w` is the room it may take.
+/// fill behind. The bar says what the word is: muted for most, the text
+/// colour for the main action, red for danger. Pressed, the bar turns
+/// accent and nothing moves. `w` is the room it may take.
 pub fn chip(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32) {
     chip_on(c, t, cx, top, ch, w, false);
 }
@@ -633,17 +636,17 @@ fn chip_on(c: &mut Canvas, t: &Theme, cx: i32, top: i32, ch: &Chip, w: i32, shad
         ch
     };
     let k = &t.c;
-    let sink = i32::from(ch.look == Look::Pressed);
-    let r = Rect::new(cx - w / 2, top + sink, w, t.m.chip_h);
+    let r = Rect::new(cx - w / 2, top, w, t.m.chip_h);
     // Word, icon, bar and its height.
     let quiet = mix(k.bg, k.fg, 110);
     let (ink, icon_ink, bar, bar_h) = match ch.look {
         Look::Normal => (k.fg, k.accent, quiet, 2),
-        Look::Main | Look::On => (k.accent, k.accent, k.accent, 2),
+        Look::Main | Look::On => (k.accent, k.accent, k.fg, 2),
         Look::Danger | Look::Hold(_) => (k.critical, k.critical, k.critical, 2),
         Look::DangerMain => (k.critical, k.critical, k.critical, 3),
         Look::Disabled => (k.disabled(), k.disabled(), k.border, 2),
-        Look::Pressed => (k.fg, k.accent, k.accent, 3),
+        Look::Pressed => (k.fg, k.accent, k.accent, 2),
+        Look::MainPressed => (k.accent, k.accent, k.accent, 2),
         Look::Busy => (k.muted, k.muted, k.muted, 2),
     };
     let foot = top + t.m.chip_h + t.m.chip_foot;
@@ -2031,6 +2034,37 @@ mod tests {
             for selected in [false, true] {
                 let fill = neutral_fill(&t, selected);
                 assert!(contrast(p.accent, fill) >= 3.0, "{} {selected}", p.name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_pressed_chip_only_changes_its_bar() {
+        let pairs = [
+            (Look::Normal, Look::Pressed),
+            (Look::Main, Look::MainPressed),
+            (Look::On, Look::MainPressed),
+        ];
+        for p in PALETTES {
+            let t = Theme::new(*p);
+            let top = t.m.height - t.m.chip_foot - t.m.chip_h;
+            let bar_top = top + t.m.chip_h + t.m.chip_foot - 2;
+            for (icon, word) in [("search", "Find"), ("aperture", "")] {
+                for (up, down) in pairs {
+                    let draw = |look| {
+                        let mut c = Canvas::new(t.m.width, t.m.height);
+                        let mut chips = [Chip::default(); 5];
+                        chips[2] = Chip { icon, word, look };
+                        action_bar(&mut c, &t, &chips);
+                        c
+                    };
+                    let (a, b) = (draw(up), draw(down));
+                    for y in 0..bar_top {
+                        assert_eq!(a.row(y), b.row(y), "{} {word} {up:?}: row {y}", p.name);
+                    }
+                    let bar_changed = (bar_top..t.m.height).any(|y| a.row(y) != b.row(y));
+                    assert!(bar_changed, "{} {word} {up:?}", p.name);
+                }
             }
         }
     }
