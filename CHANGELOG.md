@@ -12,8 +12,10 @@
 - 📷 **Film looks** for photos in Camera, and a shutter that answers while
   the last photo saves.
 - 🔔 The switcher shows a bell when notifications wait.
+- 🌍 Setup and Settings find your country as you type its name.
 - 🐛 Fixes: Camera and video use less memory, the first sound after the
-  screen wakes plays whole, and an app that pauses late comes back.
+  screen wakes plays whole, an app that pauses late comes back, and
+  Settings shows whether logs are really kept.
 
 ## v0.3.0 alpha
 
