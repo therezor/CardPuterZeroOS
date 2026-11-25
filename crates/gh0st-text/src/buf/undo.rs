@@ -32,6 +32,9 @@ pub(crate) struct Undo {
     /// The last step takes more edits until sealed.
     open: bool,
     next: u64,
+    /// Names the text when no step is left: 0 as opened, else the last
+    /// step dropped, so undoing to there still reads as changed.
+    floor: u64,
 }
 
 impl Undo {
@@ -70,7 +73,7 @@ impl Undo {
         });
         self.open = true;
         if self.done.len() > STEPS {
-            self.done.remove(0);
+            self.floor = self.done.remove(0).id;
         }
     }
 
@@ -80,7 +83,32 @@ impl Undo {
 
     /// The text as it stands: the last step's id, 0 for the text as opened.
     pub fn state(&self) -> u64 {
-        self.done.last().map_or(0, |g| g.id)
+        self.done.last().map_or(self.floor, |g| g.id)
+    }
+
+    /// Forgets every step. The text keeps its name.
+    pub fn clear(&mut self) {
+        self.floor = self.state();
+        self.done.clear();
+        self.undone.clear();
+        self.open = false;
+    }
+
+    /// Marks in `used` each file a step's pieces read.
+    pub fn mark_stores(&self, used: &mut [bool]) {
+        let pieces = self
+            .done
+            .iter()
+            .chain(&self.undone)
+            .flat_map(|g| &g.splices)
+            .flat_map(|s| s.old.iter().chain(&s.new));
+        for p in pieces {
+            if let Src::Orig(g) = p.src {
+                if let Some(u) = used.get_mut(g as usize) {
+                    *u = true;
+                }
+            }
+        }
     }
 
     pub fn take_undo(&mut self) -> Option<Step> {

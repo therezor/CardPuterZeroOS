@@ -101,6 +101,9 @@ pub struct Saver {
     off: u64,
     len: u64,
     mode: Option<u32>,
+    /// The text's version at the start. Written after a change, the file
+    /// would hold some of the old text and some of the new.
+    version: u64,
 }
 
 impl Saver {
@@ -109,6 +112,7 @@ impl Saver {
     pub fn start(buf: &mut Buffer, path: &Path, how: Way) -> io::Result<Saver> {
         let target = target(path)?;
         let len = buf.len();
+        let version = buf.version();
         let mode = std::fs::metadata(&target)
             .ok()
             .map(|m| m.permissions().mode() & 0o7777);
@@ -138,6 +142,7 @@ impl Saver {
                     off: 0,
                     len,
                     mode,
+                    version,
                 })
             }
             Way::InPlace => {
@@ -158,6 +163,7 @@ impl Saver {
                     off: 0,
                     len,
                     mode: None,
+                    version,
                 })
             }
         }
@@ -169,8 +175,12 @@ impl Saver {
     }
 
     /// Writes about `budget` bytes. True once the save is done: the file
-    /// is synced and in place, and `buf` reads from it.
+    /// is synced and in place, and `buf` reads from it. An error once the
+    /// text has changed since the start.
     pub fn step(&mut self, buf: &mut Buffer, budget: u64) -> io::Result<bool> {
+        if buf.version() != self.version {
+            return Err(io::Error::other("the text changed while saving"));
+        }
         if self.way == Way::Replace && self.off < self.len {
             let end = self.len.min(self.off + budget.max(1));
             let mut err = None;
@@ -226,9 +236,12 @@ impl Saver {
             }
             Way::InPlace | Way::ReadOnly => {
                 let mem = self.mem.take().unwrap_or_default();
-                self.file.write_all(&mem)?;
-                self.file.set_len(mem.len() as u64)?;
-                self.file.sync_all()?;
+                // The old bytes go, and undo and the pieces read them.
+                buf.undo.clear();
+                if let Err(e) = write_over(&mut self.file, &mem) {
+                    buf.hold(mem);
+                    return Err(e);
+                }
                 self.off = self.len;
             }
         }
@@ -247,6 +260,12 @@ impl Drop for Saver {
     }
 }
 
+fn write_over(file: &mut File, text: &[u8]) -> io::Result<()> {
+    file.write_all(text)?;
+    file.set_len(text.len() as u64)?;
+    file.sync_all()
+}
+
 /// Saves `buf` to `path` in one go.
 pub fn save(buf: &mut Buffer, path: &Path) -> io::Result<()> {
     let how = way(path)?;
@@ -262,7 +281,7 @@ impl Buffer {
         let g = self.stores.len() as u32;
         let len = store.len();
         self.stores.push(store);
-        // The index stays: the text is the same.
+        // The index and the version stay: the text is the same.
         self.pieces.clear();
         self.starts.clear();
         if len > 0 {
@@ -274,12 +293,32 @@ impl Buffer {
             self.starts.push(0);
         }
         self.len = len;
-        self.version += 1;
-        if !self.undo.can_undo() && !self.undo.can_redo() {
-            for s in &mut self.stores[..g as usize] {
+        // A file no step reads closes, and a deleted one frees its space.
+        let mut used = vec![false; self.stores.len()];
+        used[g as usize] = true;
+        self.undo.mark_stores(&mut used);
+        for (s, used) in self.stores.iter_mut().zip(used) {
+            if !used {
                 *s = Store::empty();
             }
         }
+    }
+
+    /// An in-place save failed part way: the file is lost, so the text
+    /// is held here, whole.
+    fn hold(&mut self, text: Vec<u8>) {
+        self.pieces.clear();
+        self.starts.clear();
+        if !text.is_empty() {
+            self.pieces.push(Piece {
+                src: Src::Add,
+                off: self.add.len() as u64,
+                len: text.len() as u64,
+            });
+            self.starts.push(0);
+        }
+        self.len = text.len() as u64;
+        self.add.extend_from_slice(&text);
     }
 }
 
@@ -352,6 +391,61 @@ mod tests {
         save(&mut b, &a).unwrap();
         assert_eq!(std::fs::read(&other).unwrap(), b"both\n");
         assert_eq!(all(&mut b), b"both\n");
+    }
+
+    #[test]
+    fn an_in_place_save_starts_undo_afresh() {
+        let d = dir("hard-undo");
+        let a = d.join("a.txt");
+        std::fs::write(&a, "shared\n").unwrap();
+        std::fs::hard_link(&a, d.join("b.txt")).unwrap();
+        let mut b = Buffer::open(&a).unwrap();
+        b.replace(0..6, b"both").unwrap();
+        let state = b.state();
+        assert_eq!(way(&a).unwrap(), Way::InPlace);
+        save(&mut b, &a).unwrap();
+        // The bytes the step took out were written over.
+        assert!(!b.can_undo());
+        assert_eq!(b.state(), state, "still the text as saved");
+        b.shrink();
+        assert_eq!(all(&mut b), b"both\n");
+    }
+
+    #[test]
+    fn a_save_stops_when_the_text_changes_under_it() {
+        let d = dir("changed");
+        let p = d.join("big.txt");
+        let text = vec![b'a'; 3 << 20];
+        std::fs::write(&p, &text).unwrap();
+        let mut b = Buffer::open(&p).unwrap();
+        b.insert(0, b"b").unwrap();
+        let mut s = Saver::start(&mut b, &p, Way::Replace).unwrap();
+        assert!(!s.step(&mut b, 1 << 20).unwrap());
+        b.delete(0..2 << 20).unwrap();
+        assert!(s.step(&mut b, 1 << 20).is_err());
+        drop(s);
+        assert_eq!(std::fs::read(&p).unwrap(), text);
+        assert_eq!(std::fs::read_dir(&d).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn old_files_close_once_no_undo_step_reads_them() {
+        let d = dir("stores");
+        let p = d.join("f.txt");
+        std::fs::write(&p, "hello\n").unwrap();
+        let mut b = Buffer::open(&p).unwrap();
+        let open = |b: &Buffer| b.stores.iter().filter(|s| !s.is_empty()).count();
+        // Undo puts back an "h" read from the file as opened.
+        b.delete(0..1).unwrap();
+        save(&mut b, &p).unwrap();
+        for _ in 0..3 {
+            b.seal();
+            b.insert(0, b"x").unwrap();
+            save(&mut b, &p).unwrap();
+        }
+        assert_eq!(open(&b), 2, "the first and the last");
+        while b.undo().is_some() {}
+        assert_eq!(all(&mut b), b"hello\n");
     }
 
     #[test]

@@ -739,6 +739,18 @@ mod tests {
     }
 
     #[test]
+    fn undoing_past_the_oldest_kept_step_still_reads_as_changed() {
+        let mut b = Buffer::from_bytes(b"");
+        for i in 0..1001 {
+            b.insert(i, b"x").unwrap();
+            b.seal();
+        }
+        while b.undo().is_some() {}
+        assert_eq!(all(&mut b), b"x", "the first step is gone");
+        assert_ne!(b.state(), 0, "so the text is not as opened");
+    }
+
+    #[test]
     fn bytes_stay_exact() {
         let raw = b"crlf\r\nbad \xff\xfe\nhalf \xe2\x82\nno newline";
         let p = temp("exact", raw);

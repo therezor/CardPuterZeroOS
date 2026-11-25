@@ -41,7 +41,8 @@ cargo run --release -p gh0st-text --example bench -- FILE   # timings
 - The text is a piece table over the file and a buffer of what was typed.
   An edit touches a few pieces, never the file, whatever its size.
 - Undo takes back a typing run, a paste or a command as one step. It keeps
-  1000 steps and reaches back past a save.
+  1000 steps and reaches back past a save, but not past one written in
+  place.
 - Enter keeps the line's indent, and adds one after `{`, `(` or `[`, and
   after `:` in Python and YAML. Between a pair it opens a line inside. A
   closer typed on a line of blanks steps back one indent. The indent is a
