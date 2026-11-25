@@ -142,10 +142,14 @@ impl Prompts {
         self.reset();
     }
 
-    /// Everything goes: the shell or the daemon went away.
-    pub fn clear_all(&mut self) {
-        self.queue.clear();
-        self.reset();
+    /// Keeps only the asks whose origin `keep` takes: a daemon went away,
+    /// and its questions with it.
+    pub fn retain(&mut self, keep: impl Fn(&Origin) -> bool) {
+        let front = self.queue.front().is_some_and(|q| !keep(&q.origin));
+        self.queue.retain(|q| keep(&q.origin));
+        if front {
+            self.reset();
+        }
     }
 
     /// Where the colour picker's crosshair is.
@@ -623,6 +627,30 @@ mod tests {
         );
         p.checked_wrong();
         assert!(p.wrong && !p.checking);
+    }
+
+    #[test]
+    fn a_daemon_that_died_takes_only_its_own_questions() {
+        let mut p = Prompts::default();
+        p.push(pw(Origin::Daemon(3)));
+        p.push(Ask {
+            origin: Origin::Portal(1, "account"),
+            kind: Kind::Approve {
+                app: "Chat".into(),
+                what: "see your name".into(),
+            },
+        });
+        p.push(approve(4));
+        p.seen(1000);
+        p.key(&key(30, Some('a')), T);
+        p.retain(|o| matches!(o, Origin::Portal(..)));
+        assert_eq!(
+            p.current().map(|a| &a.origin),
+            Some(&Origin::Portal(1, "account"))
+        );
+        assert_eq!(p.typed(), 0, "what was typed went with its question");
+        p.retain(|o| !matches!(o, Origin::Portal(..)));
+        assert!(p.is_empty());
     }
 
     #[test]

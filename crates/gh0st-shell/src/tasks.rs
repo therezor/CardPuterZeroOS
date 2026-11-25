@@ -58,6 +58,9 @@ pub struct Task {
     pub quiet: bool,
     /// Sent `awake 1`: the screen stays on while it is in front.
     pub awake: bool,
+    /// `gh0st session` holds an inhibitor for it: as `awake`, kept apart
+    /// so a session that restarts lets go of its own only.
+    pub inhibited: bool,
     /// Holds the keyboard itself or can't be paused: the shell can't see
     /// its keys or stop its drawing, so the screen stays on until it
     /// leaves the front.
@@ -255,6 +258,7 @@ mod tests {
             background: false,
             quiet: false,
             awake: false,
+            inhibited: false,
             keeps_on: false,
             sound_parked: false,
         }

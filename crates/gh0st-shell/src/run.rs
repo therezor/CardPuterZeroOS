@@ -147,6 +147,9 @@ enum PortalAsk {
 
 /// Task ids of the choosers: never an app's own file name.
 const PICKER: &str = "gh0st-picker-";
+/// Portal questions over a frozen screen or a picture at once. Each keeps
+/// a frame and its backdrop, about 300 KB; past this, the ask is refused.
+const FROZEN_MAX: usize = 4;
 
 /// What a watched fd says changed. Only Linux has the watches.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -245,11 +248,14 @@ struct Shell {
     canvas: Canvas,
     /// Home's and the lock's picture, baked; none when it is off.
     wall: Option<wallpaper::Baked>,
-    /// A wallpaper an app asked for, or the frozen screen, shown behind
-    /// its question.
-    preview: Option<(u64, wallpaper::Baked)>,
-    /// The frozen screen a portal question is about.
-    shot: Option<(u64, Canvas)>,
+    /// Wallpapers apps asked for, or frozen screens, by portal request:
+    /// each shown behind its question.
+    preview: Vec<(u64, wallpaper::Baked)>,
+    /// The frozen screens portal questions are about, by request.
+    shot: Vec<(u64, Canvas)>,
+    /// Choosers of a `gh0st session` that died: the new one may reuse
+    /// their ids, so their end is not told to it.
+    orphans: Vec<String>,
     /// The process group `gh0st session` was last told is in front, for
     /// the clipboard; -1 before it knows.
     front_told: i32,
@@ -589,8 +595,9 @@ impl Shell {
             prompt_pid: 0,
             config,
             wall: None,
-            preview: None,
-            shot: None,
+            preview: Vec::new(),
+            shot: Vec::new(),
+            orphans: Vec::new(),
             front_told: -1,
             wall_from: None,
         };
@@ -830,9 +837,7 @@ impl Shell {
                             if let Ok(n) = id.parse() {
                                 self.prompts.cancel_portal(n);
                                 self.drop_preview(n);
-                                if self.shot.as_ref().is_some_and(|(i, _)| *i == n) {
-                                    self.shot = None;
-                                }
+                                self.take_shot(n);
                             }
                             self.portal.retain(|a| match a {
                                 PortalAsk::Pick { id: i, .. } | PortalAsk::Open { id: i, .. } => {
@@ -939,9 +944,9 @@ impl Shell {
         let m = self.t.m;
         let pic = wallpaper::load(path, m.width as usize, m.height as usize);
         match (id.parse::<u64>(), pic, self.front_asker(pid, app)) {
-            (Ok(n), Some(pic), Some(app)) => {
+            (Ok(n), Some(pic), Some(app)) if self.preview.len() < FROZEN_MAX => {
                 let baked = wallpaper::bake(&pic, &self.t.c, m.bar_h as usize, m.hint_h as usize);
-                self.preview = Some((n, baked));
+                self.preview.push((n, baked));
                 self.prompts.push(Ask {
                     origin: Origin::Portal(n, "wallpaper"),
                     kind: Kind::Approve {
@@ -971,10 +976,17 @@ impl Shell {
     }
 
     fn drop_preview(&mut self, id: u64) {
-        if self.preview.as_ref().is_some_and(|(i, _)| *i == id) {
-            self.preview = None;
+        let had = self.preview.len();
+        self.preview.retain(|(i, _)| *i != id);
+        if self.preview.len() != had {
             self.full_flush = true;
         }
+    }
+
+    /// The frozen screen of request `id`, which no longer keeps it.
+    fn take_shot(&mut self, id: u64) -> Option<Canvas> {
+        let at = self.shot.iter().position(|(i, _)| *i == id)?;
+        Some(self.shot.swap_remove(at).1)
     }
 
     /// The answer to a portal's question. A screenshot is saved now, and
@@ -986,10 +998,10 @@ impl Shell {
             Answer::Deny => "deny",
         };
         self.drop_preview(id);
-        let shot = self.shot.take().filter(|(i, _)| *i == id);
+        let shot = self.take_shot(id);
         let mut fields = vec![verb.to_string(), id.to_string()];
         if verb == "shot" && answer != Answer::Deny {
-            match shot.map(|(_, c)| save_screenshot(&c)) {
+            match shot.map(|c| save_screenshot(&c)) {
                 Some(Ok(p)) => fields.push(link::path_field(&p)),
                 Some(Err(e)) => {
                     self.toast(format!("Screenshot failed: {e}"));
@@ -1015,9 +1027,9 @@ impl Shell {
             None => t.id == file,
         });
         if let Some(t) = task {
-            t.awake = on;
+            t.inhibited = on;
         }
-        if on && self.tasks.front().is_some_and(|t| t.awake) {
+        if on && self.tasks.front().is_some_and(|t| t.inhibited) {
             self.undim();
         }
     }
@@ -1051,18 +1063,47 @@ impl Shell {
         }
     }
 
-    /// A daemon died and was started again: what the keyring held is gone,
-    /// and so are its questions.
+    /// A daemon died and was started again: what it held is gone, and so
+    /// are its questions. The other's stay.
     fn daemon_died(&mut self, w: Which) {
-        if w == Which::Session {
-            self.front_told = -1;
-        }
-        if w == Which::Keyring {
-            self.keyring_open = false;
-            self.prompts.clear_all();
-            if self.screen == Screen::Prompt {
-                self.prompt_leave();
+        match w {
+            Which::Session => {
+                self.front_told = -1;
+                self.drop_portal();
             }
+            Which::Keyring => {
+                self.keyring_open = false;
+                self.prompts.retain(|o| matches!(o, Origin::Portal(..)));
+            }
+        }
+        if self.screen == Screen::Prompt && self.prompts.is_empty() {
+            self.prompt_leave();
+        }
+    }
+
+    /// The old `gh0st session` is gone and the new one numbers requests
+    /// afresh: nothing kept for the old ones may answer the new.
+    fn drop_portal(&mut self) {
+        self.prompts.retain(|o| !matches!(o, Origin::Portal(..)));
+        self.portal.clear();
+        self.shot.clear();
+        if !self.preview.is_empty() {
+            self.preview.clear();
+            self.full_flush = true;
+        }
+        let now = rt::now_ms();
+        let choosers: Vec<String> = self
+            .tasks
+            .iter()
+            .filter(|t| t.id.starts_with(PICKER))
+            .map(|t| t.id.clone())
+            .collect();
+        for id in choosers {
+            self.tasks.close(&id, now);
+            self.orphans.push(id);
+        }
+        for t in self.tasks.iter_mut() {
+            t.inhibited = false;
         }
     }
 
@@ -1304,10 +1345,8 @@ impl Shell {
             prompt::Action::Color(origin, (x, y)) => {
                 if let Origin::Portal(id, _) = origin {
                     let picked = self
-                        .shot
-                        .take()
-                        .filter(|(i, _)| *i == id)
-                        .map(|(_, c)| gh0st_ui::color::to_rgb8(c.get(x, y)));
+                        .take_shot(id)
+                        .map(|c| gh0st_ui::color::to_rgb8(c.get(x, y)));
                     let id = id.to_string();
                     match picked {
                         Some([r, g, b]) => self.services.say_session(&[
@@ -1826,6 +1865,10 @@ impl Shell {
             }
         }
         for t in gone.iter().filter(|t| t.id.starts_with(PICKER)) {
+            if let Some(i) = self.orphans.iter().position(|o| *o == t.id) {
+                self.orphans.swap_remove(i);
+                continue;
+            }
             let id = &t.id[PICKER.len()..];
             self.services.say_session(&["gone", id]);
         }
@@ -2072,7 +2115,7 @@ impl Shell {
         }
         let d = self.dark_ms?;
         let d = match self.tasks.front() {
-            Some(t) if t.awake || t.keeps_on => return None,
+            Some(t) if t.awake || t.inhibited || t.keeps_on => return None,
             Some(_) => d,
             None if self.screen == Screen::Locked => d.min(LOCK_DARK_MS),
             None => d,
@@ -3023,13 +3066,16 @@ impl Shell {
         let Ok(n) = id.parse::<u64>() else {
             return;
         };
-        let Some(app) = self.front_asker(pid, app) else {
+        let Some(app) = self
+            .front_asker(pid, app)
+            .filter(|_| self.shot.len() < FROZEN_MAX)
+        else {
             self.services.say_session(&[verb, id, "deny"]);
             return;
         };
         let shot = self.grab();
         if quiet {
-            self.shot = Some((n, shot));
+            self.shot.push((n, shot));
             return self.answer_portal(n, verb, Answer::Once);
         }
         let m = self.t.m;
@@ -3051,8 +3097,8 @@ impl Shell {
                 lock: b,
             }
         };
-        self.preview = Some((n, ground));
-        self.shot = Some((n, shot));
+        self.preview.push((n, ground));
+        self.shot.push((n, shot));
         let kind = match verb {
             "color" => Kind::PickColor,
             _ => Kind::Approve {
@@ -3561,6 +3607,7 @@ impl Shell {
             background: app.entry.background,
             quiet: false,
             awake: false,
+            inhibited: false,
             keeps_on: false,
             sound_parked: false,
         });
@@ -3997,8 +4044,12 @@ impl Shell {
             Screen::Switcher => Some(self.switcher.selected()),
             _ => Some(0),
         };
-        let previewing = match (&self.preview, self.prompts.current()) {
-            (Some((id, b)), Some(a)) if origin_id(&a.origin) == *id => Some(b.home.clone()),
+        let previewing = match self.prompts.current().map(|a| &a.origin) {
+            Some(Origin::Portal(id, _)) => self
+                .preview
+                .iter()
+                .find(|(i, _)| i == id)
+                .map(|(_, b)| b.home.clone()),
             _ => None,
         };
         let ground = self.wall.as_ref().and_then(|w| match self.screen {

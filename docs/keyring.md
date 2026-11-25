@@ -17,7 +17,10 @@ other Linux app that keeps secrets use it unchanged.
 
 The shell starts both on socket pairs before any app, and starts one again
 the moment it dies, so no app gets time to take its bus names. A dead shell
-takes them with it.
+takes them with it. A daemon that died takes its questions with it, and the
+other's stay. A new `gh0st session` numbers its requests afresh: the shell
+drops the old one's questions, closes its choosers and lets go of its
+inhibitors.
 
 ## The vault
 
