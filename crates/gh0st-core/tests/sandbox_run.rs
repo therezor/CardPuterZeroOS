@@ -8,12 +8,14 @@ fn an_app_in_its_sandbox_keeps_its_files_and_reaches_nothing_else() {
     use std::path::Path;
     use std::process::Command;
 
+    // A container masks parts of /proc, and then refuses a fresh one.
     let works = Command::new(BWRAP)
-        .args(["--unshare-user", "--dev-bind", "/", "/", "true"])
+        .args(["--unshare-user", "--unshare-pid", "--dev-bind", "/", "/"])
+        .args(["--proc", "/proc", "true"])
         .status()
         .is_ok_and(|s| s.success());
     if !works {
-        eprintln!("skipped: no bwrap, or no user namespaces");
+        eprintln!("skipped: no bwrap, no user namespaces, or no fresh /proc");
         return;
     }
     let root = std::env::temp_dir().join(format!("gh0st-sb-run-{}", std::process::id()));
