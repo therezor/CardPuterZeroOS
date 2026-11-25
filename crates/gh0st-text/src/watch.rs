@@ -23,11 +23,22 @@ pub struct FileWatch {
 
 impl FileWatch {
     pub fn new(path: &Path) -> FileWatch {
+        FileWatch::since(path, Disk::of(path))
+    }
+
+    /// A watch that takes `known` as the file we read: a change made
+    /// since then shows at the first check.
+    pub fn since(path: &Path, known: Option<Disk>) -> FileWatch {
         FileWatch {
             inner: open(path.parent().unwrap_or(Path::new("/"))),
             path: path.to_path_buf(),
-            known: Disk::of(path),
+            known,
         }
+    }
+
+    /// The file as we last knew it.
+    pub fn known(&self) -> Option<Disk> {
+        self.known
     }
 
     /// For the page to watch. None off Linux.

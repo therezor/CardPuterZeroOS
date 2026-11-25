@@ -7,7 +7,7 @@
 //! - View and edit: a file opens in View, where letters move and chips
 //!   find, go to a line and save. Enter or `i` edits; Esc goes back.
 
-use crate::buf::save::{self, Saver, Way};
+use crate::buf::save::{self, Disk, Saver, Way};
 use crate::buf::{Buffer, Lines};
 use crate::find::{Finder, Found};
 use crate::journal::{self, Journal, Recovered};
@@ -195,6 +195,9 @@ struct Parked {
     saved: u64,
     hit: Option<(u64, u64)>,
     journal: Option<Journal>,
+    /// The file on disk as last read or saved: a change while parked shows
+    /// when it is back on screen.
+    known: Option<Disk>,
 }
 
 pub struct Editor {
@@ -226,7 +229,8 @@ pub struct Editor {
     area: Rect,
     index: Option<Timer>,
     budget: u64,
-    finder: Option<(Finder, Timer)>,
+    /// A find under way, and the text's version it searches.
+    finder: Option<(Finder, Timer, u64)>,
     /// A save under way, and the file it writes: the page takes that name
     /// once it is done.
     saving: Option<(Saver, Timer, PathBuf)>,
@@ -239,6 +243,9 @@ pub struct Editor {
     needle: Vec<u8>,
     /// The match on screen.
     hit: Option<(u64, u64)>,
+    /// The text's version at the last settle: a change since makes the
+    /// match stale, and may send the index back.
+    seen: u64,
     clip: Vec<u8>,
     watch: Option<(FileWatch, Watch)>,
     context: String,
@@ -341,6 +348,7 @@ impl Editor {
             search: Search::new(),
             needle: Vec::new(),
             hit: None,
+            seen: 0,
             clip: Vec::new(),
             watch: None,
             context: String::new(),
@@ -501,6 +509,59 @@ impl Editor {
         }
     }
 
+    /// Another program changed the file on screen: with no changes of
+    /// ours it is read again, else the user hears of it.
+    fn disk_changed(&mut self, change: Change, cx: &mut Cx) {
+        match change {
+            Change::Gone => cx.toast_tone(Tone::Warning, "The file was deleted or moved"),
+            Change::Modified if !self.dirty() => self.reload(cx),
+            Change::Modified => cx.ask(
+                ask::CHANGED,
+                Dialog::confirm(
+                    "Changed on disk",
+                    "Another program changed this file. Your edits stay until you save over it.",
+                )
+                .yes("ok"),
+            ),
+        }
+    }
+
+    /// Reads the file on screen again. The watch stays; what ran for the
+    /// old text stops.
+    fn reload(&mut self, cx: &mut Cx) {
+        let Some(p) = self.path.clone() else {
+            return;
+        };
+        self.stop_warm();
+        if let Some(t) = self.index.take() {
+            cx.cancel(t);
+        }
+        if let Some((_, t, _)) = self.finder.take() {
+            cx.cancel(t);
+            cx.idle();
+        }
+        if let Some((_, t, _)) = self.saving.take() {
+            cx.cancel(t);
+            cx.idle();
+        }
+        self.close_after = false;
+        // Nothing unsaved: what its journal holds is stale.
+        if let Some(mut j) = self.journal.take() {
+            j.discard();
+        }
+        let mut fresh = Editor::open(Some(&p), self.opts.clone()).take_file();
+        let len = fresh.doc.buf.len();
+        fresh.cursor = self.cursor.min(len);
+        fresh.top = fresh.doc.buf.line_start(self.top.min(len)).unwrap_or(0);
+        self.put_file(fresh);
+        self.attach_journal(cx);
+        if !self.doc.borrow().buf.lines().exact {
+            self.warm_from(0, cx);
+            self.index = Some(cx.after(0));
+        }
+        cx.toast("Reloaded: changed on disk");
+    }
+
     /// Asks the file chooser for files to open.
     fn ask_open(&mut self, cx: &mut Cx) {
         let mut spec = text_types(PickSpec::open().multiple());
@@ -617,6 +678,7 @@ impl Editor {
             saved: self.saved,
             hit: self.hit.take(),
             journal: self.journal.take(),
+            known: self.path.as_deref().and_then(Disk::of),
         }
     }
 
@@ -638,6 +700,8 @@ impl Editor {
         self.hit = p.hit;
         self.journal = p.journal;
         self.pair = None;
+        // The parked match is of this text.
+        self.seen = self.doc.get_mut().buf.version();
     }
 
     /// Stops what runs for the file on screen and takes it out.
@@ -647,30 +711,41 @@ impl Editor {
         if let Some(t) = self.index.take() {
             cx.cancel(t);
         }
-        if let Some((_, t)) = self.finder.take() {
+        if let Some((_, t, _)) = self.finder.take() {
             cx.cancel(t);
             cx.idle();
         }
-        if let Some((_, w)) = self.watch.take() {
-            cx.unwatch(w);
-        }
-        self.take_file()
+        let known = match self.watch.take() {
+            Some((w, id)) => {
+                cx.unwatch(id);
+                w.known()
+            }
+            None => self.path.as_deref().and_then(Disk::of),
+        };
+        let mut p = self.take_file();
+        p.known = known;
+        p
     }
 
     /// Puts `p` on screen and starts what runs for it: its watch, and the
     /// index while it has more to read.
     fn unpark(&mut self, p: Parked, cx: &mut Cx) {
+        let known = p.known;
         self.put_file(p);
         if !self.doc.borrow().buf.lines().exact {
             let from = self.doc.borrow().buf.indexed();
             self.warm_from(from, cx);
             self.index = Some(cx.after(1));
         }
-        if let Some(p) = &self.path {
-            let w = FileWatch::new(p);
+        if let Some(p) = self.path.clone() {
+            let mut w = FileWatch::since(&p, known);
+            let change = w.check();
             if let Some(fd) = w.fd() {
                 let id = cx.watch(fd);
                 self.watch = Some((w, id));
+            }
+            if let Some(c) = change {
+                self.disk_changed(c, cx);
             }
         }
         if let Some(e) = self.error.clone() {
@@ -1479,14 +1554,15 @@ impl Editor {
         let from = self.hit.map_or(self.cursor, |(a, _)| a + 1);
         let f = Finder::new(&self.needle, from, true);
         self.warm_from(from, cx);
-        if let Some((_, t)) = self.finder.take() {
+        if let Some((_, t, _)) = self.finder.take() {
             cx.cancel(t);
         }
-        self.finder = Some((f, cx.after(0)));
+        let version = self.doc.borrow().buf.version();
+        self.finder = Some((f, cx.after(0), version));
     }
 
     fn find_step(&mut self, cx: &mut Cx) {
-        let Some((mut f, _)) = self.finder.take() else {
+        let Some((mut f, _, version)) = self.finder.take() else {
             return;
         };
         let t0 = Instant::now();
@@ -1511,12 +1587,12 @@ impl Editor {
                 Ok(Found::More) if (t0.elapsed().as_millis() as u64) < SLICE_MS => {}
                 Ok(Found::More) => {
                     cx.busy("Finding");
-                    self.finder = Some((f, cx.after(0)));
+                    self.finder = Some((f, cx.after(0), version));
                     return;
                 }
                 Ok(Found::Wait) => {
                     cx.busy("Finding");
-                    self.finder = Some((f, cx.after(DISK_WAIT_MS)));
+                    self.finder = Some((f, cx.after(DISK_WAIT_MS), version));
                     return;
                 }
                 Err(e) => {
@@ -1693,6 +1769,24 @@ impl Editor {
 
     /// After every event: the bars may have changed, the cursor moved.
     fn settle(&mut self, cx: &mut Cx) {
+        let version = self.doc.borrow().buf.version();
+        if version != self.seen {
+            self.seen = version;
+            // What was found is of the text before.
+            self.hit = None;
+            if self.finder.as_ref().is_some_and(|f| f.2 != version) {
+                if let Some((_, t, _)) = self.finder.take() {
+                    cx.cancel(t);
+                    cx.idle();
+                }
+            }
+            // An edit the index could not follow sends it back a way.
+            if self.index.is_none() && !self.lines().exact {
+                let from = self.doc.borrow().buf.indexed();
+                self.warm_from(from, cx);
+                self.index = Some(cx.after(1));
+            }
+        }
         let t = *cx.theme();
         self.area = self.bars().content(&t);
         self.reveal();
@@ -2214,40 +2308,10 @@ impl Page for Editor {
         if *id != w {
             return;
         }
-        match fw.check() {
-            Some(Change::Gone) => cx.toast_tone(Tone::Warning, "The file was deleted or moved"),
-            Some(Change::Modified) if !self.dirty() => {
-                if let Some(p) = self.path.clone() {
-                    // The same file read again; the watch stays.
-                    let watch = self.watch.take();
-                    self.stop_warm();
-                    if let Some(t) = self.index.take() {
-                        cx.cancel(t);
-                    }
-                    let mut fresh = Editor::open(Some(&p), self.opts.clone()).take_file();
-                    let len = fresh.doc.buf.len();
-                    fresh.cursor = self.cursor.min(len);
-                    fresh.top = fresh.doc.buf.line_start(self.top.min(len)).unwrap_or(0);
-                    self.put_file(fresh);
-                    self.watch = watch;
-                    self.attach_journal(cx);
-                    if !self.doc.borrow().buf.lines().exact {
-                        self.warm_from(0, cx);
-                        self.index = Some(cx.after(0));
-                    }
-                    cx.toast("Reloaded: changed on disk");
-                }
-            }
-            Some(Change::Modified) => cx.ask(
-                ask::CHANGED,
-                Dialog::confirm(
-                    "Changed on disk",
-                    "Another program changed this file. Your edits stay until you save over it.",
-                )
-                .yes("ok"),
-            ),
-            None => return,
-        }
+        let Some(change) = fw.check() else {
+            return;
+        };
+        self.disk_changed(change, cx);
         self.settle(cx);
         cx.redraw();
     }
@@ -2290,7 +2354,7 @@ impl Page for Editor {
 
     fn back(&mut self, cx: &mut Cx) -> bool {
         if matches!(self.mode, Mode::Find | Mode::Goto) {
-            if let Some((_, t)) = self.finder.take() {
+            if let Some((_, t, _)) = self.finder.take() {
                 cx.cancel(t);
                 cx.idle();
             }

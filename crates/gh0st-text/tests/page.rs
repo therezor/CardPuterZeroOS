@@ -614,3 +614,67 @@ fn a_file_new_when_opened_keeps_a_journal_once_saved() {
     let kept = gh0st_text::journal::read(&data, &p).expect("a journal");
     assert_eq!(kept.typed(), b"two\n");
 }
+
+#[test]
+fn a_file_changed_while_behind_another_is_read_again() {
+    let a = temp("behind.txt", b"mine\n");
+    let b = temp("front.txt", b"other\n");
+    let mut d = editing(&a);
+    d.open(&[b.as_path()]);
+    let theirs = |text: &[u8]| {
+        let tmp = a.with_extension("new");
+        std::fs::write(&tmp, text).unwrap();
+        std::fs::rename(&tmp, &a).unwrap();
+    };
+    // Another program replaces it while it is not on screen.
+    theirs(b"theirs\n");
+    d.keys("ctrl+tab\ntype X\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&a).unwrap(), b"Xtheirs\n");
+    // With edits of ours, it asks instead.
+    d.keys("type Y\nctrl+tab");
+    theirs(b"again\n");
+    d.keys("ctrl+tab");
+    assert_eq!(d.dialog().map(|x| x.0), Some("Changed on disk"));
+}
+
+#[test]
+fn a_match_the_text_moved_from_is_not_replaced() {
+    let p = temp("stale.py", b"x = 1\nx = 2\n");
+    let mut d = editing(&p);
+    d.keys("ctrl+f\ntype x\nenter");
+    d.wait(100);
+    // Ctrl K moves the text under the match, then Replace.
+    d.keys("esc\nctrl+k\nctrl+r\ntype y\nenter");
+    d.wait(100);
+    d.keys("esc\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"# x = 1\nx = 2\n");
+}
+
+#[test]
+fn the_line_index_reads_again_after_an_undo_it_could_not_follow() {
+    let mut text = Vec::new();
+    for c in *b"abc" {
+        text.extend(std::iter::repeat_n(c, 700_000));
+        text.push(b'\n');
+    }
+    text.extend_from_slice(b"end\n");
+    let p = temp("reindex.txt", &text);
+    let opts = Options {
+        keys: Some(KeyModel::Modeless),
+        data: Some(data()),
+        index_budget: Some(16 << 10),
+        ..Options::default()
+    };
+    let mut d = Driver::new(Editor::open(Some(&p), opts));
+    // Over a megabyte out while the index has read little, then back once
+    // it is done: the index has that part to read again.
+    d.keys("ctrl+down\nshift+fn+l\nbackspace");
+    d.wait(1000);
+    d.keys("ctrl+z");
+    d.wait(2000);
+    d.keys("ctrl+g\ntype 4\nenter\ntype X\nctrl+s");
+    d.wait(100);
+    assert!(std::fs::read(&p).unwrap().ends_with(b"\nXend\n"));
+}

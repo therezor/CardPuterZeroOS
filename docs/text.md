@@ -144,7 +144,8 @@ held discards them. Close without saving is in the menu too.
 - A file the user can't write is read only.
 - Another program changing the file shows: inotify on its folder, then its
   device, inode, size and time. With no changes of ours the text reloads;
-  with changes, the editor says so and keeps them.
+  with changes, the editor says so and keeps them. A file not on screen is
+  checked as it comes back.
 
 ## Colour
 
