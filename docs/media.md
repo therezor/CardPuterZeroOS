@@ -215,10 +215,11 @@ PipeWire, so the loop's thread only moves finished pictures to the ring.
 - A JPEG decodes at the size it is shown, so it may be up to 256 MP. A
   progressive one past what 96 MB holds is refused by libjpeg.
 - A video's tile is held to 24 MP too. Playing is held to twice 1080p
-  (4.1 MP), checked before a decoder starts its threads, and every decoder
-  refuses a picture past it. A 4K video shows as a tile but doesn't play.
-  This limit is reasoned from the 1080p row in `hardware-facts.md`, not
-  measured at 4K.
+  (4.1 MP). A file that states a larger size is refused before a decoder
+  opens, and every decoder refuses a picture past it, so a stream that
+  states none (MPEG-2 in a TS) fails as it starts. A 4K video shows as a
+  tile but doesn't play. The limit is reasoned from the 1080p row in
+  `hardware-facts.md`, not measured at 4K.
 - An animated WebP is held to the same 4.1 MP, as it plays from two
   canvases of its size, and to a 32 MB file.
 - A RAW with no JPEG preview is refused past 50 MP of mosaic, borders

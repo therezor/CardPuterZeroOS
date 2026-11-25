@@ -878,9 +878,14 @@ struct Player::State {
     }
 
     // Finds the streams, each stream's decoder held to MAX_PIXELS: a file
-    // that claims a huge picture gets no room for it.
+    // that claims a huge picture gets no room for it. Some decoders then
+    // forget the size, so the container's is kept from before.
+    std::vector<int64_t> claimed;
     bool findStreams()
     {
+        for (unsigned i = 0; i < fmt->nb_streams; i++)
+            claimed.push_back(int64_t(fmt->streams[i]->codecpar->width) *
+                              fmt->streams[i]->codecpar->height);
         std::vector<AVDictionary *> o(fmt->nb_streams, nullptr);
         for (auto &d : o)
             av_dict_set_int(&d, "max_pixels", MAX_PIXELS, 0);
@@ -1056,7 +1061,10 @@ bool Player::open(const std::string &path, int w, int h, const Options &o, std::
     int vw = 0, vh = 0;
     if (s.vi >= 0) {
         const AVCodecParameters *cp = s.fmt->streams[s.vi]->codecpar;
-        if (int64_t(cp->width) * cp->height > MAX_PIXELS) {
+        int64_t px = int64_t(cp->width) * cp->height;
+        if (size_t(s.vi) < s.claimed.size())
+            px = std::max(px, s.claimed[s.vi]);
+        if (px > MAX_PIXELS) {
             why = "too big to play here";
             close();
             return false;

@@ -189,11 +189,12 @@ it once the helper writes DNG.
 
 - **Sounds.** A photo clicks. The self-timer beeps each second. A
   recording beeps once and starts 350 ms later, so the film doesn't catch
-  the beep, and beeps twice once the file is saved. A self-timer, or a
-  recording still waiting on its beep, is called off when the gallery
-  opens, the mode or video size changes, or the helper fails. The
-  viewfinder's keys make no sound. Shutter sound in the menu turns these
-  off; System sounds in Settings turns off every sound, these too.
+  the beep, and beeps twice once the file is saved. Opening the gallery,
+  changing the mode or the helper failing calls off the self-timer and a
+  recording still waiting on its beep; changing the video size calls off
+  the recording. The viewfinder's keys make no sound. Shutter sound in
+  the menu turns these off; System sounds in Settings turns off every
+  sound, these too.
 
 - **Microphone.** Auto, or one the sound server lists. Auto takes a
   plugged-in microphone (USB, Bluetooth) over the board's own. The headset
@@ -272,8 +273,8 @@ are in `native/av` (`docs/media.md`), and the Makefile builds them through
   Media). A seek opens the hardware decoder again, as not every build of
   it can flush; 60 packets with no picture move it to
   software, and software failing ends in `playerr`. A video past twice
-  1080p is refused before its decoder starts. A sound track whose shape
-  changes partway is resampled afresh. Paused or at the end, nothing
+  1080p is refused. A sound track whose shape changes partway is
+  resampled afresh. Paused or at the end, nothing
   polls and the sound stream closes, so the codec sleeps. Only the
   loop thread touches the link and the ring. `make playcheck` builds a host check of play, pause, seek and the
   end.

@@ -15,8 +15,9 @@ namespace gh0st {
 
 class Player {
 public:
-    // A picture larger than this is refused before a decoder starts its
-    // threads: twice 1080p, where a software decoder's threads already
+    // A picture larger than this doesn't play: refused before a decoder
+    // opens when the file states its size, by the decoder when it
+    // doesn't. Twice 1080p, where a software decoder's threads already
     // hold 95 MB (docs/hardware-facts.md, Media).
     static constexpr int64_t MAX_PIXELS = 2 * 1920 * 1080;
     // A .srt beside the file is read whole as it opens; a larger one is

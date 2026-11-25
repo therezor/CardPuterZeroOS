@@ -286,6 +286,9 @@ Fail packBase(const uint8_t *const data[4], const int ls[4], AVPixelFormat fmt, 
 // that claims to be huge is refused while it is probed.
 struct Av {
     AVFormatContext *fmt = nullptr;
+    // Each stream's picture size as the container gave it. A decoder held
+    // to MAX_PIXELS may forget a larger one.
+    std::vector<int64_t> claimed;
     ~Av() { avformat_close_input(&fmt); }
 
     int open(const std::string &path)
@@ -293,6 +296,9 @@ struct Av {
         int r = avformat_open_input(&fmt, path.c_str(), nullptr, nullptr);
         if (r < 0)
             return r;
+        for (unsigned i = 0; i < fmt->nb_streams; i++)
+            claimed.push_back(int64_t(fmt->streams[i]->codecpar->width) *
+                              fmt->streams[i]->codecpar->height);
         std::vector<AVDictionary *> opts(fmt->nb_streams, nullptr);
         for (auto &o : opts)
             av_dict_set_int(&o, "max_pixels", int64_t(MAX_PIXELS), 0);
@@ -643,12 +649,13 @@ Fail Stills::probe(const std::string &path, Info &out)
     } else {
         out.kind = still ? Kind::Image : Kind::Video;
     }
-    if (out.w <= 0 || out.h <= 0)
-        return Fail::Corrupt;
     // A video's tile decodes one picture whole, so it is held to this too.
     // Playing holds it to less (player.h).
-    if (double(out.w) * out.h > MAX_PIXELS)
+    double claim = size_t(vi) < av.claimed.size() ? double(av.claimed[vi]) : 0;
+    if (std::max(double(out.w) * out.h, claim) > MAX_PIXELS)
         return Fail::TooBig;
+    if (out.w <= 0 || out.h <= 0)
+        return Fail::Corrupt;
     return Fail::None;
 }
 
