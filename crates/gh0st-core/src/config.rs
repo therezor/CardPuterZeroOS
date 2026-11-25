@@ -25,6 +25,100 @@ pub struct Config {
     /// The file was there but did not parse. A save moves it aside first, so
     /// its keys are never lost to a write that holds only ours.
     broken: bool,
+    secure: Secure,
+}
+
+/// The keys an app must not set for itself (`is_secure`). Stock apps write
+/// config.json, so a sandboxed app can too; these live in
+/// `~/.config/gh0st/settings.json` instead, which a sandbox only reads.
+#[derive(Debug, Default)]
+struct Secure {
+    path: PathBuf,
+    map: BTreeMap<String, Value>,
+    /// The file exists. Until `migrate` makes it, the keys stay in
+    /// config.json as before.
+    present: bool,
+    dirty: bool,
+}
+
+/// Where the secure keys of the config at `shared` live:
+/// `~/.config/gh0st/settings.json` beside `~/.config/cardputerzero`.
+pub fn secure_path(shared: &Path) -> PathBuf {
+    match shared.parent() {
+        Some(d) if d.file_name() == Some(std::ffi::OsStr::new("cardputerzero")) => {
+            d.with_file_name("gh0st").join("settings.json")
+        }
+        Some(d) => d.join("gh0st-settings.json"),
+        None => PathBuf::from("gh0st-settings.json"),
+    }
+}
+
+/// What an app may use, per app: `gh0st.app.<id>.<leaf>`.
+pub const GRANTS: [&str; 4] = ["isolate", "network", "camera", "mic"];
+
+/// A key that changes what runs, what locks, or what an app may reach.
+pub fn is_secure(k: &str) -> bool {
+    const KEYS: [&str; 6] = [
+        key::LOCK_PASSWORD,
+        key::LOCK_AFTER,
+        key::TERMINAL,
+        key::STORE_MIRROR,
+        key::RECENT_REMEMBER,
+        key::CLIPBOARD_KEEP,
+    ];
+    KEYS.contains(&k)
+        || k.strip_prefix("gh0st.app.")
+            .and_then(|r| r.rsplit_once('.'))
+            .is_some_and(|(_, leaf)| GRANTS.contains(&leaf))
+}
+
+impl Secure {
+    fn load(path: PathBuf) -> Secure {
+        let (map, present) = match std::fs::read(&path) {
+            Ok(b) => (
+                std::str::from_utf8(&b)
+                    .ok()
+                    .and_then(parse)
+                    .unwrap_or_default(),
+                true,
+            ),
+            Err(_) => (BTreeMap::new(), false),
+        };
+        Secure {
+            path,
+            map,
+            present,
+            dirty: false,
+        }
+    }
+
+    fn save(&mut self) -> std::io::Result<()> {
+        if let Some(dir) = self.path.parent() {
+            create_private_dir(dir)?;
+        }
+        if !self.path.exists() {
+            // Born private: write_atomic keeps an existing file's mode.
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(&self.path)?;
+        }
+        write_atomic(&self.path, to_json(&self.map).as_bytes())?;
+        self.present = true;
+        self.dirty = false;
+        Ok(())
+    }
+}
+
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
 }
 
 /// The keys more than one program reads. Each has one reader below, so the
@@ -98,7 +192,28 @@ impl Config {
             path: path.to_path_buf(),
             map,
             broken,
+            secure: Secure::load(secure_path(path)),
         }
+    }
+
+    /// Moves the secure keys out of config.json into their own file, once.
+    /// The shell runs it at start, before any app: from then on a value an
+    /// app writes into config.json for one of them is ignored.
+    pub fn migrate(path: &Path) -> std::io::Result<()> {
+        if secure_path(path).exists() {
+            return Ok(());
+        }
+        Config::update(path, |c| {
+            let moved: Vec<(String, Value)> = c
+                .map
+                .iter()
+                .filter(|(k, _)| is_secure(k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            c.secure.map.extend(moved);
+            c.secure.dirty = true;
+        })
+        .map(|_| ())
     }
 
     /// Reads the file again, applies `f` and saves. Every writer goes through
@@ -123,18 +238,31 @@ impl Config {
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
+        if self.secure.present && is_secure(key) {
+            return self.secure.map.get(key);
+        }
         self.map.get(key)
     }
 
+    /// Sets `key`, in the secure file once it exists.
+    fn put(&mut self, key: &str, v: Value) {
+        if self.secure.present && is_secure(key) {
+            self.secure.map.insert(key.to_string(), v);
+            self.secure.dirty = true;
+        } else {
+            self.map.insert(key.to_string(), v);
+        }
+    }
+
     pub fn get_str(&self, key: &str) -> Option<&str> {
-        match self.map.get(key)? {
+        match self.get(key)? {
             Value::Str(s) | Value::Num(s) => Some(s),
             _ => None,
         }
     }
 
     pub fn get_int(&self, key: &str) -> Option<i64> {
-        match self.map.get(key)? {
+        match self.get(key)? {
             Value::Num(s) | Value::Str(s) => s.trim().parse().ok(),
             Value::Bool(b) => Some(*b as i64),
             _ => None,
@@ -142,7 +270,7 @@ impl Config {
     }
 
     pub fn get_bool(&self, key: &str) -> Option<bool> {
-        match self.map.get(key)? {
+        match self.get(key)? {
             Value::Bool(b) => Some(*b),
             Value::Num(s) | Value::Str(s) => match s.as_str() {
                 "1" | "true" | "on" => Some(true),
@@ -207,15 +335,15 @@ impl Config {
     }
 
     pub fn set_int(&mut self, key: &str, v: i64) {
-        self.map.insert(key.to_string(), Value::Num(v.to_string()));
+        self.put(key, Value::Num(v.to_string()));
     }
 
     pub fn set_bool(&mut self, key: &str, v: bool) {
-        self.map.insert(key.to_string(), Value::Bool(v));
+        self.put(key, Value::Bool(v));
     }
 
     pub fn set_str(&mut self, key: &str, v: &str) {
-        self.map.insert(key.to_string(), Value::Str(v.to_string()));
+        self.put(key, Value::Str(v.to_string()));
     }
 
     pub fn path(&self) -> &Path {
@@ -224,6 +352,9 @@ impl Config {
 
     pub fn remove(&mut self, key: &str) {
         self.map.remove(key);
+        if self.secure.map.remove(key).is_some() {
+            self.secure.dirty = true;
+        }
     }
 
     /// Writes atomically: a temp file in the same directory, fsync, rename.
@@ -242,6 +373,14 @@ impl Config {
             );
             std::fs::rename(&self.path, &aside)?;
             self.broken = false;
+        }
+        // The secure file first: config.json then drops its copies, and a
+        // crash between the two leaves both, which reads the same.
+        if self.secure.dirty {
+            self.secure.save()?;
+        }
+        if self.secure.present {
+            self.map.retain(|k, _| !is_secure(k));
         }
         write_atomic(&self.path, to_json(&self.map).as_bytes())
     }
@@ -655,6 +794,73 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("config.json")
+    }
+
+    #[test]
+    fn secure_keys_are_the_ones_that_change_what_runs_or_locks() {
+        assert!(is_secure(key::TERMINAL));
+        assert!(is_secure(key::LOCK_PASSWORD));
+        assert!(is_secure("gh0st.app.zsynth_desktop.network"));
+        assert!(is_secure("gh0st.app.zsynth_desktop.isolate"));
+        assert!(!is_secure("gh0st.app.zsynth_desktop.background"));
+        assert!(!is_secure(key::PALETTE));
+        assert!(!is_secure("brightness"));
+        assert_eq!(
+            secure_path(Path::new("/h/.config/cardputerzero/config.json")),
+            Path::new("/h/.config/gh0st/settings.json")
+        );
+    }
+
+    #[test]
+    fn migrate_moves_secure_keys_and_config_json_no_longer_counts_for_them() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = scratch("secure");
+        std::fs::write(
+            &path,
+            r#"{"brightness": 80, "gh0st": {"terminal": "/bin/old", "palette": "nord"}}"#,
+        )
+        .unwrap();
+        Config::migrate(&path).unwrap();
+        let shared = std::fs::read_to_string(&path).unwrap();
+        assert!(!shared.contains("terminal"), "{shared}");
+        assert!(shared.contains("nord") && shared.contains("80"), "{shared}");
+        let sp = secure_path(&path);
+        let mode = std::fs::metadata(&sp).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(Config::load(&path).get_str(key::TERMINAL), Some("/bin/old"));
+
+        // An app that can write config.json plants a terminal: ignored.
+        std::fs::write(&path, r#"{"gh0st": {"terminal": "/tmp/evil"}}"#).unwrap();
+        assert_eq!(Config::load(&path).get_str(key::TERMINAL), Some("/bin/old"));
+
+        // Settings sets one: it lands in the secure file, not config.json.
+        Config::update(&path, |c| {
+            c.set_bool(key::LOCK_PASSWORD, false);
+            c.set_int("volume", 30);
+        })
+        .unwrap();
+        let shared = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !shared.contains("lock") && !shared.contains("evil"),
+            "{shared}"
+        );
+        let c = Config::load(&path);
+        assert!(!c.lock_password());
+        assert_eq!(c.get_int("volume"), Some(30));
+
+        // Migrating again changes nothing.
+        let before = std::fs::read_to_string(&sp).unwrap();
+        Config::migrate(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&sp).unwrap(), before);
+    }
+
+    #[test]
+    fn before_migration_secure_keys_stay_in_config_json() {
+        let path = scratch("premigrate");
+        std::fs::write(&path, "{}").unwrap();
+        Config::update(&path, |c| c.set_str(key::TERMINAL, "/bin/t")).unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("/bin/t"));
+        assert!(!secure_path(&path).exists());
     }
 
     #[test]
