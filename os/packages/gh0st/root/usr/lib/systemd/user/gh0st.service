@@ -16,6 +16,9 @@ StartLimitIntervalSec=0
 ExecStartPre=-/usr/bin/xdg-user-dirs-update
 ExecStart=/usr/bin/gh0st shell
 WorkingDirectory=/usr/share/APPLaunch
+# The shell gives each app a cgroup of its own, which names it to the
+# keyring and the session (docs/isolation.md).
+Delegate=yes
 Restart=always
 RestartSec=1
 

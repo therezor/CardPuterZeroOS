@@ -6,3 +6,4 @@ Exec=/usr/bin/gh0st-settings
 Icon=gh0st:settings
 Terminal=false
 X-Gh0st-Bars=both
+X-Gh0st-Sandbox=false

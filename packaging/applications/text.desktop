@@ -7,3 +7,4 @@ Icon=gh0st:file-code
 Terminal=false
 MimeType=text/plain;application/json;application/xml;application/x-shellscript;application/toml;application/yaml;application/x-desktop;application/x-subrip;
 X-Gh0st-Bars=top
+X-Gh0st-Sandbox=false
