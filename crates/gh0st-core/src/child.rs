@@ -64,6 +64,26 @@ pub fn spawn<S: AsRef<OsStr>>(
     pause: bool,
     link: Option<RawFd>,
 ) -> io::Result<i32> {
+    spawn_with(argv, dev, pause, link, &Extra::default())
+}
+
+/// What else a launch sets up.
+#[derive(Default)]
+pub struct Extra<'a> {
+    /// The app's cgroup (`sandbox::Cgroups`): the child joins it before
+    /// exec, so all it starts is named for the app.
+    pub cgroup: Option<&'a Path>,
+    pub env: Vec<(&'static str, String)>,
+}
+
+/// As `spawn`, with `extra`.
+pub fn spawn_with<S: AsRef<OsStr>>(
+    argv: &[S],
+    dev: &Devices,
+    pause: bool,
+    link: Option<RawFd>,
+    extra: &Extra,
+) -> io::Result<i32> {
     let (prog, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::other("empty command"))?;
@@ -82,6 +102,27 @@ pub fn spawn<S: AsRef<OsStr>>(
         .env("CAMERA_APP_KEYBOARD_GRAB", "false");
     if Path::new(APP_CWD).is_dir() {
         cmd.current_dir(APP_CWD);
+    }
+    for (k, v) in &extra.env {
+        cmd.env(k, v);
+    }
+    if let Some(cg) = extra.cgroup {
+        use std::os::unix::ffi::OsStrExt;
+        let procs = std::ffi::CString::new(cg.join("cgroup.procs").as_os_str().as_bytes())
+            .map_err(io::Error::other)?;
+        // SAFETY: open, write and close are async-signal-safe, and the path
+        // was built before the fork. Best effort: an app left out of its
+        // cgroup still runs, named by its executable.
+        unsafe {
+            cmd.pre_exec(move || {
+                let fd = libc::open(procs.as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC);
+                if fd >= 0 {
+                    libc::write(fd, b"0".as_ptr().cast(), 1);
+                    libc::close(fd);
+                }
+                Ok(())
+            });
+        }
     }
     if let Some(fd) = link {
         cmd.env(crate::link::ENV, fd.to_string());

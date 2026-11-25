@@ -6,8 +6,9 @@
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::Path;
 
-/// The shell's unit: it makes `app-<stem>` right under its own cgroup.
-const SHELL_UNIT: &str = "gh0st.service";
+/// The shell's units: ours, and the stock one our drop-in takes over.
+/// The shell makes `app-<stem>` right under its own cgroup.
+const SHELL_UNITS: [&str; 2] = ["gh0st.service", "APPLaunch.service"];
 
 /// The app from a `/proc/<pid>/cgroup` body: the `app-<stem>` right under
 /// the shell's cgroup. A process can make cgroups under its own, and
@@ -15,7 +16,7 @@ const SHELL_UNIT: &str = "gh0st.service";
 pub fn app_of_cgroup(body: &str) -> Option<String> {
     let path = body.lines().find_map(|l| l.strip_prefix("0::"))?;
     let segs: Vec<&str> = path.split('/').collect();
-    let at = segs.iter().position(|s| *s == SHELL_UNIT)?;
+    let at = segs.iter().position(|s| SHELL_UNITS.contains(s))?;
     let stem = segs.get(at + 1)?.strip_prefix("app-")?;
     (!stem.is_empty()).then(|| stem.to_string())
 }
@@ -186,6 +187,11 @@ mod tests {
             "a cgroup made inside an app is still that app"
         );
         assert_eq!(app_of_cgroup("12:cpu:/x\n"), None);
+        assert_eq!(
+            app_of_cgroup("0::/system.slice/APPLaunch.service/app-zsynth\n").as_deref(),
+            Some("zsynth"),
+            "the stock unit our drop-in takes over"
+        );
         assert_eq!(
             app_of_cgroup("0::/user.slice/user@1000.service/app.slice/app-chromium.scope\n"),
             None,

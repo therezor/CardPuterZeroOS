@@ -30,6 +30,7 @@ pub mod procfs;
 pub mod recent;
 pub mod rfkill;
 pub mod rt;
+pub mod sandbox;
 pub mod script;
 pub mod search;
 pub mod sound;

@@ -246,6 +246,54 @@ pub fn background_key(file: &str) -> String {
     app_key(file, "background")
 }
 
+/// How an app runs: in the sandbox or not, and what it may reach there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Isolation {
+    pub sandbox: bool,
+    pub grants: crate::sandbox::Grants,
+}
+
+/// Why an app runs outside the sandbox whatever the user picks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exempt {
+    /// Ours, and it needs the whole home or pkexec (`X-Gh0st-Sandbox`).
+    BuiltIn,
+    /// It runs as root: through sudo in its `Exec`, or by the Store's mark.
+    Root,
+}
+
+pub fn exempt(app: &App, root: bool) -> Option<Exempt> {
+    if app.ours && app.entry.no_sandbox {
+        Some(Exempt::BuiltIn)
+    } else if root || runs_as_root(&app.entry.exec) {
+        Some(Exempt::Root)
+    } else {
+        None
+    }
+}
+
+/// The user's choices in Settings > Apps, else everything on. `root` is
+/// the Store's mark for an app that asks for root as it runs.
+pub fn isolation(c: &crate::config::Config, app: &App, root: bool) -> Isolation {
+    let get = |leaf: &str| c.get_bool(&app_key(&app.file, leaf)).unwrap_or(true);
+    Isolation {
+        sandbox: get("isolate") && exempt(app, root).is_none(),
+        grants: crate::sandbox::Grants {
+            network: get("network"),
+            camera: get("camera"),
+            mic: get("mic"),
+        },
+    }
+}
+
+/// An `Exec` line that asks for root. A sandbox can't give it: setuid
+/// programs don't raise anything there.
+pub fn runs_as_root(exec: &str) -> bool {
+    exec.split(|c: char| c.is_whitespace() || ";&|()`'\"".contains(c))
+        .filter_map(|t| t.rsplit('/').next())
+        .any(|t| matches!(t, "sudo" | "pkexec" | "doas" | "su" | "run0" | "gksudo"))
+}
+
 pub fn app_key(file: &str, leaf: &str) -> String {
     let id: String = file
         .bytes()
@@ -459,6 +507,53 @@ mod tests {
 
     fn names(apps: &[App]) -> Vec<&str> {
         apps.iter().map(|a| a.entry.name.as_str()).collect()
+    }
+
+    #[test]
+    fn sudo_anywhere_in_exec_runs_as_root() {
+        assert!(runs_as_root("sudo /usr/bin/thing"));
+        assert!(runs_as_root("/usr/bin/sudo -E thing"));
+        assert!(runs_as_root("sh -c 'cd x; pkexec y'"));
+        assert!(!runs_as_root("bin/battleship-launch"));
+        assert!(!runs_as_root("/opt/pseudo-app --sudo"));
+    }
+
+    #[test]
+    fn isolation_is_on_with_everything_until_the_user_says_otherwise() {
+        let path = std::env::temp_dir()
+            .join(format!("gh0st-apps-iso-{}", std::process::id()))
+            .join("config.json");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let mut entry = DesktopEntry {
+            name: "Synth".into(),
+            exec: "/opt/zsynth/zsynth.py".into(),
+            ..Default::default()
+        };
+        let mut app = App::for_test(entry.clone(), false);
+        let c = crate::config::Config::load(&path);
+        let i = isolation(&c, &app, false);
+        assert!(i.sandbox);
+        assert_eq!(i.grants, crate::sandbox::Grants::default());
+        assert!(
+            !isolation(&c, &app, true).sandbox,
+            "the Store marks it root"
+        );
+
+        crate::config::Config::update(&path, |c| {
+            c.set_bool(&app_key("test.desktop", "mic"), false)
+        })
+        .unwrap();
+        let i = isolation(&crate::config::Config::load(&path), &app, false);
+        assert!(i.sandbox && !i.grants.mic && i.grants.network);
+
+        // A Store app can't opt out with our key; ours can.
+        entry.no_sandbox = true;
+        app.entry = entry;
+        assert!(isolation(&c, &app, false).sandbox);
+        app.ours = true;
+        assert_eq!(exempt(&app, false), Some(Exempt::BuiltIn));
+        assert!(!isolation(&c, &app, false).sandbox);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

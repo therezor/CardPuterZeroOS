@@ -28,6 +28,9 @@ pub struct DesktopEntry {
     /// `NoDisplay`: not on home or in Settings > Apps, but it may still
     /// open files.
     pub no_display: bool,
+    /// `X-Gh0st-Sandbox=false`: runs outside the sandbox. Honoured only
+    /// for our own apps, which need the whole home or pkexec.
+    pub no_sandbox: bool,
 }
 
 /// At most this many `MimeType=` entries are kept.
@@ -126,6 +129,7 @@ pub fn parse(contents: &str) -> Option<DesktopEntry> {
             "Terminal" => e.terminal = truthy(&v),
             "Sysplause" => e.sysplause = truthy(&v),
             "X-Gh0st-Background" => e.background = truthy(&v),
+            "X-Gh0st-Sandbox" => e.no_sandbox = !truthy(&v),
             "MimeType" => {
                 e.mime_types = v
                     .split(';')

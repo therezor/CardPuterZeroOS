@@ -113,8 +113,11 @@ impl Flags {
     pub const HARDWARE: Flags = Flags(1 << 6);
     pub const DISPLAY: Flags = Flags(1 << 7);
     pub const IMU: Flags = Flags(1 << 8);
+    /// It asks for root as it runs (sudo, pkexec, a setuid file), which a
+    /// sandbox can't give: it runs outside one.
+    pub const ROOT: Flags = Flags(1 << 9);
 
-    const NAMES: [(Flags, &'static str); 9] = [
+    const NAMES: [(Flags, &'static str); 10] = [
         (Flags::SCRIPTS, "scripts"),
         (Flags::PATHS, "paths"),
         (Flags::SERVICE, "service"),
@@ -124,6 +127,7 @@ impl Flags {
         (Flags::HARDWARE, "hardware"),
         (Flags::DISPLAY, "display"),
         (Flags::IMU, "imu"),
+        (Flags::ROOT, "root"),
     ];
 
     pub fn has(self, f: Flags) -> bool {
@@ -192,6 +196,14 @@ pub struct Pinned {
     pub size: u64,
 }
 
+/// The catalog marks the app with `.desktop` stem `desktop` as one that
+/// needs root as it runs. Read at each launch: a few milliseconds.
+pub fn needs_root(desktop: &str) -> bool {
+    Catalog::load()
+        .and_then(|c| c.by_desktop(desktop).map(|a| a.flags.has(Flags::ROOT)))
+        .unwrap_or(false)
+}
+
 /// The catalog: what the Store lists. Signed by our apt key; the engine
 /// checks the signature before it lands in [`state_dir`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -234,6 +246,13 @@ impl Catalog {
 
     pub fn load() -> Option<Catalog> {
         Catalog::parse(&std::fs::read_to_string(catalog_path()).ok()?).ok()
+    }
+
+    /// The app that installs `<desktop>.desktop`.
+    pub fn by_desktop(&self, desktop: &str) -> Option<&App> {
+        self.apps
+            .iter()
+            .find(|a| !a.desktop.is_empty() && a.desktop == desktop)
     }
 
     /// Whether this catalog, already verified, replaces `old` at `now`.
