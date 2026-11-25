@@ -351,6 +351,35 @@ fn with_no_file_open_asks_the_chooser_and_opens_what_it_picks() {
 }
 
 #[test]
+fn the_start_page_moves_with_the_default_keys() {
+    // Opens to read by default: the view's arrow commands must not take
+    // the start page's keys.
+    let dir = std::env::temp_dir().join(format!("gh0st-text-start-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let opts = Options {
+        data: Some(dir.clone()),
+        ..Options::default()
+    };
+    let mut d = Driver::in_home(Editor::open(None, opts), &dir.join("home"));
+    d.wait(100);
+    d.keys("x\nenter");
+    assert!(d.picks().is_empty(), "New file, not the chooser");
+    let mut d = Driver::in_home(
+        Editor::open(
+            None,
+            Options {
+                data: Some(dir.clone()),
+                ..Options::default()
+            },
+        ),
+        &dir.join("home"),
+    );
+    d.wait(100);
+    d.keys("x\nf\nenter");
+    assert_eq!(d.picks().len(), 1, "back up on Open a file");
+}
+
+#[test]
 fn a_new_file_saves_where_the_chooser_says() {
     let dir = std::env::temp_dir().join(format!("gh0st-text-new-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

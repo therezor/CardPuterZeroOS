@@ -2588,13 +2588,15 @@ impl Page for Editor {
         let edit = self.mode == Mode::Edit;
         let can_edit = !self.read_only;
         let mode = if view { VIEWING } else { EDITING };
-        let here = |c: Command| c.mode(mode, view || edit);
+        // The start page's list takes the arrows and letters, not a file.
+        let doc = self.start.is_none();
+        let here = |c: Command| c.mode(mode, (view || edit) && doc);
         c.group("File");
         c.add(Command::action(cmd::OPEN, "Open").keys("Ctrl+o").opens());
         c.add(
             Command::action(cmd::SAVE_AS, "Save as")
                 .opens()
-                .enabled(!self.binary),
+                .enabled(!self.binary && doc),
         );
         c.add(here(
             Command::action(cmd::SAVE, "Save")
@@ -2670,9 +2672,9 @@ impl Page for Editor {
             Command::action(cmd::EDIT, "Edit")
                 .keys("i")
                 .keys_only()
-                .mode(VIEWING, view && can_edit),
+                .mode(VIEWING, view && can_edit && doc),
         );
-        let moves = |c: Command| c.keys_only().repeats().mode(VIEWING, view);
+        let moves = |c: Command| c.keys_only().repeats().mode(VIEWING, view && doc);
         c.add(moves(
             Command::choice(cmd::UP_DOWN, "Up, down", "").keys("f x"),
         ));
