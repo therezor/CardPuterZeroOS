@@ -16,7 +16,9 @@ pub(crate) struct Clip {
     tried: bool,
     /// No session bus: the app's own clipboard only.
     pub offline: bool,
-    /// What this app copied last, for when the session isn't there.
+    /// What this app copied last while the session wasn't there. Never
+    /// what the session took: the lock clears that, and a copy here
+    /// would bring it back.
     pub local: Option<Vec<u8>>,
 }
 
@@ -29,11 +31,19 @@ impl Clip {
         self.conn.as_mut()
     }
 
+    /// Replaces this app's own copy. A password may be in the old one.
+    pub fn keep(&mut self, data: Option<&[u8]>) {
+        if let Some(old) = self.local.as_mut() {
+            old.fill(0);
+        }
+        self.local = data.map(<[u8]>::to_vec);
+    }
+
     /// False when the session refused: another app is in front, or it is
     /// too much.
     pub fn copy(&mut self, data: &[u8]) -> bool {
         let Some(c) = self.conn() else {
-            self.local = Some(data.to_vec());
+            self.keep(Some(data));
             return true;
         };
         let m = Message::call(NAME, PATH, IFACE, "Set")
@@ -41,7 +51,7 @@ impl Clip {
             .arg(Value::Bytes(data.to_vec()));
         match c.call(m, CALL_MS) {
             Ok(_) => {
-                self.local = Some(data.to_vec());
+                self.keep(None);
                 true
             }
             Err(Error::Remote { .. }) => false,
@@ -49,13 +59,15 @@ impl Clip {
                 // The bus went away: this app's own, and try again later.
                 self.conn = None;
                 self.tried = false;
-                self.local = Some(data.to_vec());
+                self.keep(Some(data));
                 true
             }
         }
     }
 
-    /// The text copied last, by this app or another.
+    /// The text copied last, by this app or another. None when the
+    /// session has nothing (the lock cleared it) or refused: never this
+    /// app's own copy then.
     pub fn paste(&mut self) -> Option<Vec<u8>> {
         let Some(c) = self.conn() else {
             return self.local.clone();
@@ -70,5 +82,45 @@ impl Clip {
                 self.local.clone()
             }
         }
+    }
+}
+
+/// What Ctrl+V types into a field: the first line copied that has text,
+/// at most `max` characters, cut before it is decoded so a big clipboard
+/// costs no more than the line. Control characters end it; bytes that
+/// aren't UTF-8 are left out, never typed as U+FFFD.
+pub(crate) fn first_line(bytes: &[u8], max: usize) -> String {
+    let line = bytes
+        .split(|&b| b == b'\n' || b == b'\r')
+        .find(|l| l.iter().any(|b| !b.is_ascii_whitespace()))
+        .unwrap_or_default();
+    // A character is 4 bytes at most.
+    let line = &line[..line.len().min(max.saturating_mul(4))];
+    let mut out = String::new();
+    'chunks: for chunk in line.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if c.is_control() || out.chars().count() >= max {
+                break 'chunks;
+            }
+            out.push(c);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_gets_the_first_line_with_text() {
+        assert_eq!(first_line(b"\n  \r\nhello world\nnext", 100), "hello world");
+        assert_eq!(first_line(b"ab\xffcd\tef", 100), "abcd");
+        assert_eq!(first_line("héllo".as_bytes(), 3), "hél");
+        assert_eq!(first_line(b"", 10), "");
+        // A big clipboard: only the line's bytes are looked at.
+        let mut big = b"pass".to_vec();
+        big.extend(std::iter::repeat_n(b'x', 1 << 20));
+        assert_eq!(first_line(&big, 8), "passxxxx");
     }
 }

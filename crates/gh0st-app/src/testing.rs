@@ -224,7 +224,13 @@ impl Driver {
 
     /// Something copied, as if by another app.
     pub fn set_clipboard(&mut self, data: &[u8]) -> &mut Driver {
-        self.rt.s.clip.local = Some(data.to_vec());
+        self.rt.s.clip.keep(Some(data));
+        self
+    }
+
+    /// The clipboard emptied, as the lock does.
+    pub fn clear_clipboard(&mut self) -> &mut Driver {
+        self.rt.s.clip.keep(None);
         self
     }
 

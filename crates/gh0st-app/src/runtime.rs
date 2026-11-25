@@ -824,16 +824,8 @@ impl Runtime {
         // Ctrl+V types the first line copied into whatever has focus.
         if typing && is_paste(raw) {
             let text = self.s.clip.paste().unwrap_or_default();
-            let line = String::from_utf8_lossy(&text);
-            let chars: Vec<char> = line
-                .lines()
-                .next()
-                .unwrap_or("")
-                .chars()
-                .take_while(|c| !c.is_control())
-                .take(PASTE_MAX)
-                .collect();
-            for c in chars {
+            let line = crate::clipboard::first_line(&text, PASTE_MAX);
+            for c in line.chars() {
                 self.call(top, now, |p, cx| p.key(Key::Char(c), cx));
             }
             return;
@@ -1105,7 +1097,7 @@ impl Runtime {
             }
             if d.typing() && is_paste(raw) {
                 if let Some(text) = self.s.clip.paste() {
-                    d.paste(&String::from_utf8_lossy(&text));
+                    d.paste(&crate::clipboard::first_line(&text, PASTE_MAX));
                 }
                 return;
             }

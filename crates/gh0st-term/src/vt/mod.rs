@@ -1025,11 +1025,15 @@ impl Terminal {
                 self.events |= event::NOTICE;
             }
             // Copy only. A read ("?") gets no answer: a remote host must
-            // never see the local clipboard.
+            // never see the local clipboard. Nothing, which xterm takes as
+            // a clear, is ignored: output may not empty the clipboard.
             b"52" => {
                 let data = params.get(2).copied().unwrap_or_default();
                 if data != b"?" {
-                    if let Some(text) = base64(data).and_then(|b| String::from_utf8(b).ok()) {
+                    if let Some(text) = base64(data)
+                        .filter(|b| !b.is_empty())
+                        .and_then(|b| String::from_utf8(b).ok())
+                    {
                         self.clipboard = Some(text);
                         self.events |= event::CLIPBOARD;
                     }

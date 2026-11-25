@@ -125,12 +125,20 @@ pub fn paste(text: &str, modes: &Modes, out: &mut Vec<u8>) {
     if modes.bracketed_paste {
         out.extend_from_slice(b"\x1b[200~");
     }
-    // A pasted end mark must not end the paste early.
-    let clean = text
-        .replace("\x1b[201~", "")
-        .replace("\r\n", "\r")
-        .replace('\n', "\r");
-    out.extend_from_slice(clean.as_bytes());
+    let mut cr = false;
+    for &b in text.as_bytes() {
+        // No ESC between the marks: nothing pasted can end the paste early,
+        // not even an end mark split around another.
+        if b == 0x1b && modes.bracketed_paste {
+            continue;
+        }
+        match b {
+            b'\n' if cr => {}
+            b'\n' => out.push(b'\r'),
+            _ => out.push(b),
+        }
+        cr = b == b'\r';
+    }
     if modes.bracketed_paste {
         out.extend_from_slice(b"\x1b[201~");
     }
@@ -227,6 +235,14 @@ mod tests {
         };
         let mut out = Vec::new();
         paste("a\n\x1b[201~b", &m, &mut out);
-        assert_eq!(out, b"\x1b[200~a\rb\x1b[201~");
+        assert_eq!(out, b"\x1b[200~a\r[201~b\x1b[201~");
+        // One pass of removal would leave an end mark made of the halves.
+        out.clear();
+        paste("x\x1b[20\x1b[201~1~y\r\nz", &m, &mut out);
+        assert_eq!(out, b"\x1b[200~x[20[201~1~y\rz\x1b[201~");
+        // Without the marks, ESC is the user's to paste.
+        out.clear();
+        paste("\x1b[A\n", &Modes::default(), &mut out);
+        assert_eq!(out, b"\x1b[A\r");
     }
 }

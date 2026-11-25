@@ -247,6 +247,10 @@ fn osc_52_copies_but_never_answers_a_read() {
     assert_eq!(v.t.clipboard.as_deref(), Some("hello world"));
     feed(&mut v, "\x1b]52;c;?\x07");
     assert!(v.t.replies.is_empty());
+    // An empty payload would clear the clipboard: ignored.
+    v.t.clipboard = None;
+    feed(&mut v, "\x1b]52;c;\x07\x1b]52;c\x07");
+    assert_eq!(v.t.clipboard, None);
 }
 
 #[test]

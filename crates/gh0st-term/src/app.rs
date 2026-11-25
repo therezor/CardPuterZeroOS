@@ -33,6 +33,9 @@ const SETTLE_MS: u64 = 5;
 const NOTICE_GAP_MS: u128 = 3000;
 /// Synchronized output may hold the screen this long at most.
 const SYNC_MS: u64 = 150;
+/// The most one paste sends to the program, so a big clipboard can't
+/// flood it.
+const PASTE_MAX: usize = 64 * 1024;
 
 /// What `gh0st-term` was started with.
 pub struct Options {
@@ -186,7 +189,6 @@ pub struct Term {
     mode: Mode,
     query: String,
     hit: Option<Hit>,
-    clipboard: String,
     /// The command of `-e` ended: the next key quits.
     waiting: bool,
     /// When the last notification went out.
@@ -229,7 +231,6 @@ impl Term {
             mode: Mode::Typing,
             query: String::new(),
             hit: None,
-            clipboard: String::new(),
             waiting: false,
             noticed: None,
             epoch: std::time::Instant::now(),
@@ -478,12 +479,12 @@ impl Term {
             }
             t.replies.clear();
         }
-        // OSC 52: a program in the tab copies, to the clipboard every app
-        // shares.
+        // OSC 52: a program in the tab in view copies, to the clipboard
+        // every app shares. A tab out of sight doesn't.
         if let Some(text) = t.clipboard.take() {
-            cx.copy(text.as_bytes());
-            self.clipboard = text;
-            cx.toast("Copied");
+            if i == self.cur && cx.copy(text.as_bytes()) {
+                cx.toast("Copied");
+            }
         }
         let notice = t.notice.take();
         let events = std::mem::take(&mut t.events);
@@ -835,28 +836,38 @@ impl Term {
         };
         let text = selected_text(&tab.vt.t, anchor, head, &mut self.scratch.borrow_mut());
         let lines = text.lines().count().max(1);
-        cx.copy(text.as_bytes());
-        self.clipboard = text;
+        let copied = cx.copy(text.as_bytes());
         self.mode = Mode::View;
-        cx.toast(&format!("Copied {lines} lines"));
+        if copied {
+            cx.toast(&format!("Copied {lines} lines"));
+        } else {
+            cx.toast("Couldn't copy that");
+        }
         cx.redraw();
     }
 
+    /// What the clipboard holds, never a copy of the terminal's own: the
+    /// lock clears the clipboard, and nothing here may bring it back.
     fn paste(&mut self, cx: &mut Cx) {
-        let text = match cx.paste() {
-            Some(b) => String::from_utf8_lossy(&b).into_owned(),
-            None => self.clipboard.clone(),
-        };
-        if text.is_empty() {
+        let Some(bytes) = cx.paste().filter(|b| !b.is_empty()) else {
             cx.toast("Nothing copied");
             return;
+        };
+        let mut end = bytes.len().min(PASTE_MAX);
+        // Cut where a character starts.
+        while end < bytes.len() && end > 0 && bytes[end] & 0xc0 == 0x80 {
+            end -= 1;
         }
+        let text = String::from_utf8_lossy(&bytes[..end]);
         let Some(tab) = self.tab() else {
             return;
         };
         let mut out = Vec::new();
         keys::paste(&text, &tab.vt.t.modes, &mut out);
         self.send(&out, cx);
+        if end < bytes.len() {
+            cx.toast(&format!("Pasted the first {} KB", PASTE_MAX >> 10));
+        }
     }
 
     /// A key no command took, by mode. Releases do nothing.

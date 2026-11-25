@@ -749,13 +749,15 @@ impl Cx<'_> {
 
     /// Copies `data` (text, as UTF-8 or the bytes as they are) to the
     /// clipboard every app shares. False when it was refused: only the app
-    /// in front may copy, 16 MB at most.
+    /// in front may copy, about 1 MB at most (a D-Bus message).
     pub fn copy(&mut self, data: &[u8]) -> bool {
         self.s.clip.copy(data)
     }
 
     /// The text copied last, by this app or another. None when nothing
-    /// is, or when this app isn't in front.
+    /// is, when the lock cleared it, or when this app isn't in front.
+    /// Without the session, what this app copied last. Keep no copy of
+    /// your own to fall back on: it would bring back what the lock cleared.
     pub fn paste(&mut self) -> Option<Vec<u8>> {
         self.s.clip.paste()
     }

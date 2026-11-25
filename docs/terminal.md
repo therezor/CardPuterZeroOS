@@ -89,7 +89,7 @@ keys here too:
 | r t, m, b | Text size, grid, top bar |
 | n | Find: type, then Enter or Fn+F for older, Fn+X for newer, Esc when done |
 | v | Copy whole lines: f x extend, y or Enter copies |
-| p | Paste |
+| p | Paste: the first 64 KB of the clipboard |
 | o w, Tab 1-9 | New tab, close tab, go to a tab |
 | s | More settings |
 | k | Send Home |
@@ -121,7 +121,9 @@ The menu's More settings, or `s` in scroll mode. Saved in `~/.config/cardputerze
 xterm's common set: cursor moves, erase, insert and delete, scroll regions,
 SGR with 256 colours and truecolor, the alternate screen, wide chars and
 combining marks, line drawing, tab stops, bracketed paste, cursor shapes,
-focus reports, synchronized output (mode 2026), DSR, DA and DECRQM.
+focus reports, synchronized output (mode 2026), DSR, DA and DECRQM. In
+bracketed paste, Esc is left out of the text, so nothing pasted can end the
+paste early.
 
 Answers to DSR, DA and DECRQM come from a budget: 4 KB at once, then 1 KB
 a second. A program that floods queries and never reads the answers, such
@@ -129,8 +131,9 @@ as `cat` of a file full of them, gets a few, as in xterm.
 
 - OSC 0 and 2 set the title. OSC 7 tells the terminal the working directory;
   a new tab starts there.
-- OSC 52 copies to the terminal's clipboard. It never answers a read, so a
-  remote host can't see what you copied.
+- OSC 52 copies to the clipboard every app shares, from the tab in view
+  only. It never answers a read, so a remote host can't see what you
+  copied, and an empty copy, which would clear it, is ignored.
 - OSC 9 and 777 notify. The bell of a tab out of sight does too. While the
   terminal runs behind another app, the shell shows these as toasts. Each
   starts with "Terminal:", and at most one goes out every 3 s, since the
