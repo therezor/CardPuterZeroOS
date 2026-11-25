@@ -638,3 +638,22 @@ fn delete_acts_on_the_names_the_dialog_showed() {
         .collect();
     assert_eq!(deleted, [vec![Loc::Local(h.home().join("Music/b.flac"))]]);
 }
+
+#[test]
+fn a_folder_opened_from_another_app_leaves_a_clash_waiting() {
+    let h = Home::new("clash-open");
+    let mut f = fake();
+    f.copy.conflict = Some("a.flac".into());
+    let (mut d, log) = drive(&h, f, Keyring::over(None));
+    // Music: copy a.flac, paste it back into Music.
+    keys(&mut d, "enter\n5\n6");
+    assert_eq!(d.title(), "Already there");
+    assert!(d.awake());
+    // Another app opens a folder here meanwhile.
+    d.open(&[h.home().as_path()]);
+    d.frame();
+    assert_eq!(d.title(), "Already there", "the question stays");
+    keys(&mut d, "enter");
+    assert_eq!(replies(&log), [Some("both".to_string())]);
+    assert!(!d.awake(), "the copy ended");
+}

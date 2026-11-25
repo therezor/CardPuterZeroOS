@@ -239,9 +239,11 @@ you may have open. The top bar says what it does and for whom: `Open ·
 - The app's file types hide the rest; folders always show. With more than
   one type, a Type chip picks which.
 - **Open:** Enter picks the file. When the app takes several, 4 or Space
-  marks them and Enter picks the marks.
+  marks them and Enter picks the marks. Only files are marked, Mark all
+  too.
 - **Save:** Save opens the name, filled with the app's. Enter on a file
-  saves over it. Saving over a file asks first.
+  saves over it. Saving over a file asks first; a folder's name is
+  refused.
 - **Folder:** only folders show. Choose picks the one you are in.
 - Esc held at Places, or Esc held 3 s anywhere, gives up: the app hears
   that no file was picked.
@@ -250,10 +252,13 @@ you may have open. The top bar says what it does and for whom: `Open ·
 
 Enter on a file on a server or in an archive, when an app opens its type,
 copies it to `~/.cache/gh0st-files/open/<hash>/` with the usual progress
-card (Esc stops it), then opens it in its app. The copy is read only: the
-app can't save over it as if it were the original, and offers Save as. A
-copy already there, the same size, opens at once. Files keeps 256 MB of
-copies, removing the oldest when it starts.
+card (Esc stops it), then opens it in its app. Enter again while it comes
+does nothing more. The copy and its folder are read only: the app can't
+save over it as if it were the original, nor rename a new file over it,
+and offers Save as. A copy already there, the same size and time, opens at
+once; a source with no time (some WebDAV servers) is copied again. Files
+keeps 256 MB of copies, removing those opened longest ago when it starts,
+never the newest, and not when it starts as a chooser.
 
 ## Limits
 

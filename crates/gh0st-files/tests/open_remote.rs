@@ -70,5 +70,31 @@ fn a_server_file_is_copied_then_opened_in_its_app() {
     assert!(cache.starts_with(home.join(".cache/gh0st-files/open")));
     let opened = d.opened_requests();
     assert_eq!(opened, [(None, cache.join("notes.txt"))]);
-    let _ = std::fs::remove_dir_all(&dir);
+
+    // A slow copy: Enter again while it comes starts nothing more.
+    let mut f = Fake::new().folder("nas", "/", vec![Entry::file("big.txt", 9)]);
+    f.copy.progress = Some((1, 9, "big.txt".into()));
+    let log = f.log.clone();
+    let mut d = Driver::new(Files::with(Options {
+        home: home.clone(),
+        data: Some(dir.join("data")),
+        engine: Box::new(f),
+        keyring: Keyring::over(None),
+        pick: None,
+    }));
+    d.frame();
+    for k in ["tab", "x", "x", "x", "x", "enter", "x", "enter", "enter"] {
+        d.keys(k);
+        d.frame();
+    }
+    let copies = log
+        .borrow()
+        .iter()
+        .filter(|r| matches!(r, Request::Copy { .. }))
+        .count();
+    assert_eq!(copies, 1);
+    assert_eq!(d.toast(), Some("Getting it already"));
+    // The sealed copy's folder is read only.
+    gh0st_files::open_cache::remove(cache);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -162,3 +162,43 @@ fn recent_files_of_the_asked_type_are_a_place_to_pick_from() {
     keys(&mut d, "enter");
     assert_eq!(*answer.borrow(), Some(Some(vec![h.0.join("Music/a.flac")])));
 }
+
+#[test]
+fn mark_all_in_the_chooser_marks_files_not_folders() {
+    let h = home("all");
+    std::fs::create_dir_all(h.0.join("Music/live")).unwrap();
+    let mut spec = Spec::new(Mode::Open, "Media");
+    spec.multiple = true;
+    let (mut d, answer) = chooser(&h, spec);
+    // Music, mark all, then Enter on a file: the cursor walks down to one.
+    keys(&mut d, "x\nenter\na");
+    for _ in 0..4 {
+        if answer.borrow().is_some() {
+            break;
+        }
+        keys(&mut d, "x\nenter");
+    }
+    let got = answer.borrow().clone().unwrap().unwrap();
+    assert_eq!(
+        got,
+        [
+            h.0.join("Music/a.flac"),
+            h.0.join("Music/b.flac"),
+            h.0.join("Music/notes.txt")
+        ]
+    );
+}
+
+#[test]
+fn save_refuses_a_folders_name() {
+    let h = home("save-dir");
+    let mut spec = Spec::new(Mode::Save, "Text");
+    spec.name = "Music".into();
+    let (mut d, answer) = chooser(&h, spec);
+    keys(&mut d, "6\nenter");
+    assert_eq!(
+        d.dialog(),
+        Some(("Save as", Some("A folder has that name")))
+    );
+    assert!(answer.borrow().is_none());
+}

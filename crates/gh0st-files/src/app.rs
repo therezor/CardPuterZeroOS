@@ -234,6 +234,16 @@ impl Side {
             .unwrap_or_default()
     }
 
+    /// As `picked`, files only: what a chooser hands back.
+    fn picked_files(&self) -> Vec<String> {
+        let names = self.picked();
+        self.entries
+            .iter()
+            .filter(|e| !e.kind.is_dir() && names.contains(&e.name))
+            .map(|e| e.name.clone())
+            .collect()
+    }
+
     fn select_name(&mut self, name: &str) {
         if self.state != State::Ready {
             self.want = Some(name.into());
@@ -471,10 +481,13 @@ impl Files {
         match spec.mode {
             Mode::Open => {
                 let names = if spec.multiple {
-                    self.side().picked()
+                    self.side().picked_files()
                 } else {
                     vec![e.name.clone()]
                 };
+                if names.is_empty() {
+                    return;
+                }
                 self.finish(Some(names.iter().map(|n| dir.join(n)).collect()), cx);
             }
             Mode::Save => self.ask_replace(dir.join(&e.name), cx),
@@ -981,11 +994,22 @@ impl Files {
     fn fetch_open(&mut self, e: &Entry, loc: &Loc, cx: &mut Cx) {
         let dir = open_cache::slot(&self.home, &format!("{loc:?}"));
         let file = dir.join(&e.name);
+        // Under way already: a second start would pull the folder from
+        // under the first.
+        let fetching = self
+            .pending
+            .values()
+            .any(|p| matches!(p, Pending::Fetch(f, _) if f.parent() == Some(dir.as_path())));
+        if fetching {
+            cx.toast("Getting it already");
+            return;
+        }
         if open_cache::fresh(&file, e.size, e.mtime) {
+            open_cache::touch(&dir);
             cx.open_file(&file);
             return;
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        open_cache::remove(&dir);
         if let Err(err) = std::fs::create_dir_all(&dir) {
             self.say_failed(&err.to_string(), cx);
             return;
@@ -1346,7 +1370,7 @@ impl Files {
                 self.transfers.retain(|t| t.id != id);
                 cx.keep_awake(!self.transfers.is_empty());
                 if let Some(dir) = file.parent() {
-                    let _ = std::fs::remove_dir_all(dir);
+                    open_cache::remove(dir);
                 }
                 if shown || text != "Stopped" {
                     self.say_failed(&text, cx);
@@ -1626,13 +1650,17 @@ impl Files {
         s.list.select((i + 1).min(n.saturating_sub(1)));
     }
 
-    /// Marks every row shown (a search's matches only), or clears.
+    /// Marks every row shown (a search's matches only), or clears. A
+    /// chooser marks files only.
     fn mark_all(&mut self) {
+        let picking = self.pick.is_some();
         let s = self.side_mut();
         let shown: BTreeSet<String> = s
             .shown()
             .into_iter()
-            .map(|i| s.entries[i].name.clone())
+            .map(|i| &s.entries[i])
+            .filter(|e| !(picking && e.kind.is_dir()))
+            .map(|e| e.name.clone())
             .collect();
         if shown.is_subset(&s.marks) {
             s.marks.retain(|m| !shown.contains(m));
@@ -2251,7 +2279,10 @@ impl Page for Files {
         if self.data.is_none() {
             self.data = Some(cx.data_dir());
         }
-        open_cache::trim(&self.home, open_cache::CAP);
+        // A chooser comes up over another app, which may have a copy open.
+        if self.pick.is_none() {
+            open_cache::trim(&self.home, open_cache::CAP);
+        }
         if let Some(p) = self.servers_path() {
             self.servers = servers::load(&p);
         }
@@ -2284,7 +2315,12 @@ impl Page for Files {
                 _ => return,
             }
         };
-        self.view = View::Browse;
+        // A question the worker waits on, and a half filled form, stay:
+        // the folder opens under them.
+        if !matches!(self.view, View::Conflict { .. } | View::Server(_)) {
+            self.view = View::Browse;
+            self.armed = false;
+        }
         let base = if dir.starts_with(&self.home) {
             self.home.clone()
         } else {
@@ -2295,6 +2331,8 @@ impl Page for Files {
         if let Some(n) = name {
             self.side_mut().select_name(&n);
         }
+        // A question that waited for the viewer.
+        self.next_ask(cx);
         self.retitle();
     }
 
@@ -2941,7 +2979,12 @@ impl Files {
                     return;
                 };
                 let path = dir.join(&name);
-                if std::fs::symlink_metadata(&path).is_ok() {
+                if path.is_dir() {
+                    let d = Dialog::text("Save as", "name")
+                        .value(&name)
+                        .error("A folder has that name");
+                    cx.ask(ASK_SAVE, d.yes("save"));
+                } else if std::fs::symlink_metadata(&path).is_ok() {
                     self.ask_replace(path, cx);
                 } else {
                     self.finish(Some(vec![path]), cx);
