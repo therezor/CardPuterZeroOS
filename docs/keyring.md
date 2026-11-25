@@ -159,7 +159,9 @@ prompt's end comes on the bus fd, which the page watches.
   password, and password changes.
 - **`crates/gh0st/tests/keyring_sim.sh`** runs the real shell under
   `--sim` with both daemons: unlock from the lock screen, approve once, a
-  key too soon, deny, and an app in front parked and brought back.
+  key too soon, deny, an app in front parked and brought back, a
+  question after the dark over an app, and `gh0st open` from the app in
+  front opening with no key pressed.
 - **`crates/gh0st-keyringd/tests/compat.sh`** and
   **`crates/gh0st-session/tests/compat.sh`** run real clients under
   `dbus-run-session` in CI: `secret-tool`, `gdbus`, python `keyring` and
