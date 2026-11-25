@@ -295,6 +295,10 @@ impl Mpris {
 
 impl Drop for Mpris {
     fn drop(&mut self) {
+        // A bus that went has let the name go, and a call would wait.
+        if self.closed() {
+            return;
+        }
         let m = Message::call(bus::NAME, "/org/freedesktop/DBus", bus::NAME, "ReleaseName")
             .arg(Value::str(NAME));
         let _ = self.conn.call(m, 500);

@@ -483,7 +483,8 @@ impl Media {
         }
     }
 
-    /// Reads the folder again. The file selected stays so where it still is.
+    /// Reads the folder again, the selected file kept selected if it is
+    /// still there.
     fn relist(&mut self) {
         self.stale = false;
         let at = self.entry().map(|e| e.path.clone());
