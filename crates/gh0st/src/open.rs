@@ -9,6 +9,8 @@
 //! - `gh0st wallpaper FILE`: the wallpaper, after the user's yes.
 
 use gh0st_dbus::{Conn, Kind, Message, Value, bus};
+use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 const NAME: &str = "org.freedesktop.portal.Desktop";
@@ -33,7 +35,8 @@ fn ask(iface: &str, member: &str, args: Vec<Value>, secs: u64) -> Result<(u32, V
     let mut m = Message::call(NAME, PATH, iface, member);
     m.body = args;
     let m = m.arg(Value::props([("handle_token", Value::str(token))]));
-    conn.call(m, 5000).map_err(|e| e.to_string())?;
+    // Only the portal that took the call may answer it.
+    let portal = conn.call(m, 5000).map_err(|e| e.to_string())?.sender;
     let end = std::time::Instant::now() + std::time::Duration::from_secs(secs);
     while std::time::Instant::now() < end {
         let mut fds = [gh0st_core::rt::pollfd(conn.fd())];
@@ -42,7 +45,11 @@ fn ask(iface: &str, member: &str, args: Vec<Value>, secs: u64) -> Result<(u32, V
             break;
         }
         while let Ok(Some(r)) = conn.recv() {
-            if r.kind == Kind::Signal && r.path.as_deref() == Some(path.as_str()) {
+            if r.kind == Kind::Signal
+                && r.is("org.freedesktop.portal.Request", "Response")
+                && r.path.as_deref() == Some(path.as_str())
+                && r.sender == portal
+            {
                 let code = r.body.first().and_then(Value::as_u32).unwrap_or(2);
                 let results = r.body.get(1).cloned().unwrap_or(Value::props::<&str>([]));
                 return Ok((code, results));
@@ -52,29 +59,37 @@ fn ask(iface: &str, member: &str, args: Vec<Value>, secs: u64) -> Result<(u32, V
     Err("no answer".into())
 }
 
-/// Prints why a request ended without a result.
+/// Prints why a request ended without a result. The portal says no more
+/// than refused or failed; the screen may say why.
 fn refused(cmd: &str, code: u32) -> i32 {
     match code {
         1 => eprintln!("gh0st {cmd}: cancelled"),
-        _ => eprintln!("gh0st {cmd}: refused: only the app in front may ask"),
+        _ => eprintln!("gh0st {cmd}: refused or failed. Only the app in front may ask."),
     }
     1
 }
 
-fn uri_of(cmd: &str, target: &str) -> Option<String> {
-    if target.starts_with("file://") {
-        return Some(target.to_string());
+fn uri_of(cmd: &str, target: &OsStr) -> Option<String> {
+    if target.as_bytes().starts_with(b"file://") {
+        return match target.to_str() {
+            Some(u) => Some(u.to_string()),
+            None => {
+                eprintln!("gh0st {cmd}: a URI is ASCII, with %XX for other bytes");
+                None
+            }
+        };
     }
-    match std::fs::canonicalize(Path::new(target)) {
+    let target = Path::new(target);
+    match std::fs::canonicalize(target) {
         Ok(a) => Some(gh0st_core::uri::from_path(&a)),
         Err(e) => {
-            eprintln!("gh0st {cmd}: {target}: {e}");
+            eprintln!("gh0st {cmd}: {}: {e}", target.display());
             None
         }
     }
 }
 
-pub fn main(args: &[String]) -> i32 {
+pub fn main(args: &[OsString]) -> i32 {
     let [target] = args else {
         eprintln!("usage: gh0st open <file|folder|file:// URI>");
         return 2;
@@ -94,7 +109,7 @@ pub fn main(args: &[String]) -> i32 {
     }
 }
 
-pub fn screenshot(args: &[String]) -> i32 {
+pub fn screenshot(args: &[OsString]) -> i32 {
     if !args.is_empty() {
         eprintln!("usage: gh0st screenshot");
         return 2;
@@ -119,7 +134,7 @@ pub fn screenshot(args: &[String]) -> i32 {
     }
 }
 
-pub fn pick_color(args: &[String]) -> i32 {
+pub fn pick_color(args: &[OsString]) -> i32 {
     if !args.is_empty() {
         eprintln!("usage: gh0st pick-color");
         return 2;
@@ -148,7 +163,7 @@ pub fn pick_color(args: &[String]) -> i32 {
     }
 }
 
-pub fn wallpaper(args: &[String]) -> i32 {
+pub fn wallpaper(args: &[OsString]) -> i32 {
     let [target] = args else {
         eprintln!("usage: gh0st wallpaper <picture>");
         return 2;

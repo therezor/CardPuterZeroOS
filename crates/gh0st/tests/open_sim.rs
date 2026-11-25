@@ -430,3 +430,20 @@ fn an_app_closed_behind_forgets_its_opener() {
     );
     assert!(!shell.contains("resumed Alpha"), "{shell}");
 }
+
+#[test]
+fn a_name_that_is_not_utf8_is_an_error_not_a_panic() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    let run = |args: &[&[u8]]| {
+        Command::new(env!("CARGO_BIN_EXE_gh0st"))
+            .args(args.iter().map(|a| OsStr::from_bytes(a)))
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .code()
+    };
+    assert_eq!(run(&[b"open", b"/nonexistent/\xff.jpg"]), Some(1));
+    // A program that reads text refuses it.
+    assert_eq!(run(&[b"update", b"\xff"]), Some(2));
+}
