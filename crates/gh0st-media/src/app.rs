@@ -395,9 +395,11 @@ impl Media {
         if !self.music {
             self.stop_play();
         }
-        // A helper that kept dying gets another go with a new folder.
+        // A helper that kept dying gets another go with a new folder. Asks
+        // made meanwhile went nowhere: the one taken would hold the rest.
         if self.helper.is_none() && self.crashes > RESTARTS {
             self.crashes = 0;
+            self.asks.clear();
             self.launch(cx);
         }
         if let Some(t) = self.slides.take() {
@@ -2210,6 +2212,10 @@ impl Page for Media {
                 c.add(Command::action(AHEAD, "Ahead 10 s").keys_only());
                 self.play_commands(c);
                 c.add(Command::action(INFO, "Details").keys("i"));
+                // A show that came to a moving picture or a video.
+                if self.slides.is_some() {
+                    c.add(Command::toggle(SLIDES, "Slideshow", true).keys("p"));
+                }
             }
             View::Music => {
                 c.add(Command::action(PLAY, "Play or pause").keys("Enter Space"));
@@ -2266,7 +2272,7 @@ impl Page for Media {
                 }
                 self.save(cx);
             }
-            (View::Grid | View::Viewer, SLIDES) => {
+            (View::Grid | View::Viewer | View::Player, SLIDES) => {
                 if let Some(t) = self.slides.take() {
                     cx.cancel(t);
                     cx.keep_awake(false);

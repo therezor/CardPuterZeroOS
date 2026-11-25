@@ -84,8 +84,10 @@ fn lines(log: &Path) -> Vec<i32> {
         .collect()
 }
 
-fn kill_all(log: &Path) {
-    for pid in lines(log) {
+/// Ends the helper started last: the only one still the app's child. The
+/// others were reaped, and their pids may be another's now.
+fn kill_last(log: &Path) {
+    if let Some(&pid) = lines(log).last() {
         // SAFETY: a signal to a helper this test started.
         unsafe { libc::kill(pid, libc::SIGKILL) };
     }
@@ -108,7 +110,50 @@ fn a_helper_that_dies_as_it_starts_is_tried_four_times() {
     ));
     d.pump(1500);
     assert_eq!(lines(&log).len(), 4, "the first and three more");
+    // A folder opened tries again, as many times.
     d.frame();
+    d.keys("x\nenter");
+    d.pump(1500);
+    assert_eq!(lines(&log).len(), 8);
+    assert!(d.lint().is_empty(), "{:?}", d.lint());
+}
+
+#[test]
+fn a_helper_back_after_dying_gets_the_asks() {
+    let _one = one();
+    let h = home("back", &[]);
+    for i in 0..40 {
+        let p = h.join(format!("Pictures/p{i:02}.jpg"));
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b"x").unwrap();
+    }
+    let log = h.join("starts");
+    // The first is the fake helper; the next three die as they start;
+    // the one a folder brings back is the fake again.
+    let script = format!(
+        "echo $$ >> '{log}'; n=$(wc -l < '{log}'); \
+         [ \"$n\" -eq 1 ] || [ \"$n\" -ge 5 ] && exec '{bin}' --fake-helper; exit 3",
+        log = log.display(),
+        bin = env!("CARGO_BIN_EXE_gh0st-media"),
+    );
+    let mut d = Driver::new(Media::with(sh(script), h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "x\nenter");
+    d.pump(500);
+    kill_last(&log);
+    d.pump(1500);
+    assert_eq!(lines(&log).len(), 4);
+    // Tiles asked while it is stopped go nowhere; the folder again.
+    step(&mut d, "x\nx\nx\nesc\nenter");
+    d.pump(1000);
+    assert_eq!(lines(&log).len(), 5);
+    // Rows never drawn: their tiles come.
+    d.keys("x\nx\nx\nx\nx");
+    let blank = d.frame().pixels().to_vec();
+    d.pump(1000);
+    assert!(d.frame().pixels() != &blank[..], "the tiles come");
+    kill_last(&log);
 }
 
 #[test]
@@ -129,7 +174,7 @@ fn a_helper_that_died_is_started_again_once() {
     let mut d = Driver::new(Media::with(sh(script), h.clone(), None));
     d.pump(1000);
     let started = lines(&log).len();
+    kill_last(&log);
     drop(d);
-    kill_all(&log);
     assert_eq!(started, 2, "its hangup and its exit start one helper");
 }
