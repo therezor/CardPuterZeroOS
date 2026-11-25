@@ -29,6 +29,7 @@ pub mod rfkill;
 pub mod rt;
 pub mod script;
 pub mod search;
+pub mod sound;
 pub mod status;
 pub mod store;
 pub mod sysconf;

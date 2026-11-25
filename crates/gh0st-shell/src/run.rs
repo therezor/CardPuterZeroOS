@@ -11,6 +11,7 @@ use crate::notices::{self, Panel};
 use crate::overlay::Overlay;
 use crate::prompt::{self, Ask, Kind, Origin, Prompts};
 use crate::services::{Said, Services, Which};
+use crate::sound::{self as sounds, Player};
 use crate::switcher::{Card, HoldTick, Switcher};
 use crate::tasks::{self, Task, Tasks};
 use gh0st_core::apps::{self, App, Dirs, IconRef};
@@ -29,6 +30,7 @@ use gh0st_core::password::{self, Account, Tries};
 use gh0st_core::rfkill;
 use gh0st_core::rt;
 use gh0st_core::script::Script;
+use gh0st_core::sound::Sound;
 use gh0st_core::status::{self, Net, Watch};
 use gh0st_core::usage::{self, Sampler};
 use gh0st_ui::display::{Display, Frames};
@@ -355,6 +357,10 @@ struct Shell {
     services: Services,
     /// Under `--sim`: tests may swap the programs that check passwords.
     sim: bool,
+    /// The binary `gh0st audio` runs from. In a sim, only a test's stub.
+    audio_exe: Option<PathBuf>,
+    /// System sounds.
+    player: Player,
     /// The keyring's questions.
     prompts: Prompts,
     /// The keyring said its vault is open.
@@ -533,6 +539,17 @@ impl Shell {
             },
             prompts: Prompts::default(),
             sim: sim.is_some(),
+            audio_exe: if on_device {
+                Some(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/gh0st")))
+            } else {
+                // A test watches the calls through a stub.
+                std::env::var_os("GH0ST_AUDIO_EXE").map(PathBuf::from)
+            },
+            player: Player::new(if on_device {
+                Some("pacat".into())
+            } else {
+                std::env::var("GH0ST_PACAT").ok()
+            }),
             keyring_open: false,
             unlock_sent: false,
             open_asked: false,
@@ -567,6 +584,11 @@ impl Shell {
         // A shell that stopped in the dark left Wi-Fi off.
         if on_device && std::fs::remove_file(wifi_marker()).is_ok() {
             child::fire(&["nmcli", "radio", "wifi", "on"]);
+        }
+        // Its paused apps went with it; their null sinks did not.
+        audio(s.audio_exe.as_deref(), "clear", None);
+        if on_device && sounds::first_since_boot() {
+            s.sound(Sound::Boot);
         }
         // A restart or a power cycle must not skip the lock.
         if s.lock_password {
@@ -611,7 +633,7 @@ impl Shell {
         match kind {
             JobKind::Volume => {
                 if let Some((v, muted)) = parse_volume(&j.output()) {
-                    self.volume.get_or_insert(v.min(100));
+                    self.volume = Some(v.min(100));
                     self.muted = Some(muted);
                 }
             }
@@ -681,6 +703,7 @@ impl Shell {
                 self.save_tries();
                 if current {
                     let ok = result != password::Check::Wrong;
+                    self.sound(if ok { Sound::Unlock } else { Sound::Error });
                     self.lock.checked(ok, rt::now_ms());
                     if ok {
                         // Broken twice lets the user in this once: a
@@ -1212,6 +1235,9 @@ impl Shell {
         let before = self.low.warning();
         let w = self.low.update(self.battery, rt::now_ms());
         if w != before {
+            if w != Warning::None {
+                self.sound(Sound::Warn);
+            }
             self.dirty = true;
         }
         self.dirty = true;
@@ -1223,7 +1249,11 @@ impl Shell {
         let r = self.battery_dir.as_deref().and_then(battery::sample);
         if r != self.battery {
             self.battery = r;
-            self.low.update(r, now);
+            let before = self.low.warning();
+            let w = self.low.update(r, now);
+            if w != before && w != Warning::None {
+                self.sound(Sound::Warn);
+            }
             self.dirty = true;
         }
     }
@@ -1258,6 +1288,7 @@ impl Shell {
                     .then_some(self.tab_down.map(|t| t + LOCK_HOLD_MS))
                     .flatten(),
                 self.rescan_at,
+                self.player.deadline(),
                 (shell && self.screen == Screen::Switcher && self.next_frame(now).is_none())
                     .then_some(self.stats_at)
                     .flatten(),
@@ -1405,6 +1436,9 @@ impl Shell {
     /// Routes every exited child: an app's leader, or a job.
     fn reap(&mut self) {
         for (pid, status) in child::reap() {
+            if self.player.exited(pid, rt::now_ms()) {
+                continue;
+            }
             if let Some((w, gave_up)) = self.services.exited(pid, rt::now_ms()) {
                 self.daemon_died(w);
                 if gave_up {
@@ -1441,6 +1475,9 @@ impl Shell {
             if self.debug {
                 eprintln!("gh0st shell: {} closed at {}", t.name, now - self.t0);
             }
+            if t.sound_parked {
+                audio(self.audio_exe.as_deref(), "unpark", Some(t.pgid));
+            }
             if self.pending == Some(Pending::Resume(t.id.clone())) {
                 self.pending = None;
             }
@@ -1457,6 +1494,7 @@ impl Shell {
             self.screen = Screen::Home;
             self.undim();
             self.take_screen();
+            self.sound(Sound::Close);
             // An app opened over another goes back to it.
             if let Some((opened, opener)) = self.return_to.take() {
                 let back = gone.iter().any(|t| t.id == opened)
@@ -1482,6 +1520,7 @@ impl Shell {
     }
 
     fn on_timers(&mut self, now: u64) {
+        self.player.tick(now);
         if let Some(k) = self.kb.repeat_due(now) {
             self.on_key(k, now);
         }
@@ -1553,6 +1592,7 @@ impl Shell {
         if self.low.warning() == Warning::Countdown {
             if self.screen == Screen::Off {
                 self.screen_on(now);
+                self.sound(Sound::Warn);
             }
             self.dirty = true;
             if self.low.take_shutdown(now) {
@@ -1784,6 +1824,7 @@ impl Shell {
         self.switcher.cancel_hold();
         self.tab_down = None;
         self.screen = Screen::Off;
+        self.player.close();
         self.off_at = rt::now_ms();
         self.wifi_done = false;
         self.sync_grab();
@@ -1921,6 +1962,7 @@ impl Shell {
             _ => Back::Home,
         };
         self.lock_secure = true;
+        self.sound(Sound::Lock);
         self.enter_locked(now);
     }
 
@@ -2021,6 +2063,7 @@ impl Shell {
         let mut toasts = Vec::new();
         let mut slept = false;
         let mut open = None;
+        let mut sounds = Vec::new();
         if let Some(t) = self.tasks.iter_mut().find(|t| t.pgid == pgid) {
             let front = t.state == tasks::State::Front;
             while let Some(m) = t.link.as_ref().and_then(|l| l.recv()) {
@@ -2029,6 +2072,9 @@ impl Shell {
                     Some("toast") => toasts.extend(m.get(1).cloned()),
                     // Only the app in front may bring another up.
                     Some("open") if front => open = m.get(1).cloned(),
+                    Some("sound") if front => {
+                        sounds.extend(m.get(1).and_then(|n| Sound::from_name(n)))
+                    }
                     Some("awake") => {
                         let on = m.get(1).is_some_and(|v| v == "1");
                         slept |= t.awake && !on;
@@ -2054,6 +2100,9 @@ impl Shell {
         }
         if let Some(name) = open {
             self.open_request(&name);
+        }
+        for s in sounds {
+            self.app_sound(s);
         }
         // What an app says stays private while the device is locked.
         if self.locked() {
@@ -2121,6 +2170,7 @@ impl Shell {
         self.sync_notices();
         if let Some(n) = fresh.filter(|_| announce) {
             if !self.locked() && self.screen != Screen::Off {
+                self.sound(Sound::Notice);
                 self.announce(&n);
             }
         }
@@ -2389,6 +2439,23 @@ impl Shell {
         self.dirty = true;
     }
 
+    /// A system sound of the shell's, while the user has them on and could
+    /// hear one.
+    fn sound(&mut self, s: Sound) {
+        if self.config.sounds() {
+            self.app_sound(s);
+        }
+    }
+
+    /// A sound an app asked for: the app checked the setting, which the
+    /// shell reads again only once the app leaves the front.
+    fn app_sound(&mut self, s: Sound) {
+        let quiet = self.muted == Some(true) || self.volume == Some(0);
+        if !quiet && self.screen != Screen::Off {
+            self.player.play(s, rt::now_ms());
+        }
+    }
+
     fn toast(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.level = None;
@@ -2464,7 +2531,10 @@ impl Shell {
             match self.lock.key(&k, now, password, waiting) {
                 lock::Action::None => {}
                 lock::Action::Redraw => self.dirty = true,
-                lock::Action::Unlock => self.unlock(),
+                lock::Action::Unlock => {
+                    self.sound(Sound::Unlock);
+                    self.unlock();
+                }
                 lock::Action::Check(typed) => {
                     self.check_password(typed);
                     self.dirty = true;
@@ -2604,6 +2674,7 @@ impl Shell {
         child::fire(&["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", &arg]);
         self.volume = Some(v);
         self.save_config(|c| c.set_int(config::key::VOLUME, v as i64));
+        self.sound(Sound::Move);
     }
 
     fn apply_mute(&mut self, muted: bool) {
@@ -2787,7 +2858,11 @@ impl Shell {
             keys::Nav::Left => (-1, 0),
             keys::Nav::Right => (1, 0),
         };
+        let from = self.home.index();
         self.home.move_by(dx, dy, rt::now_ms());
+        if self.home.index() != from {
+            self.sound(Sound::Move);
+        }
         self.dirty = true;
     }
 
@@ -2827,10 +2902,17 @@ impl Shell {
         }
         match self.tasks.get(&id).map(|t| t.state) {
             Some(tasks::State::Closing { .. }) => {
+                self.sound(Sound::Error);
                 self.toast(format!("{} is closing", app.entry.name))
             }
-            Some(_) => self.pending = Some(Pending::Resume(id)),
-            None => self.launch(&app),
+            Some(_) => {
+                self.sound(Sound::Open);
+                self.pending = Some(Pending::Resume(id));
+            }
+            None => {
+                self.sound(Sound::Open);
+                self.launch(&app);
+            }
         }
     }
 
@@ -2893,6 +2975,7 @@ impl Shell {
             quiet: false,
             awake: false,
             keeps_on: false,
+            sound_parked: false,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -2980,6 +3063,9 @@ impl Shell {
         t.pixels = Some(frame);
         t.state = tasks::State::Paused;
         t.used = now;
+        // A stopped app's open stream keeps the codec running.
+        audio(self.audio_exe.as_deref(), "park", Some(t.pgid));
+        t.sound_parked = true;
         if self.debug {
             eprintln!("gh0st shell: paused {} at {}", t.name, now - self.t0);
         }
@@ -3005,6 +3091,9 @@ impl Shell {
         t.mem_kb = None;
         t.keeps_on = false;
         let pgid = t.pgid;
+        if std::mem::take(&mut t.sound_parked) {
+            audio(self.audio_exe.as_deref(), "unpark", Some(pgid));
+        }
         // A quiet app redraws all of itself when told to resume.
         if std::mem::take(&mut t.quiet) {
             if let Some(l) = &t.link {
@@ -3042,6 +3131,13 @@ impl Shell {
         // Settings and stock apps may have changed config.json and the pins,
         // and the app may have installed or removed apps (the Store does).
         self.reload_config();
+        // And the volume and mute, which system sounds follow.
+        if !self.sim {
+            self.start_job(
+                JobKind::Volume,
+                &["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+            );
+        }
         self.pins = apps::load_pins();
         self.refresh_status();
         self.rescan();
@@ -3198,6 +3294,7 @@ impl Shell {
                     }
                     Some(id) => {
                         if self.tasks.get(&id).is_some_and(|t| t.resumable()) {
+                            self.sound(Sound::Open);
                             self.pending = Some(Pending::Resume(id));
                         }
                     }
@@ -3220,14 +3317,25 @@ impl Shell {
         if k.state == State::Release {
             return;
         }
+        let from = self.switcher.selected();
         match k.nav(true) {
-            Some(keys::Nav::Left) => self.switcher.move_by(-1, now),
-            Some(keys::Nav::Right) => self.switcher.move_by(1, now),
+            Some(keys::Nav::Left | keys::Nav::Right) => {
+                let dx = if k.nav(true) == Some(keys::Nav::Left) {
+                    -1
+                } else {
+                    1
+                };
+                self.switcher.move_by(dx, now);
+                if self.switcher.selected() != from {
+                    self.sound(Sound::Move);
+                }
+            }
             _ if (k.is(code::BACKSPACE) || k.ch == Some('8')) && k.state == State::Press => {
                 // Del or 8 on an app closes it; on Home, Del held closes
                 // every app, as 4 does.
                 match self.switcher.selected_app().map(|c| c.id.clone()) {
                     Some(id) => {
+                        self.sound(Sound::Close);
                         self.tasks.close(&id, now);
                         let cards = self.cards();
                         self.switcher.set_apps(cards);
@@ -3427,6 +3535,17 @@ impl Shell {
         t.f.small
             .draw(c, inner.x, inner.bottom() - 2, foot, t.c.muted);
     }
+}
+
+/// `gh0st audio VERB [PGID]` as a child, since pactl can take a while.
+fn audio(exe: Option<&Path>, verb: &str, pgid: Option<i32>) {
+    let Some(exe) = exe.and_then(Path::to_str) else {
+        return;
+    };
+    let pgid = pgid.map(|p| p.to_string());
+    let mut argv = vec![exe, "audio", verb];
+    argv.extend(pgid.as_deref());
+    child::fire(&argv);
 }
 
 /// Wakes for app installs (true: rescan), and for battery, charger and link

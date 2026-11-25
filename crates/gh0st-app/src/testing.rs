@@ -33,6 +33,8 @@ use std::path::Path;
 pub struct Driver {
     rt: Runtime,
     now: u64,
+    /// The shell's end of the app's link, once [`listen`](Driver::listen)ed.
+    shell: Option<gh0st_core::link::Link>,
 }
 
 impl Driver {
@@ -55,7 +57,11 @@ impl Driver {
         rt.off_device();
         rt.own_time();
         rt.start(0);
-        Driver { rt, now: 0 }
+        Driver {
+            rt,
+            now: 0,
+            shell: None,
+        }
     }
 
     /// Presses keys, one script line each: `down`, `enter`, `esc`, `6`,
@@ -237,5 +243,27 @@ impl Driver {
     /// True once the last page has closed.
     pub fn quit(&self) -> bool {
         self.rt.quit
+    }
+
+    /// Puts a shell on the other end of the app's link, so a test can read
+    /// what the app tells it: [`heard`](Driver::heard).
+    pub fn listen(&mut self) -> &mut Driver {
+        let pair = gh0st_core::link::Link::pair()
+            .and_then(|(shell, app)| Ok((shell, gh0st_core::link::Link::from_fd(app)?)));
+        if let Ok((shell, app)) = pair {
+            self.rt.link = Some(app);
+            self.shell = Some(shell);
+        }
+        self
+    }
+
+    /// What the app said to the shell since the last call, a line each:
+    /// `sound move`, `awake 1`.
+    pub fn heard(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Some(m) = self.shell.as_ref().and_then(|l| l.recv()) {
+            out.push(m.join(" "));
+        }
+        out
     }
 }

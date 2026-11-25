@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+mod audio;
 mod auth;
 mod helper;
 mod store;
@@ -41,12 +42,16 @@ fn main() {
             let rest: Vec<String> = args.collect();
             std::process::exit(gh0st_session::run::main(&rest))
         }
+        "audio" => {
+            let rest: Vec<String> = args.collect();
+            std::process::exit(audio::main(&rest))
+        }
         "store" => {
             let rest: Vec<String> = args.collect();
             std::process::exit(store::main(&rest))
         }
         _ => {
-            eprintln!("usage: gh0st <shell|helper|update|store|keyring|session|version>");
+            eprintln!("usage: gh0st <shell|helper|update|store|keyring|session|audio|version>");
             std::process::exit(2);
         }
     }

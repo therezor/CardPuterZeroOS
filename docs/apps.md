@@ -100,6 +100,7 @@ App to shell:
 | `toast` text | A short message over an OS bar for 2 s |
 | `awake` `1` or `0` | Keep the screen on while the app is in front, for a player or a clock. `0` lets it go dark again |
 | `open` name | Bring up app `name` (its desktop file stem, or the program its `Exec` runs). Only the app in front may ask. It pauses, and comes back when `name` closes |
+| `sound` name | Play a system sound: `move`, `select`, `back`, `open`, `close`, `lock`, `unlock`, `error`, `notice`, `warn` or `boot`. Only the app in front may ask, and only while the user has sounds on (`gh0st.sounds`): the app checks the setting, so a change in Settings counts at once. The shell plays nothing while dark or muted |
 
 `icon` names a symbol built into gh0st, the Lucide set that `gh0st:<name>`
 uses.
@@ -212,6 +213,12 @@ for it, as Fn+K parks it, and gets `pause` and `resume` on its link.
   never reads the password. Before an app resumes, the shell lets go and writes `MSC_SCAN`
   events to the device until every paused reader's queue overflows, so the
   app reads `SYN_DROPPED` instead of keys typed elsewhere. Ignore `EV_MSC`.
+- A stopped app's sound is parked. A stopped app leaves its streams open,
+  which keeps the codec and PipeWire running. `gh0st audio park` moves its
+  uncorked playback and capture streams to a null sink of its own, and the
+  codec sleeps. On resume, or once the app is gone, the sink is unloaded
+  and PipeWire moves the streams back to the default device. An app that
+  runs behind is not parked.
 - Closing a paused app from the switcher sends SIGTERM and SIGCONT together,
   then SIGKILL 3 s later. So does a stopping shell.
 - The switcher shows each app's memory: PSS plus swapped PSS, summed over

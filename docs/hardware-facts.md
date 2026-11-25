@@ -99,7 +99,10 @@ Measured on the device unless marked.
   send a `change` uevent when something moved. On stock, `wf-panel-pi` (the
   HDMI desktop's panel) reads it every 5 s, so most uevents come from that.
   The delay from the cable to `status` is not timed.
-  gh0st reads it every 2 s while a bar is lit.
+  gh0st reads it every 2 s while a bar is lit. With the screen dark and
+  nothing reading it, the gauge's own poll still sent a `change` uevent
+  5 min 14 s in. The shell watches uevents in the dark too; its
+  low-battery countdown firing from one is not yet seen on the device.
 - LEDs: `ext_5v_out`, `grove_5v_out`, `ext_usb_gpio_fun`, `grove_fun`.
 - `wpctl`, `pw-play`, `aplay`, `bluetoothctl`, `nmcli`, `timedatectl`,
   `gpioset` are installed. `fb_load.service` has exited by the time the
@@ -268,6 +271,77 @@ averaged over 10 to 20 s. Each change was reverted after its run.
   user, gives the same 212 mA. Wi-Fi off in the dark at 1 min blocked the
   radio 61 s into the dark, through `nmcli` from the shell's unit. The wake
   turning it back on is not yet checked on the device.
+- After a restart of Gh0st OS the Ethernet chip reads `power/control=auto`
+  from the image's rule, the hub and root hub are suspended, and dwc2 fired
+  no IRQ in 10 s.
+
+## Sound of a paused app
+
+Stock Music playing, then stopped with Fn+K, on Gh0st OS with the charger
+in, so no current figures. Wakeups a second over 20 s of PipeWire's threads
+(its and pipewire-pulse's data loops, pipewire-pulse's main loop) and
+schedutil's `sugov` thread, which follow the screen less than the system
+total does:
+
+| State | Codec PCM | PipeWire and `sugov` | System total |
+|---|---|---|---|
+| Dark, no stream, PipeWire running | closed | 65 | 713 |
+| Music stopped, its stream left open | RUNNING | 1,750 | 4,372 |
+| The same stream on a null sink of quantum 8192 | closed | 100 | 830 |
+
+The baseline was dark; the switcher showed for part of the other two.
+
+- A stopped client's stream stays uncorked. pipewire-pulse goes on asking
+  it for data at its own quantum (Music: `node.latency` 300/48000), so the
+  sink, the codec and the I2S DMA keep running.
+- A null sink with no other setting suspends the codec, but the graph still
+  cycles at the app's quantum, driven by the Dummy-Driver. With
+  `node.force-quantum=8192` on the sink it cycles about six times a second.
+  A stream played meanwhile kept its own quantum on the ALSA sink (2048).
+- Recorder opens a capture stream as soon as it starts, for its level
+  meter. Stopped, it keeps the ADC running, and PipeWire and `sugov` wake
+  about 500 times a second. Moved by hand to a null sink's monitor, the ADC
+  suspends and they wake about 120 times.
+- Unloading the null sink moves its streams back to the default device.
+  Music played on, and the capture stream went back to the microphone.
+- A move with pactl saves the new sink as the app's target in WirePlumber's
+  `stream-properties`. WirePlumber restores a saved target only while a
+  node of that name exists, so a target naming a gone sink falls back to
+  the default. `state.restore-props=false` on a sink keeps the sink itself
+  out of the file.
+- The key is the first of `media.role`, `application.id`,
+  `application.name`, so other apps can share it. While a parked sink
+  exists, a new stream with that key would be restored onto it and play
+  silent (`state-stream.lua`, not run). The image sets
+  `node.stream.restore-target = false`: targets are still written, never
+  restored.
+- `pactl suspend-sink` on the null sink does nothing while a stream is
+  linked to it.
+- `gh0st audio park` took 0.25 s; with no audio library mapped in the group
+  it returns in 19 ms without calling pactl.
+- From source, not measured: the AW8737A amplifier's enable (GPIO24)
+  follows the stream. M5's `simple-amplifier.c` sets it in DAPM's
+  POST_PMU and clears it in PRE_PMD.
+
+## System sounds through `pacat`
+
+Raw clips piped into `pacat --raw --latency-msec=30`, timed by recording
+the board's own microphone, with the charger in.
+
+- A held stream plays a clip as soon as it is written, an 18 ms tick
+  included: nothing waits for the buffer to fill.
+- With the sink suspended, a new stream's PCM was PREPARED after 169 ms
+  and RUNNING after 192 ms; in a later run the first clip came about
+  120 ms after its write. Three cold streams in a row played their first
+  clip whole: the same length and energy as the same clip played warm
+  600 ms later. No lead of silence is needed.
+- One `pacat` per clip instead adds 100 to 130 ms to every clip, the cold
+  one included, and holds nothing open.
+- A held stream with nothing to play still runs the graph: about 1,970
+  wakeups a second (`sugov` 1,006, the data loops 475 and 235,
+  pipewire-pulse 259), as a stopped app's open stream does.
+- Closing its stdin ends `pacat` in 79 ms, and the sink suspends.
+- `pipewire-pulse` takes 7.9 MB PSS once a pulse client has started it.
 
 ## Idle, 60 s on home (`scripts/measure.sh`)
 
@@ -552,6 +626,9 @@ Checked in a container with trixie's packages, not on a device.
 | `passwd -S` as the user | prints `<user> P ...` for the user's own account, `NP` or `L` otherwise | lock screen |
 | `EVIOCGRAB` while an app holds the grab | fails with `EBUSY` | dark over an app |
 | Dark current | `current_now` lower with the terminal sent behind and the backlight off than on home | dark state |
+| Restore-target off | a new stream with a parked app's key plays on the default device | `50-gh0st-streams.conf` |
+| System sounds' current | lit home with sounds on draws no more than with them off, past the 2 s hold | `gh0st-shell/src/sound.rs` |
+| A parked app's current | about 35 to 40 mA less than a stopped app with its stream open, as `cz-battery-saver` measured for the stock launcher | `gh0st audio` |
 | Grace window | the helper's parent under pkexec is Settings, so a second change within 5 minutes skips the prompt | helper auth |
 | `gpu_mem=64` | `vcgencmd` reads `gpu=64M` after a restart; camera and splash still work | Advanced |
 | `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |

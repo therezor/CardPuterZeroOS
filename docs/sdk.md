@@ -940,6 +940,15 @@ the user watches without typing, a player or a clock, calls
 `cx.keep_awake(false)` lets it go dark again. Ask only while it matters:
 the screen is the biggest drain after Wi-Fi.
 
+### Sounds
+
+Keys sound on their own while the user has System sounds on: a tick when
+the selection moves, a blip for Enter, a chip, a command or a menu entry,
+and a falling blip for a step back. A raw-key page makes none, so a game
+or the terminal stays quiet. For an event no key shows, ask for one:
+`cx.sound(Sound::Error)` when a scan finds nothing, `Sound::Notice` when a
+download is done. The shell plays them, and only for the app in front.
+
 ## Settings and files
 
 `cx.settings()` reads and writes `~/.config/cardputerzero/config.json`. The

@@ -4,7 +4,7 @@ Architecture: arm64
 Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: x11
 Priority: optional
-Depends: gh0st-panel-modules, xdg-user-dirs, network-manager, wireplumber,
+Depends: gh0st-panel-modules, xdg-user-dirs, network-manager, wireplumber, pulseaudio-utils,
  bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd, apt,
  iw, dnsmasq-base, nftables, curl, sqv
 Description: the Gh0st OS shell and Settings
@@ -13,7 +13,7 @@ Description: the Gh0st OS shell and Settings
  Store (gh0st-store and its engine), the keyring and session services
  (gh0st keyring, gh0st session) with the Keyring app (gh0st-keyring), and
  the root helper. Static binaries;
- the Depends are the commands they run: nmcli, wpctl, bluetoothctl, rfkill,
+ the Depends are the commands they run: nmcli, wpctl, pactl, pacat, bluetoothctl, rfkill,
  pkexec, vcgencmd, unix_chkpwd, passwd, iw, and systemd's systemctl,
  timedatectl and hostnamectl. dnsmasq-base and nftables are what
  NetworkManager's shared mode runs for the hotspot: DHCP and DNS, and NAT.

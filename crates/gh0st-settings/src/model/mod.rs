@@ -66,6 +66,8 @@ pub enum Setting {
     /// The picture behind home and the lock.
     Wallpaper,
     Animations,
+    /// System sounds on or off.
+    Sounds,
     Clock,
     /// Shown on home, by `.desktop` file name.
     AppShown(String),

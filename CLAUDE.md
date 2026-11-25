@@ -76,7 +76,8 @@ battery in `/sys/class/power_supply`. Details and sources in
   its screens into `mockups/keyboard`; `docs/keyboard.md` is its guide.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
   program. `gh0st update` is the update engine and `gh0st store` the
-  Store's, both run as root by systemd.
+  Store's, both run as root by systemd. `gh0st audio` parks a paused
+  app's streams on a null sink, run by the shell.
 - `os/store/mirror.py`: CI's mirror of M5's registry, the Store's signed
   catalog on our Pages (`os/build.sh store`).
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are

@@ -336,6 +336,7 @@ impl Settings {
             Vec::new()
         };
         s.animations = config.animations();
+        s.sounds = config.sounds();
         s.wallpaper = config.wallpaper().to_string();
         s.own_picture = crate::wallpaper::kept().is_file();
         s.pictures = crate::wallpaper::pictures_dir()
@@ -548,6 +549,9 @@ impl Settings {
             Setting::Animations => {
                 cx.settings()
                     .set_bool(key::ANIMATIONS, !self.state.animations);
+            }
+            Setting::Sounds => {
+                cx.settings().set_bool(key::SOUNDS, !self.state.sounds);
             }
             Setting::Clock => {
                 let h24 = !self.state.clock_24h;

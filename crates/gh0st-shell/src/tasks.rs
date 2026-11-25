@@ -60,6 +60,8 @@ pub struct Task {
     /// its keys or stop its drawing, so the screen stays on until it
     /// leaves the front.
     pub keeps_on: bool,
+    /// Paused with `gh0st audio park` sent: its sound waits on a null sink.
+    pub sound_parked: bool,
 }
 
 impl Task {
@@ -249,6 +251,7 @@ mod tests {
             quiet: false,
             awake: false,
             keeps_on: false,
+            sound_parked: false,
         }
     }
 

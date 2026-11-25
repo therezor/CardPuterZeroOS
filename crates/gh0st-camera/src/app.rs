@@ -1418,6 +1418,11 @@ impl Page for Camera {
         self.rec.as_ref().map(|_| ("REC", Tone::Critical))
     }
 
+    // The finder in video mode: a key's blip would end up in the film.
+    fn quiet(&self) -> bool {
+        self.view == View::Finder && (self.video || self.rec.is_some())
+    }
+
     fn bars(&self) -> Bars {
         match self.view {
             View::Finder => {

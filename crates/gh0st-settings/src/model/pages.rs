@@ -209,6 +209,8 @@ pub struct State {
     pub own_picture: bool,
     pub pictures: Vec<String>,
     pub animations: bool,
+    /// `gh0st.sounds`: the shell's and apps' ticks and chimes.
+    pub sounds: bool,
     pub clock_24h: bool,
     pub apps: Vec<AppRow>,
     pub wifi_on: bool,
@@ -416,6 +418,12 @@ pub fn build(id: &PageId, s: &State) -> Page {
                     Act::Set(Setting::Volume),
                 ),
                 Item::new("", "Mute", Value::Toggle(s.muted), Act::Set(Setting::Mute)),
+                Item::new(
+                    "bell",
+                    "System sounds",
+                    Value::Toggle(s.sounds),
+                    Act::Set(Setting::Sounds),
+                ),
             ]),
             vec![],
         ),

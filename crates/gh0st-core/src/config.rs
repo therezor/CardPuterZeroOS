@@ -38,6 +38,8 @@ pub mod key {
     /// `12h`, else 24-hour.
     pub const CLOCK: &str = "gh0st.clock";
     pub const ANIMATIONS: &str = "gh0st.animations";
+    /// System sounds: the shell's ticks and chimes, and the ones apps ask for.
+    pub const SOUNDS: &str = "gh0st.sounds";
     pub const HOME_LAYOUT: &str = "gh0st.home_layout";
     pub const LOCK_PASSWORD: &str = "gh0st.lock.password";
     /// Seconds dark before the lock; -1 locks only by hand.
@@ -161,6 +163,10 @@ impl Config {
 
     pub fn animations(&self) -> bool {
         self.get_bool(key::ANIMATIONS).unwrap_or(true)
+    }
+
+    pub fn sounds(&self) -> bool {
+        self.get_bool(key::SOUNDS).unwrap_or(true)
     }
 
     pub fn dark_secs(&self) -> i64 {
@@ -738,7 +744,7 @@ mod tests {
     #[test]
     fn typed_keys_have_one_default_and_never_wrap() {
         let mut c = Config::default();
-        assert!(c.clock_24h() && c.animations() && c.lock_password());
+        assert!(c.clock_24h() && c.animations() && c.sounds() && c.lock_password());
         assert_eq!(c.dark_ms(), Some(30_000));
         assert_eq!(c.lock_after_ms(), Some(300_000));
         assert_eq!(c.dark_wifi_ms(), None);

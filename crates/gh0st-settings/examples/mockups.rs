@@ -52,6 +52,7 @@ fn sample_state() -> State {
             "IMG_2041.PNG".into(),
         ],
         animations: true,
+        sounds: true,
         clock_24h: true,
         apps: vec![
             app("files.desktop", "Files", true),

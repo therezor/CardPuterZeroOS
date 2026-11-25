@@ -120,9 +120,11 @@ LightDM + LXDE (Kali image).
    BT toggle would need a reboot.
 5. **Audio on demand.** Keep PipeWire (stock apps need `libpulse0`). Debian already socket-activates
    it; what keeps it running on stock is `APPLaunch.service`'s `Wants=/After=pipewire-pulse.service`.
-   The Rust launcher's unit must not `Want` PipeWire, and it connects only while it plays a sound.
-   Leave WirePlumber's node suspend-on-idle on so the codec powers down. With key sounds off and no
-   audio app running, PipeWire never starts.
+   The shell's unit doesn't `Want` PipeWire, but the shell calls `wpctl` at start (the saved
+   volume), and PipeWire and WirePlumber run from boot. WirePlumber suspends a node with no
+   stream: at idle the sink is suspended and the codec closed with PipeWire running
+   (`hardware-facts.md`). The shell opens no stream, and it parks a paused app's streams
+   (`apps.md`, Pausing).
 6. **Wi-Fi stack.** Keep NetworkManager for app compatibility, but use `wifi.backend=iwd`
    instead of `wpa_supplicant`. Measure both; `iwd` + `systemd-networkd` alone is lighter still
    if no app needs NM's D-Bus API.

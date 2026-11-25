@@ -62,6 +62,12 @@ pub trait Page {
         Bars::top()
     }
 
+    /// True while keys should make no sound: a page that records sound, as
+    /// a camera does in video mode. A raw-key page is always quiet.
+    fn quiet(&self) -> bool {
+        false
+    }
+
     /// A key press. Esc and 4 don't come here: see [`back`](Page::back).
     fn key(&mut self, key: Key, cx: &mut Cx) {
         let _ = (key, cx);
@@ -234,6 +240,7 @@ pub(crate) enum Request {
     Notify(String),
     KeepAwake(bool),
     Open(String),
+    Sound(gh0st_core::sound::Sound),
     ShowKeys,
     Ask(u32, Dialog),
 }
@@ -247,6 +254,11 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Reads the file again, for changes other programs made meanwhile.
+    pub(crate) fn reload(&mut self) {
+        self.config = Config::load(self.config.path());
+    }
+
     pub(crate) fn load(path: &std::path::Path) -> Settings {
         Settings {
             config: Config::load(path),
@@ -542,6 +554,17 @@ impl Cx<'_> {
     /// Takes back notice `tag`, posted by [`post`](Cx::post).
     pub fn unpost(&mut self, tag: &str) {
         let _ = crate::notify::remove(&crate::notify::user_dir(), &self.s.app_id, tag);
+    }
+
+    /// Asks the shell for a system sound, for an event the SDK can't see:
+    /// a scan that found nothing ([`Sound::Error`]), a download done
+    /// ([`Sound::Notice`]). Moving, choosing and going back already sound.
+    /// Only in front, and only while the user has sounds on.
+    ///
+    /// [`Sound::Error`]: gh0st_core::sound::Sound::Error
+    /// [`Sound::Notice`]: gh0st_core::sound::Sound::Notice
+    pub fn sound(&mut self, s: gh0st_core::sound::Sound) {
+        self.s.requests.push(Request::Sound(s));
     }
 
     /// Keeps the screen on while the app is in front, for a player or a

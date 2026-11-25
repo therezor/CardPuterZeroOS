@@ -33,6 +33,8 @@ pub use field::{Edit, TextField};
 pub use form::Form;
 /// A key event as [`Page::raw`] gets it.
 pub use gh0st_core::keys::{Key as RawKey, State as KeyState};
+/// System sounds, for [`Cx::sound`].
+pub use gh0st_core::sound::Sound;
 /// What a toast or a top-bar word says about itself.
 pub use gh0st_ui::theme::Tone;
 pub use key::{Key, codes};
@@ -52,6 +54,7 @@ pub use gh0st_ui as gfx;
 pub mod prelude {
     pub use crate::{
         Action, Answer, Bars, Chip, Command, Commands, Cx, Dialog, Edit, Form, Grid, Job, JobEvent,
-        Key, List, Page, Row, Scroll, Search, Step, Steps, TextField, Timer, Tone, Ui, Watch,
+        Key, List, Page, Row, Scroll, Search, Sound, Step, Steps, TextField, Timer, Tone, Ui,
+        Watch,
     };
 }

@@ -10,6 +10,7 @@ use crate::page::{Cx, Job, JobEvent, Page, Request, Shared, Timer, Watch};
 use crate::ui::Ui;
 use gh0st_core::keys::code as keys_code;
 use gh0st_core::keys::{Keyboard, State};
+use gh0st_core::sound::Sound;
 use gh0st_core::{battery, child, job, rt, status};
 use gh0st_ui::theme::Tone;
 use gh0st_ui::widgets::{self, Battery, Hint, Look, Net, Status};
@@ -405,6 +406,7 @@ impl Runtime {
                         l.send(&["open", &name]);
                     }
                 }
+                Request::Sound(s) => self.sound(s),
                 Request::Notify(text) => match &self.link {
                     Some(l) if self.paused => {
                         l.send(&["toast", &text]);
@@ -632,6 +634,7 @@ impl Runtime {
                 Some(hit) => {
                     if raw.state == State::Press {
                         self.take(raw.code);
+                        self.sound(Sound::Select);
                     }
                     if raw.state == State::Press || hit.repeats {
                         self.call(top, now, |p, cx| p.command(hit.id, hit.step, cx));
@@ -666,6 +669,7 @@ impl Runtime {
         if raw.ch == Some('8') && plain && !typing && bars.menu && (bars.bottom || bars.corner) {
             if raw.state == State::Press {
                 self.take(raw.code);
+                self.sound(Sound::Select);
                 self.open_menu(top);
             }
             return;
@@ -682,7 +686,24 @@ impl Runtime {
                     self.press_chip(top, n, raw.code, chip, now);
                 }
             }
-            _ => self.call(top, now, |p, cx| p.key(k, cx)),
+            _ => {
+                if let Some(s) = key_sound(k) {
+                    self.sound(s);
+                }
+                self.call(top, now, |p, cx| p.key(k, cx));
+            }
+        }
+    }
+
+    /// A system sound through the shell: only in front, only while the
+    /// user has sounds on. Without a shell, nothing plays.
+    fn sound(&mut self, s: Sound) {
+        let quiet = self.stack.last().is_some_and(|p| p.quiet() || p.raw_keys());
+        if quiet || self.s.paused || !self.s.settings.config().sounds() {
+            return;
+        }
+        if let Some(l) = &self.link {
+            l.send(&["sound", s.name()]);
         }
     }
 
@@ -694,9 +715,11 @@ impl Runtime {
         self.apply(top, now);
         self.dirty = true;
         if !close || self.stack.len() != top + 1 {
+            self.sound(Sound::Back);
             return;
         }
         if top > 0 {
+            self.sound(Sound::Back);
             self.pop(now);
             return;
         }
@@ -719,6 +742,7 @@ impl Runtime {
         }
         self.pressed = Some((code, n));
         self.dirty = true;
+        self.sound(Sound::Select);
         if chip.hold {
             self.hold = Some(Hold {
                 code,
@@ -894,8 +918,14 @@ impl Runtime {
             }
             match d.key(raw) {
                 dialog::Out::Nothing => {}
-                dialog::Out::Yes => self.answer(true, now),
-                dialog::Out::No => self.answer(false, now),
+                dialog::Out::Yes => {
+                    self.sound(Sound::Select);
+                    self.answer(true, now);
+                }
+                dialog::Out::No => {
+                    self.sound(Sound::Back);
+                    self.answer(false, now);
+                }
             }
             return;
         }
@@ -929,9 +959,14 @@ impl Runtime {
                     }
                     return;
                 }
+                let moved = raw.state != State::Release && raw.nav(true).is_some();
                 match m.key(raw) {
+                    Out::Nothing if moved => self.sound(Sound::Move),
                     Out::Nothing => {}
-                    Out::Close => self.close_overlay(),
+                    Out::Close => {
+                        self.sound(Sound::Back);
+                        self.close_overlay();
+                    }
                     Out::Quit => {
                         self.close_overlay();
                         self.quit_all();
@@ -945,6 +980,7 @@ impl Runtime {
                         }
                     }
                     Out::Run { id, step, close } => {
+                        self.sound(Sound::Select);
                         if close {
                             self.close_overlay();
                         }
@@ -1048,6 +1084,9 @@ impl Runtime {
     /// Back in front after a pause: keys held before mean nothing now, and
     /// the whole screen is drawn again.
     pub fn resume_input(&mut self, now: u64) {
+        // Settings may have changed sounds or the palette meanwhile.
+        self.s.settings.reload();
+        self.retheme();
         self.kb.reset();
         self.paused = false;
         self.s.paused = false;
@@ -1453,6 +1492,15 @@ fn drain(w: &mut WatchEntry) {
                 return;
             }
         }
+    }
+}
+
+/// The sound a page key makes on its own: a move, or a choice.
+fn key_sound(k: Key) -> Option<Sound> {
+    match k {
+        Key::Up | Key::Down | Key::Left | Key::Right => Some(Sound::Move),
+        Key::Enter => Some(Sound::Select),
+        _ => None,
     }
 }
 

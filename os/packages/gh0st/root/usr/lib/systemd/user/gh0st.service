@@ -1,6 +1,6 @@
 # The shell runs as UID 1000 with linger, like the stock launcher it
-# replaces. It does not pull in PipeWire: audio starts from its socket when
-# an app plays.
+# replaces. It does not pull in PipeWire: its volume restore at start
+# reaches PipeWire through the socket.
 [Unit]
 Description=Gh0st OS shell
 # Exactly one of setup and the shell runs: the shell waits for setup's

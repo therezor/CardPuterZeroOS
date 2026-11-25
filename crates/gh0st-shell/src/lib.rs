@@ -12,5 +12,6 @@ pub mod overlay;
 pub mod prompt;
 pub mod run;
 pub mod services;
+pub mod sound;
 pub mod switcher;
 pub mod tasks;

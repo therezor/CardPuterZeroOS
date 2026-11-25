@@ -24,6 +24,8 @@ poweroff
 xdg-user-dirs-update
 ss
 pactl
+# System sounds: the shell feeds raw samples to one pacat.
+pacat
 ffmpeg
 ffprobe
 # The Store's engine: downloads, the app list's signature, deb checks.

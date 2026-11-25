@@ -269,6 +269,11 @@ impl Home {
         &self.query
     }
 
+    /// Where the selection is among the tiles shown.
+    pub fn index(&self) -> usize {
+        self.selected
+    }
+
     pub fn selected(&self) -> Option<&Entry> {
         self.shown.get(self.selected).map(|&i| &self.entries[i])
     }

@@ -427,6 +427,13 @@ menu, then the page.
   powering off in 30 s".
 - **Level.** The volume and brightness keys show the level in the top bar's
   place for 1.5 s.
+- **Sound.** Short notes of one key (A major), soft and below a third of
+  full scale: the amplifier is loud. A tick when the selection moves, a
+  rising blip to choose or open, a falling one to go back or close, a
+  rising chord to unlock and a falling one to lock, a low double buzz for a
+  wrong password, two bell notes for a notice, three beeps for a low
+  battery, and a chord at power on. Typing, a raw-key page and the dark
+  make none. Settings > Sound > System sounds turns them off.
 
 ## Home and the switcher
 

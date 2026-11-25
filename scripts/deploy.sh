@@ -24,6 +24,7 @@ restart_launcher() {
     # A user unit of UID 1000 with linger: gh0st.service on our image,
     # APPLaunch.service with our drop-in on the stock one.
     remote "export XDG_RUNTIME_DIR=/run/user/\$(id -u); $user_unit daemon-reload
+        $user_unit try-restart wireplumber.service
         if $user_unit cat gh0st.service >/dev/null 2>&1; then
             $user_unit restart gh0st.service
         else
@@ -93,6 +94,9 @@ scp -q -r "$root/packaging/systemd/update" "$host:/tmp/gh0st-update-units"
 scp -q -r "$root/packaging/systemd/store" "$host:/tmp/gh0st-store-units"
 scp -q "$root/packaging/systemd/keyring/gh0st-keyring.tmpfiles" "$host:/tmp/"
 scp -q -r "$root/packaging/palettes" "$host:/tmp/gh0st-palettes"
+# A paused app's null sink must never take a new stream (gh0st audio).
+scp -q "$root/os/packages/gh0st-base/root/usr/share/wireplumber/wireplumber.conf.d/50-gh0st-streams.conf" \
+    "$host:/tmp/"
 remote 'set -e
     sudo install -m 755 /tmp/gh0st /usr/bin/gh0st
     sudo install -m 755 /tmp/gh0st-settings /usr/bin/gh0st-settings
@@ -120,6 +124,7 @@ remote 'set -e
     sudo install -D -m 644 gh0st-update.tmpfiles /usr/lib/tmpfiles.d/gh0st-update.conf
     sudo install -D -m 755 90-gh0st-update /usr/lib/NetworkManager/dispatcher.d/90-gh0st-update
     sudo install -D -m 644 -t /usr/share/gh0st/palettes /tmp/gh0st-palettes/*.palette
+    sudo install -D -m 644 -t /usr/share/wireplumber/wireplumber.conf.d /tmp/50-gh0st-streams.conf
     cd /tmp/gh0st-store-units
     sudo install -m 644 -t /usr/lib/systemd/system gh0st-store.service
     sudo install -D -m 644 gh0st-store.tmpfiles /usr/lib/tmpfiles.d/gh0st-store.conf
@@ -136,6 +141,7 @@ remote 'set -e
         /tmp/gh0st-keyring /tmp/gh0st-files /tmp/keyring.desktop /tmp/files.desktop \
         /tmp/gh0st-store-units /tmp/gh0st-palettes /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
-        /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy'
+        /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy \
+        /tmp/50-gh0st-streams.conf'
 restart_launcher
 echo "gh0st $(git -C "$root" rev-parse --short HEAD) running on $host"
