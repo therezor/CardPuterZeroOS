@@ -928,13 +928,14 @@ camera, and finishes a file it was writing.
 `gh0st session`, about 1 MB at most; `cx.paste()` gives back what was
 copied last, by this app or another. Bytes stay as they are, so text that
 isn't UTF-8 survives. Only the app in front may copy or paste: an app
-behind gets None, so it can't watch what the user copies. The lock clears
-the clipboard, so keep no copy of your own to paste when `cx.paste()`
-gives None. Ctrl+V types the first line with text into a typing page or a
-dialog's field, by itself, leaving out bytes that aren't UTF-8. Off the
-device, and in a test, the app keeps its own: `Driver::clipboard()` reads
-it, `Driver::set_clipboard()` fills it and `Driver::clear_clipboard()`
-empties it as the lock does.
+behind gets None, so it can't watch what the user copies. `cx.copy` is
+false when the session refuses: the app is behind, or the copy is past
+what one bus message carries. The lock clears the clipboard, so keep no
+copy of your own to paste when `cx.paste()` gives None. Ctrl+V types the
+first line with text into a typing page or a dialog's field, by itself,
+leaving out bytes that aren't UTF-8. Off the device, and in a test, the
+app keeps its own: `Driver::clipboard()` reads it, `Driver::set_clipboard()`
+fills it and `Driver::clear_clipboard()` empties it as the lock does.
 
 ### The network
 

@@ -9,6 +9,8 @@ const PATH: &str = "/org/gh0st/Clipboard";
 const IFACE: &str = "org.gh0st.Clipboard";
 const TEXT: &str = "text/plain;charset=utf-8";
 const CALL_MS: u64 = 2000;
+/// The most a copy carries: one bus message, less room for its header.
+const MAX: usize = gh0st_dbus::MAX_MESSAGE - 4096;
 
 #[derive(Default)]
 pub(crate) struct Clip {
@@ -46,6 +48,11 @@ impl Clip {
             self.keep(Some(data));
             return true;
         };
+        // Too big for a message: refused, not taken for a bus gone, which
+        // kept it here alone while a paste got the shared one.
+        if data.len() > MAX {
+            return false;
+        }
         let m = Message::call(NAME, PATH, IFACE, "Set")
             .arg(Value::str(TEXT))
             .arg(Value::Bytes(data.to_vec()));
