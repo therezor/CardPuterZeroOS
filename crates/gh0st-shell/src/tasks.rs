@@ -56,6 +56,10 @@ pub struct Task {
     /// Running behind and told to `pause`: it draws nothing and reads no
     /// keys, so the shell needs neither its pixels nor a guard.
     pub quiet: bool,
+    /// Sent `pause`, answered or not: it is owed a `resume`. One that
+    /// answers late pauses all the same, and one stopped first reads the
+    /// word once it runs again.
+    pub told_pause: bool,
     /// Sent `awake 1`: the screen stays on while it is in front.
     pub awake: bool,
     /// `gh0st session` holds an inhibitor for it: as `awake`, kept apart
@@ -73,6 +77,24 @@ impl Task {
     /// Can come to the front: paused or running behind.
     pub fn resumable(&self) -> bool {
         matches!(self.state, State::Paused | State::Background)
+    }
+
+    /// Tells an app on the link to pause, and waits up to `wait_ms` for
+    /// its answer: quiet if it came.
+    pub fn ask_pause(&mut self, wait_ms: u64) {
+        let link = self.link.as_ref().filter(|_| self.linked);
+        self.told_pause = link.is_some_and(|l| l.send(&["pause"]));
+        self.quiet = self.told_pause && link.is_some_and(|l| l.wait_for("paused", wait_ms));
+    }
+
+    /// Undoes a `pause`. A quiet app redraws all of itself when told.
+    pub fn tell_resume(&mut self) {
+        self.quiet = false;
+        if std::mem::take(&mut self.told_pause) {
+            if let Some(l) = &self.link {
+                l.send(&["resume"]);
+            }
+        }
     }
 }
 
@@ -257,6 +279,7 @@ mod tests {
             link_v: 0,
             background: false,
             quiet: false,
+            told_pause: false,
             awake: false,
             inhibited: false,
             keeps_on: false,
@@ -306,5 +329,49 @@ mod tests {
         t.close("a", 2000);
         t.close_all(2500);
         assert_eq!(t.next_at(2500), Some(1000 + KILL_GRACE_MS));
+    }
+
+    #[test]
+    fn a_linked_app_is_asked_to_pause_and_answers() {
+        let (shell, theirs) = Link::pair().unwrap();
+        let app = Link::from_fd(theirs).unwrap();
+        let answer = std::thread::spawn(move || {
+            assert!(app.wait_for("pause", 1000));
+            app.send(&["paused"]);
+            app
+        });
+        let mut t = task("a", 999_995, 0);
+        t.link = Some(shell);
+        t.linked = true;
+        t.ask_pause(1000);
+        assert!(t.quiet && t.told_pause);
+        let app = answer.join().unwrap();
+        t.tell_resume();
+        assert!(app.recv().is_some_and(|m| m == ["resume"]));
+        assert!(!t.quiet && !t.told_pause);
+        // Off the link: not asked.
+        t.linked = false;
+        t.ask_pause(10);
+        assert!(!t.quiet && !t.told_pause);
+        assert!(app.recv().is_none(), "not asked");
+    }
+
+    #[test]
+    fn an_app_that_answers_late_is_still_told_to_resume() {
+        let (shell, theirs) = Link::pair().unwrap();
+        let app = Link::from_fd(theirs).unwrap();
+        let mut t = task("a", 999_996, 0);
+        t.link = Some(shell);
+        t.linked = true;
+        // No answer in time: not quiet, but it will pause once it reads
+        // the word, so it is owed a resume.
+        t.ask_pause(10);
+        assert!(!t.quiet && t.told_pause);
+        assert!(app.recv().is_some_and(|m| m == ["pause"]));
+        app.send(&["paused"]);
+        t.tell_resume();
+        assert!(app.recv().is_some_and(|m| m == ["resume"]));
+        t.tell_resume();
+        assert!(app.recv().is_none(), "once");
     }
 }

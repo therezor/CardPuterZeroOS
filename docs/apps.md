@@ -306,7 +306,8 @@ for it, as Fn+K parks it, and gets `pause` and `resume` on its link.
   keeps no copy of its frame and doesn't guard the panel. Any other is then
   stopped, so it first lets go of what a stop would freeze: a camera
   streaming, a file half written. On return the shell sends `resume` and the
-  app draws all of its screen.
+  app draws all of its screen. It sends `resume` to an app that answered
+  late too: that app paused all the same.
 - An app off the link, or one that doesn't answer, is guarded as before.
   While the shell is in front it gets no keys (the shell holds the grab),
   and the shell repaints over anything it draws, keeping its pixels for its
