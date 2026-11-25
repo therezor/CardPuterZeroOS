@@ -4,4 +4,4 @@ expires 1766462000
 about b88160629c190b172fea1ca848326b3013c95462c8671141536d31a4f8a7f08d 640
 icons 1111111111111111111111111111111111111111111111111111111111111111 20
 app	acidzero	0.2.0	1000	aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa	Games	hardware	AcidZero	Acid bass synth with a sequencer	someone	MIT	https://github.com/CardputerZero/packages/releases/download/apt-pool/acidzero_0.2.0_arm64.deb	https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/packages/pool/main/acidzero/acidzero_0.2.0_arm64.deb	ABCD	acidzero
-app	rootsetup	1.0	1000	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	Games	scripts,paths,service,network	Root Setup	A small app	someone	MIT	https://github.com/CardputerZero/packages/releases/download/apt-pool/rootsetup_1.0_arm64.deb		ABCD	
+app	rootsetup	1.0	1000	bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb	Games	scripts,paths,service,root,network	Root Setup	A small app	someone	MIT	https://github.com/CardputerZero/packages/releases/download/apt-pool/rootsetup_1.0_arm64.deb		ABCD	

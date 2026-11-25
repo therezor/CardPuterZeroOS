@@ -127,12 +127,21 @@ SYSTEM_ETC = {
 }
 TMPFILES = ("usr/lib/tmpfiles.d/", "etc/tmpfiles.d/")
 # The last column dates the facts: rows from an older rule are checked again.
-FACTS = "4"
+FACTS = "5"
 CHECKED_COLS = [
     "sha256", "package", "version", "arch", "depends", "provides",
     "replaces", "conflicts", "breaks", "scripts", "paths", "service", "desktop",
-    "facts",
+    "root", "facts",
 ]
+# Asking for root as it runs, which a sandbox can't give (docs/isolation.md):
+# sudo, pkexec or doas as a command in a script or a program's strings.
+ROOT_CMD = re.compile(rb"(?:^|[\0\s'\"`;&|(/=])(?:sudo|pkexec|doas)(?=[\0\s'\"`;&|)]|$)", re.M)
+# Code is read up to this much; past it a file is data.
+SCAN_CAP = 8 << 20
+NOT_CODE = ("usr/share/doc/", "usr/share/man/", "usr/share/locale/", "usr/share/info/")
+DATA_EXT = (".md", ".txt", ".html", ".png", ".jpg", ".jpeg", ".gif", ".ttf", ".otf", ".wav",
+            ".mp3", ".ogg", ".json", ".svg", ".bmp")
+CODE_EXT = (".py", ".sh", ".desktop", ".pl", ".lua", ".js", ".rb")
 
 URL_RE = re.compile(r"^https://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$")
 PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]{1,127}$")
@@ -308,17 +317,17 @@ def control_fields(deb):
     return fields
 
 
-def members(deb, part, read=lambda name: False):
+def members(deb, part, read=lambda name, mode: 0):
     """The tar members of a deb's control or data part: name, is_dir, mode,
-    and the bytes of the small files `read` asks for, from the stream.
-    Nothing touches the disk."""
+    and the bytes of the files `read` asks for, up to the size it gives,
+    from the stream. Nothing touches the disk."""
     p = subprocess.Popen(["dpkg-deb", f"--{part}-tarfile", "--", deb], stdout=subprocess.PIPE)
     out = []
     try:
         with tarfile.open(fileobj=p.stdout, mode="r|") as t:
             for m in t:
                 data = None
-                if m.isfile() and m.size <= 65536 and read(m.name):
+                if m.isfile() and m.size <= read(m.name, m.mode):
                     data = t.extractfile(m).read()
                 out.append((m.name, m.isdir(), m.mode, data))
         return out
@@ -361,13 +370,35 @@ def root_reads(n, pkg):
     return n.startswith(ROOT_READS) and not (own and n.startswith(own)) and not n.startswith(UNIT_DIRS)
 
 
+def is_code(n, mode):
+    """A file that may run: executable, or a script by its name."""
+    if n.startswith(NOT_CODE) or n.lower().endswith(DATA_EXT):
+        return False
+    return bool(mode & 0o111) or n.lower().endswith(CODE_EXT)
+
+
+def asks_root(n, mode, body):
+    """The file at `n` asks for root as it runs: setuid, or code that
+    calls sudo, pkexec or doas."""
+    if mode & 0o4000:
+        return True
+    return body is not None and is_code(n, mode) and ROOT_CMD.search(body) is not None
+
+
+def scan_size(name, mode):
+    n = rel(name)
+    if n.startswith(TMPFILES):
+        return 65536
+    return SCAN_CAP if is_code(n, mode) else 0
+
+
 def facts(deb, sha256):
     """What a deb holds, for checked.tsv."""
     f = control_fields(deb)
     ctrl = {os.path.basename(n) for n, _, _, _ in members(deb, "ctrl")}
-    data = members(deb, "fsys", lambda n: rel(n).startswith(TMPFILES))
+    data = members(deb, "fsys", scan_size)
     pkg = f.get("Package", "")
-    paths = service = False
+    paths = service = root = False
     desktop = ""
     for name, is_dir, mode, body in data:
         n = rel(name)
@@ -382,6 +413,8 @@ def facts(deb, sha256):
             paths = True
         if n.startswith(UNIT_DIRS):
             service = True
+        if asks_root(n, mode, body):
+            root = True
         m = re.fullmatch(r"usr/share/APPLaunch/applications/([^/]+)\.desktop", n)
         if m and not desktop:
             desktop = m.group(1)
@@ -400,6 +433,7 @@ def facts(deb, sha256):
         "paths": "1" if paths else "0",
         "service": "1" if service else "0",
         "desktop": desktop,
+        "root": "1" if root else "0",
         "facts": FACTS,
     }
 
@@ -556,6 +590,8 @@ def app_line(app, facts_row, cn):
         flags.append("paths")
     if facts_row["service"] == "1" or perms.get("background_service"):
         flags.append("service")
+    if facts_row.get("root") == "1":
+        flags.append("root")
     for key, word in [("network", "network"), ("camera", "camera"),
                       ("microphone", "microphone"), ("additional_hardware", "hardware"),
                       ("external_display", "display"), ("imu", "imu")]:

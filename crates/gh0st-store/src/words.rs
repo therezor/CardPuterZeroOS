@@ -7,8 +7,10 @@ use gh0st_core::update::size_text;
 /// Help's About section.
 pub const ABOUT: &str = "The apps and their list come from M5Stack. Gh0st \
 signs a copy of the list so it arrives unchanged, but doesn't review the \
-apps. An app's setup can run as root: the Store asks before installing one \
-that does. No account, no device ID.";
+apps. Each runs in its own sandbox, apart from your secrets and other apps. \
+An app's setup can run as root, and some apps ask for root as they run, \
+outside any sandbox: the Store asks before installing one that does. No \
+account, no device ID.";
 
 /// For a description the device can't draw.
 pub const NO_ENGLISH: &str = "M5's description of this app isn't in English yet.";
@@ -19,6 +21,7 @@ pub fn flags(f: Flags) -> (Vec<&'static str>, Vec<&'static str>) {
         (Flags::SCRIPTS, "Setup runs as root"),
         (Flags::PATHS, "System files"),
         (Flags::SERVICE, "Service"),
+        (Flags::ROOT, "Runs as root, outside its sandbox"),
     ]
     .into_iter()
     .filter(|(b, _)| f.has(*b))
@@ -46,6 +49,7 @@ pub fn pills(f: Flags) -> Vec<(&'static str, Tone)> {
         (Flags::SCRIPTS, "Root setup", Tone::Warning),
         (Flags::PATHS, "System files", Tone::Warning),
         (Flags::SERVICE, "Service", Tone::Warning),
+        (Flags::ROOT, "Root", Tone::Warning),
         (Flags::NETWORK, "Network", Tone::Info),
         (Flags::CAMERA, "Camera", Tone::Info),
         (Flags::MICROPHONE, "Mic", Tone::Info),

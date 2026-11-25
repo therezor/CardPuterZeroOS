@@ -136,7 +136,10 @@ impl Flags {
 
     /// Flags that ask for a confirmation before install.
     pub fn risky(self) -> bool {
-        self.has(Flags::SCRIPTS) || self.has(Flags::PATHS) || self.has(Flags::SERVICE)
+        self.has(Flags::SCRIPTS)
+            || self.has(Flags::PATHS)
+            || self.has(Flags::SERVICE)
+            || self.has(Flags::ROOT)
     }
 
     /// `scripts,network`. Unknown words are skipped, so an older device

@@ -33,7 +33,8 @@ def fixture():
     checked = {
         h("a"): row(h("a"), "acidzero", version="0.2.0", depends="libc6, libsdl2-2.0-0 | libsdl2",
                     desktop="acidzero"),
-        h("b"): row(h("b"), "rootsetup", scripts="1", paths="1", service="1", depends="python3:any"),
+        h("b"): row(h("b"), "rootsetup", scripts="1", paths="1", service="1", root="1",
+                    depends="python3:any"),
         h("c"): row(h("c"), "needsfoo", depends="libc6, foo (>= 2)"),
         h("d"): row(h("d"), "bash", version="9.9"),
         h("f"): row(h("f"), "takeover", replaces="coreutils"),
@@ -149,6 +150,23 @@ class Tmpfiles(unittest.TestCase):
             self.assertTrue(mirror.root_reads(n, pkg), (pkg, n))
 
 
+class Root(unittest.TestCase):
+    def test_sudo_as_a_command_in_code_asks_for_root(self):
+        x = 0o755
+        self.assertTrue(mirror.asks_root("opt/app/run.sh", x, b"#!/bin/sh\nsudo reboot\n"))
+        self.assertTrue(mirror.asks_root("opt/app/app.py", 0o644,
+                                         b"subprocess.run(['sudo', 'ip', 'link'])"))
+        self.assertTrue(mirror.asks_root("usr/bin/app", x, b"\x7fELF..\0/usr/bin/pkexec\0"))
+        self.assertTrue(mirror.asks_root("usr/bin/helper", 0o4755, None), "setuid")
+
+    def test_a_word_in_data_or_another_name_is_not_root(self):
+        x = 0o755
+        self.assertFalse(mirror.asks_root("usr/share/doc/app/README", 0o644, b"run with sudo"))
+        self.assertFalse(mirror.asks_root("opt/app/notes.txt", 0o644, b"sudo make me"))
+        self.assertFalse(mirror.asks_root("usr/bin/app", x, b"\x7fELF pseudo_random sudoku\0"))
+        self.assertFalse(mirror.asks_root("opt/app/app.py", 0o644, b"import os\n"))
+
+
 @unittest.skipUnless(shutil.which("dpkg-deb"), "needs dpkg-deb")
 class Debs(unittest.TestCase):
     def test_facts_see_scripts_paths_units_and_the_desktop_file(self):
@@ -189,6 +207,11 @@ class Debs(unittest.TestCase):
             os.makedirs(os.path.join(root, "etc/sudoers.d"))
             open(os.path.join(root, "etc/sudoers.d/demo"), "w").close()
             self.assertEqual(build()["paths"], "1", "a file root reads")
+            self.assertEqual(f["root"], "0")
+            with open(os.path.join(root, "usr/bin/demo"), "w") as b:
+                b.write("#!/bin/sh\nexec sudo /opt/demo/run\n")
+            os.chmod(os.path.join(root, "usr/bin/demo"), 0o755)
+            self.assertEqual(build()["root"], "1", "a script that calls sudo")
 
 
 if __name__ == "__main__":
