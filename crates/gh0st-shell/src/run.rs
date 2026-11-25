@@ -1907,6 +1907,10 @@ impl Shell {
             self.sync_grab();
             self.dirty = true;
         }
+        // Gone from behind, it leads back nowhere: opened again from home,
+        // it must not bring up its old opener.
+        self.return_to
+            .retain(|(opened, _)| !gone.iter().any(|t| t.id == *opened));
     }
 
     fn next_frame(&self, now: u64) -> Option<u64> {
@@ -2476,7 +2480,7 @@ impl Shell {
         let mut slept = false;
         let mut open = None;
         let mut sounds = Vec::new();
-        let mut open_file: Option<(Option<String>, PathBuf)> = None;
+        let mut open_files: Vec<(Option<String>, PathBuf)> = Vec::new();
         let mut leave = false;
         if let Some(t) = self.tasks.iter_mut().find(|t| t.pgid == pgid) {
             let front = t.state == tasks::State::Front;
@@ -2493,12 +2497,12 @@ impl Shell {
                         sounds.extend(m.get(1).and_then(|n| Sound::from_name(n)))
                     }
                     Some("open-file") if front => {
-                        open_file = m.get(1).map(|p| (None, link::path_of(p)));
+                        open_files.extend(m.get(1).map(|p| (None, link::path_of(p))));
                     }
                     Some("leave") if front => leave = true,
                     Some("open-with") if front => {
                         if let (Some(app), Some(p)) = (m.get(1), m.get(2)) {
-                            open_file = Some((Some(app.clone()), link::path_of(p)));
+                            open_files.push((Some(app.clone()), link::path_of(p)));
                         }
                     }
                     Some("awake") => {
@@ -2530,7 +2534,7 @@ impl Shell {
         for s in sounds {
             self.app_sound(s);
         }
-        if let Some((app, path)) = open_file {
+        for (app, path) in open_files {
             self.open_file(app.as_deref(), path);
         }
         if leave && self.pending.is_none() {
@@ -2552,7 +2556,8 @@ impl Shell {
             return;
         };
         let front = self.tasks.front().map(|t| t.id.clone());
-        if front.is_some() && front.as_deref() != Some(app.file.as_str()) {
+        if front.is_some() && front.as_deref() != Some(app.file.as_str()) && self.pending.is_none()
+        {
             self.pending = Some(Pending::Open(app.file.clone(), Vec::new()));
         }
     }
@@ -2562,8 +2567,18 @@ impl Shell {
     /// the file; one that doesn't is left alone, so nothing it holds is
     /// lost.
     fn open_file(&mut self, app: Option<&str>, path: PathBuf) -> bool {
+        // Relative, it would resolve against the shell's folder, and one
+        // that starts with `-` would reach the target as an option.
+        if !path.is_absolute() {
+            self.toast("Can't open that file");
+            return false;
+        }
         let target = match app {
             Some(name) => match self.openers.iter().find(|a| a.answers_to(name)) {
+                Some(_) if !path.exists() => {
+                    self.toast("That file is gone");
+                    return false;
+                }
                 Some(a) => a.clone(),
                 None => {
                     self.toast(format!("Can't find {name}"));
@@ -2585,6 +2600,15 @@ impl Shell {
                 }
             }
         };
+        // Started a moment ago, its hello may wait unread.
+        if let Some(pgid) = self
+            .tasks
+            .get(&target.file)
+            .filter(|t| !t.linked && t.link.is_some())
+            .map(|t| t.pgid)
+        {
+            self.read_link(pgid);
+        }
         let running = self.tasks.get(&target.file);
         if running.is_some_and(|t| t.link_v < 2) {
             self.toast(format!("Close {} to open this file", target.entry.name));
@@ -2593,28 +2617,37 @@ impl Shell {
         let front = self.tasks.front().map(|t| t.id.clone());
         if front.as_deref() == Some(target.file.as_str()) {
             // The app in front opens it itself.
-            self.hand_files(&target.file, &[path]);
-            return true;
+            return self.hand_files(&target.file, &[path]);
         }
-        self.pending = Some(Pending::Open(target.file.clone(), vec![path]));
+        // Another handover waits for keys: one more file for the same app
+        // joins it, anything else waits for nothing.
+        match &mut self.pending {
+            None => self.pending = Some(Pending::Open(target.file.clone(), vec![path])),
+            Some(Pending::Open(id, files)) if *id == target.file => files.push(path),
+            Some(_) => return false,
+        }
         true
     }
 
     /// Sends `open` for each file to a running app on link version 2.
-    fn hand_files(&mut self, id: &str, files: &[PathBuf]) {
-        let Some(t) = self.tasks.get(id) else {
-            return;
-        };
-        let Some(l) = t.link.as_ref().filter(|_| t.link_v >= 2) else {
-            return;
-        };
-        for f in files {
-            if !l.send(&["open", &link::path_field(f)]) {
-                let name = t.name.clone();
-                self.toast(format!("{name} didn't take the file"));
-                return;
-            }
+    /// False, with a toast, if it didn't take them.
+    fn hand_files(&mut self, id: &str, files: &[PathBuf]) -> bool {
+        if files.is_empty() {
+            return true;
         }
+        let Some(t) = self.tasks.get(id) else {
+            return false;
+        };
+        let name = t.name.clone();
+        let sent = t.link.as_ref().filter(|_| t.link_v >= 2).is_some_and(|l| {
+            files
+                .iter()
+                .all(|f| l.send(&["open", &link::path_field(f)]))
+        });
+        if !sent {
+            self.toast(format!("{name} didn't take the file"));
+        }
+        sent
     }
 
     /// Pauses the app in front and brings up app `id` over it, opening
@@ -3543,6 +3576,8 @@ impl Shell {
             }
             None => {
                 self.sound(Sound::Open);
+                // Started from home, it has no opener to go back to.
+                self.return_to.retain(|(opened, _)| *opened != id);
                 self.launch(&app, &[]);
             }
         }

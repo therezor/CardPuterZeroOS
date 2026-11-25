@@ -159,8 +159,8 @@ App to shell:
 | `awake` `1` or `0` | Keep the screen on while the app is in front, for a player or a clock. `0` lets it go dark again |
 | `open` name | Bring up app `name` (its desktop file stem, or the program its `Exec` runs). Only the app in front may ask. It pauses, and comes back when `name` closes |
 | `sound` name | Play a system sound: `move`, `select`, `back`, `open`, `close`, `lock`, `unlock`, `error`, `notice`, `warn` or `boot`. Only the app in front may ask, and only while the user has sounds on (`gh0st.sounds`): the app checks the setting, so a change in Settings counts at once. The shell plays nothing while dark or muted |
-| `open-file` path | Open a file in the app its type opens with, as `open` does. The shell toasts if none does |
-| `open-with` name path | Open a file in app `name` |
+| `open-file` path | Open a file in the app its type opens with, as `open` does. The path is absolute and the file exists. The shell toasts if none does |
+| `open-with` name path | Open a file in app `name`. The path is absolute and the file exists |
 | `leave` | Step back without closing: the app that opened this one comes back, or home, and this one runs on behind if it may (a player whose music plays on) |
 
 `icon` names a symbol built into gh0st, the Lucide set that `gh0st:<name>`

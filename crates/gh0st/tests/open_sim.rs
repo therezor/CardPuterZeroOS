@@ -311,7 +311,7 @@ fn leave_brings_back_the_opener_and_keeps_the_app() {
     in_order(&log, &["a argv\n", "b argv", "a got resume"]);
     // Beta is parked, not closed, when Alpha comes back.
     in_order(&shell, &["started Beta", "paused Beta", "resumed Alpha"]);
-    let closed = shell.find("closed Beta").unwrap_or(usize::MAX);
+    let closed = shell.find("Beta closed").unwrap_or(usize::MAX);
     assert!(shell.find("resumed Alpha") < Some(closed), "{shell}");
 }
 
@@ -353,4 +353,80 @@ fn a_notice_chip_reaches_its_running_app_and_enter_opens_its_file() {
     in_order(&shell, &["started Alpha", "toast Next", "started Beta"]);
     let n = notes.display().to_string();
     assert!(log.contains(&format!("b argv {n}")), "{log}");
+}
+
+#[test]
+fn only_absolute_paths_that_exist_open() {
+    let s = Sim::new("paths");
+    let notes = s.file("notes.txt", b"words\n");
+    let gone = s.dir.join("files/gone.txt");
+    s.app(
+        "a",
+        "Alpha",
+        "",
+        "",
+        &[
+            "wait 400".into(),
+            send(&["open-file", "notes.txt"]),
+            send(&["open-with", "b", "--flag"]),
+            send(&["open-with", "b", &path_field(&gone)]),
+            "wait 100".into(),
+            open_file(&notes),
+            "wait 2000".into(),
+        ],
+    );
+    s.app(
+        "b",
+        "Beta",
+        "%f",
+        "MimeType=text/plain;\nNoDisplay=true\n",
+        &["wait 2000".into()],
+    );
+    let (log, shell) = s.run("wait 600\nenter\nwait 1500\n");
+    assert_eq!(
+        shell.matches("toast Can't open that file").count(),
+        2,
+        "{shell}"
+    );
+    assert_eq!(
+        shell.matches("toast That file is gone").count(),
+        1,
+        "{shell}"
+    );
+    let n = notes.display().to_string();
+    assert!(log.contains(&format!("b argv {n}\n")), "{log}");
+    assert!(!log.contains("b argv --flag"), "{log}");
+}
+
+/// Beta, opened by Alpha, is closed from the switcher. Started again from
+/// home and closed, it goes home, not back to Alpha.
+#[test]
+fn an_app_closed_behind_forgets_its_opener() {
+    let s = Sim::new("forget");
+    let notes = s.file("notes.txt", b"words\n");
+    s.app(
+        "a",
+        "Alpha",
+        "",
+        "",
+        &["wait 400".into(), open_file(&notes), "wait 9000".into()],
+    );
+    s.app(
+        "b",
+        "Beta",
+        "%f",
+        "MimeType=text/plain;\n",
+        &["wait 1500".into(), "exit".into()],
+    );
+    // Alpha opens Beta. Fn+K, 8 closes Beta, Esc goes home. Right and
+    // Enter start Beta again; it exits on its own.
+    let (_, shell) = s.run(
+        "wait 600\nenter\nwait 1000\nhome\nwait 400\n8\nwait 800\nesc\nwait 300\n\
+         right\nenter\nwait 2500\n",
+    );
+    in_order(
+        &shell,
+        &["started Beta", "Beta closed", "started Beta", "Beta closed"],
+    );
+    assert!(!shell.contains("resumed Alpha"), "{shell}");
 }
