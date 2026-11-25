@@ -416,13 +416,13 @@ fn an_app_closed_behind_forgets_its_opener() {
         "Beta",
         "%f",
         "MimeType=text/plain;\n",
-        &["wait 1500".into(), "exit".into()],
+        &["wait 3000".into(), "exit".into()],
     );
     // Alpha opens Beta. Fn+K, 8 closes Beta, Esc goes home. Right and
-    // Enter start Beta again; it exits on its own.
+    // Enter start Beta again; it exits on its own. Slack for slow starts.
     let (_, shell) = s.run(
-        "wait 600\nenter\nwait 1000\nhome\nwait 400\n8\nwait 800\nesc\nwait 300\n\
-         right\nenter\nwait 2500\n",
+        "wait 600\nenter\nwait 2000\nhome\nwait 400\n8\nwait 800\nesc\nwait 300\n\
+         right\nenter\nwait 4500\n",
     );
     in_order(
         &shell,

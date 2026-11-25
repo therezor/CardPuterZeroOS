@@ -162,6 +162,9 @@ answers `1` done, `0` not: a folder on another drive has no Trash here.
   colour under it and its hex, away from the crosshair. Enter answers
   `color` as `(ddd)` from 0 to 1; Esc answers `1`. Picking is the user's
   yes: there is no question first.
+- Each waiting question keeps its own frozen screen, as a wallpaper
+  question keeps its picture. Four may wait at once; past that the shell
+  denies.
 
 ## NetworkMonitor
 

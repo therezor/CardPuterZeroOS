@@ -942,9 +942,13 @@ impl Shell {
     /// wallpaper. The question shows over the picture itself.
     fn ask_wallpaper(&mut self, id: &str, pid: i32, app: &str, path: &Path) {
         let m = self.t.m;
+        if self.preview.len() >= FROZEN_MAX {
+            self.services.say_session(&["wallpaper", id, "deny"]);
+            return;
+        }
         let pic = wallpaper::load(path, m.width as usize, m.height as usize);
         match (id.parse::<u64>(), pic, self.front_asker(pid, app)) {
-            (Ok(n), Some(pic), Some(app)) if self.preview.len() < FROZEN_MAX => {
+            (Ok(n), Some(pic), Some(app)) => {
                 let baked = wallpaper::bake(&pic, &self.t.c, m.bar_h as usize, m.hint_h as usize);
                 self.preview.push((n, baked));
                 self.prompts.push(Ask {
@@ -1156,6 +1160,11 @@ impl Shell {
                 let ok = self.open_file(None, path);
                 self.services
                     .say_session(&[if ok { "done" } else { "refuse" }, &id]);
+            }
+            // A chooser of a session that died may still be closing under
+            // this id: the new request must not take its place.
+            PortalAsk::Pick { .. } if self.tasks.get(&format!("{PICKER}{id}")).is_some() => {
+                self.services.say_session(&["refuse", &id]);
             }
             PortalAsk::Pick { .. } => {
                 let Some(files) = self
@@ -3099,13 +3108,14 @@ impl Shell {
         let Ok(n) = id.parse::<u64>() else {
             return;
         };
-        let Some(app) = self
-            .front_asker(pid, app)
-            .filter(|_| self.shot.len() < FROZEN_MAX)
-        else {
+        let Some(app) = self.front_asker(pid, app) else {
             self.services.say_session(&[verb, id, "deny"]);
             return;
         };
+        if self.shot.len() >= FROZEN_MAX {
+            self.services.say_session(&[verb, id, "deny"]);
+            return;
+        }
         let shot = self.grab();
         if quiet {
             self.shot.push((n, shot));
