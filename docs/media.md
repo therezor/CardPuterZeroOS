@@ -192,7 +192,8 @@ and keeps it on the clock, one decodes the sound and writes it to
 PipeWire, so the loop's thread only moves finished pictures to the ring.
 
 - H.264 decodes on the VPU (`h264_v4l2m2m`) up to 1080p; everything else in
-  software. A software decoder gets 2 threads up to 640x480, 3 up to
+  software. The VPU gets 4 buffers in and 6 out, not ffmpeg's 16 and 20,
+  which ran the 64 MB CMA pool dry at 1080p (`hardware-facts.md`, Media). A software decoder gets 2 threads up to 640x480, 3 up to
   1280x720, 4 above: each thread holds pictures of its own. The sound is
   the clock.
 - On the board H.264, HEVC, VP9 and AV1 keep 30 fps up to 720p, measured

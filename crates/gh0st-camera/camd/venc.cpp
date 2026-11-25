@@ -15,10 +15,12 @@ namespace camd {
 namespace {
 
 const char *DEVICE = "/dev/video11";
-// Frames in flight to the encoder, and buffers for what it makes. As
-// rpicam-vid: 512 KB holds any 1080p frame at our rates.
-const unsigned IN_SLOTS = 4;
-const unsigned OUT_BUFS = 12;
+// Frames in flight to the encoder, two fewer than the camera's video
+// buffers (VIDEO_BUFS), and buffers for what it makes, which the writer
+// takes at once. 512 KB holds any 1080p frame at our rates, as rpicam-vid.
+// Fewer of either dropped frames at 1080p30 (hardware-facts.md, Camera).
+const unsigned IN_SLOTS = 3;
+const unsigned OUT_BUFS = 6;
 const unsigned OUT_SIZE = 512 << 10;
 
 int xioctl(int fd, unsigned long req, void *arg)

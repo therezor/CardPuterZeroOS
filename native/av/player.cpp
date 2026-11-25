@@ -865,7 +865,18 @@ struct Player::State {
                 if (lowres)
                     ctx->lowres = std::min(1, int(codec->max_lowres));
             }
-            if (avcodec_open2(ctx, codec, nullptr) == 0) {
+            // The VPU's buffers come out of CMA, and ffmpeg's 16 in and 20
+            // out run the pool dry at 1080p. The firmware keeps the
+            // reference pictures itself: four out played B-frame clips at
+            // 30 fps (hardware-facts.md, Media), and six leave room.
+            AVDictionary *hwo = nullptr;
+            if (codec->capabilities & AV_CODEC_CAP_HARDWARE) {
+                av_dict_set_int(&hwo, "num_output_buffers", 4, 0);
+                av_dict_set_int(&hwo, "num_capture_buffers", 6, 0);
+            }
+            int opened = avcodec_open2(ctx, codec, &hwo);
+            av_dict_free(&hwo);
+            if (opened == 0) {
                 if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
                     hw = codec->capabilities & AV_CODEC_CAP_HARDWARE;
                 return true;

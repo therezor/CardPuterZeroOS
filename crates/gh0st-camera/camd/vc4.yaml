@@ -1,8 +1,8 @@
-# libcamera's Raspberry Pi pipeline settings for gh0st-camd, loaded through
-# LIBCAMERA_RPI_CONFIG_FILE. Raw buffers between the sensor and the ISP:
-# the default four are 40 MB at 8 MP, which with the 12 MB picture does not
-# fit in 64 MB of CMA. Two drop frames at 1080p30. Three do neither
-# (measured, hardware-facts.md).
+# libcamera's Raspberry Pi pipeline settings for gh0st-camd in video mode,
+# loaded through LIBCAMERA_RPI_CONFIG_FILE. Raw buffers between the sensor
+# and the ISP: two drop frames at 1080p30, three don't. Photos take two
+# (vc4-photo.yaml): the default four are 40 MB at 8 MP, which with the
+# still's buffers does not fit in 64 MB of CMA (hardware-facts.md).
 {
         "version": 1.0,
         "target": "bcm2835",

@@ -1,0 +1,13 @@
+# libcamera's Raspberry Pi pipeline settings for gh0st-camd in photo mode.
+# Two raw buffers: an 8 MP still then takes 10 MB less of the 64 MB CMA
+# pool than with video's three (vc4.yaml), and the 25 fps preview keeps its
+# pace (measured, hardware-facts.md).
+{
+        "version": 1.0,
+        "target": "bcm2835",
+        "pipeline_handler":
+        {
+                "min_unicam_buffers": 2,
+                "min_total_unicam_buffers": 2
+        }
+}

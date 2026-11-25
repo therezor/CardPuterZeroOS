@@ -2,6 +2,7 @@
 // libcamera's thread; onDone only queues them and writes the wake fd, and
 // everything else runs on the loop's thread.
 #include "camd.h"
+#include "look.h"
 #include "rec.h"
 #include "still.h"
 
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <dirent.h>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -62,7 +64,8 @@ int64_t fromCamera(int64_t camUs)
 const int VIDEO_FPS = 30;
 const int64_t VIDEO_FRAME_US = 1000000 / VIDEO_FPS;
 // Buffers in video mode: frames wait in the encoder while the preview runs.
-const unsigned VIDEO_BUFS = 6;
+// Five keep 1080p30 whole; four drop a frame now and then (hardware-facts.md).
+const unsigned VIDEO_BUFS = 5;
 // A photo may expose longer than the preview: up to 1/8 s, still sharp in
 // a steady hand, and much less gain in a dim room.
 const int64_t STILL_MIN_US = 33333, STILL_MAX_US = 125000;
@@ -86,6 +89,36 @@ Rectangle cropFor(const Rectangle &max, double aspect, float zoom)
 Fault faultOf(int err)
 {
     return err == -ENOMEM ? Fault::NoMemory : err == -EBUSY ? Fault::Busy : Fault::Other;
+}
+
+// The dma-bufs this process holds, each counted once: the sensor's, the
+// ISP's and the encoder's input. The encoder's own output buffers are
+// V4L2 MMAP and don't show.
+long dmabufKb()
+{
+    std::set<std::string> seen;
+    long sum = 0;
+    DIR *d = opendir("/proc/self/fdinfo");
+    if (!d)
+        return -1;
+    while (dirent *e = readdir(d)) {
+        std::ifstream f(std::string("/proc/self/fdinfo/") + e->d_name);
+        std::string k, v, ino;
+        long size = -1;
+        bool buf = false;
+        while (f >> k >> v) {
+            if (k == "size:")
+                size = atol(v.c_str());
+            else if (k == "exp_name:")
+                buf = true;
+            else if (k == "ino:")
+                ino = v;
+        }
+        if (buf && size > 0 && seen.insert(ino.empty() ? e->d_name : ino).second)
+            sum += size;
+    }
+    closedir(d);
+    return sum / 1024;
 }
 
 long cmaFreeKb()
@@ -112,7 +145,7 @@ struct Lc : Backend {
     Fault open() override
     {
         if (!cm_) {
-            usePipelineConfig();
+            usePipelineConfig(video_);
             cm_ = std::make_unique<CameraManager>();
             if (cm_->start() < 0) {
                 cm_.reset();
@@ -136,21 +169,52 @@ struct Lc : Backend {
         return Fault::None;
     }
 
-    // Our buffer counts (vc4.yaml), from beside the binary or the package,
-    // unless the caller chose a file.
-    static void usePipelineConfig()
+    // Our buffer counts, from beside the binary or the package: video's
+    // three raw buffers (vc4.yaml) or photos' two (vc4-photo.yaml), and
+    // video's for photos when theirs is missing. A file the caller chose is
+    // kept for both.
+    static const char *callerConfig()
     {
-        if (getenv("LIBCAMERA_RPI_CONFIG_FILE"))
-            return;
+        static const char *c = getenv("LIBCAMERA_RPI_CONFIG_FILE");
+        return c;
+    }
+
+    static std::string configFile(bool video)
+    {
+        if (callerConfig())
+            return callerConfig();
         char exe[4096];
         ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
-        std::string here = n > 0 ? std::string(exe, n) : "";
-        here = here.substr(0, here.find_last_of('/') + 1) + "vc4.yaml";
-        for (const std::string &p : {here, std::string("/usr/share/gh0st-camera/vc4.yaml")})
-            if (access(p.c_str(), R_OK) == 0) {
-                setenv("LIBCAMERA_RPI_CONFIG_FILE", p.c_str(), 1);
-                return;
-            }
+        std::string dir = n > 0 ? std::string(exe, n) : "";
+        dir = dir.substr(0, dir.find_last_of('/') + 1);
+        for (const char *name : {video ? "vc4.yaml" : "vc4-photo.yaml", "vc4.yaml"})
+            for (const std::string &p : {dir + name, std::string("/usr/share/gh0st-camera/") + name})
+                if (access(p.c_str(), R_OK) == 0)
+                    return p;
+        return "";
+    }
+
+    void usePipelineConfig(bool video)
+    {
+        loaded_ = configFile(video);
+        if (!loaded_.empty())
+            setenv("LIBCAMERA_RPI_CONFIG_FILE", loaded_.c_str(), 1);
+        else
+            unsetenv("LIBCAMERA_RPI_CONFIG_FILE");
+    }
+
+    // libcamera reads the pipeline file only when the camera manager
+    // starts, so a mode that wants the other file starts it again. A start
+    // that failed left no camera: this claims it again, or says why not.
+    Fault useMode(bool video)
+    {
+        video_ = video;
+        if (cm_ && configFile(video) != loaded_) {
+            close();
+            cm_->stop();
+            cm_.reset();
+        }
+        return open();
     }
 
     std::string sensor() const override { return model_; }
@@ -159,6 +223,8 @@ struct Lc : Backend {
 
     Fault preview(Mode mode, int w, int h, const Controls &c) override
     {
+        if (Fault f = useMode(mode != Mode::Photo); f != Fault::None)
+            return f;
         ctl_ = c;
         aspect_ = mode == Mode::Photo ? 4.0 / 3 : 16.0 / 9;
         Fault f;
@@ -215,6 +281,10 @@ struct Lc : Backend {
 
     Fault still(const Controls &c, Yuv420 &out, ShotMeta &meta, std::string &why) override
     {
+        if (Fault f = useMode(false); f != Fault::None) {
+            why = "camera";
+            return f;
+        }
         ctl_ = c;
         // Zoom crops the sensor: the photo is the crop's own pixels, not
         // scaled up to 8 MP.
@@ -238,6 +308,8 @@ struct Lc : Backend {
             stopStream();
             return f;
         }
+        if (probing_)
+            stillKb_ = dmabufKb();
         // The exposure carries over from the preview. In good light the
         // first frame is settled; in the dark, AE now has room to expose
         // longer, so wait while it searches.
@@ -635,6 +707,9 @@ struct Lc : Backend {
     }
 
     int wake_;
+    // Which pipeline file the camera manager started with, and the mode's.
+    std::string loaded_;
+    bool video_ = false;
     std::unique_ptr<CameraManager> cm_;
     std::shared_ptr<Camera> cam_;
     std::unique_ptr<CameraConfiguration> cfg_;
@@ -649,6 +724,9 @@ struct Lc : Backend {
     uint32_t gaps_ = 0, completed_ = 0;
     int64_t lastTs_ = 0, sumDelta_ = 0, sumDur_ = 0;
     int32_t lastExposureUs_ = 0;
+    // What a still held in dma-bufs, counted only for --probe.
+    bool probing_ = false;
+    long stillKb_ = 0;
     std::vector<std::unique_ptr<Request>> reqs_;
     std::map<int, std::pair<uint8_t *, size_t>> maps_;
     std::map<const FrameBuffer *, std::array<uint8_t *, 3>> planes_;
@@ -751,9 +829,10 @@ int probe(const char *dir)
     for (int fd : wake)
         fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     Lc lc(wake[1]);
+    lc.probing_ = true;
     printf("libcamera: %s\n", CameraManager::version().c_str());
-    Lc::usePipelineConfig();
-    printf("pipeline config: %s\n", getenv("LIBCAMERA_RPI_CONFIG_FILE") ?: "libcamera's default");
+    printf("pipeline config: photo %s, video %s\n", Lc::configFile(false).c_str(),
+           Lc::configFile(true).c_str());
     printf("cma free idle: %ld kB\n", cmaFreeKb());
     Fault f = lc.open();
     if (f != Fault::None) {
@@ -790,8 +869,9 @@ int probe(const char *dir)
         uint64_t started = nowMs() - t0, first;
         describe(lc, p.name);
         int n = countFrames(lc, wake[0], 3000, first);
-        printf("%s: start %llu ms, first frame %llu ms, %.1f fps, cma free %ld kB\n", p.name,
-               (unsigned long long)started, (unsigned long long)first, n / 3.0, cmaFreeKb());
+        printf("%s: start %llu ms, first frame %llu ms, %.1f fps, cma free %ld kB, dmabuf %ld kB\n",
+               p.name, (unsigned long long)started, (unsigned long long)first, n / 3.0, cmaFreeKb(),
+               dmabufKb());
         lc.stop();
     }
 
@@ -821,7 +901,10 @@ int probe(const char *dir)
         int shown = 0;
         uint64_t convMs = 0;
         std::vector<uint16_t> px(size_t(p.w) * p.h);
-        uint64_t end = nowMs() + 5000;
+        const char *secs = getenv("GH0ST_PROBE_SECS");
+        const int recMs = (secs && atoi(secs) > 0 ? atoi(secs) : 5) * 1000;
+        uint64_t end = nowMs() + recMs;
+        long held = 0;
         while (nowMs() < end) {
             pollfd fds[2] = {{wake[0], POLLIN, 0}, {rec.fd(), POLLIN, 0}};
             poll(fds, 2, int(end - nowMs()));
@@ -839,6 +922,8 @@ int probe(const char *dir)
                 [&](const VideoFrame &vf) { return rec.frame(vf); });
             if (fds[1].revents)
                 rec.service();
+            if (!held)
+                held = dmabufKb();
         }
         long cma = cmaFreeKb();
         printf("%s rec: %u frames, %u lost, preview to RGB565 %.2f ms a frame, real frame %.1f us, "
@@ -849,11 +934,11 @@ int probe(const char *dir)
         lc.completed_ = lc.gaps_ = 0;
         lc.lastTs_ = 0;
         rec.stop();
-        printf("%s rec: %lld ms, %llu bytes (%.1f Mb/s), %d dropped, preview %.1f fps, cma free %ld kB "
-               "-> %s\n",
+        printf("%s rec: %lld ms, %llu bytes (%.1f Mb/s), %d dropped, preview %.1f fps, cma free %ld kB, "
+               "dmabuf %ld kB -> %s\n",
                p.name, (long long)rec.ms(), (unsigned long long)rec.bytes(),
-               rec.ms() ? rec.bytes() * 8.0 / rec.ms() / 1000 : 0.0, rec.dropped(), shown / 5.0, cma,
-               path.c_str());
+               rec.ms() ? rec.bytes() * 8.0 / rec.ms() / 1000 : 0.0, rec.dropped(),
+               shown * 1000.0 / recMs, cma, held, path.c_str());
         lc.stop();
     }
 
@@ -874,9 +959,18 @@ int probe(const char *dir)
             printf("still %gx: %s (%s)\n", zoom, faultName(f), why.c_str());
             continue;
         }
-        printf("still %gx: %dx%d in %llu ms, real exposure %lld us, gain %.2f, cma free before %ld kB\n",
+        printf("still %gx: %dx%d in %llu ms, real exposure %lld us, gain %.2f, cma free before %ld kB, "
+               "dmabuf %ld kB\n",
                zoom, img.w, img.h, (unsigned long long)took, (long long)meta.exposure_us,
-               meta.gain, cma);
+               meta.gain, cma, lc.stillKb_);
+        // Each look over the photo, as the worker runs it before the JPEG.
+        if (zoom == 1.0f)
+            for (const Recipe &r : recipes()) {
+                Yuv420 copy = img;
+                uint64_t l0 = nowMs();
+                lookYuv(copy, build(r), 1);
+                printf("look %s: %llu ms\n", r.id, (unsigned long long)(nowMs() - l0));
+            }
         t0 = nowMs();
         f = lc.preview(Mode::Photo, 226, 170, c);
         uint64_t first = 0;

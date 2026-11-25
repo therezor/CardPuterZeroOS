@@ -39,13 +39,20 @@ What that means for the best result:
   tuned for the Pi v2 module's 3.04 mm lens. Lens shading and colour may be
   off at the edges. A tuning file of our own, loaded through
   `LIBCAMERA_RPI_TUNING_FILE`, is the largest quality step left.
-- **Memory.** CMA is 64 MB. With libcamera's four raw buffers an 8 MP
-  still does not fit; the helper loads `camd/vc4.yaml`, which keeps two
-  (`LIBCAMERA_RPI_CONFIG_FILE`, beside the binary or in
-  `/usr/share/gh0st-camera`). Zero shutter lag at
-  full size does not fit, so a photo stops the preview, takes the still in
-  the full mode and starts again. The IPA keeps exposure and white balance
-  across that switch, so there is no settling wait.
+- **Memory.** CMA is 64 MB, shared by the ISP, the encoder and the
+  decoder. With libcamera's four raw buffers an 8 MP still does not fit.
+  The helper loads a pipeline file of its own through
+  `LIBCAMERA_RPI_CONFIG_FILE`, beside the binary or in
+  `/usr/share/gh0st-camera`: `vc4-photo.yaml` keeps two raw buffers,
+  `vc4.yaml` three for video, which drops frames with two. libcamera reads
+  the file only when its camera manager starts, so changing between photo
+  and video starts it again (about 80 ms). A still then holds 45 MB
+  rather than 55. Video keeps five buffers at the recording size and the
+  encoder six outputs; the player asks the VPU for 4 and 6
+  (`hardware-facts.md`, Camera and Media). Zero shutter lag at full size
+  does not fit, so a photo stops the preview, takes the still in the full
+  mode and starts again. The IPA keeps exposure and white balance across
+  that switch, so there is no settling wait.
 
 ## Two processes
 
@@ -358,8 +365,9 @@ Builds:
   shell stops the app without it, and the helper keeps the sensor
   streaming in the background.
 - `/usr/libexec/gh0st-camd --probe DIR` on a device prints the modes, the
-  preview configs and their fps, CMA free in each, and the time of a full
-  photo and its JPEG at q95 and q85.
+  preview configs and their fps, CMA free and the dma-bufs held in each,
+  a recording at each size (`GH0ST_PROBE_SECS`, 5 s by default), the time
+  of a full photo, each look on it, and its JPEG at q95 and q85.
 
 ## Tests
 
@@ -396,11 +404,12 @@ Builds:
 
 - **Unmeasured.** The capture's latency against the picture, and whether
   the jack's input carries a headset's microphone.
-- **CMA.** The VPU's buffers for a 1080p clip take 40 to 46 MB of the 64 MB
-  pool, and a 1080p recording leaves about 17 MB free. Playing while
-  recording is untried. An 8 MP still can fail with `nomem` for a while
-  after long uptime: page-cache pages the kernel can't move split the
-  pool (docs/hardware-facts.md). A larger pool would leave room.
+- **CMA.** Playing a 1080p clip leaves about 33 MB of the 64 MB pool, a
+  1080p recording about 27 MB. Playing while recording is untried. An 8
+  MP still needs 45 MB and can still fail with `nomem` for a while after
+  long uptime: page-cache pages the kernel can't move split the pool
+  (docs/hardware-facts.md). 12 MB of a still is a second picture
+  libcamera keeps for the ISP; only libcamera can drop it.
 - **Plain headphones.** The sound driver moves the input to the jack for
   anything plugged in, so headphones without a microphone record silence.
   A Built-in choice would set the codec's input back for the recording.

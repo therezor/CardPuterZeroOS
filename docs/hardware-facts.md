@@ -571,9 +571,32 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 - `ScalerCrop` max is 3280x2464 at (0, 0) in the binned mode and
   1920x1080 at (680, 692) in the 1080p crop.
 - CMA: with libcamera's defaults (four raw buffers) an 8 MP still fails to
-  allocate. Two fit but drop 1 to 5 frames in 5 s at 1080p30. Three
-  (`camd/vc4.yaml`) do neither. `CmaFree` reads near zero
-  at idle because the page cache borrows CMA; it moves out on demand.
+  allocate. Two raw buffers drop 1 to 5 frames in 5 s at 1080p30; three
+  (`camd/vc4.yaml`) don't. Photos take two (`camd/vc4-photo.yaml`): the
+  preview keeps 25 fps and a still works. `CmaFree` reads near zero at
+  idle because the page cache borrows CMA; it moves out on demand.
+- What the helper holds in dma-bufs (`--probe`, from `/proc/self/fdinfo`;
+  each has a unique inode):
+
+| | Before | Now |
+|---|---|---|
+| Photo preview | 7.9 MB | 5.4 MB |
+| 8 MP still | 55.5 MB | 45.5 MB |
+| 1080p, and the encoder's output | 30.0 + 6 MB | 26.8 + 3 MB |
+| 720p, and the encoder's output | 18.1 + 6 MB | 16.6 + 3 MB |
+
+- A still holds three raw buffers of 10.1 MB (now two), its 12.1 MB
+  picture, and one more 12.1 MB picture libcamera keeps for the ISP
+  itself. 1080p holds six video buffers of 3.1 MB (now five), three raw
+  of 2.6 MB, the ISP's own 3.1 MB and the preview's.
+- Video buffers and the encoder: five video buffers, three of them in the
+  encoder, and six 512 KB outputs kept 0 lost and 0 dropped over 60 s at
+  1080p and 720p. Four video buffers dropped a frame in 30 s.
+- Two raw buffers against three in photo mode, in the same light at
+  -2 EV: both 25.0 fps. In a dim room the exposure caps both near 17 fps.
+  Moving between photo and video starts libcamera's camera manager again
+  (it reads the pipeline file only then): the first video preview starts
+  in about 160 ms instead of 85.
 - Not always: after half a day up, an 8 MP still failed with `nomem` for
   minutes at a time (kernel 6.18.60). The ISP's 12 MB output (3003
   pages) found no free run: a few dirty ext4 page-cache pages with buffers
@@ -594,8 +617,11 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
   302x170: the helper converts it.
 - Video, 5 s each, with the clock fixed: 1080p (the 1920x1080 crop) 149
   frames, no gaps, 12.0 Mb/s; 720p (binned, scaled) 149 frames. CMA free
-  while recording 1080p: about 17 MB. Files decode clean in ffprobe: High
-  profile, level 4.1, BT.709 limited range.
+  while recording 1080p: about 17 MB with six video buffers, 27 MB with
+  five. Files decode clean in ffprobe: High profile, level 4.1, BT.709
+  limited range.
+- Looks on an 8 MP still, four cores: 85 ms without grain, 125 ms with it
+  (JPEG at q95 takes 430 to 500 ms after).
 
 ## Media (`gh0st-mediad`'s `bench`, kernel `6.18.60+rpt-rpi-v8`)
 
@@ -621,9 +647,15 @@ faster than film, so real clips need more.
 | AV1 720p | 30.0 | 0 | 133% | 57 MB | 66 ms |
 | AV1 1080p | 28.5 | 14 | 219% | 85 MB | 98 ms |
 
-- The VPU's buffers come out of CMA. `CmaFree` read 46 to 49 MB before
-  and, while it played, 32 MB at 480p, 19 MB at 720p and 1 to 8 MB at
-  1080p.
+- The VPU's buffers come out of CMA. With ffmpeg's defaults for
+  `h264_v4l2m2m` (16 buffers in, about 1.5 MB each at 1080p, and 20
+  out) `CmaFree` read 46 to 49 MB before and, while it played, 32 MB at
+  480p, 19 MB at 720p and 0 to 8 MB at 1080p. The player now asks for 4
+  in and 6 out: 1080p leaves about 33 MB free.
+- The firmware keeps the reference pictures itself: 4 out still played a
+  1080p x264 clip with 3 B-frames and 4 references at 30 fps. With 6 out,
+  x264 clips at 720p with 9 references and 480p with 16 played at 30 fps
+  with no drops, seeks and the end included.
 - A 12000x8400 JPEG (100 MP): probe 12 ms, the fitted view 536 ms, a 4x
   zoom 162 ms, peak 28 MB. A 1280x720 JPEG's view: 15 ms.
 - A 6000x4000 PNG (24 MP): probe 643 ms (`avformat_find_stream_info`
