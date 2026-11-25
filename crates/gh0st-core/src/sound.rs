@@ -96,21 +96,9 @@ impl Sound {
         const EB4: f32 = 311.1;
         let plain = Voice::Sine;
         let (notes, peak): (&[Note], f32) = match self {
-            Sound::Move => (&[Note::new(0, A6, 18, 4.0, plain)], 0.16),
-            Sound::Select => (
-                &[
-                    Note::new(0, E6, 40, 12.0, plain),
-                    Note::new(28, A6, 60, 14.0, plain),
-                ],
-                0.22,
-            ),
-            Sound::Back => (
-                &[
-                    Note::new(0, A6, 40, 12.0, plain),
-                    Note::new(28, E6, 60, 14.0, plain),
-                ],
-                0.20,
-            ),
+            Sound::Move => (&[Note::new(0, A5, 22, 5.0, Voice::Pop)], 0.12),
+            Sound::Select => (&[Note::new(0, E6, 90, 30.0, Voice::Wood)], 0.18),
+            Sound::Back => (&[Note::new(0, A5, 90, 30.0, Voice::Wood)], 0.16),
             Sound::Open => (
                 &[
                     Note::new(0, CS6, 50, 14.0, plain),
@@ -129,20 +117,19 @@ impl Sound {
             ),
             Sound::Lock => (
                 &[
-                    Note::new(0, E6, 60, 18.0, plain),
-                    Note::new(45, A5, 60, 18.0, plain),
-                    Note::new(90, E5, 160, 45.0, plain),
+                    Note::new(0, E6, 120, 40.0, Voice::Wood),
+                    Note::new(70, CS6, 120, 40.0, Voice::Wood),
+                    Note::new(140, A5, 320, 110.0, Voice::Wood),
                 ],
-                0.24,
+                0.22,
             ),
             Sound::Unlock => (
                 &[
-                    Note::new(0, A5, 60, 18.0, plain),
-                    Note::new(45, CS6, 60, 18.0, plain),
-                    Note::new(90, E6, 60, 18.0, plain),
-                    Note::new(135, A6, 220, 60.0, plain),
+                    Note::new(0, A5, 120, 40.0, Voice::Wood),
+                    Note::new(70, CS6, 120, 40.0, Voice::Wood),
+                    Note::new(140, E6, 340, 120.0, Voice::Wood),
                 ],
-                0.24,
+                0.22,
             ),
             Sound::Error => (
                 &[
@@ -177,10 +164,10 @@ impl Sound {
             ),
             Sound::Shutter => (
                 &[
-                    Note::new(0, 4200.0, 24, 5.0, Voice::Noise),
-                    Note::new(70, 2400.0, 40, 8.0, Voice::Noise),
+                    Note::new(0, 3000.0, 20, 4.0, Voice::Noise),
+                    Note::new(60, 1700.0, 32, 7.0, Voice::Noise),
                 ],
-                0.28,
+                0.24,
             ),
             Sound::RecStart => (&[Note::new(0, E6, 140, 90.0, plain)], 0.22),
             Sound::RecStop => (
@@ -206,6 +193,11 @@ enum Voice {
     Bell,
     /// Noise through a band around the note's pitch: a click.
     Noise,
+    /// A drop: a sine that falls from half again its pitch in a few ms.
+    Pop,
+    /// A marimba's bar: a sine and its fourth partial, which dies at once
+    /// as a mallet's knock.
+    Wood,
 }
 
 #[derive(Clone, Copy)]
@@ -261,6 +253,13 @@ fn mix(notes: &[Note], peak: f32) -> Vec<i16> {
                 Voice::Sine => w.sin() + 0.15 * (2.0 * w).sin(),
                 Voice::Hollow => w.sin() + (3.0 * w).sin() / 3.0 + (5.0 * w).sin() / 5.0,
                 Voice::Bell => w.sin() + 0.4 * (2.76 * w).sin() * (-t * 30.0).exp(),
+                Voice::Pop => {
+                    // The phase of a pitch gliding from 1.5x down to 1x.
+                    let tau = 0.003;
+                    let glide = 0.5 * tau * (1.0 - (-t / tau).exp());
+                    (std::f32::consts::TAU * n.hz * (t + glide)).sin()
+                }
+                Voice::Wood => w.sin() + 0.45 * (3.93 * w).sin() * (-t / 0.004).exp(),
                 Voice::Noise => {
                     seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                     let white = (seed >> 8) as f32 / (1u32 << 23) as f32 - 1.0;

@@ -428,9 +428,10 @@ menu, then the page.
 - **Level.** The volume and brightness keys show the level in the top bar's
   place for 1.5 s.
 - **Sound.** Short notes of one key (A major), soft and below a third of
-  full scale: the amplifier is loud. A tick when the selection moves, a
-  rising blip to choose or open, a falling one to go back or close, a
-  rising chord to unlock and a falling one to lock, a low double buzz for a
+  full scale: the amplifier is loud. A soft drop when the selection moves,
+  a wooden knock to choose (higher) or go back (lower), a rising blip to
+  open and a falling one to close, a marimba's rising arpeggio to unlock
+  and a falling one to lock, a low double buzz for a
   wrong password, two bell notes for a notice, three beeps for a low
   battery, and a chord at power on. The camera clicks for a photo, beeps
   each second of its timer, once as a recording starts and twice once it
