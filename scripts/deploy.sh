@@ -25,7 +25,8 @@ restart_launcher() {
     # A user unit of UID 1000 with linger: gh0st.service on our image,
     # APPLaunch.service with our drop-in on the stock one.
     remote "export XDG_RUNTIME_DIR=/run/user/\$(id -u); $user_unit daemon-reload
-        $user_unit try-restart wireplumber.service
+        $user_unit reload dbus.service 2>/dev/null || true
+        $user_unit try-restart pipewire-pulse.socket wireplumber.service
         if $user_unit cat gh0st.service >/dev/null 2>&1; then
             $user_unit restart gh0st.service
         else
@@ -117,6 +118,15 @@ scp -q -r "$root/packaging/palettes" "$host:/tmp/gh0st-palettes"
 # A paused app's null sink must never take a new stream (gh0st audio).
 scp -q "$root/os/packages/gh0st-base/root/usr/share/wireplumber/wireplumber.conf.d/50-gh0st-streams.conf" \
     "$host:/tmp/"
+# The sandbox's bus policy and audio rules (docs/isolation.md). Without
+# bwrap the shell starts no sandboxed app at all.
+base="$root/os/packages/gh0st-base/root/usr"
+scp -q "$base/share/dbus-1/session.d/gh0st.conf" "$host:/tmp/gh0st-session.conf"
+scp -q "$base/share/wireplumber/scripts/gh0st-nomic.lua" \
+    "$base/share/wireplumber/wireplumber.conf.d/50-gh0st-nomic.conf" "$host:/tmp/"
+scp -q "$base/share/pipewire/pipewire-pulse.conf.d/50-gh0st-nomic.conf" "$host:/tmp/gh0st-nomic-pulse.conf"
+scp -q "$base/lib/systemd/user/pipewire-pulse.socket.d/gh0st.conf" "$host:/tmp/gh0st-pulse-socket.conf"
+scp -q "$root/os/packages/gh0st/root/usr/lib/systemd/user/gh0st.service" "$host:/tmp/"
 remote 'set -e
     sudo install -m 755 /tmp/gh0st /usr/bin/gh0st
     sudo install -m 755 /tmp/gh0st-settings /usr/bin/gh0st-settings
@@ -148,6 +158,18 @@ remote 'set -e
     sudo install -D -m 755 90-gh0st-update /usr/lib/NetworkManager/dispatcher.d/90-gh0st-update
     sudo install -D -m 644 -t /usr/share/gh0st/palettes /tmp/gh0st-palettes/*.palette
     sudo install -D -m 644 -t /usr/share/wireplumber/wireplumber.conf.d /tmp/50-gh0st-streams.conf
+    sudo apt-get install -y --no-install-recommends bubblewrap
+    sudo install -D -m 644 /tmp/gh0st-session.conf /usr/share/dbus-1/session.d/gh0st.conf
+    sudo install -D -m 644 /tmp/gh0st-nomic.lua /usr/share/wireplumber/scripts/gh0st-nomic.lua
+    sudo install -D -m 644 -t /usr/share/wireplumber/wireplumber.conf.d /tmp/50-gh0st-nomic.conf
+    sudo install -D -m 644 /tmp/gh0st-nomic-pulse.conf \
+        /usr/share/pipewire/pipewire-pulse.conf.d/50-gh0st-nomic.conf
+    sudo install -D -m 644 /tmp/gh0st-pulse-socket.conf \
+        /usr/lib/systemd/user/pipewire-pulse.socket.d/gh0st.conf
+    # Our image runs the shell as gh0st.service; it now delegates cgroups.
+    if [ -f /usr/lib/systemd/user/gh0st.service ]; then
+        sudo install -m 644 /tmp/gh0st.service /usr/lib/systemd/user/gh0st.service
+    fi
     cd /tmp/gh0st-store-units
     sudo install -m 644 -t /usr/lib/systemd/system gh0st-store.service
     sudo install -D -m 644 gh0st-store.tmpfiles /usr/lib/tmpfiles.d/gh0st-store.conf
@@ -165,6 +187,8 @@ remote 'set -e
         /tmp/gh0st-store-units /tmp/gh0st-palettes /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
         /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy \
-        /tmp/50-gh0st-streams.conf'
+        /tmp/50-gh0st-streams.conf /tmp/gh0st-session.conf /tmp/gh0st-nomic.lua \
+        /tmp/50-gh0st-nomic.conf /tmp/gh0st-nomic-pulse.conf /tmp/gh0st-pulse-socket.conf \
+        /tmp/gh0st.service'
 restart_launcher
 echo "gh0st $(git -C "$root" rev-parse --short HEAD) running on $host"
