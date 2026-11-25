@@ -296,6 +296,7 @@ fn four_files_open_switch_and_close_one_at_a_time() {
     let b = temp("two.txt", b"two\n");
     let mut d = editing(&a);
     d.open(&[b.as_path()]);
+    assert_ne!(d.toast(), Some("Reloaded: changed on disk"), "as opened");
     d.keys("type B\nctrl+s");
     d.wait(100);
     assert_eq!(std::fs::read(&b).unwrap(), b"Btwo\n");
@@ -733,8 +734,11 @@ fn edits_that_no_longer_fit_wait_while_four_files_are_open() {
     d.open(&[others[1].as_path(), others[2].as_path(), p.as_path()]);
     assert_eq!(d.dialog().map(|x| x.0), Some("Keep the unsaved edits?"));
     d.keys("enter");
-    // No room for them: what is typed now leaves the journal as it was.
-    d.keys("type new");
+    // No room for them: what is typed and saved now leaves the journal
+    // as it was.
+    d.keys("type new\nctrl+s");
+    d.wait(100);
+    d.keys("type more");
     d.pause();
     let kept = gh0st_text::journal::read(&data, &p).expect("still kept");
     assert_eq!(kept.typed(), b"kept\n");

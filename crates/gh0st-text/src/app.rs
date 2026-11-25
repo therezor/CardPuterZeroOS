@@ -277,6 +277,9 @@ pub struct Editor {
     start: Option<List>,
     /// The journal of the file on screen.
     journal: Option<Journal>,
+    /// Edits from before wait in the journal for room to open them:
+    /// nothing here writes or deletes it.
+    journal_waits: bool,
     /// When the journal next reaches the card.
     flush_at: Option<Timer>,
     /// Edits found from before, waiting for the user's answer.
@@ -370,6 +373,7 @@ impl Editor {
             journal: None,
             flush_at: None,
             recovered: None,
+            journal_waits: false,
         }
     }
 
@@ -451,6 +455,7 @@ impl Editor {
                     // Its journal stays untouched, and the question comes
                     // back as this file shows again.
                     self.journal = None;
+                    self.journal_waits = true;
                     self.doc.borrow_mut().buf.keep_changes(false);
                     cx.toast("Four files are open: close one to keep the edits");
                     return;
@@ -623,6 +628,7 @@ impl Editor {
         if let Some(mut j) = self.journal.take() {
             j.discard();
         }
+        self.journal_waits = false;
         self.new_journal(cx);
         let w = FileWatch::new(&path);
         if let Some(fd) = w.fd() {
@@ -638,7 +644,7 @@ impl Editor {
         let Some(p) = self.path.clone() else {
             return;
         };
-        if self.binary || self.read_only || self.journal.is_some() {
+        if self.binary || self.read_only || self.journal.is_some() || self.journal_waits {
             return;
         }
         let data = self.data_dir(cx);
@@ -671,6 +677,7 @@ impl Editor {
     /// Takes out the file on screen. Its timers, watch and reader must have
     /// stopped: see `park`.
     fn take_file(&mut self) -> Parked {
+        let known = self.path.as_deref().and_then(Disk::of);
         Parked {
             path: self.path.take(),
             title: std::mem::take(&mut self.title),
@@ -687,7 +694,7 @@ impl Editor {
             saved: self.saved,
             hit: self.hit.take(),
             journal: self.journal.take(),
-            known: self.path.as_deref().and_then(Disk::of),
+            known,
         }
     }
 
@@ -708,6 +715,7 @@ impl Editor {
         self.saved = p.saved;
         self.hit = p.hit;
         self.journal = p.journal;
+        self.journal_waits = false;
         self.pair = None;
         // The parked match is of this text.
         self.seen = self.doc.get_mut().buf.version();
@@ -2793,7 +2801,9 @@ impl Page for Editor {
                 break;
             }
             let end = d.buf.line_end(start).unwrap_or(len);
-            let long = end - start > LONG;
+            // Measured as `bounds` does, without a CR LF's CR.
+            let cr = end > start && d.buf.bytes(end - 1..end).ok().as_deref() == Some(b"\r");
+            let long = end - start - cr as u64 > LONG;
             let wraps = self.wrap && !long;
             let take = (end - start).min(if wraps { LONG } else { lex::LINE_MAX as u64 });
             d.line.clear();
