@@ -35,7 +35,8 @@ pub fn app_label(stem: &str) -> String {
     stem.to_string()
 }
 
-fn alive(pidfd: &OwnedFd) -> bool {
+/// Whether the process a pidfd holds still runs.
+pub fn alive(pidfd: &OwnedFd) -> bool {
     #[cfg(target_os = "linux")]
     {
         // SAFETY: pidfd_send_signal with signal 0 only checks the process.
@@ -56,6 +57,25 @@ fn alive(pidfd: &OwnedFd) -> bool {
     }
 }
 
+/// A pidfd for `pid`, where the kernel has them: it outlives any reuse of
+/// the number.
+pub fn pidfd_open(pid: u32) -> Option<OwnedFd> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::FromRawFd;
+        // SAFETY: pidfd_open takes a pid and flags and returns a new fd.
+        let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0) };
+        let fd = i32::try_from(fd).ok().filter(|&f| f >= 0)?;
+        // SAFETY: the fd is new and ours alone.
+        Some(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
 /// A process as services see it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Who {
@@ -63,22 +83,63 @@ pub struct Who {
     pub app: String,
     /// What to call it in a prompt: its `Name=`, or the program's path.
     pub label: String,
+    /// The program is root's, in a folder only root writes: its name alone
+    /// may stand for it.
+    pub installed: bool,
+}
+
+fn name_part(s: &str, max: usize) -> String {
+    s.chars()
+        .map(|c| match c.to_ascii_lowercase() {
+            c @ ('a'..='z' | '0'..='9' | '-' | '_') => c,
+            _ => '-',
+        })
+        .take(max)
+        .collect()
 }
 
 impl Who {
     /// A name fit for a notice file: lowercase letters, digits, - and _.
+    /// An installed program goes by its file name, so its notices find its
+    /// app. Any other program adds a hash of its path: a copy in `/tmp`
+    /// can't pass for Settings, or for gh0st.
     pub fn short(&self) -> String {
-        let base = self.app.rsplit('/').next().unwrap_or(&self.app);
-        let s: String = base
-            .chars()
-            .map(|c| match c.to_ascii_lowercase() {
-                c @ ('a'..='z' | '0'..='9' | '-' | '_') => c,
-                _ => '-',
-            })
-            .take(40)
-            .collect();
-        if s.is_empty() { "app".into() } else { s }
+        let Some(path) = self.app.strip_prefix("exe:") else {
+            let s = name_part(&self.app, 40);
+            return if s.is_empty() { "app".into() } else { s };
+        };
+        let base = name_part(path.rsplit('/').next().unwrap_or(path), 30);
+        if self.installed && !base.is_empty() {
+            return base;
+        }
+        let mut h: u32 = 2_166_136_261;
+        for b in path.bytes() {
+            h ^= b as u32;
+            h = h.wrapping_mul(16_777_619);
+        }
+        let base = if base.is_empty() { "app" } else { &base };
+        format!("{base}-{h:08x}")
     }
+}
+
+/// Whether the program at `exe` is root's and only root may change it,
+/// and the path names, here, the very file process `pid` runs: a mount in
+/// the process's own namespace can't lend it an installed name.
+fn installed(proc_dir: &Path, exe: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let root_only = |m: &std::fs::Metadata| m.uid() == 0 && m.mode() & 0o022 == 0;
+    let (Ok(run), Ok(named)) = (
+        std::fs::metadata(proc_dir.join("exe")),
+        std::fs::metadata(exe),
+    ) else {
+        return false;
+    };
+    run.dev() == named.dev()
+        && run.ino() == named.ino()
+        && root_only(&named)
+        && exe
+            .parent()
+            .is_some_and(|d| std::fs::metadata(d).is_ok_and(|m| root_only(&m)))
 }
 
 /// Who process `pid` is. None when it can't be read, or when the pidfd
@@ -95,6 +156,7 @@ pub fn of_pid(pid: u32, pidfd: Option<&OwnedFd>) -> Option<Who> {
         return Some(Who {
             label: app_label(&stem),
             app: stem,
+            installed: false,
         });
     }
     // Outside apps the path is all there is to judge it by: show it whole.
@@ -102,6 +164,7 @@ pub fn of_pid(pid: u32, pidfd: Option<&OwnedFd>) -> Option<Who> {
     Some(Who {
         label: exe.display().to_string(),
         app: format!("exe:{}", exe.display()),
+        installed: installed(&proc_dir, &exe),
     })
 }
 
@@ -132,12 +195,19 @@ mod tests {
 
     #[test]
     fn short_names_fit_a_notice_file() {
-        let w = |app: &str| Who {
+        let w = |app: &str, installed| Who {
             app: app.into(),
             label: String::new(),
+            installed,
         };
-        assert_eq!(w("exe:/usr/bin/Notify.Send").short(), "notify-send");
-        assert_eq!(w("chromium").short(), "chromium");
-        assert_eq!(w("exe:/").short(), "app");
+        assert_eq!(w("exe:/usr/bin/Notify.Send", true).short(), "notify-send");
+        assert_eq!(w("chromium", false).short(), "chromium");
+        let copy = w("exe:/tmp/settings", false).short();
+        assert!(copy.starts_with("settings-") && copy != "settings");
+        assert_ne!(copy, w("exe:/home/u/settings", false).short());
+        assert_ne!(w("exe:/tmp/gh0st", false).short(), "gh0st");
+        assert!(w("exe:/", true).short().starts_with("app-"));
+        let long = format!("exe:/tmp/{}", "x".repeat(300));
+        assert!(crate::notify::valid_name(&w(&long, false).short()));
     }
 }

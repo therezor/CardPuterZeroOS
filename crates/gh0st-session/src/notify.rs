@@ -440,6 +440,7 @@ mod tests {
         let who = Who {
             app: "exe:/usr/bin/notify-send".into(),
             label: "notify-send".into(),
+            installed: true,
         };
         let r = notify(&mut n, &who, 0, "Build done", "<b>all</b> &amp; green");
         let id = r.body[0].as_u32().unwrap();
@@ -455,6 +456,7 @@ mod tests {
         let other = Who {
             app: "chromium".into(),
             label: "Chromium".into(),
+            installed: false,
         };
         let mut close = Message::call(NAME, PATH, IFACE, "CloseNotification").arg(Value::U32(id));
         close.serial = 2;
@@ -480,6 +482,7 @@ mod tests {
         let who = Who {
             app: "exe:/usr/bin/mail".into(),
             label: "mail".into(),
+            installed: true,
         };
         let mut m = Message::call(NAME, PATH, IFACE, "Notify")
             .arg(Value::str("mail"))
@@ -520,6 +523,7 @@ mod tests {
         let who = Who {
             app: "exe:/usr/bin/player".into(),
             label: "player".into(),
+            installed: true,
         };
         let button = Value::props([
             ("label", Value::str("Next")),

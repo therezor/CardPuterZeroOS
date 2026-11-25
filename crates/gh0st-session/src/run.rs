@@ -19,11 +19,19 @@ use crate::settings::{self, Settings};
 /// Where the session daemon finds its end of the shell's socket pair.
 pub const ENV: &str = "GH0ST_SESSION_FD";
 
+/// A caller as the bus first named it.
+struct Caller {
+    who: Who,
+    pid: Option<i32>,
+    /// Says whether `pid` is still that process.
+    pidfd: Option<OwnedFd>,
+}
+
 struct Session {
     bus: Conn,
     link: Option<Link>,
-    /// Each caller once: who it is and its pid.
-    who: HashMap<String, (Who, Option<i32>)>,
+    /// Each caller once.
+    who: HashMap<String, Caller>,
     notes: Notifications,
     inhibit: Inhibit,
     portal: Portal,
@@ -250,22 +258,7 @@ impl Session {
         let Some(sender) = m.sender.clone() else {
             return Ok(());
         };
-        let (who, pid) = match self.who.get(&sender) {
-            Some(w) => w.clone(),
-            None => {
-                let creds = bus::credentials(&mut self.bus, &sender).unwrap_or_default();
-                let w = creds
-                    .pid
-                    .and_then(|p| ident::of_pid(p, creds.pidfd.as_ref()))
-                    .unwrap_or(Who {
-                        app: "exe:unknown".into(),
-                        label: "An unknown program".into(),
-                    });
-                let pid = creds.pid.and_then(|p| i32::try_from(p).ok());
-                self.who.insert(sender.clone(), (w.clone(), pid));
-                (w, pid)
-            }
-        };
+        let (who, pid) = self.caller(&sender);
         let path = m.path.as_deref().unwrap_or("");
         let reply = if path == portal::OURS_PATH {
             // The shell names the chooser it started before the chooser can
@@ -286,7 +279,7 @@ impl Session {
         } else if path == portal::PATH && m.interface.as_deref() == Some(settings::IFACE) {
             self.settings.call(&m)
         } else if path.starts_with(portal::PATH) {
-            self.portal.call(&m, &sender, pid, &who.label)
+            self.portal.call(&m, &sender, pid, &who)
         } else if path == clipboard::PATH {
             self.clipboard.call(&m, pid)
         } else if path == notify::PATH {
@@ -320,6 +313,38 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Who `sender` is, and its pid while that is still the process the bus
+    /// named. A lookup that failed is not kept: the next call asks again.
+    fn caller(&mut self, sender: &str) -> (Who, Option<i32>) {
+        if let Some(c) = self.who.get(sender) {
+            let live = c.pidfd.as_ref().is_none_or(ident::alive);
+            return (c.who.clone(), c.pid.filter(|_| live));
+        }
+        let unknown = Who {
+            app: "exe:unknown".into(),
+            label: "An unknown program".into(),
+            installed: false,
+        };
+        let Ok(creds) = bus::credentials(&mut self.bus, sender) else {
+            return (unknown, None);
+        };
+        let Some(p) = creds.pid else {
+            return (unknown, None);
+        };
+        let pidfd = creds.pidfd.or_else(|| ident::pidfd_open(p));
+        let Some(who) = ident::of_pid(p, pidfd.as_ref()) else {
+            return (unknown, None);
+        };
+        let pid = i32::try_from(p).ok();
+        let c = Caller {
+            who: who.clone(),
+            pid,
+            pidfd,
+        };
+        self.who.insert(sender.to_string(), c);
+        (who, pid)
     }
 
     /// Memory is short: every listener on the bus hears it, and the shell

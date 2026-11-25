@@ -3,6 +3,7 @@
 //! signals and lines for the shell. The shell decides who may ask, runs
 //! Files as the chooser, and says how it went.
 
+use gh0st_core::ident::Who;
 use gh0st_dbus::{Message, Ty, Value, bus};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::CommandExt;
@@ -103,7 +104,8 @@ enum Kind {
     Inhibit {
         pid: i32,
     },
-    /// Asks the user before giving the caller the user's name.
+    /// Asks the user before giving the caller the user's name. `app` is
+    /// the caller's id, which Always is kept by.
     Account {
         app: String,
     },
@@ -120,6 +122,7 @@ enum Kind {
     /// A wallpaper, fitted to the screen at `tmp` before the user says yes.
     Wallpaper {
         app: String,
+        label: String,
         pid: i32,
         tmp: PathBuf,
     },
@@ -392,9 +395,9 @@ impl Portal {
         Some((id, path))
     }
 
-    /// A call to the portal from `sender`, process `pid`, known to the user
-    /// as `app`.
-    pub fn call(&mut self, m: &Message, sender: &str, pid: Option<i32>, app: &str) -> Message {
+    /// A call to the portal from `sender`, process `pid`. Always is kept by
+    /// `who.app`; the user knows it as `who.label`.
+    pub fn call(&mut self, m: &Message, sender: &str, pid: Option<i32>, who: &Who) -> Message {
         let path = m.path.as_deref().unwrap_or("");
         if path.starts_with(REQUEST_ROOT) {
             return self.request_call(m, sender, path);
@@ -409,6 +412,7 @@ impl Portal {
             return Message::reply(m).arg(Value::str(introspect()));
         }
         let pid = pid.unwrap_or(0);
+        let (app, label) = (who.app.as_str(), who.label.as_str());
         if m.interface.as_deref() == Some(INHIBIT) {
             return self.inhibit_call(m, sender, pid);
         }
@@ -425,11 +429,11 @@ impl Portal {
                 Some("PickColor") => (Kind::Color, "color"),
                 _ => return Message::error(m, bus::err::UNKNOWN_METHOD, "no such method"),
             };
-            let quiet = verb == "shot" && self.remembered("shot", app);
+            let quiet = verb == "shot" && self.always("shot", app, pid);
             return match self.new_request(m, sender, kind) {
                 Some((id, rp)) => {
                     let (id, pid) = (id.to_string(), pid.to_string());
-                    let mut line = vec![verb, &id, &pid, app];
+                    let mut line = vec![verb, &id, &pid, label];
                     if quiet {
                         line.push("quiet");
                     }
@@ -440,15 +444,15 @@ impl Portal {
             };
         }
         if m.interface.as_deref() == Some(WALLPAPER) {
-            return self.wallpaper_call(m, sender, pid, app);
+            return self.wallpaper_call(m, sender, pid, who);
         }
         if m.is(ACCOUNT, "GetUserInformation") {
             return match self.new_request(m, sender, Kind::Account { app: app.into() }) {
                 Some((id, rp)) => {
-                    if self.remembered("account", app) {
+                    if self.always("account", app, pid) {
                         self.account_answer(id, "once");
                     } else {
-                        self.shell(&["account", &id.to_string(), &pid.to_string(), app]);
+                        self.shell(&["account", &id.to_string(), &pid.to_string(), label]);
                     }
                     Message::reply(m).arg(Value::path(rp))
                 }
@@ -464,7 +468,7 @@ impl Portal {
             _ => None,
         };
         if let Some(mode) = mode {
-            let mut q = Question::from_options(mode, app, title, options);
+            let mut q = Question::from_options(mode, label, title, options);
             if m.member.as_deref() == Some("SaveFiles") && q.accept.is_empty() {
                 q.accept = "Save".into();
             }
@@ -579,8 +583,9 @@ impl Portal {
         }
     }
 
-    /// Whether the user answered Always to `what` (account, wallpaper)
-    /// from `app`. One `what<TAB>app` a line.
+    /// Whether the user answered Always to `what` (account, wallpaper,
+    /// shot) from `app`, an id. One `what<TAB>app` a line. Lines from before
+    /// ids hold a path, which no id is.
     fn remembered(&self, what: &str, app: &str) -> bool {
         let line = format!("{what}\t{app}");
         self.remember
@@ -603,6 +608,13 @@ impl Portal {
         }
     }
 
+    /// Whether `app`'s Always lets process `pid` skip the question. A
+    /// program outside apps is known by its path alone, which every script
+    /// of an interpreter shares: it must still be in front.
+    fn always(&self, what: &str, app: &str, pid: i32) -> bool {
+        self.remembered(what, app) && (!app.starts_with("exe:") || self.in_front(pid))
+    }
+
     /// `pid` is the app in front, or a program it started.
     fn in_front(&self, pid: i32) -> bool {
         self.open
@@ -611,7 +623,8 @@ impl Portal {
                 .is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g))
     }
 
-    fn wallpaper_call(&mut self, m: &Message, sender: &str, pid: i32, app: &str) -> Message {
+    fn wallpaper_call(&mut self, m: &Message, sender: &str, pid: i32, who: &Who) -> Message {
+        let app = who.app.as_str();
         let file = match m.member.as_deref() {
             Some("SetWallpaperURI") => m
                 .body
@@ -636,7 +649,7 @@ impl Portal {
             return Message::error(m, bus::err::LIMITS, "a wallpaper is being set");
         }
         // The fit runs ffmpeg: for the app in front, or one the user trusts.
-        if !self.in_front(pid) && !self.remembered("wallpaper", app) {
+        if !self.in_front(pid) && !self.always("wallpaper", app, pid) {
             return Message::error(m, bus::err::ACCESS_DENIED, "only the app in front may");
         }
         let tmp = self
@@ -644,6 +657,7 @@ impl Portal {
             .join(format!("wallpaper-{}.png", self.next + 1));
         let kind = Kind::Wallpaper {
             app: app.into(),
+            label: who.label.clone(),
             pid,
             tmp: tmp.clone(),
         };
@@ -688,23 +702,24 @@ impl Portal {
         let Some(r) = self.reqs.iter().find(|r| r.id == j.id) else {
             return;
         };
-        let Kind::Wallpaper { app, pid, tmp } = &r.kind else {
+        let Kind::Wallpaper {
+            app,
+            label,
+            pid,
+            tmp,
+        } = &r.kind
+        else {
             return;
         };
         if !ok {
             return self.finish(j.id, RESPONSE_OTHER);
         }
-        if self.remembered("wallpaper", app) {
+        if self.always("wallpaper", app, *pid) {
             return self.wallpaper_answer(j.id, "once");
         }
-        let fields = [
-            "wallpaper".to_string(),
-            j.id.to_string(),
-            pid.to_string(),
-            app.clone(),
-            gh0st_core::link::path_field(tmp),
-        ];
-        self.out.push(Out::Shell(fields.to_vec()));
+        let (id, pid, label) = (j.id.to_string(), pid.to_string(), label.clone());
+        let tmp = gh0st_core::link::path_field(tmp);
+        self.shell(&["wallpaper", &id, &pid, &label, &tmp]);
     }
 
     /// The user's answer about a screenshot: once or always with the saved
@@ -1042,9 +1057,11 @@ impl Portal {
         self.out.push(Out::Bus(s));
     }
 
+    /// A line for the shell. A tab or a newline would split a field (a
+    /// program's path is its label), so control characters go.
     fn shell(&mut self, fields: &[&str]) {
-        self.out
-            .push(Out::Shell(fields.iter().map(|f| f.to_string()).collect()));
+        let clean = |f: &&str| f.replace(|c: char| c.is_control(), "\u{fffd}");
+        self.out.push(Out::Shell(fields.iter().map(clean).collect()));
     }
 }
 
@@ -1136,6 +1153,15 @@ mod tests {
 
     const ME: &str = ":1.42";
 
+    /// An app the user knows as `label`.
+    fn who(label: &str) -> Who {
+        Who {
+            app: label.to_lowercase(),
+            label: label.into(),
+            installed: false,
+        }
+    }
+
     fn call(iface: &str, member: &str, body: Vec<Value>) -> Message {
         let mut m = Message::call(NAME, PATH, iface, member);
         m.sender = Some(ME.into());
@@ -1200,7 +1226,7 @@ mod tests {
                 ),
             ),
         ]);
-        let reply = p.call(&open_file(options), ME, Some(500), "Text");
+        let reply = p.call(&open_file(options), ME, Some(500), &who("Text"));
         let path = "/org/freedesktop/portal/desktop/request/1_42/t1";
         assert_eq!(reply.body[0].as_str(), Some(path));
         assert_eq!(shell_lines(&mut p), [["pick", "1", "500"]]);
@@ -1252,9 +1278,9 @@ mod tests {
     #[test]
     fn refusals_closes_and_departures_end_requests() {
         let mut p = Portal::default();
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), "A");
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), "A");
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), "A");
+        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
+        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
+        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
         p.out.clear();
         p.shell_said(&["refuse".into(), "1".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OTHER);
@@ -1264,11 +1290,11 @@ mod tests {
         let path = "/org/freedesktop/portal/desktop/request/1_42/gh0st3";
         let mut close = Message::call(NAME, path, REQUEST, "Close");
         close.sender = Some(":1.5".into());
-        assert!(p.call(&close, ":1.5", None, "x").error_name.is_some());
+        assert!(p.call(&close, ":1.5", None, &who("x")).error_name.is_some());
         close.sender = Some(ME.into());
-        assert!(p.call(&close, ME, None, "x").error_name.is_none());
+        assert!(p.call(&close, ME, None, &who("x")).error_name.is_none());
         assert_eq!(shell_lines(&mut p), [["cancel", "3"]]);
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), "A");
+        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
         p.out.clear();
         p.gone(ME);
         assert_eq!(shell_lines(&mut p), [["cancel", "4"]]);
@@ -1285,16 +1311,16 @@ mod tests {
                 vec![Value::str(""), Value::U32(flags), Value::props::<&str>([])],
             )
         };
-        let first = p.call(&idle(8), ME, Some(300), "mpv").body[0]
+        let first = p.call(&idle(8), ME, Some(300), &who("mpv")).body[0]
             .as_str()
             .unwrap()
             .to_string();
-        p.call(&idle(8), ME, Some(300), "mpv");
-        p.call(&idle(1), ME, Some(300), "mpv");
+        p.call(&idle(8), ME, Some(300), &who("mpv"));
+        p.call(&idle(1), ME, Some(300), &who("mpv"));
         assert_eq!(shell_lines(&mut p), [["awake", "pid:300", "1"]]);
         let mut close = Message::call(NAME, &first, REQUEST, "Close");
         close.sender = Some(ME.into());
-        p.call(&close, ME, None, "mpv");
+        p.call(&close, ME, None, &who("mpv"));
         assert!(shell_lines(&mut p).is_empty(), "the second still holds");
         p.gone(ME);
         assert_eq!(shell_lines(&mut p), [["awake", "pid:300", "0"]]);
@@ -1306,7 +1332,7 @@ mod tests {
                 Value::props([("session_handle_token", Value::str("m"))]),
             ],
         );
-        p.call(&monitor, ME, Some(300), "mpv");
+        p.call(&monitor, ME, Some(300), &who("mpv"));
         let session = "/org/freedesktop/portal/desktop/session/1_42/m";
         let r = responses(&mut p);
         assert_eq!(
@@ -1318,7 +1344,7 @@ mod tests {
         );
         let mut end = Message::call(NAME, session, SESSION, "Close");
         end.sender = Some(ME.into());
-        assert!(p.call(&end, ME, None, "mpv").error_name.is_none());
+        assert!(p.call(&end, ME, None, &who("mpv")).error_name.is_none());
         assert_eq!(p.open(), 0);
     }
 
@@ -1336,18 +1362,18 @@ mod tests {
                 vec![Value::str(""), Value::props::<&str>([])],
             )
         };
-        p.call(&ask(), ME, Some(300), "Chat");
+        p.call(&ask(), ME, Some(300), &who("Chat"));
         assert_eq!(shell_lines(&mut p), [["account", "1", "300", "Chat"]]);
         p.shell_said(&["account".into(), "1".into(), "deny".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
-        p.call(&ask(), ME, Some(300), "Chat");
+        p.call(&ask(), ME, Some(300), &who("Chat"));
         p.out.clear();
         p.shell_said(&["account".into(), "2".into(), "always".into()]);
         let r = responses(&mut p);
         assert_eq!(r[0].1, RESPONSE_OK);
         assert!(r[0].2.get("name").is_some() && r[0].2.get("id").is_some());
         // Asked again, the answer comes without the shell.
-        p.call(&ask(), ME, Some(300), "Chat");
+        p.call(&ask(), ME, Some(300), &who("Chat"));
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
         assert!(shell_lines(&mut p).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1381,14 +1407,14 @@ mod tests {
             m
         };
         assert_eq!(
-            p.call(&set(), ME, Some(300), "Media").error_name.as_deref(),
+            p.call(&set(), ME, Some(300), &who("Media")).error_name.as_deref(),
             Some(bus::err::ACCESS_DENIED),
             "nothing in front: no fit"
         );
         p.open = true;
-        assert!(p.call(&set(), ME, Some(300), "Media").error_name.is_none());
+        assert!(p.call(&set(), ME, Some(300), &who("Media")).error_name.is_none());
         assert!(
-            p.call(&set(), ME, Some(300), "Media").error_name.is_some(),
+            p.call(&set(), ME, Some(300), &who("Media")).error_name.is_some(),
             "one at a time"
         );
         p.job_done();
@@ -1400,7 +1426,7 @@ mod tests {
         assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
         assert!(!tmp.exists());
 
-        p.call(&set(), ME, Some(300), "Media");
+        p.call(&set(), ME, Some(300), &who("Media"));
         p.job_done();
         p.out.clear();
         p.shell_said(&["wallpaper".into(), "2".into(), "always".into()]);
@@ -1413,11 +1439,71 @@ mod tests {
         assert_eq!(conf.wallpaper(), gh0st_ui::wallpaper::OWN);
         // Always: the next one is kept without a question, from behind too.
         p.open = false;
-        p.call(&set(), ME, Some(300), "Media");
+        p.call(&set(), ME, Some(300), &who("Media"));
         p.job_done();
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
         assert!(shell_lines(&mut p).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_label_cannot_add_fields_to_a_shell_line() {
+        let mut p = Portal::default();
+        let w = Who {
+            app: "exe:/home/u/x\tquiet".into(),
+            label: "/home/u/x\tquiet".into(),
+            installed: false,
+        };
+        let shot = call(
+            SCREENSHOT,
+            "Screenshot",
+            vec![Value::str(""), Value::props::<&str>([])],
+        );
+        p.call(&shot, ME, Some(300), &w);
+        let lines = shell_lines(&mut p);
+        assert_eq!(lines[0], ["shot", "1", "300", "/home/u/x\u{fffd}quiet"]);
+    }
+
+    #[test]
+    fn always_is_kept_by_id_and_a_program_must_still_be_in_front() {
+        let dir = std::env::temp_dir().join(format!("gh0st-always-{}", std::process::id()));
+        let mut p = Portal {
+            remember: Some(dir.join("always")),
+            ..Portal::default()
+        };
+        let ask = || {
+            call(
+                ACCOUNT,
+                "GetUserInformation",
+                vec![Value::str(""), Value::props::<&str>([])],
+            )
+        };
+        let python = Who {
+            app: "exe:/usr/bin/python3".into(),
+            label: "/usr/bin/python3".into(),
+            installed: true,
+        };
+        p.call(&ask(), ME, Some(300), &python);
+        p.out.clear();
+        p.shell_said(&["account".into(), "1".into(), "always".into()]);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
+        // Every script shares the path: behind, the shell is asked, and
+        // refuses.
+        p.call(&ask(), ME, Some(300), &python);
+        assert_eq!(shell_lines(&mut p).len(), 1, "asked, not answered");
+        p.shell_said(&["account".into(), "2".into(), "deny".into()]);
+        p.out.clear();
+        p.open = true;
+        p.call(&ask(), ME, Some(300), &python);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OK, "in front: no question");
+        // The label is not the grant.
+        let twin = Who {
+            app: "exe:/tmp/python3".into(),
+            ..python.clone()
+        };
+        p.call(&ask(), ME, Some(300), &twin);
+        assert_eq!(shell_lines(&mut p).len(), 1, "another program is asked");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1434,7 +1520,7 @@ mod tests {
                 vec![Value::str(""), Value::props::<&str>([])],
             )
         };
-        p.call(&shot(), ME, Some(300), "Chat");
+        p.call(&shot(), ME, Some(300), &who("Chat"));
         assert_eq!(shell_lines(&mut p), [["shot", "1", "300", "Chat"]]);
         let saved = gh0st_core::link::path_field(Path::new("/home/u/Pictures/Screenshots/a b.png"));
         p.shell_said(&["shot".into(), "1".into(), "always".into(), saved]);
@@ -1445,7 +1531,7 @@ mod tests {
             Some("file:///home/u/Pictures/Screenshots/a%20b.png")
         );
         // Always: the shell takes the next one without asking.
-        p.call(&shot(), ME, Some(300), "Chat");
+        p.call(&shot(), ME, Some(300), &who("Chat"));
         assert_eq!(shell_lines(&mut p), [["shot", "2", "300", "Chat", "quiet"]]);
         p.shell_said(&["shot".into(), "2".into(), "fail".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OTHER);
@@ -1455,7 +1541,7 @@ mod tests {
             "PickColor",
             vec![Value::str(""), Value::props::<&str>([])],
         );
-        p.call(&pick, ME, Some(300), "Chat");
+        p.call(&pick, ME, Some(300), &who("Chat"));
         assert_eq!(shell_lines(&mut p), [["color", "3", "300", "Chat"]]);
         let said = ["color", "3", "ok", "255", "0", "51"].map(String::from);
         p.shell_said(&said);
@@ -1465,7 +1551,7 @@ mod tests {
             c,
             &Value::Struct(vec![Value::F64(1.0), Value::F64(0.0), Value::F64(0.2)])
         );
-        p.call(&pick, ME, Some(300), "Chat");
+        p.call(&pick, ME, Some(300), &who("Chat"));
         p.out.clear();
         p.shell_said(&["color".into(), "4".into(), "deny".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
@@ -1479,7 +1565,7 @@ mod tests {
         m.fds = vec![std::fs::File::open("/").unwrap().into()];
         // No name to move: refused, answered 0.
         assert_eq!(
-            Portal::default().call(&m, ME, Some(1), "A").body[0].as_u32(),
+            Portal::default().call(&m, ME, Some(1), &who("A")).body[0].as_u32(),
             Some(0)
         );
     }
@@ -1489,13 +1575,13 @@ mod tests {
         let mut p = Portal::default();
         for _ in 0..PER_CALLER {
             assert!(
-                p.call(&open_file(Value::props::<&str>([])), ME, Some(1), "A")
+                p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"))
                     .error_name
                     .is_none()
             );
         }
         assert!(
-            p.call(&open_file(Value::props::<&str>([])), ME, Some(1), "A")
+            p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"))
                 .error_name
                 .is_some()
         );
@@ -1543,7 +1629,7 @@ mod tests {
                 Value::props::<&str>([]),
             ],
         );
-        assert!(p.call(&m, ME, Some(9), "A").error_name.is_none());
+        assert!(p.call(&m, ME, Some(9), &who("A")).error_name.is_none());
         assert_eq!(shell_lines(&mut p), [["open", "1", "9", "/tmp"]]);
         let web = call(
             OPEN_URI,
@@ -1554,15 +1640,15 @@ mod tests {
                 Value::props::<&str>([]),
             ],
         );
-        assert!(p.call(&web, ME, Some(9), "A").error_name.is_some());
+        assert!(p.call(&web, ME, Some(9), &who("A")).error_name.is_some());
         let ask = call(
             OPEN_URI,
             "SchemeSupported",
             vec![Value::str("file"), Value::props::<&str>([])],
         );
-        assert_eq!(p.call(&ask, ME, None, "A").body[0], Value::Bool(true));
+        assert_eq!(p.call(&ask, ME, None, &who("A")).body[0], Value::Bool(true));
         let mut get = Message::call(NAME, PATH, bus::PROPERTIES, "Get");
         get.body = vec![Value::str(CHOOSER), Value::str("version")];
-        assert_eq!(p.call(&get, ME, None, "A").body[0].inner(), &Value::U32(4));
+        assert_eq!(p.call(&get, ME, None, &who("A")).body[0].inner(), &Value::U32(4));
     }
 }

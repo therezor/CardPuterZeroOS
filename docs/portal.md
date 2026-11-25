@@ -135,7 +135,9 @@ answers `1` done, `0` not: a folder on another drive has no Trash here.
 - `show-preview` and `set-on` are taken and ignored: the question always
   shows the picture, and home and the lock share one wallpaper.
 - Always is kept with Account's, in `~/.local/state/gh0st/portal-always`,
-  one `what<TAB>app` a line.
+  one `what<TAB>id` a line: the app's desktop id, or `exe:` and the path
+  of a program outside apps. Such a program skips the question only while
+  it is in front, since every script of an interpreter shares its path.
 
 ## Screenshot
 

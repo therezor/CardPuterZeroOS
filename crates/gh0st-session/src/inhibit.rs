@@ -126,6 +126,7 @@ mod tests {
         let mpv = Who {
             app: "mpv".into(),
             label: "mpv".into(),
+            installed: false,
         };
         let a = call(&mut i, "Inhibit", None, &mpv, ":1.1").body[0]
             .as_u32()
@@ -151,6 +152,7 @@ mod tests {
         let w = Who {
             app: "exe:/usr/bin/x".into(),
             label: "x".into(),
+            installed: true,
         };
         let c = call(&mut i, "Inhibit", None, &w, ":1.1").body[0]
             .as_u32()
