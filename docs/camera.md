@@ -349,7 +349,9 @@ Builds:
   the jack's input carries a headset's microphone.
 - **CMA.** The VPU's buffers for a 1080p clip take 40 to 46 MB of the 64 MB
   pool, and a 1080p recording leaves about 17 MB free. Playing while
-  recording is untried.
+  recording is untried. An 8 MP still can fail with `nomem` for a while
+  after long uptime: page-cache pages the kernel can't move split the
+  pool (docs/hardware-facts.md). A larger pool would leave room.
 - **Plain headphones.** The sound driver moves the input to the jack for
   anything plugged in, so headphones without a microphone record silence.
   A Built-in choice would set the codec's input back for the recording.

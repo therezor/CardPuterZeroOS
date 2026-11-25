@@ -574,6 +574,13 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
   allocate. Two fit but drop 1 to 5 frames in 5 s at 1080p30. Three
   (`camd/vc4.yaml`) do neither. `CmaFree` reads near zero
   at idle because the page cache borrows CMA; it moves out on demand.
+- Not always: after half a day up, an 8 MP still failed with `nomem` for
+  minutes at a time (kernel 6.18.60). The ISP's 12 MB output (3003
+  pages) found no free run: a few dirty ext4 page-cache pages with buffers
+  (`/proc/kpageflags`: LRU, dirty, private, not uptodate) sat in the pool
+  and would not move (`alloc_contig_range` EBUSY, the same pfn each
+  try). `sync`, `drop_caches` and `compact_memory` did not free them. A
+  few minutes later a still worked again.
 - 8 MP still: 575 ms from the preview to the frame, JPEG 501 ms at q95
   (2.2 MB) and 391 ms at q85 (1.0 MB), preview back in about 170 ms.
   A 2x still (1640x1232): 367 ms, JPEG 159 ms.
