@@ -18,6 +18,10 @@ use crate::settings::{self, Settings};
 
 /// Where the session daemon finds its end of the shell's socket pair.
 pub const ENV: &str = "GH0ST_SESSION_FD";
+/// Past this many bytes waiting for the bus, no calls are read: a caller
+/// that floods us with calls and never reads must not grow the queue to
+/// the point Conn gives up on the bus.
+const BACKED_UP: usize = gh0st_dbus::conn::MAX_QUEUED / 2;
 
 /// A caller as the bus first named it.
 struct Caller {
@@ -162,9 +166,10 @@ impl Session {
 
     fn run(&mut self) -> i32 {
         loop {
+            let backed = self.bus.queued() > BACKED_UP;
             let mut fds = vec![gh0st_core::rt::pollfd_rw(
                 self.bus.fd(),
-                true,
+                !backed,
                 self.bus.wants_write(),
             )];
             if let Some(l) = &self.link {
@@ -223,7 +228,12 @@ impl Session {
                 }
             }
             if fds[0].revents != 0 {
-                if let Err(e) = self.bus.flush().and_then(|()| self.bus.fill()) {
+                let r = if backed {
+                    self.bus.flush()
+                } else {
+                    self.bus.flush().and_then(|()| self.bus.fill())
+                };
+                if let Err(e) = r {
                     eprintln!("gh0st session: bus: {e}");
                     return 1;
                 }
@@ -247,7 +257,10 @@ impl Session {
     }
 
     fn messages(&mut self) -> gh0st_dbus::Result<()> {
-        while let Some(m) = self.bus.recv()? {
+        while self.bus.queued() <= BACKED_UP {
+            let Some(m) = self.bus.recv()? else {
+                break;
+            };
             match m.kind {
                 Kind::Call => self.call(m)?,
                 Kind::Signal
@@ -270,13 +283,14 @@ impl Session {
         Ok(())
     }
 
-    fn call(&mut self, m: Message) -> gh0st_dbus::Result<()> {
+    fn call(&mut self, mut m: Message) -> gh0st_dbus::Result<()> {
         let Some(sender) = m.sender.clone() else {
             return Ok(());
         };
         let (who, pid, awake) = self.caller(&sender);
         let path = m.path.as_deref().unwrap_or("");
-        let reply = if path == portal::OURS_PATH {
+        let clip = path == clipboard::PATH;
+        let mut reply = if path == portal::OURS_PATH {
             // The shell names the chooser it started before the chooser can
             // ask: read what it said first.
             self.shell_lines();
@@ -317,18 +331,27 @@ impl Session {
         } else {
             Message::error(&m, bus::err::UNKNOWN_OBJECT, "no such object")
         };
-        if !m.no_reply() {
-            match self.bus.send(reply) {
-                // A reply we couldn't build is that call's loss alone.
-                Err(gh0st_dbus::Error::Invalid(why)) => {
-                    eprintln!("gh0st session: dropped a reply: {why}")
-                }
-                r => {
-                    r?;
-                }
-            }
+        if clip {
+            // What was copied: the clipboard keeps its own copy.
+            m.wipe();
         }
-        Ok(())
+        if m.no_reply() {
+            reply.wipe();
+            return Ok(());
+        }
+        self.send(reply)
+    }
+
+    /// Sends a reply or a signal. One we couldn't build is that message's
+    /// loss alone.
+    fn send(&mut self, m: Message) -> gh0st_dbus::Result<()> {
+        match self.bus.send(m) {
+            Err(gh0st_dbus::Error::Invalid(why)) => {
+                eprintln!("gh0st session: dropped a message: {why}");
+                Ok(())
+            }
+            r => r.map(drop),
+        }
     }
 
     /// Who `sender` is, its pid while that is still the process the bus
@@ -474,28 +497,21 @@ impl Session {
     }
 
     fn flush_out(&mut self) -> gh0st_dbus::Result<()> {
-        for s in std::mem::take(&mut self.notes.out) {
-            self.bus.send(s)?;
-        }
-        for s in std::mem::take(&mut self.settings.out) {
-            self.bus.send(s)?;
-        }
-        for s in std::mem::take(&mut self.clipboard.out) {
-            self.bus.send(s)?;
-        }
-        let monitors = std::mem::take(&mut self.network.out)
+        let signals: Vec<Message> = std::mem::take(&mut self.notes.out)
             .into_iter()
-            .chain(std::mem::take(&mut self.power.out));
-        for s in monitors {
-            self.bus.send(s)?;
+            .chain(std::mem::take(&mut self.settings.out))
+            .chain(std::mem::take(&mut self.clipboard.out))
+            .chain(std::mem::take(&mut self.network.out))
+            .chain(std::mem::take(&mut self.power.out))
+            .collect();
+        for s in signals {
+            self.send(s)?;
         }
         // Answers can make more answers (a test's), so drain until quiet.
         while !self.portal.out.is_empty() {
             for o in std::mem::take(&mut self.portal.out) {
                 match o {
-                    portal::Out::Bus(m) => {
-                        self.bus.send(m)?;
-                    }
+                    portal::Out::Bus(m) => self.send(m)?,
                     portal::Out::Shell(f) => {
                         let fields: Vec<&str> = f.iter().map(String::as_str).collect();
                         if !self.say(&fields) {

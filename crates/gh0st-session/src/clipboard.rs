@@ -1,5 +1,5 @@
 //! `org.gh0st.Clipboard`: one clipboard every app shares. What was copied,
-//! by type, up to 16 MB. Only the app in front, or a program it started,
+//! by type, just under 1 MiB. Only the app in front, or a program it started,
 //! may set it or read it: an app behind can't watch what the user copies.
 //! The shell names the app in front; on lock it clears the clipboard
 //! unless Settings keeps it.
@@ -11,8 +11,9 @@ pub const NAME: &str = "org.gh0st.Clipboard";
 pub const PATH: &str = "/org/gh0st/Clipboard";
 const IFACE: &str = "org.gh0st.Clipboard";
 const EMPTY: &str = "org.gh0st.Clipboard.Error.Empty";
-/// All of it, every type together.
-const MAX: usize = 16 << 20;
+/// All of it, every type together. One message carries it each way, so it
+/// leaves room for the header and the fields the bus adds.
+const MAX: usize = gh0st_dbus::MAX_MESSAGE - (4 << 10);
 const MAX_TYPE: usize = 255;
 
 #[derive(Default)]
@@ -70,7 +71,7 @@ impl Clipboard {
     /// Everything copied goes, its bytes zeroed first.
     fn wipe(&mut self) {
         for (_, data) in &mut self.items {
-            data.fill(0);
+            gh0st_dbus::wipe(data);
         }
         self.items.clear();
     }
@@ -164,8 +165,30 @@ mod tests {
         let big = vec![0u8; MAX + 1];
         assert!(
             call(&mut c, "Set", set(&big), 1).error_name.is_some(),
-            "16 MB at most"
+            "too much"
         );
+    }
+
+    #[test]
+    fn the_most_it_takes_fits_one_message_each_way() {
+        let mime = "x".repeat(MAX_TYPE);
+        let peer = Some(":1.4294967295".to_string());
+        let mut set = Message::call(NAME, PATH, IFACE, "Set")
+            .arg(Value::str(mime.clone()))
+            .arg(Value::Bytes(vec![7; MAX]));
+        set.sender = peer.clone();
+        assert!(set.encode(1).unwrap().len() <= gh0st_dbus::MAX_MESSAGE);
+        let mut c = Clipboard::new(true);
+        set.serial = 1;
+        assert!(c.call(&set, Some(1)).error_name.is_none());
+        let mut get = Message::call(NAME, PATH, IFACE, "Get").arg(Value::str(mime));
+        get.serial = 2;
+        get.sender = peer.clone();
+        let mut reply = c.call(&get, Some(1));
+        assert!(reply.error_name.is_none());
+        // The bus adds ours as the sender.
+        reply.sender = peer;
+        assert!(reply.encode(3).unwrap().len() <= gh0st_dbus::MAX_MESSAGE);
     }
 
     #[cfg(target_os = "linux")]
