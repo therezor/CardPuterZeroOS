@@ -20,6 +20,7 @@ use gh0st_app::gfx::theme::{CARDPUTER, Metrics, ON_PICTURE, PANEL_OFF};
 use gh0st_app::gfx::{Canvas, Rect, Theme, widgets};
 use gh0st_app::media::{AskQueue, Picture, PictureView, SeekBar, plate, plate_text};
 use gh0st_app::prelude::*;
+use gh0st_app::watch::{Changes, DirWatch};
 use gh0st_app::{Pick, PickSpec, Post};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -76,6 +77,9 @@ const RESTARTS: u32 = 3;
 /// Tile pictures kept before those away from the screen go: a few
 /// hundred kilobytes.
 const FACES_KEPT: usize = 200;
+/// A copy into the shown folder changes it once a file: it is read again
+/// this long after the first change, not on each.
+const RELIST_MS: u64 = 300;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
@@ -142,6 +146,11 @@ pub struct Media {
     view: View,
     dir: PathBuf,
     dir_title: String,
+    /// The folder the grid shows, watched: inotify, where there is one.
+    folder: Option<(DirWatch, Watch, PathBuf)>,
+    /// It changed since it was read.
+    stale: bool,
+    relist_at: Option<Timer>,
     /// Folders gone into, with the tile that was selected in each.
     trail: Vec<(PathBuf, usize)>,
     entries: Vec<Entry>,
@@ -229,6 +238,9 @@ impl Media {
             view: View::Start,
             dir: PathBuf::new(),
             dir_title: String::new(),
+            folder: None,
+            stale: false,
+            relist_at: None,
             trail: Vec::new(),
             entries: Vec::new(),
             tiles: gh0st_app::Tiles::new(GRID_COLS, GRID_ROWS),
@@ -394,6 +406,7 @@ impl Media {
         }
         self.dir = dir;
         self.dir_title = self.title_of_dir();
+        self.watch_dir(cx);
         self.entries = self.listing();
         self.tiles = gh0st_app::Tiles::new(GRID_COLS, GRID_ROWS);
         self.tiles.set_len(self.entries.len());
@@ -434,6 +447,84 @@ impl Media {
             k.parent()
                 .is_some_and(|d| d == dir || trail.iter().any(|(t, _)| t == d))
         });
+    }
+
+    /// Watches the folder the grid shows, so a file added or removed shows.
+    fn watch_dir(&mut self, cx: &mut Cx) {
+        self.stale = false;
+        if self.folder.as_ref().is_some_and(|(_, _, d)| *d == self.dir) {
+            return;
+        }
+        if let Some((_, w, _)) = self.folder.take() {
+            cx.unwatch(w);
+        }
+        if let Ok(dw) = DirWatch::new(&self.dir) {
+            let w = cx.watch(dw.fd());
+            self.folder = Some((dw, w, self.dir.clone()));
+        }
+    }
+
+    /// The shown folder changed: what changed is asked for again, and the
+    /// grid is read again soon if it shows.
+    fn dir_changed(&mut self, c: Changes, cx: &mut Cx) {
+        if c == Changes::default() {
+            return;
+        }
+        for n in &c.names {
+            let p = self.dir.join(n);
+            self.faces.remove(&p);
+            self.folder_faces.remove(&p);
+            self.infos.remove(&p);
+            self.fails.remove(&p);
+        }
+        self.stale = true;
+        if self.relist_at.is_none() && self.view == View::Grid && cx.in_front() {
+            self.relist_at = Some(cx.after(RELIST_MS));
+        }
+    }
+
+    /// Reads the folder again. The file selected stays so where it still is.
+    fn relist(&mut self) {
+        self.stale = false;
+        let at = self.entry().map(|e| e.path.clone());
+        let old = self.tiles.at();
+        self.entries = self.listing();
+        self.tiles.set_len(self.entries.len());
+        let i = at
+            .and_then(|p| self.entries.iter().position(|e| e.path == p))
+            .unwrap_or(old);
+        self.tiles.select(i);
+        self.asks.retain(|a| !matches!(a.what, For::Tile(_)));
+        self.want_tiles();
+    }
+
+    /// Back to the grid from a file, read again if its folder changed.
+    fn grid_again(&mut self) {
+        self.view = View::Grid;
+        if self.stale {
+            self.relist();
+        } else {
+            self.want_tiles();
+        }
+    }
+
+    /// Where clips stopped is history too: kept only while Settings lets
+    /// apps remember, and read again each time, since its Clear may have
+    /// taken it.
+    fn read_positions(&mut self, cx: &Cx) {
+        self.resume = if cx.remembers_recent() {
+            Resume::load(self.data.join("positions"))
+        } else {
+            Resume::none()
+        };
+    }
+
+    fn save_positions(&mut self, cx: &Cx) {
+        if cx.remembers_recent() {
+            self.resume.save();
+        } else {
+            self.resume = Resume::none();
+        }
     }
 
     /// The folder's entries in the order the grid shows them.
@@ -1766,13 +1857,7 @@ impl Page for Media {
     }
 
     fn start(&mut self, cx: &mut Cx) {
-        // Where clips stopped is history too: kept only while Settings
-        // lets apps remember.
-        self.resume = if cx.remembers_recent() {
-            Resume::load(self.data.join("positions"))
-        } else {
-            Resume::none()
-        };
+        self.read_positions(cx);
         self.load(cx);
         self.launch(cx);
         self.show_start();
@@ -1849,10 +1934,13 @@ impl Page for Media {
         cx.unpost(NOW_PLAYING);
         self.posted = None;
         self.stop_play();
-        self.resume.save();
+        self.save_positions(cx);
         self.quitting = true;
         self.save(cx);
         self.send(&Cmd::Quit);
+        if let Some((_, w, _)) = self.folder.take() {
+            cx.unwatch(w);
+        }
     }
 
     fn front(&mut self, front: bool, cx: &mut Cx) {
@@ -1868,16 +1956,27 @@ impl Page for Media {
                     self.resume_play();
                 }
             }
-            // The folder may have changed meanwhile.
+            self.read_positions(cx);
+            // The folder may have changed meanwhile. With no watch on it,
+            // it is read again each time.
             match self.view {
                 View::Start => self.show_start(),
-                View::Grid => self.open_dir(self.dir.clone(), self.tiles.at(), cx),
+                View::Grid if self.stale || self.folder.is_none() => self.relist(),
                 _ => {}
             }
             cx.redraw();
             return;
         }
-        self.resume.save();
+        // Where a video got to, in case the app is not let back.
+        if let Some(p) = self
+            .play
+            .as_ref()
+            .filter(|p| !self.music && p.bar.dur_ms > 0)
+        {
+            let (path, pos, dur) = (p.path.clone(), p.bar.pos_ms, p.bar.dur_ms);
+            self.resume.set(&path, pos, dur);
+        }
+        self.save_positions(cx);
         // Music plays on behind; a video and a slideshow stop.
         if !self.music && self.play.is_some() {
             self.send(&Cmd::Pause);
@@ -1908,6 +2007,15 @@ impl Page for Media {
                 self.sync_mpris(cx);
                 return;
             }
+        }
+        if self.folder.as_ref().is_some_and(|(_, w, _)| *w == watch) {
+            let c = self
+                .folder
+                .as_ref()
+                .map(|(d, _, _)| d.changes())
+                .unwrap_or_default();
+            self.dir_changed(c, cx);
+            return;
         }
         if self.watch != Some(watch) {
             return;
@@ -1944,6 +2052,13 @@ impl Page for Media {
     }
 
     fn timer(&mut self, t: Timer, cx: &mut Cx) {
+        if self.relist_at == Some(t) {
+            self.relist_at = None;
+            if self.stale && self.view == View::Grid && cx.in_front() {
+                self.relist();
+            }
+            return;
+        }
         if self.slides == Some(t) {
             let before = self.tiles.at();
             self.step(1, cx);
@@ -1978,8 +2093,7 @@ impl Page for Media {
                     cx.leave();
                     return false;
                 }
-                self.view = View::Grid;
-                self.want_tiles();
+                self.grid_again();
                 false
             }
             View::Viewer | View::Player => {
@@ -2003,8 +2117,7 @@ impl Page for Media {
                 self.full = Picture::default();
                 self.asks.retain(|a| matches!(a.what, For::Tile(_)));
                 self.forget();
-                self.view = View::Grid;
-                self.want_tiles();
+                self.grid_again();
                 false
             }
         }

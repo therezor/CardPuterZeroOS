@@ -457,3 +457,76 @@ fn low_memory_keeps_the_tiles_on_screen() {
     d.low_memory(255).pump(300);
     assert!(d.frame().pixels() == &before[..]);
 }
+
+/// A folder of two pictures, `a` newer than `b`, and the grid on it with
+/// `b` selected.
+fn grid_on_b(name: &str) -> (Driver, PathBuf) {
+    use std::time::{Duration, SystemTime};
+    let h = home(name);
+    let dir = h.join("Pictures/Pair");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (n, age) in [("a.jpg", 60), ("b.png", 120)] {
+        let f = std::fs::File::create(dir.join(n)).unwrap();
+        f.set_modified(SystemTime::now() - Duration::from_secs(age))
+            .unwrap();
+    }
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "g");
+    d.answer_pick(Some(vec![dir.clone()]));
+    d.frame();
+    step(&mut d, "right");
+    (d, dir)
+}
+
+#[test]
+fn back_in_front_the_grid_keeps_its_file_selected() {
+    let (mut d, dir) = grid_on_b("relist");
+    // A newer file comes first, as the camera's would.
+    std::fs::write(dir.join("new.jpg"), b"x").unwrap();
+    d.pump(100);
+    d.pause().pump(100);
+    d.resume().pump(100);
+    d.frame();
+    step(&mut d, "enter");
+    assert_eq!(d.recent().first(), Some(&dir.join("b.png")));
+    step(&mut d, "esc\nleft\nleft\nenter");
+    assert_eq!(d.recent().first(), Some(&dir.join("new.jpg")));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_grid_follows_its_folder_as_it_changes() {
+    let (mut d, dir) = grid_on_b("watch");
+    std::fs::write(dir.join("new.jpg"), b"x").unwrap();
+    d.pump(100);
+    d.wait(400);
+    d.frame();
+    step(&mut d, "left\nleft\nenter");
+    assert_eq!(d.recent().first(), Some(&dir.join("new.jpg")));
+}
+
+#[test]
+fn a_video_left_behind_keeps_its_place() {
+    let h = home("left");
+    std::fs::create_dir_all(h.join("Videos")).unwrap();
+    std::fs::write(h.join("Videos/movie night.mkv"), b"x").unwrap();
+    let film = h.join("Videos/movie night.mkv");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), Some(film.clone())));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "enter\n7\n7\n7");
+    // Another app comes in front, and this one never comes back.
+    d.pause().pump(100);
+    drop(d);
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), Some(film)));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "enter");
+    assert!(
+        d.toast().is_some_and(|t| t.starts_with("From 00:3")),
+        "{:?}",
+        d.toast()
+    );
+}

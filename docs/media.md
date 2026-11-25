@@ -30,14 +30,18 @@ draws each into `mockups/media`.
   Other folder, ask the file chooser (`portal.md`): pictures, videos or
   songs, several at once, or a folder for the grid. A file picked shows
   with its folder's others; Esc goes back to that folder.
+- The grid follows its folder through inotify: a file added or removed
+  shows, and the file selected stays selected. Behind another app it is
+  read again when Media is back in front.
 - The music queue keeps its songs whatever folder the grid shows, so
   music plays on while you look through pictures. Shuffle reorders it at
   once, the song playing first. Past the last song, Next does nothing
   and the music ends there, unless Repeat is on.
 - A clip of five minutes or more goes on from where it stopped, unless it
   was near its start or end: the newest 64 places, in
-  `~/.local/share/gh0st-media/positions`. Only while Settings > Privacy
-  lets apps remember recent files; its Clear removes them.
+  `~/.local/share/gh0st-media/positions`, written as a clip stops, fails
+  or the app leaves the front. Only while Settings > Privacy lets apps
+  remember recent files; its Clear removes them.
 - Music plays on behind other apps and with the screen dark. A video and a
   slideshow pause when the app leaves the front; a video keeps the screen
   on while it plays. A slideshow ends when another folder opens.
@@ -46,8 +50,8 @@ draws each into `mockups/media`.
   is back in front.
 - When memory runs short (`sdk.md`, Low memory), the helper drops the
   picture it keeps for pan and zoom, unless it is on screen, and the app
-  drops tile pictures away from the screen. It keeps those near the
-  screen as it goes too, and the rest when another folder opens.
+  drops tile pictures away from the screen. They go anyway past 200, and
+  when another folder opens.
 - A file that fails shows why on its own screen. If the helper dies, the
   app starts it again and marks what it was reading and what played, so
   neither is asked for again on its own; music goes on from the next song.
