@@ -150,7 +150,7 @@ impl Page for Welcome {
             Tone::Info,
             "Welcome to Gh0st OS",
             "We know nothing about you.\nLet's keep it that way.",
-            &[("Enter", "take the training"), ("6", "I'm already a spy")],
+            &[("Enter", "take the training")],
         );
     }
 }
