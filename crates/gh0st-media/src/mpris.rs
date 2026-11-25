@@ -225,6 +225,8 @@ pub struct Mpris {
     conn: Conn,
     /// What clients were last told.
     told: State,
+    /// Reading or writing the bus failed.
+    broken: bool,
 }
 
 impl Mpris {
@@ -238,6 +240,7 @@ impl Mpris {
         Some(Mpris {
             conn,
             told: state.clone(),
+            broken: false,
         })
     }
 
@@ -249,6 +252,7 @@ impl Mpris {
     pub fn ready(&mut self, state: &State) -> Vec<Control> {
         let mut out = Vec::new();
         if self.conn.flush().and_then(|()| self.conn.fill()).is_err() {
+            self.broken = true;
             return out;
         }
         while let Ok(Some(m)) = self.conn.recv() {
@@ -263,6 +267,11 @@ impl Mpris {
         }
         let _ = self.conn.flush();
         out
+    }
+
+    /// The bus hung up or failed: drop this player.
+    pub fn closed(&self) -> bool {
+        self.broken || self.conn.closed()
     }
 
     /// Tells clients what changed since they were last told.

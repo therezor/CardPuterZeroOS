@@ -439,3 +439,21 @@ fn a_slideshow_starts_at_a_picture_and_ends_with_its_folder() {
     assert_eq!(d.title(), "Trip");
     assert!(!d.awake(), "the show ended");
 }
+
+#[test]
+fn low_memory_keeps_the_tiles_on_screen() {
+    let h = home("lowmem-grid");
+    for i in 0..40 {
+        std::fs::write(h.join(format!("Pictures/p{i:02}.jpg")), b"x").unwrap();
+    }
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "x\nenter");
+    // Down past the first screen and back, so tiles off screen were drawn.
+    step(&mut d, "x\nx\nx\nx\nf\nf\nf\nf");
+    d.pump(500);
+    let before = d.frame().pixels().to_vec();
+    d.low_memory(255).pump(300);
+    assert!(d.frame().pixels() == &before[..]);
+}

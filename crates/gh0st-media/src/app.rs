@@ -21,7 +21,7 @@ use gh0st_app::gfx::{Canvas, Rect, Theme, widgets};
 use gh0st_app::media::{AskQueue, Picture, PictureView, SeekBar, plate, plate_text};
 use gh0st_app::prelude::*;
 use gh0st_app::{Pick, PickSpec, Post};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub mod key {
@@ -73,6 +73,9 @@ const SPEEDS: [u16; 6] = [50, 75, 100, 125, 150, 200];
 /// Times the helper is started again with no answer between: one that
 /// dies whatever it is asked would otherwise start for ever.
 const RESTARTS: u32 = 3;
+/// Tile pictures kept before those away from the screen go: a few
+/// hundred kilobytes.
+const FACES_KEPT: usize = 200;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
@@ -133,6 +136,8 @@ pub struct Media {
     /// Deaths since the helper last answered.
     crashes: u32,
     places: Vec<Place>,
+    /// How much each place holds, read as the start page opens.
+    counts: Vec<String>,
     start: List,
     view: View,
     dir: PathBuf,
@@ -190,6 +195,9 @@ pub struct Media {
     asked: Option<(Pick, Asked)>,
     /// The music on the session bus, while it plays.
     mpris: Option<(mpris::Mpris, Watch)>,
+    /// No bus, or another player has the name: not tried again until the
+    /// music stops.
+    mpris_failed: bool,
     /// The Now playing notice as posted: title, artist, playing. It is
     /// written again only when one of them changes.
     posted: Option<(String, String, bool)>,
@@ -216,6 +224,7 @@ impl Media {
             missing: false,
             crashes: 0,
             places: files::places(&home),
+            counts: Vec::new(),
             start: List::new(),
             view: View::Start,
             dir: PathBuf::new(),
@@ -255,6 +264,7 @@ impl Media {
             data: home.join(".local/share/gh0st-media"),
             asked: None,
             mpris: None,
+            mpris_failed: false,
             posted: None,
             music: false,
         }
@@ -388,10 +398,42 @@ impl Media {
         self.tiles = gh0st_app::Tiles::new(GRID_COLS, GRID_ROWS);
         self.tiles.set_len(self.entries.len());
         self.tiles.select(select);
+        self.trim();
         self.forget();
         self.view = View::Grid;
         self.asks.retain(|a| !matches!(a.what, For::Tile(_)));
         self.want_tiles();
+    }
+
+    /// Lets go of what can be asked for again: tile pictures away from the
+    /// screen, and what was learned of files in other folders. A tile that
+    /// failed keeps its empty picture, so it is not asked for again.
+    fn trim(&mut self) {
+        let (first, n) = self.tiles.window();
+        let from = first.saturating_sub(GRID_COLS);
+        let to = (first + n + GRID_COLS).min(self.entries.len());
+        let near: HashSet<PathBuf> = self
+            .entries
+            .get(from..to)
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|e| match e.look {
+                Look::Folder => self.folder_faces.get(&e.path).cloned().flatten(),
+                _ => Some(e.path.clone()),
+            })
+            .collect();
+        self.faces
+            .retain(|p, pic| pic.is_empty() || near.contains(p));
+        let dir = self.dir.as_path();
+        let playing = self.play.as_ref().map(|p| p.path.as_path());
+        self.infos
+            .retain(|p, _| p.parent() == Some(dir) || Some(p.as_path()) == playing);
+        // Folders on the way back up keep theirs: finding one reads a folder.
+        let trail = &self.trail;
+        self.folder_faces.retain(|k, _| {
+            k.parent()
+                .is_some_and(|d| d == dir || trail.iter().any(|(t, _)| t == d))
+        });
     }
 
     /// The folder's entries in the order the grid shows them.
@@ -422,6 +464,19 @@ impl Media {
         v
     }
 
+    /// The start page, with how much each place holds now.
+    fn show_start(&mut self) {
+        self.view = View::Start;
+        self.counts = self
+            .places
+            .iter()
+            .map(|p| match std::fs::read_dir(&p.path) {
+                Ok(rd) => rd.flatten().count().to_string(),
+                Err(_) => String::new(),
+            })
+            .collect();
+    }
+
     fn title_of_dir(&self) -> String {
         if let Some(p) = self.places.iter().find(|p| p.path == self.dir) {
             return p.name.to_string();
@@ -445,6 +500,9 @@ impl Media {
 
     /// The tiles on screen and the row past it.
     fn want_tiles(&mut self) {
+        if self.faces.len() > FACES_KEPT {
+            self.trim();
+        }
         let (first, n) = self.tiles.window();
         let end = (first + n + GRID_COLS).min(self.entries.len());
         for i in first..end {
@@ -755,18 +813,21 @@ impl Media {
         let s = self.mpris_state();
         match (&mut self.mpris, on) {
             (Some((m, _)), true) => m.update(&s),
-            (None, true) => {
-                if let Some(m) = mpris::Mpris::start(&s) {
+            (None, true) if !self.mpris_failed => match mpris::Mpris::start(&s) {
+                Some(m) => {
                     let w = cx.watch(m.fd());
                     self.mpris = Some((m, w));
                 }
-            }
+                None => self.mpris_failed = true,
+            },
+            (None, true) => {}
             (Some(_), false) => {
                 if let Some((_, w)) = self.mpris.take() {
                     cx.unwatch(w);
                 }
+                self.mpris_failed = false;
             }
-            (None, false) => {}
+            (None, false) => self.mpris_failed = false,
         }
     }
 
@@ -810,10 +871,10 @@ impl Media {
     fn remote(&mut self, c: mpris::Control, cx: &mut Cx) {
         let state = self.play.as_ref().map(|p| p.state);
         match c {
-            mpris::Control::Play if state == Some(PlayState::Paused) => self.resume_music(),
+            mpris::Control::Play if state == Some(PlayState::Paused) => self.resume_play(),
             mpris::Control::Play if state == Some(PlayState::Done) => {
                 self.send(&Cmd::Seek(0));
-                self.resume_music();
+                self.resume_play();
             }
             mpris::Control::Pause if state == Some(PlayState::Playing) => {
                 self.send(&Cmd::Pause);
@@ -850,7 +911,7 @@ impl Media {
         cx.redraw();
     }
 
-    fn resume_music(&mut self) {
+    fn resume_play(&mut self) {
         self.send(&Cmd::Resume);
         if let Some(p) = &mut self.play {
             p.state = PlayState::Playing;
@@ -1298,18 +1359,10 @@ fn speed_word(p: u16) -> String {
 
 impl Media {
     fn draw_start(&self, ui: &mut Ui) {
-        let counts: Vec<String> = self
-            .places
-            .iter()
-            .map(|p| match std::fs::read_dir(&p.path) {
-                Ok(rd) => rd.flatten().count().to_string(),
-                Err(_) => String::new(),
-            })
-            .collect();
         let rows: Vec<Row> = self
             .places
             .iter()
-            .zip(&counts)
+            .zip(&self.counts)
             .map(|(p, n)| {
                 let r = Row::link(p.name).icon(p.icon);
                 if n.is_empty() {
@@ -1722,6 +1775,7 @@ impl Page for Media {
         };
         self.load(cx);
         self.launch(cx);
+        self.show_start();
         if let Some(p) = self.opened.take() {
             self.open_given(p, cx);
         }
@@ -1768,12 +1822,13 @@ impl Page for Media {
         cx.redraw();
     }
 
-    /// The helper's kept picture is the one big thing: it goes unless it
-    /// is on screen.
+    /// The helper's kept picture is the big thing: it goes unless it is on
+    /// screen. Tile pictures away from the screen go too.
     fn low_memory(&mut self, _level: u8, _cx: &mut Cx) {
         if self.view != View::Viewer {
             self.send(&Cmd::Forget);
         }
+        self.trim();
     }
 
     fn notice_action(&mut self, tag: &str, action: &str, cx: &mut Cx) {
@@ -1810,12 +1865,14 @@ impl Page for Media {
                     .as_ref()
                     .is_some_and(|p| p.state == PlayState::Paused);
                 if paused {
-                    self.resume_music();
+                    self.resume_play();
                 }
             }
             // The folder may have changed meanwhile.
-            if self.view == View::Grid {
-                self.open_dir(self.dir.clone(), self.tiles.at(), cx);
+            match self.view {
+                View::Start => self.show_start(),
+                View::Grid => self.open_dir(self.dir.clone(), self.tiles.at(), cx),
+                _ => {}
             }
             cx.redraw();
             return;
@@ -1839,6 +1896,12 @@ impl Page for Media {
         if let Some((m, w)) = &mut self.mpris {
             if *w == watch {
                 let controls = m.ready(&s);
+                // The bus went: its fd would wake the loop for ever.
+                if m.closed() {
+                    cx.unwatch(*w);
+                    self.mpris = None;
+                    self.mpris_failed = true;
+                }
                 for c in controls {
                     self.remote(c, cx);
                 }
@@ -1900,7 +1963,7 @@ impl Page for Media {
                 if let Some((dir, at)) = self.trail.pop() {
                     self.open_dir(dir, at, cx);
                 } else {
-                    self.view = View::Start;
+                    self.show_start();
                 }
                 false
             }

@@ -45,7 +45,9 @@ draws each into `mockups/media`.
   once paused) and Next as chips. It follows the song, and goes when Media
   is back in front.
 - When memory runs short (`sdk.md`, Low memory), the helper drops the
-  picture it keeps for pan and zoom, unless it is on screen.
+  picture it keeps for pan and zoom, unless it is on screen, and the app
+  drops tile pictures away from the screen. It keeps those near the
+  screen as it goes too, and the rest when another folder opens.
 - A file that fails shows why on its own screen. If the helper dies, the
   app starts it again and marks what it was reading and what played, so
   neither is asked for again on its own; music goes on from the next song.
