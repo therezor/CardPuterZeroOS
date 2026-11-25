@@ -80,7 +80,7 @@ found, and installs only when you say so. Your files and settings stay.
 🧩 **Your apps keep working.** CardputerZero apps install and launch the way
 they always have. Hold Esc to close one that hangs.
 
-<img src="docs/screenshots/settings.png" width="400" alt="Settings"> <img src="docs/screenshots/store.png" width="400" alt="The Store">
+<img src="docs/screenshots/settings.png" width="400" alt="Settings: the network, camera and microphone switches for one app"> <img src="docs/screenshots/store.png" width="400" alt="The Store">
 
 <img src="docs/screenshots/camera.png" width="400" alt="The Camera app"> <img src="docs/screenshots/paper.png" width="400" alt="Home in the Paper palette">
 
