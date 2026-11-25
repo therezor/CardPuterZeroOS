@@ -14,10 +14,16 @@ if [ "$1" = configure ]; then
     rm -f /etc/NetworkManager/conf.d/90-gh0st-mac.conf \
         /etc/NetworkManager/conf.d/90-gh0st-scan-mac.conf
     # Memory pressure (PSI) tells apps when memory runs short. The kernel
-    # keeps it off unless asked; this takes effect at the next boot.
+    # keeps it off unless asked; this takes effect at the next boot. The
+    # new file is on the card before it replaces the old: an empty one
+    # would not boot. A failed edit leaves nothing behind.
     c=/boot/firmware/cmdline.txt
-    if [ -f "$c" ] && ! grep -qw 'psi=1' "$c"; then
-        sed '1s/$/ psi=1/' "$c" >"$c.new" && mv "$c.new" "$c"
+    if [ -s "$c" ] && ! grep -qw 'psi=1' "$c"; then
+        if sed '1s/$/ psi=1/' "$c" >"$c.new" && [ -s "$c.new" ] && sync; then
+            mv "$c.new" "$c" && sync || rm -f "$c.new"
+        else
+            rm -f "$c.new"
+        fi
     fi
     # The data partition's grow unit is gone. Its card keeps the old
     # layout, and the enable link would point at nothing.
