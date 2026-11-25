@@ -251,7 +251,6 @@ pub struct Editor {
     /// The text's version at the last settle: a change since makes the
     /// match stale, and may send the index back.
     seen: u64,
-    clip: Vec<u8>,
     watch: Option<(FileWatch, Watch)>,
     context: String,
     /// The reader bringing a big file into memory (`warm`).
@@ -357,7 +356,6 @@ impl Editor {
             needle: Vec::new(),
             hit: None,
             seen: 0,
-            clip: Vec::new(),
             watch: None,
             context: String::new(),
             warm: None,
@@ -1611,9 +1609,8 @@ impl Editor {
     }
 
     /// The selection to the clipboard every app shares, bytes as they are.
-    /// This app keeps its own copy too, for when the shared one won't give
-    /// it back. False, and said, unless all of it was copied: a cut then
-    /// keeps the text.
+    /// No copy of its own: the lock clears what was copied. False, and
+    /// said, unless all of it was copied: a cut then keeps the text.
     fn copy(&mut self, cx: &mut Cx) -> bool {
         let Some((a, b)) = self.selection() else {
             return false;
@@ -1633,7 +1630,6 @@ impl Editor {
             cx.toast_tone(Tone::Warning, "Too much to copy");
             return false;
         }
-        self.clip = bytes;
         true
     }
 
@@ -2083,7 +2079,7 @@ impl Editor {
                 }
             }
             cmd::PASTE if edit_ok => {
-                let clip = cx.paste().unwrap_or_else(|| self.clip.clone());
+                let clip = cx.paste().unwrap_or_default();
                 if clip.is_empty() {
                     cx.toast("Nothing copied");
                 } else {
