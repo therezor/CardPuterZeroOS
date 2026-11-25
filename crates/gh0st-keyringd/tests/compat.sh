@@ -48,7 +48,9 @@ echo "python keyring and secretstorage"
 python3 - <<'PY'
 import keyring, secretstorage
 from keyring.backends import SecretService
-assert isinstance(keyring.get_keyring(), SecretService.Keyring), keyring.get_keyring()
+# Newer keyring wraps the backends it finds in a chainer.
+kr = keyring.get_keyring()
+assert any(isinstance(b, SecretService.Keyring) for b in getattr(kr, "backends", [kr])), kr
 keyring.set_password("svc", "u", "pw1")
 assert keyring.get_password("svc", "u") == "pw1"
 keyring.delete_password("svc", "u")
