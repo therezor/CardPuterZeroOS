@@ -23,6 +23,7 @@ cargo test --workspace
 | Source rules | `crates/gh0st-ui/tests/rules.rs` | colours and faces only from the theme; no em dash |
 | Idle budget | `Driver::idle_wakes`, `crates/gh0st-settings/tests/pages.rs` | an idle page wakes for the clock and nothing else |
 | Store mirror | `os/store/test_mirror.py` | CI's mirror of M5's catalog, from a fixture registry |
+| Sandbox | `crates/gh0st-core/tests/sandbox_run.rs` | an app in a real bwrap keeps its files and reaches no secret, start file, process or network; runs where bwrap and user namespaces work (CI sets the sysctl Ubuntu's AppArmor needs) |
 | Compat suites | `crates/gh0st-keyringd/tests/compat.sh`, `crates/gh0st-session/tests/compat.sh`, `crates/gh0st/tests/keyring_sim.sh` | real D-Bus clients against our session services on a private bus, and the shell with both daemons |
 | Device | `scripts/measure.sh` | PSS, wakeups and CPU at idle, before a release |
 

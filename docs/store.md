@@ -66,10 +66,11 @@ page says it:
 | `scripts` | the deb has `preinst`, `postinst`, `prerm` or `postrm` | Setup runs as root |
 | `paths` | a file where root reads, loads or runs it: `/etc` past the app's own config (`/etc/<pkg>/`, `/etc/<pkg>.conf`, `/etc/default/<pkg>`, unless the name is a system one such as `sudoers.d`), udev rules, sysctl, modprobe, binfmt, polkit, PAM, NSS, D-Bus system services, kernel modules, firmware, apt methods, `/usr/local`, `sbin`, Python `.pth` files, NetworkManager, `/boot`, tmpfiles that reach past the app's own folders, or a setuid file | System files |
 | `service` | M5's `background_service`, or a systemd unit in the deb | Service |
+| `root` | a setuid file, or `sudo`, `pkexec` or `doas` as a command in a program or script: the app asks for root as it runs, so it runs outside its sandbox (`isolation.md`) | Runs as root, outside its sandbox |
 | `network`, `camera`, `microphone`, `hardware`, `display`, `imu` | M5's permissions | Uses network, camera |
 
 dpkg never lets a package overwrite another's files, so a file elsewhere
-is only data. A deb checked under an older rule is checked again. Installing an app with any of the first three asks first, and
+is only data. A deb checked under an older rule is checked again. Installing an app with any of the first four asks first, and
 names them.
 An update doesn't ask.
 CI leaves out an app whose dependencies our sources don't have, or whose
@@ -91,9 +92,10 @@ registry as untrusted:
   `raw.githubusercontent.com/CardputerZero/` for art. Redirects to HTTP are
   refused.
 - **Debs.** Each new deb downloads once, is checked against the registry's
-  size and SHA-256, and only then does `dpkg-deb` list it. Nothing is
-  extracted. The facts carry over in `checked.tsv`, by SHA-256. Package,
-  version and architecture come from the deb's control file.
+  size and SHA-256, and only then does `dpkg-deb` list it. Code is read
+  from the stream for the `root` mark, never written to disk. The facts
+  carry over in `checked.tsv`, by SHA-256. Package, version and
+  architecture come from the deb's control file.
 - **Left out**, with the reason in `dropped.tsv`: a package named like one
   of Debian's or ours, one whose `Provides`, `Replaces`, `Conflicts` or
   `Breaks` names one, and one with a `Depends` group nothing in trixie or

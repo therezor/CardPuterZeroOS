@@ -30,7 +30,9 @@ are in `docs/hardware-facts.md`.
   theme.
 - `crates/gh0st-shell`: the home screen (grid or list, nav and search modes),
   the switcher and the dock. `examples/mockups.rs` renders its screens to PNG.
-- `crates/gh0st-core`: syscalls, event loop, input, config, apps, children.
+- `crates/gh0st-core`: syscalls, event loop, input, config, apps, children,
+  and the sandbox each app runs in (`src/sandbox.rs`, `docs/isolation.md`).
+  `examples/sandboxed.rs` runs a command in an app's sandbox.
 - `crates/gh0st-dbus`: our D-Bus codec and connection. SASL EXTERNAL, the
   wire format with every spec limit checked, fd passing, one poll loop and
   no threads. `tests/fuzz.rs` mutates real messages.
@@ -109,6 +111,8 @@ are in `docs/hardware-facts.md`.
   and the milestones.
 - `docs/hotspot.md`: the Wi-Fi access point, why it takes wlan0, its security
   and its tests.
+- `docs/isolation.md`: the sandbox and cgroup every app runs in, what the
+  user can take away, who runs outside, the bus policy and the limits.
 - `docs/keyring.md`: the keyring and session services, the vault, prompts,
   password changes and the limits.
 - `docs/files.md`: Files, its two sides, keys, servers, passwords, archives,
@@ -148,13 +152,18 @@ are in `docs/hardware-facts.md`.
   group, SIGKILL 3 s later. Never `EVIOCGRAB` while an app is in front; the
   shell grabs only while it is in front with apps paused, dark, or locked.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
-  apps too. Keep unknown keys. Our keys use a `gh0st.` prefix.
+  apps too. Keep unknown keys. Our keys use a `gh0st.` prefix. Stock apps
+  write it too, so keys an app must not set (`config::is_secure`: the
+  terminal, the lock, app grants) live in `~/.config/gh0st/settings.json`,
+  which a sandbox only reads.
 - New dependencies need a reason. Today: `libc`, `png`, `ab_glyph`,
   `qrcodegen` (the hotspot's QR code; no dependencies of its own), and in the
   terminal `vte` (the DEC parser, without std so its OSC buffer is bounded) and
   `unicode-width` (wcwidth). In the keyring: `argon2`, `chacha20poly1305`
   and `zeroize`, RustCrypto's, because crypto is never ours to write. Build
-  only: `resvg`. The camera helper is C++
+  only: `resvg`. On the image, `bubblewrap` runs each app's sandbox:
+  sandbox setup is as subtle as crypto, and Flatpak's launcher is audited.
+  The camera helper is C++
   because libcamera has no C API: it links libcamera and libjpeg-turbo, both
   on the stock image already, and for sound and playback ffmpeg's libraries
   (the image has ffmpeg for the terminal and Store apps) and libpulse
@@ -220,6 +229,8 @@ GH0ST_LOG=debug cargo run -p gh0st -- shell --sim /tmp/frames < session.txt
 ```
 
 The shell starts on the lock screen. A session opens with `tab` then `enter`,
-or sets `"gh0st.lock.password": false` in the scratch config.json.
+or sets `"gh0st.lock.password": false` in the scratch config.json before
+the first run (the shell then moves it to `.config/gh0st/settings.json`).
+Under `--sim` apps start unsandboxed.
 `GH0ST_PASSWD` and `GH0ST_CHKPWD` swap `passwd -S` and `unix_chkpwd` for test
 scripts.

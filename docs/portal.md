@@ -214,8 +214,8 @@ The shell decides, as it does for the keyring's questions:
 
 ## Limits
 
-- No document portal: a picked file is its real path, as the upstream
-  portal gives any app that is not sandboxed. No app here is sandboxed.
+- No document portal: a picked file is its real path. Every sandbox sees
+  home at the same paths (`isolation.md`), so the path works there too.
 - `parent` (a window handle) is ignored: the caller is always the app in
   front.
 - `modal` is always true.

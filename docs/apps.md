@@ -11,7 +11,8 @@ use this page directly.
   (stock and Store installs) and `/usr/share/gh0st/applications` (ours).
 - It reads these keys: `Name`, `Exec`, `Icon`, `Comment`, `TryExec`,
   `Terminal`, `Sysplause`, `Hidden`, `NoDisplay`, `MimeType`, `Type` (which
-  must be `Application`), and our own `X-Gh0st-Background` (see Pausing).
+  must be `Application`), and our own `X-Gh0st-Background` (see Pausing)
+  and `X-Gh0st-Sandbox`, which only our own apps may use (`isolation.md`).
 - `Hidden=true` drops the entry. `NoDisplay=true` keeps it off home and
   Settings > Apps, but it may still open files.
 - `Exec` follows the stock rule. It contains no `| & ; < > $ \` or backtick,
@@ -27,6 +28,9 @@ use this page directly.
 - `TryExec` names a program that must exist. If it doesn't, the shell hides
   the entry.
 - An app with `Terminal=true` shows only when a terminal is installed.
+- Every app runs in a sandbox and a cgroup of its own, unless the user, its
+  `Exec` or the Store's `root` mark says otherwise. Its uid, groups,
+  devices and home stay; secrets and other apps don't (`isolation.md`).
 
 ## Opening files
 

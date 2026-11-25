@@ -144,8 +144,20 @@ From M5's documentation and device tree (Sources, below), not measured.
 - `user.max_user_namespaces` is 1494. `unshare -Ur` and `unshare -Urm` work
   as UID 1000; inside, `/dev/fb_lcd` and `/dev/input` open and a tmpfs
   mounts.
-- `gh0st.service` runs in `user@1000.service/app.slice/gh0st.service` with
-  `Delegate=no`.
+- `gh0st.service` runs in `user@1000.service/app.slice/gh0st.service`.
+  With `Delegate=yes` the shell makes `app-<stem>` there and moves an app
+  in before exec; the freezer works on it, and an app with
+  `/sys/fs/cgroup` hidden can't leave.
+- bubblewrap 0.12.0 runs unprivileged: its own user, mount, PID and IPC
+  namespaces, with the panel, keys, camera, codec and sound opening through
+  group membership. Its two processes take about 0.4 MB PSS per app.
+- Inside a sandbox the session bus refuses systemd, activation environment
+  changes and monitoring once `session.d/gh0st.conf` is loaded; before
+  that, a transient unit started from a sandbox ran in the host user
+  namespace. Bus activation through systemd (dconf) still works.
+- A pulse client on `native-nomic` lists no source; recording the sink's
+  monitor fails with a protocol error. pipewire-pulse takes the socket from
+  systemd's socket unit like `native`.
 - A CoreChips USB Ethernet adapter (`r8152`, `0fe6:9900`) has no address of
   its own: it comes up as `enx4adbd2912288`, a locally administered MAC,
   with NetworkManager's "Wired connection 1". Its stable-id is now fixed
@@ -772,7 +784,6 @@ Checked in a container with trixie's packages, not on a device.
 | Swap on the image | `zram-size` in `/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf` beats `50-gh0st.conf`; 0 leaves no zram0 | Advanced |
 | Swap compression and swappiness on the image | the same drop-ins work without rpi-swap | Advanced |
 | NetworkManager secret agent | accepted from UID 1000 with linger and no logind session; `psk-flags 1` calls `SaveSecrets`; registering clears `NO_SECRETS` | Wi-Fi in the keyring |
-| cgroup delegation | `Delegate=yes` on `gh0st.service` gives the shell a writable subtree | app identity |
 
 ## Stock system baseline (`scripts/measure.sh system`)
 

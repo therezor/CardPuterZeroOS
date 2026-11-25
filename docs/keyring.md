@@ -73,8 +73,10 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
 ## Who is asking
 
 - A process in a cgroup `app-<desktop stem>` right under `gh0st.service` is
-  that app. The shell puts no app in such a cgroup yet, so every caller is
-  its executable's path.
+  that app. The shell starts every app in one (`isolation.md`). Anything
+  else is named by its executable's path.
+- One of our programs keeps what it stored or was allowed under its old
+  name, `exe:/usr/bin/gh0st-<app>`.
 - The pid comes from the bus, with a pidfd where dbus-daemon gives one, so a
   reused pid can't pass for another program.
 - An item belongs to the app that stored it. To any other app it looks
@@ -147,9 +149,11 @@ prompt's end comes on the bus fd, which the page watches.
 
 ## Limits
 
-- Every app, the terminal and anything run through sudo can do what UID
-  1000 can: read keys while another app is in front, or call the keyring
-  under a name it chooses. For them, approval is a speed bump, not a wall.
+- An app outside its sandbox (`isolation.md`), the terminal and anything run
+  through sudo can do what UID 1000 can: read keys while another app is in
+  front, or move into another app's cgroup and call the keyring as it. For
+  them, approval is a speed bump, not a wall. A sandboxed app can't see
+  the vault or leave its cgroup.
 - Sessions are `plain`. The bus is local and only UID 1000 can listen on
   it, so the DH session would add nothing; libsecret and python
   `secretstorage` fall back to plain.
