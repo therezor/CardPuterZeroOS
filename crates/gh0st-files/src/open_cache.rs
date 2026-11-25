@@ -23,7 +23,8 @@ pub fn slot(home: &Path, key: &str) -> PathBuf {
 pub fn fresh(file: &Path, size: u64, mtime: i64) -> bool {
     use std::os::unix::fs::MetadataExt;
     mtime > 0
-        && std::fs::metadata(file).is_ok_and(|m| m.is_file() && m.len() == size && m.mtime() == mtime)
+        && std::fs::metadata(file)
+            .is_ok_and(|m| m.is_file() && m.len() == size && m.mtime() == mtime)
 }
 
 /// Read only, for the app that opens it, with the source's time so a

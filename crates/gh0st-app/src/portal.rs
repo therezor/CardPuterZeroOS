@@ -235,7 +235,8 @@ impl Client {
     /// The chooser is told so it goes; no reply is waited for.
     pub(crate) fn forget(&mut self, from: usize) {
         for w in split_off(&mut self.waiting, |w| w.owner >= from) {
-            let m = Message::call(NAME, &w.path, REQUEST, "Close").flags(gh0st_dbus::message::NO_REPLY);
+            let m =
+                Message::call(NAME, &w.path, REQUEST, "Close").flags(gh0st_dbus::message::NO_REPLY);
             if self.conn.send(m).is_err() {
                 self.dead = true;
             }
@@ -458,10 +459,7 @@ mod tests {
         portal.send(response(&path, "file:///tmp/a.txt")).unwrap();
         portal.send(reply(1, &path)).unwrap();
         c.pick(7, 1, &PickSpec::open()).unwrap();
-        assert_eq!(
-            c.drain(),
-            [(7, 1, Some(vec![PathBuf::from("/tmp/a.txt")]))]
-        );
+        assert_eq!(c.drain(), [(7, 1, Some(vec![PathBuf::from("/tmp/a.txt")]))]);
         assert!(c.idle());
     }
 
@@ -494,18 +492,26 @@ mod tests {
         let path = format!("{}/gh0st5", requests(ME));
         portal.send(reply(1, &path)).unwrap();
         c.pick(5, 0, &PickSpec::open()).unwrap();
-        let mut gone = Message::signal(gh0st_dbus::bus::PATH, gh0st_dbus::bus::NAME, "NameOwnerChanged")
-            .arg(Value::str(NAME))
-            .arg(Value::str(PORTAL))
-            .arg(Value::str(""));
+        let mut gone = Message::signal(
+            gh0st_dbus::bus::PATH,
+            gh0st_dbus::bus::NAME,
+            "NameOwnerChanged",
+        )
+        .arg(Value::str(NAME))
+        .arg(Value::str(PORTAL))
+        .arg(Value::str(""));
         // Only the bus says who left.
         gone.sender = Some(":1.99".into());
         portal.send(gone).unwrap();
         assert!(c.ready().is_empty());
-        let mut gone = Message::signal(gh0st_dbus::bus::PATH, gh0st_dbus::bus::NAME, "NameOwnerChanged")
-            .arg(Value::str(NAME))
-            .arg(Value::str(PORTAL))
-            .arg(Value::str(""));
+        let mut gone = Message::signal(
+            gh0st_dbus::bus::PATH,
+            gh0st_dbus::bus::NAME,
+            "NameOwnerChanged",
+        )
+        .arg(Value::str(NAME))
+        .arg(Value::str(PORTAL))
+        .arg(Value::str(""));
         gone.sender = Some(gh0st_dbus::bus::NAME.into());
         portal.send(gone).unwrap();
         assert_eq!(c.ready(), [(5, 0, None)]);

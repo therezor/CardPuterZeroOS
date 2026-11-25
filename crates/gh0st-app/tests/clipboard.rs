@@ -43,5 +43,9 @@ fn ctrl_v_skips_empty_lines_and_types_nothing_once_cleared() {
     assert_eq!(d.clipboard(), Some(&b"secret!"[..]));
     d.clear_clipboard();
     d.keys("ctrl+v\nenter");
-    assert_eq!(d.clipboard(), Some(&b"secret!"[..]), "the field kept its text");
+    assert_eq!(
+        d.clipboard(),
+        Some(&b"secret!"[..]),
+        "the field kept its text"
+    );
 }
