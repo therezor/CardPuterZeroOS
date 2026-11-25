@@ -363,3 +363,79 @@ fn a_song_that_cant_play_leaves_no_word_that_it_plays() {
     step(&mut d, "esc");
     assert_eq!(d.status(), None);
 }
+
+#[test]
+fn under_music_the_arrows_still_step_through_pictures() {
+    let h = songs("arrows");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "x\nx\nx\nenter\nenter\nenter\no");
+    d.answer_pick(Some(vec![h.join("Pictures/a.jpg")]));
+    d.pump(300);
+    let before = d.frame().pixels().to_vec();
+    step(&mut d, "right");
+    assert!(d.frame().pixels() != &before[..], "the next picture");
+    assert_eq!(d.status().as_deref(), Some("Playing"));
+}
+
+#[test]
+fn a_moving_picture_moves_and_the_arrows_pass_it() {
+    use std::time::{Duration, SystemTime};
+    let h = home("anim");
+    let dir = h.join("Pictures/Anim");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Newest first: the moving one, then a still one.
+    for (n, age) in [("lights.gif", 0), ("still.jpg", 60)] {
+        let f = std::fs::File::create(dir.join(n)).unwrap();
+        f.set_modified(SystemTime::now() - Duration::from_secs(age))
+            .unwrap();
+    }
+    let mut d = Driver::new(Media::with(
+        Source::Fake,
+        h.clone(),
+        Some(dir.join("lights.gif")),
+    ));
+    d.pump(300);
+    let a = d.frame().pixels().to_vec();
+    d.pump(300);
+    assert!(d.frame().pixels() != &a[..], "it moves");
+    assert!(!d.awake(), "a picture doesn't hold the screen on");
+    step(&mut d, "right");
+    let b = d.frame().pixels().to_vec();
+    d.pump(300);
+    assert!(d.frame().pixels() == &b[..], "the next one is still");
+}
+
+#[test]
+fn a_file_the_folder_hides_opens_all_the_same() {
+    let h = home("hidden");
+    std::fs::write(h.join("Pictures/.secret.jpg"), b"x").unwrap();
+    let mut d = Driver::new(Media::with(
+        Source::Fake,
+        h.clone(),
+        Some(h.join("Pictures/./.secret.jpg")),
+    ));
+    d.pump(300);
+    let f = d.frame();
+    assert!((140..180).all(|x| f.get(x, 2) != 0), "on the whole screen");
+    assert!(d.toast().is_none());
+}
+
+#[test]
+fn a_slideshow_starts_at_a_picture_and_ends_with_its_folder() {
+    let h = home("slides");
+    std::fs::create_dir_all(h.join("Pictures/Trip")).unwrap();
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    // The first tile is the folder: the show starts at the picture after.
+    step(&mut d, "x\nenter\np");
+    assert_eq!(d.title(), "Media", "a picture, not the folder");
+    assert!(d.awake());
+    step(&mut d, "g");
+    d.answer_pick(Some(vec![h.join("Pictures/Trip")]));
+    d.frame();
+    assert_eq!(d.title(), "Trip");
+    assert!(!d.awake(), "the show ended");
+}

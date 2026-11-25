@@ -13,13 +13,19 @@ draws each into `mockups/media`.
 | View | What it shows | Keys |
 |---|---|---|
 | Start | Camera, Pictures, Videos, Music (the XDG folders) and Home, with how much each holds, then Other folder | Up and Down, Enter |
-| Grid | A folder as tiles, five across: subfolders first with their cover or newest picture, then pictures, videos and songs, newest first. A folder of songs goes by name. The top bar names the tile | the arrows, Enter opens, 6 sorts by name or date, `p` starts a slideshow |
+| Grid | A folder as tiles, five across: subfolders first with their cover or newest picture, then pictures, videos and songs, newest first. A folder of songs goes by name. The top bar names the tile | the arrows, Enter opens, 6 sorts by name or date, `p` starts a slideshow at the first picture or video from the tile on |
 | Viewer | A picture on the whole screen: fitted, or filling it (6), closer in steps up to its own pixels (5 and 7). Zoomed or filled, a map shows where the view is | Left and Right step through the folder; zoomed, the arrows look around. Enter shows the details |
 | Player | A video, or a moving picture that loops. Its time and a line over the buttons | Enter or 6 plays and pauses, 5 and 7 or Left and Right move 10 s. The menu has speed, the sound track, subtitles, A to B and the next picture |
 | Music | A song with its cover, title, artist and album; the folder is the queue | 6 plays and pauses, 5 and 7 the previous and next song. `q` the queue, `s` shuffle, `r` repeat |
 
 - Opened with a file (`gh0st-media PATH`, as the shell starts it for one),
-  it shows that file, and Left and Right step through its folder.
+  it shows that file, and Left and Right step through its folder. A file
+  the folder's listing would hide (a dot file, a name of no known type)
+  shows there too, and the helper's probe says what it is.
+- A moving picture (GIF, APNG, animated WebP) plays in the player as it
+  shows, and Left and Right pass it on. It doesn't keep the screen on.
+  Under music it shows still: the helper has one player, and the music
+  keeps it.
 - The menu's Open file (`o`) and Choose folder (`g`), and the start page's
   Other folder, ask the file chooser (`portal.md`): pictures, videos or
   songs, several at once, or a folder for the grid. A file picked shows
@@ -34,7 +40,7 @@ draws each into `mockups/media`.
   lets apps remember recent files; its Clear removes them.
 - Music plays on behind other apps and with the screen dark. A video and a
   slideshow pause when the app leaves the front; a video keeps the screen
-  on while it plays.
+  on while it plays. A slideshow ends when another folder opens.
 - Behind another app, music has a Now playing notice with Pause (Play
   once paused) and Next as chips. It follows the song, and goes when Media
   is back in front.

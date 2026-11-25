@@ -175,6 +175,9 @@ pub struct Media {
     showing_queue: bool,
     queue_list: List,
     opened: Option<PathBuf>,
+    /// A file opened here that its folder's listing hides: a dot file, or
+    /// a name of no known type. It shows in that folder all the same.
+    extra: Option<Entry>,
     quitting: bool,
     /// The file on screen is one another app opened here: Esc goes back
     /// to that app, not to this one's folder.
@@ -245,6 +248,7 @@ impl Media {
             showing_queue: false,
             queue_list: List::stopping(),
             opened: file,
+            extra: None,
             quitting: false,
             given: false,
             resume: Resume::none(),
@@ -374,24 +378,13 @@ impl Media {
             self.crashes = 0;
             self.launch(cx);
         }
+        if let Some(t) = self.slides.take() {
+            cx.cancel(t);
+            cx.keep_awake(false);
+        }
         self.dir = dir;
         self.dir_title = self.title_of_dir();
-        self.entries = files::list(&self.dir, self.sort);
-        // A folder of songs (an album, with its cover) plays in its own
-        // order.
-        let songs = self
-            .entries
-            .iter()
-            .filter(|e| e.look == Look::Sound)
-            .count();
-        let shows = self
-            .entries
-            .iter()
-            .filter(|e| matches!(e.look, Look::Picture | Look::Video))
-            .count();
-        if songs > shows && self.sort != Sort::Name {
-            self.entries = files::list(&self.dir, Sort::Name);
-        }
+        self.entries = self.listing();
         self.tiles = gh0st_app::Tiles::new(GRID_COLS, GRID_ROWS);
         self.tiles.set_len(self.entries.len());
         self.tiles.select(select);
@@ -399,6 +392,34 @@ impl Media {
         self.view = View::Grid;
         self.asks.retain(|a| !matches!(a.what, For::Tile(_)));
         self.want_tiles();
+    }
+
+    /// The folder's entries in the order the grid shows them.
+    fn listing(&self) -> Vec<Entry> {
+        let mut v = files::list(&self.dir, self.sort);
+        // A folder of songs (an album, with its cover) plays in its own
+        // order.
+        let songs = v.iter().filter(|e| e.look == Look::Sound).count();
+        let shows = v
+            .iter()
+            .filter(|e| matches!(e.look, Look::Picture | Look::Video))
+            .count();
+        if songs > shows && self.sort != Sort::Name {
+            v = files::list(&self.dir, Sort::Name);
+        }
+        let hidden = self
+            .extra
+            .as_ref()
+            .filter(|x| x.path.parent() == Some(self.dir.as_path()))
+            .filter(|x| !v.iter().any(|e| e.path == x.path) && x.path.is_file());
+        if let Some(x) = hidden {
+            let at = v
+                .iter()
+                .position(|e| e.look != Look::Folder)
+                .unwrap_or(v.len());
+            v.insert(at, x.clone());
+        }
+        v
     }
 
     fn title_of_dir(&self) -> String {
@@ -481,34 +502,28 @@ impl Media {
         let Some(e) = self.entry().cloned() else {
             return;
         };
-        // Music plays on under a still picture; a video takes the player.
+        // Music plays on under a picture; a video takes the player.
         if !(self.music && e.look == Look::Picture) {
             self.stop_play();
         }
-        if e.look == Look::Video {
+        // A moving picture plays in the player as soon as it shows. Under
+        // music it shows still: the helper has one player.
+        let anim = self.is_anim(&e.path) && !self.music;
+        let player = e.look == Look::Video || anim;
+        if player {
             self.forget();
         }
         self.full = Picture::default();
         self.show_info = false;
         self.pv.set_fill(false);
         self.pv.show(self.infos.get(&e.path).map(|i| (i.w, i.h)));
-        self.view = if e.look == Look::Video {
-            View::Player
-        } else {
-            View::Viewer
-        };
+        self.view = if player { View::Player } else { View::Viewer };
         self.count_context();
         self.ask(For::Probe(e.path.clone()));
-        if self.infos.contains_key(&e.path) {
-            self.ask(For::Full(e.path.clone()));
-        }
-        // A moving picture plays as soon as it shows.
-        if self
-            .infos
-            .get(&e.path)
-            .is_some_and(|i| i.kind == Kind::Anim)
-        {
+        if anim {
             self.start_play(cx, e.path, Flags::default());
+        } else if self.infos.contains_key(&e.path) {
+            self.ask(For::Full(e.path));
         }
     }
 
@@ -537,7 +552,7 @@ impl Media {
             subs,
             slow: false,
         });
-        cx.keep_awake(self.view == View::Player);
+        cx.keep_awake(self.seeking());
     }
 
     fn stop_play(&mut self) {
@@ -594,7 +609,7 @@ impl Media {
                 if let Some(p) = &mut self.play {
                     p.state = PlayState::Playing;
                 }
-                cx.keep_awake(self.view == View::Player);
+                cx.keep_awake(self.seeking());
             }
         }
     }
@@ -620,6 +635,17 @@ impl Media {
             View::Music => self.track_path(),
             _ => self.entry().map(|e| e.path.clone()),
         }
+    }
+
+    /// A moving picture, as its probe said.
+    fn is_anim(&self, path: &Path) -> bool {
+        self.infos.get(path).is_some_and(|i| i.kind == Kind::Anim)
+    }
+
+    /// A video plays in the player: the arrows move through it, not the
+    /// folder, and it keeps the screen on. A moving picture does neither.
+    fn seeking(&self) -> bool {
+        self.view == View::Player && self.play.as_ref().is_some_and(|p| !self.is_anim(&p.path))
     }
 
     /// The next or previous picture or video in the folder, folders and
@@ -970,16 +996,44 @@ impl Media {
 
     fn probed(&mut self, path: PathBuf, info: Info, cx: &mut Cx) {
         let here = self.current().as_ref() == Some(&path);
-        let anim = info.kind == Kind::Anim;
+        let kind = info.kind;
         let size = (info.w, info.h);
+        self.fails.remove(&path);
         self.infos.insert(path.clone(), info);
         if !here || !matches!(self.view, View::Viewer | View::Player) {
             return;
         }
+        // A name of no known type: what the file is decides.
+        if files::look_of(&path).is_none() {
+            let look = match kind {
+                Kind::Video => Look::Video,
+                Kind::Audio => Look::Sound,
+                Kind::Image | Kind::Anim => Look::Picture,
+            };
+            let at = self.tiles.at();
+            for e in self.entries.get_mut(at).into_iter().chain(&mut self.extra) {
+                if e.path == path {
+                    e.look = look;
+                }
+            }
+            if look == Look::Sound {
+                self.music(cx);
+                return;
+            }
+        }
         self.pv.show(Some(size));
-        self.ask(For::Full(path.clone()));
-        if anim && self.play.is_none() {
-            self.start_play(cx, path, Flags::default());
+        match kind {
+            Kind::Anim if self.play.is_none() => {
+                self.forget();
+                self.view = View::Player;
+                self.start_play(cx, path, Flags::default());
+            }
+            Kind::Video if self.view == View::Viewer => {
+                self.forget();
+                self.view = View::Player;
+                self.ask(For::Full(path));
+            }
+            _ => self.ask(For::Full(path)),
         }
     }
 
@@ -999,6 +1053,9 @@ impl Media {
                     cy: self.pv.centre().1,
                     path: p.clone(),
                 };
+                if !pic.is_empty() {
+                    self.fails.remove(&p);
+                }
                 if self.current().as_ref() == Some(&p) && a.cmd == want && self.frame_is_still() {
                     self.full = pic;
                 }
@@ -1045,19 +1102,18 @@ impl Media {
                 self.ahead();
             }
         }
-        let Some(p) = &mut self.play else {
+        let Some(p) = self.play.as_mut().filter(|p| p.id == id) else {
             return;
         };
-        if p.id != id {
-            return;
-        }
         p.bar.pos_ms = pos_ms;
         p.bar.dur_ms = dur_ms;
         p.state = state;
+        let path = p.path.clone();
+        // It plays: a mark from a helper that died is past.
+        self.fails.remove(&path);
         if state == PlayState::Done {
             cx.keep_awake(false);
             // Seen to the end: next time it starts over.
-            let path = p.path.clone();
             self.resume.set(&path, dur_ms, dur_ms);
         }
     }
@@ -1169,7 +1225,11 @@ impl Media {
 
     /// Opens the file the app was started for, in its folder.
     fn open_given(&mut self, path: PathBuf, cx: &mut Cx) {
+        let path = std::path::absolute(&path).unwrap_or(path);
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        // Matched by name in the folder listed, however the path was put.
+        let path = dir.join(path.file_name().unwrap_or_default());
+        self.extra = files::entry(&path);
         self.open_dir(dir, 0, cx);
         if let Some(i) = self.entries.iter().position(|e| e.path == path) {
             self.tiles.select(i);
@@ -1620,7 +1680,7 @@ impl Page for Media {
                     Some(PlayState::Done) => Chip::new("rotate-cw", ""),
                     _ => Chip::new("play", ""),
                 };
-                let idle = self.play.is_none();
+                let idle = !self.seeking();
                 Bars::actions()
                     .over()
                     .chip(5, Chip::new("rewind", "").runs(BACK).disabled(idle))
@@ -1743,6 +1803,16 @@ impl Page for Media {
     fn front(&mut self, front: bool, cx: &mut Cx) {
         self.now_playing(cx);
         if front {
+            // A moving picture paused as the app left goes on.
+            if self.view == View::Player && !self.seeking() {
+                let paused = self
+                    .play
+                    .as_ref()
+                    .is_some_and(|p| p.state == PlayState::Paused);
+                if paused {
+                    self.resume_music();
+                }
+            }
             // The folder may have changed meanwhile.
             if self.view == View::Grid {
                 self.open_dir(self.dir.clone(), self.tiles.at(), cx);
@@ -1947,7 +2017,7 @@ impl Page for Media {
                 c.add(Command::toggle(SLIDES, "Slideshow", self.slides.is_some()).keys("p"));
             }
             View::Player => {
-                let (l, r) = if self.play.is_some() {
+                let (l, r) = if self.seeking() {
                     ("Back 10 s", "Ahead 10 s")
                 } else {
                     ("Previous", "Next")
@@ -2025,7 +2095,15 @@ impl Page for Media {
                     cx.keep_awake(false);
                 } else {
                     if self.view == View::Grid {
-                        self.open(cx);
+                        // From the first picture or video here on.
+                        let from = self.tiles.at();
+                        let Some(i) = (from..self.entries.len())
+                            .find(|&i| matches!(self.entries[i].look, Look::Picture | Look::Video))
+                        else {
+                            return;
+                        };
+                        self.tiles.select(i);
+                        self.show(cx);
                     }
                     self.slides = Some(cx.every(SLIDE_MS));
                     cx.keep_awake(true);
@@ -2044,7 +2122,7 @@ impl Page for Media {
                     }
                 }
             }
-            (View::Viewer | View::Player, LEFT | RIGHT) if self.play.is_none() => {
+            (View::Viewer | View::Player, LEFT | RIGHT) if !self.seeking() => {
                 self.step(if id == LEFT { -1 } else { 1 }, cx)
             }
             (View::Viewer, ZOOM_IN | ZOOM_OUT | FILL) => {

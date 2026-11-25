@@ -525,6 +525,10 @@ impl Fake {
             if let Ok(mut l) = CRASHED.lock() {
                 l.push(p.clone());
             }
+            // A moment before it goes, so what the app sent with this lands
+            // first. A host without SOCK_SEQPACKET links over datagrams,
+            // where the hangup is an error that a send can take.
+            std::thread::sleep(std::time::Duration::from_millis(50));
             return false;
         }
         match cmd {

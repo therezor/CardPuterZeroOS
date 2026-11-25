@@ -89,11 +89,7 @@ pub fn list(dir: &Path, sort: Sort) -> Vec<Entry> {
         let Ok(md) = std::fs::metadata(&path) else {
             continue;
         };
-        let when = md
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_secs() as i64);
+        let when = modified(&md);
         if md.is_dir() {
             folders.push(Entry {
                 path,
@@ -120,6 +116,28 @@ pub fn list(dir: &Path, sort: Sort) -> Vec<Entry> {
     }
     folders.extend(media);
     folders
+}
+
+/// One file as an entry, whatever its name says: a file opened here that
+/// the listing hides. A name of no known type looks like a picture until
+/// the helper's probe says. None for no file.
+pub fn entry(path: &Path) -> Option<Entry> {
+    let md = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+    Some(Entry {
+        path: path.to_path_buf(),
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        look: look_of(path).unwrap_or(Look::Picture),
+        when: modified(&md),
+        bytes: md.len(),
+    })
+}
+
+/// Seconds since the epoch.
+fn modified(md: &std::fs::Metadata) -> i64 {
+    md.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Names as people count: "track 2" before "track 10", case aside.
