@@ -2,6 +2,26 @@
 
 Measured on the device unless marked.
 
+## The board
+
+From M5's documentation and device tree (Sources, below), not measured.
+
+| Part | Detail |
+|---|---|
+| SoC | Raspberry Pi CM0 Lite: RP3A0 (BCM2710A1), 4x Cortex-A53 at 1.0 GHz |
+| RAM | 512 MB LPDDR2, shared with the VideoCore GPU |
+| Storage | microSD only, no eMMC |
+| Panel | ST7789V3 320x170 RGB565 on SPI0 CS0, DC on GPIO25, TE on GPIO5, backlight PWM on M5IOE1 |
+| Keyboard | TCA8418 at 0x34 on I2C1, IRQ on GPIO27 |
+| Audio | ES8389 codec at 0x10 (I2S), AW8737A amplifier (enable GPIO24), headphone detect GPIO17 |
+| Power | BQ27220 fuel gauge at 0x55, power-fail on GPIO6, no suspend to RAM |
+| IO expander | M5IOE1 at 0x4F: panel reset, backlight, keyboard and hub reset, Grove and HAT 5 V, mic mode |
+| Other on I2C1 | BMI270 at 0x68, BMM150 (some units), RX8130CE RTC at 0x32 |
+| Radios | CYW43439 Wi-Fi, 2.4 GHz only (SDIO, `brcmfmac`), Bluetooth over UART |
+| USB | `dwc2`, then a GL852G hub: SR9900A Ethernet, USB-A, USB-C, HAT. A switch picks host or device |
+| Camera | IMX219 on CSI, through unicam and libcamera. Not on the Lite |
+| HDMI | VC4 KMS (`vc4-kms-v3d`) |
+
 ## Measured
 
 - Debian 13 trixie, kernel `6.18.39+rpt-rpi-v8`, 352 MB RAM visible to Linux
@@ -246,6 +266,18 @@ Read without changing anything, on the stock M5 image with gh0st installed.
 - `/proc/PID/task/TID/children` is there (`CONFIG_PROC_CHILDREN`), so the
   switcher's figures walk the shell's own tree instead of all 167 processes.
   `CLK_TCK` is 100.
+- Read from M5's image build (`CardputerZero/pi-gen`, branch
+  `cardputerzero_v1.1`, `3b0e6f6`): the full Raspberry Pi OS desktop
+  (stages 0 to 4), with labwc running headless. Build tools, kernel headers
+  and both Noto CJK font sets stay in. User `pi`, password `raspberry`, SSH
+  on, time zone Asia/Shanghai.
+- M5's drivers come from their repo's `main`, unpinned, and build once into
+  `/lib/modules/<kver>/extra` with no DKMS. A kernel upgrade drops the
+  panel, keyboard and audio drivers.
+- The launcher (`applaunch` 0.6.111) is about 99 MB installed, 35 MB of it
+  programs. Its bundled ZClaw chat app fetches Cloudflare's trace, which
+  returns the caller's IP and location, and a Microsoft connectivity URL
+  at every start. Read from its binaries and `CardputerZero/launcher`.
 
 ## Dark current
 
@@ -280,6 +312,26 @@ averaged over 10 to 20 s. Each change was reverted after its run.
 - After a restart of Gh0st OS the Ethernet chip reads `power/control=auto`
   from the image's rule, the hub and root hub are suspended, and dwc2 fired
   no IRQ in 10 s.
+
+## Stock current, measured by others
+
+From `InstantComet/cz-battery-saver` and `vasilpetrov/cardputerzero-batt-opt`
+(Sources), on the stock image with a 1750 mAh battery.
+
+| Cause | Cost |
+|---|---|
+| Stock idle, screen on | 416 mA, about 4.2 h |
+| USB Ethernet chip never suspends: hub and `dwc2` awake, about 8000 IRQ/s | about 105 mA |
+| Launcher keeps an audio stream open: ES8389 and I2S DMA never stop | 35 to 40 mA |
+| Launcher keeps sending frames with the backlight off | about 30 mA |
+| Wi-Fi on (screen off) | about 38 mA |
+| PipeWire running (screen off) | about 36 mA |
+| Backlight | about 30 mA |
+| Moving through the launcher | 500 to 700 mA |
+| Floor: the CM0 alone, everything off | about 173 mA |
+
+Bluetooth, a 600 MHz CPU cap, HDMI and the camera made no measurable
+difference.
 
 ## Sound of a paused app
 
@@ -751,6 +803,17 @@ SSH.
 | IRQs on dwc2, mmc, spi | about 8,000 a second |
 | Battery current | 349 mA |
 
-## Baseline (stock APPLaunch)
+## Sources
 
-To fill in with `scripts/measure.sh M5CardputerZero-APPLaunch`.
+- M5Stack: https://docs.m5stack.com/en/CardputerZero ,
+  https://docs.m5stack.com/en/compute/cardputerzero/image
+- CNX Software: https://www.cnx-software.com/2026/05/25/cardputerzero-a-raspberry-pi-cm0-pocket-computer-for-makers/
+- M5's image build: https://github.com/CardputerZero/pi-gen (branch `cardputerzero_v1.1`)
+- Drivers and overlays: https://github.com/m5stack/m5stack-linux-dtoverlays (`modules/CardputerZero`, `st7789v-1.0`)
+- The stock launcher, source and release debs: https://github.com/CardputerZero/launcher
+- A Kali image built the same way (mmdebstrap, the Raspberry Pi kernel, M5's drivers): https://github.com/on-my-machine-works/kali-on-cardputerzero
+- Power: https://github.com/InstantComet/cz-battery-saver ,
+  https://github.com/vasilpetrov/cardputerzero-batt-opt
+- Bring-up notes, kernel and OS versions: https://github.com/oumike/camillia-mt/issues/155
+- An index of CardputerZero repos: https://github.com/UnAneOnyme/CardputerZeroCollection
+- M5's Imager fork: https://github.com/CardputerZero/m5stack-imager

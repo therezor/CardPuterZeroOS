@@ -2,8 +2,8 @@
 
 **Gh0st OS**, a lean OS for the M5Stack CardputerZero. This workspace is its
 Rust shell: the launcher, plus Settings and the terminal as apps. They
-replace the stock C++/LVGL APPLaunch and keep its app contract. The distro
-side is in `docs/distro-plan.md`.
+replace the stock C++/LVGL APPLaunch and keep its app contract. The image
+side is in `docs/image-build.md`.
 
 ## Writing style
 
@@ -21,9 +21,8 @@ Applies to chat replies, commit messages, docs and code comments.
 Raspberry Pi CM0 (4x Cortex-A53, 512 MB). ST7789V 320x170 RGB565 on SPI, driven
 by DRM `panel-mipi-dbi-m` with fbdev emulation at `/dev/fb_lcd`. TCA8418
 keyboard on evdev (`/dev/input/by-path/platform-3f804000.i2c-event`). BQ27220
-battery in `/sys/class/power_supply`. Details and sources in
-`docs/distro-plan.md`. Nothing here is measured on a device yet: mark what is, in
-`docs/hardware-facts.md`.
+battery in `/sys/class/power_supply`. The board, measurements and sources
+are in `docs/hardware-facts.md`.
 
 ## Layout
 

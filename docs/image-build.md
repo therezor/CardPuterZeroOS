@@ -1,7 +1,9 @@
 # Building the Gh0st OS image
 
 The image is Debian 13 trixie arm64, built from pinned inputs in a container.
-The reasons behind each choice are in `distro-plan.md`. Everything here runs the same on the Mac and on CI.
+Debian, because every CardputerZero app is an arm64 deb built for trixie.
+The Raspberry Pi `rpt` kernel is pinned, because M5's drivers are made for
+it. Everything here runs the same on the Mac and on CI.
 
 ## Quick start
 
@@ -148,6 +150,15 @@ PipeWire's sockets. One timer, the daily update check
 (`gh0st-update-daily.timer`, off from Settings); the tmpfiles timer is
 masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the checks hold it to.
 
+**Privacy.** The deny lists keep out cloud-init, Raspberry Pi Connect,
+avahi, ModemManager, popularity-contest and systemd-coredump. journald
+stores nothing until Settings turns logs on. NetworkManager sends no
+hostname and runs no connectivity check. It gives each Wi-Fi network a
+stable address of its own and scans with a random one. SSH is off and
+every radio starts blocked (`rfkill default_state=0`). The kernel log and
+kernel pointers are root-only, and core dumps go nowhere. The hostname is
+`zero` until setup names the device.
+
 ## Kernel and boot
 
 - No initramfs. Root is found by PARTUUID.
@@ -159,6 +170,15 @@ masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the ch
   splash. `fb_load` draws the logo once the kernel is up.
 - `config.txt` is the stock one minus the Pi 4/5 sections, `auto_initramfs`
   and the splash. `gpu_mem=64` stays first, where Settings edits it.
+- Under KMS the GPU and the camera draw from the 64 MB CMA pool
+  (`vc4-kms-v3d,cma-64`), not from `gpu_mem`. Page cache borrows idle CMA
+  until the camera needs it.
+- Bluetooth stays off through rfkill, not `dtoverlay=disable-bt`. That
+  overlay would move `serial0` off the mini UART (GPIO14/15), which the
+  GPS and LoRa Cap apps use.
+- `cmdline.txt` adds `fbcon=map:off`, so the console stays off the panel,
+  `psi=1`, so `gh0st session` can watch memory pressure, and `quiet
+  loglevel=3`.
 
 ## Partitions and first boot
 
@@ -172,6 +192,10 @@ bind-mounted onto itself to keep it `nodev,nosuid`. One filesystem means no
 split to guess and nothing to resize by hand. 1% of root is reserved, so the
 system still has room when the home folder fills the card. The disk ID is
 fixed (`0x67683073`, "gh0s"), so every card shares PARTUUIDs.
+
+`/tmp` is a tmpfs of 32 MB, not the default half of RAM: big temporary
+files belong in `/var/tmp`. Swap is zram only, half of RAM with zstd,
+`vm.swappiness=100` and `vm.page-cluster=0`. Nothing swaps to the card.
 
 On first boot `gh0st-grow-root.service` grows p2 and then its filesystem,
 both while root is mounted: the kernel takes a mounted partition's new size
