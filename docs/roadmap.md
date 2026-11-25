@@ -3,8 +3,7 @@
 1. **Outside keyboards.** Pair and connect Bluetooth and USB keyboards to the
    device, and pick a layout. (The Keyboard app is the other way round: the
    device as a keyboard for a computer or phone, `docs/keyboard.md`.)
-2. **File manager.** Browse, open, copy, move and delete files on the card.
-3. **App isolation.** Every app runs as UID 1000, the same user as the shell,
+2. **App isolation.** Every app runs as UID 1000, the same user as the shell,
    with the network, the camera, the mic and the home directory open to it.
    In steps:
 

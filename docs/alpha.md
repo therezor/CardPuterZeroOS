@@ -104,3 +104,8 @@ Open an issue on GitHub and include:
   MT7612U, Realtek RTL8812AU and RTL8811AU, and more; `gh0st-wifi`).
 - The hotspot takes the Wi-Fi: the device leaves its network while it runs.
 - The training runs only in setup.
+- After some hours up, a photo can fail with "The photo wasn't saved": the
+  memory the camera needs in one piece is split. Video still works, and a
+  restart clears it.
+- Media plays video up to 2560x1440. Larger videos show a tile but don't
+  play.

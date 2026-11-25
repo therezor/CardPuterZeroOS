@@ -245,7 +245,7 @@ checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 
 [[package]]
 name = "gh0st"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-core",
  "gh0st-dbus",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-core",
  "gh0st-dbus",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-camera"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "libc",
@@ -276,21 +276,21 @@ dependencies = [
 
 [[package]]
 name = "gh0st-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "gh0st-dbus"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
 ]
 
 [[package]]
 name = "gh0st-files"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",
@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-keyboard"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",
@@ -311,7 +311,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-keyring"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-keyringd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-media"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "libc",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-session"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-core",
  "gh0st-dbus",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-settings"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-shell"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-core",
  "gh0st-ui",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-store"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-term"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-text"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-ui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ab_glyph",
  "libc",
@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "gh0st-update"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gh0st-app",
  "gh0st-core",

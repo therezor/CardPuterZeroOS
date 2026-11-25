@@ -5,9 +5,10 @@
 **A lean, private OS for the M5Stack CardputerZero.**
 Faster than stock, private by default, and every CardputerZero app still runs.
 
-[⬇️ Download v0.2.0 alpha](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.2.0) ·
+[⬇️ Download v0.3.0 alpha](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.3.0) ·
 [⚡ Flash in 5 minutes](#-flash-it) ·
 [🧪 Tester notes](docs/alpha.md) ·
+[📝 Changelog](CHANGELOG.md) ·
 [🗺️ Roadmap](docs/roadmap.md)
 
 <img src="docs/screenshots/home.png" width="640" alt="The Gh0st OS home screen on a CardputerZero">
@@ -38,8 +39,32 @@ pocket can't unlock it, because it takes Tab and then Enter.
 signed mirror of its catalog. Browse by category, search, and install,
 update or remove with real progress. It sends no account and no device ID.
 
-📷 **A new Camera.** Photos and video with zoom, exposure, a grid and a timer,
-on the CardputerZero's camera.
+📷 **A new Camera.** Photos and video with zoom, exposure, a grid, a timer and
+a shutter sound, on the CardputerZero's camera.
+
+📁 **Files.** One pane with two sides, archives that open as folders, and
+SFTP, FTP and WebDAV servers with their passwords in the keyring. Enter opens
+a file in the app for its type; O offers the others.
+
+📝 **Text.** A code and text editor that opens files of any size, colours
+the common languages, finds and replaces, holds four files at once, and
+brings back unsaved edits after a crash.
+
+🖼️ **Media.** Pictures, video and music in one app. Music plays on behind
+other apps, with Pause and Next in its notification.
+
+⌨️ **Keyboard.** The CardputerZero as a keyboard, mouse and media remote for
+a computer or phone, over Bluetooth or a USB cable.
+
+🔑 **Keyring.** Passwords for servers and apps, locked with your login
+password. An app asks before it reads one.
+
+📋 **Apps that work together.** Copy and paste between apps, open any file
+in its app, and a file chooser for apps that ask for one. Apps that use the
+standard desktop portal get it too.
+
+🔊 **System sounds.** Soft ticks and chimes as you move, choose and unlock.
+Settings turns them off.
 
 ⚙️ **Settings, a terminal and Updates, built in.** Wi-Fi, a Wi-Fi hotspot with
 a QR code, Bluetooth, display, sound, look, time zone, SSH and logs, all from
@@ -82,7 +107,7 @@ You need a CardputerZero, a genuine microSD card of 8 GB or more, and
 [Raspberry Pi Imager](https://www.raspberrypi.com/software/) 2.0.2 or later.
 Flashing erases the card.
 
-1. ⬇️ From the [v0.2.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.2.0),
+1. ⬇️ From the [v0.3.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.3.0),
    download `gh0st-release-DATE.img.xz`.
 2. 🍓 In Imager, pick **Raspberry Pi Zero 2 W** as the device, then
    **Use custom** as the OS, and choose the `.img.xz`. Don't unpack it.
@@ -117,24 +142,24 @@ too.
 
 ## 🚧 Status
 
-**v0.2.0 is an alpha.** It runs every day on our test device, but it can
+**v0.3.0 is an alpha.** It runs every day on our test device, but it can
 still break, and the SDK and the design can still change. To report a bug,
 open an issue with the Build from Settings > About. The
 [tester notes](docs/alpha.md) list what else to include.
 
 Next on the [roadmap](docs/roadmap.md):
 
-- ⌨️ A keyboard app for Bluetooth and USB keyboards.
-- 📁 A file manager.
+- ⌨️ Bluetooth and USB keyboards for the device itself.
 - 🛡️ App isolation: network, files, camera and mic per app.
 
 ## 🛠️ For developers
 
 Gh0st OS is Debian 13, built from pinned inputs in a container
 ([docs/image-build.md](docs/image-build.md)). The shell, Settings, the
-terminal, the Store app, Updates and Camera are Rust. Each is a static binary of
-1 to 2 MB with its fonts and icons built in, and each runs one thread with one
-`poll` loop.
+terminal, the Store app, Updates, Camera, Files, Text, Media, Keyboard and
+Keyring are Rust. Each is a static binary of 1 to 2 MB with its fonts and
+icons built in, and each runs one thread with one `poll` loop. Camera and
+Media decode in small C++ helpers, so a bad file can't take the app down.
 
 ```sh
 cargo test --workspace
