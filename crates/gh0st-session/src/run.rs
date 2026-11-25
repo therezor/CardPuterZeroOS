@@ -106,6 +106,7 @@ pub fn main(args: &[String]) -> i32 {
     portal.settings_bin = std::env::var_os("GH0ST_SETTINGS")
         .unwrap_or_else(|| "/usr/bin/gh0st-settings".into())
         .into();
+    portal.open = test;
     let mut s = Session {
         bus: conn,
         link,
@@ -417,7 +418,11 @@ impl Session {
         for m in lines {
             match m.first().map(String::as_str) {
                 Some("action" | "closed") => self.notes.shell_said(&m),
-                Some("front" | "clipboard-clear") => self.clipboard.shell_said(&m),
+                Some("front") => {
+                    self.clipboard.shell_said(&m);
+                    self.portal.shell_said(&m);
+                }
+                Some("clipboard-clear") => self.clipboard.shell_said(&m),
                 _ => self.portal.shell_said(&m),
             }
         }

@@ -104,12 +104,13 @@ fn through_ffmpeg(file: File, w: usize, h: usize) -> Result<wallpaper::Picture, 
         w * 2,
         h * 2
     );
-    // /dev/stdin opens the file again, with its own offset.
+    // /dev/stdin opens the file again, with its own offset. A hostile
+    // picture gets 30 s of CPU and 64 MP at most.
     let mut child = Command::new("ffmpeg")
+        .args(["-v", "error", "-nostdin", "-timelimit", "30"])
         .args([
-            "-v",
-            "error",
-            "-nostdin",
+            "-max_pixels",
+            "64000000",
             "-i",
             "/dev/stdin",
             "-frames:v",

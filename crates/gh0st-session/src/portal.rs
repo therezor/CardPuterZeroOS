@@ -5,6 +5,7 @@
 
 use gh0st_dbus::{Message, Ty, Value, bus};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 
 pub const NAME: &str = "org.freedesktop.portal.Desktop";
@@ -155,6 +156,10 @@ pub struct Portal {
     /// `gh0st-settings`, which fits a picture to the screen.
     pub settings_bin: PathBuf,
     job: Option<Job>,
+    /// The process group of the app in front, as the shell says.
+    pub front: Option<i32>,
+    /// Anyone may: `gh0st session --test`, with no shell.
+    pub open: bool,
 }
 
 /// The user, as the Account portal gives them: login name and real name.
@@ -598,6 +603,14 @@ impl Portal {
         }
     }
 
+    /// `pid` is the app in front, or a program it started.
+    fn in_front(&self, pid: i32) -> bool {
+        self.open
+            || self
+                .front
+                .is_some_and(|g| pid > 0 && gh0st_core::procfs::belongs_to(pid, g))
+    }
+
     fn wallpaper_call(&mut self, m: &Message, sender: &str, pid: i32, app: &str) -> Message {
         let file = match m.member.as_deref() {
             Some("SetWallpaperURI") => m
@@ -622,6 +635,10 @@ impl Portal {
         if self.job.is_some() {
             return Message::error(m, bus::err::LIMITS, "a wallpaper is being set");
         }
+        // The fit runs ffmpeg: for the app in front, or one the user trusts.
+        if !self.in_front(pid) && !self.remembered("wallpaper", app) {
+            return Message::error(m, bus::err::ACCESS_DENIED, "only the app in front may");
+        }
         let tmp = self
             .scratch
             .join(format!("wallpaper-{}.png", self.next + 1));
@@ -634,12 +651,14 @@ impl Portal {
             return Message::error(m, bus::err::LIMITS, "too many requests");
         };
         let _ = std::fs::create_dir_all(&self.scratch);
+        // Its own group, so a cancel stops ffmpeg under it too.
         let child = std::process::Command::new(&self.settings_bin)
             .arg("--import-wallpaper")
             .arg("-")
             .arg(&tmp)
             .stdin(file)
             .stdout(std::process::Stdio::piped())
+            .process_group(0)
             .spawn();
         match child {
             Ok(child) => self.job = Some(Job { id, child }),
@@ -784,7 +803,10 @@ impl Portal {
         if let Kind::Wallpaper { tmp, .. } = &r.kind {
             let _ = std::fs::remove_file(tmp);
             if let Some(mut j) = self.job.take_if(|j| j.id == r.id) {
-                let _ = j.child.kill();
+                if let Ok(g) = i32::try_from(j.child.id()) {
+                    // SAFETY: a signal to the group the child leads.
+                    unsafe { libc::kill(-g, libc::SIGKILL) };
+                }
                 let _ = j.child.wait();
             }
         }
@@ -927,6 +949,13 @@ impl Portal {
     /// A line from the shell about request `id`.
     pub fn shell_said(&mut self, fields: &[String]) {
         let verb = fields.first().map(String::as_str).unwrap_or("");
+        if verb == "front" {
+            self.front = fields
+                .get(1)
+                .and_then(|g| g.parse::<i32>().ok())
+                .filter(|&g| g > 0);
+            return;
+        }
         let Some(id) = fields.get(1).and_then(|v| v.parse::<u64>().ok()) else {
             return;
         };
@@ -1351,6 +1380,12 @@ mod tests {
             m.fds = vec![std::fs::File::open(dir.join("pic.png")).unwrap().into()];
             m
         };
+        assert_eq!(
+            p.call(&set(), ME, Some(300), "Media").error_name.as_deref(),
+            Some(bus::err::ACCESS_DENIED),
+            "nothing in front: no fit"
+        );
+        p.open = true;
         assert!(p.call(&set(), ME, Some(300), "Media").error_name.is_none());
         assert!(
             p.call(&set(), ME, Some(300), "Media").error_name.is_some(),
@@ -1376,7 +1411,8 @@ mod tests {
         );
         let conf = gh0st_core::config::Config::load(&dir.join("conf/config.json"));
         assert_eq!(conf.wallpaper(), gh0st_ui::wallpaper::OWN);
-        // Always: the next one is kept without a question.
+        // Always: the next one is kept without a question, from behind too.
+        p.open = false;
         p.call(&set(), ME, Some(300), "Media");
         p.job_done();
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
