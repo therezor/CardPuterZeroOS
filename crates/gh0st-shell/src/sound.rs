@@ -203,6 +203,19 @@ mod tests {
         .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&prog, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A test thread that forks while the script is being written holds
+        // it open until it execs, and running it then fails (ETXTBSY).
+        for _ in 0..100 {
+            match std::process::Command::new(&prog)
+                .stdin(std::process::Stdio::null())
+                .status()
+            {
+                Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                _ => break,
+            }
+        }
         (Player::new(Some(prog.display().to_string())), out)
     }
 
