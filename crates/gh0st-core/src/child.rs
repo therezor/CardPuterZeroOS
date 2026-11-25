@@ -290,6 +290,8 @@ mod tests {
 
     #[test]
     fn files_reach_a_real_shell_as_they_are() {
+        // Another test's waitpid(-1) would take this child's exit.
+        let _one = CHILD_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         use std::os::unix::ffi::OsStrExt;
         let d = std::env::temp_dir().join(format!("gh0st-argv-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();

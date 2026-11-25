@@ -203,6 +203,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_real_tree_is_walked_into_a_child_in_its_own_session() {
+        // Another test's waitpid(-1) would take this child's exit.
+        let _one = crate::child::CHILD_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use std::os::unix::process::CommandExt;
         let mut c = std::process::Command::new("/bin/sh")
             .args(["-c", "setsid sleep 2 & exec sleep 2"])

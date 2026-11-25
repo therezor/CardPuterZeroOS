@@ -1053,6 +1053,10 @@ mod tests {
 
     #[test]
     fn a_pinned_file_matches_by_size_and_hash() {
+        // Another test's waitpid(-1) would take this child's exit.
+        let _one = crate::child::CHILD_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let p = std::env::temp_dir().join(format!("gh0st-pinned-{}", std::process::id()));
         std::fs::write(&p, "abc").unwrap();
         let sha = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
@@ -1070,6 +1074,10 @@ mod tests {
     /// Skipped where either tool is missing; CI installs both.
     #[test]
     fn sqv_accepts_our_signature_and_nothing_else() {
+        // Another test's waitpid(-1) would take this child's exit.
+        let _one = crate::child::CHILD_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let have = |t: &str| {
             std::process::Command::new(t)
                 .arg("--version")

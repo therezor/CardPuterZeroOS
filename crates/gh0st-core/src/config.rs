@@ -683,6 +683,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_stopped_writer_doesnt_hold_up_a_save() {
+        // Another test's waitpid(-1) would take this child's exit.
+        let _one = crate::child::CHILD_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         use std::os::unix::fs::FileExt;
         let path = scratch("held");
         std::fs::write(&path, STOCK).unwrap();
