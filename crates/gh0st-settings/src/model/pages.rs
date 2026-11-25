@@ -134,6 +134,59 @@ pub struct AppRow {
     /// Keeps running when sent to the background instead of pausing.
     pub background: bool,
     pub pinned: bool,
+    /// How it runs: in its sandbox or not, and what it may reach there.
+    pub isolation: gh0st_core::apps::Isolation,
+    /// Why it runs outside its sandbox whatever the user picks.
+    pub exempt: Option<gh0st_core::apps::Exempt>,
+}
+
+/// An app's sandbox rows: the switch, and what it may reach inside.
+fn isolation_rows(a: &AppRow) -> Vec<Item> {
+    use gh0st_core::apps::Exempt;
+    let f = || a.file.clone();
+    let why = match a.exempt {
+        Some(Exempt::BuiltIn) => Some("Built in"),
+        Some(Exempt::Root) => Some("Runs as root"),
+        None => None,
+    };
+    if let Some(why) = why {
+        return vec![Item::new(
+            "shield",
+            "Isolation",
+            Value::Text(why.into()),
+            Act::None,
+        )];
+    }
+    let iso = a.isolation;
+    let mut rows = vec![Item::new(
+        "shield",
+        "Isolation",
+        Value::Toggle(iso.sandbox),
+        Act::Set(Setting::AppIsolate(f())),
+    )];
+    if iso.sandbox {
+        rows.extend([
+            Item::new(
+                "globe",
+                "Network",
+                Value::Toggle(iso.grants.network),
+                Act::Set(Setting::AppNetwork(f())),
+            ),
+            Item::new(
+                "camera",
+                "Camera",
+                Value::Toggle(iso.grants.camera),
+                Act::Set(Setting::AppCamera(f())),
+            ),
+            Item::new(
+                "mic",
+                "Microphone",
+                Value::Toggle(iso.grants.mic),
+                Act::Set(Setting::AppMic(f())),
+            ),
+        ]);
+    }
+    rows
 }
 
 /// Symbols an app's icon can be swapped for, after its own.
@@ -566,32 +619,37 @@ pub fn build(id: &PageId, s: &State) -> Page {
             let f = || a.file.clone();
             (
                 "App",
-                Body::List(vec![
-                    Item::new(
-                        "layout-grid",
-                        "Show on home",
-                        Value::Toggle(a.shown),
-                        Act::Set(Setting::AppShown(f())),
-                    ),
-                    Item::new(
-                        "palette",
-                        "Icon",
-                        Value::Choice(icon_label(&a.icon)),
-                        Act::Set(Setting::AppIcon(f())),
-                    ),
-                    Item::new(
-                        "arrow-left-right",
-                        "Run in background",
-                        Value::Toggle(a.background),
-                        Act::Set(Setting::AppBackground(f())),
-                    ),
-                    Item::new(
-                        "pin",
-                        "Pinned",
-                        Value::Toggle(a.pinned),
-                        Act::Set(Setting::AppPinned(f())),
-                    ),
-                ]),
+                Body::List(
+                    vec![
+                        Item::new(
+                            "layout-grid",
+                            "Show on home",
+                            Value::Toggle(a.shown),
+                            Act::Set(Setting::AppShown(f())),
+                        ),
+                        Item::new(
+                            "palette",
+                            "Icon",
+                            Value::Choice(icon_label(&a.icon)),
+                            Act::Set(Setting::AppIcon(f())),
+                        ),
+                        Item::new(
+                            "arrow-left-right",
+                            "Run in background",
+                            Value::Toggle(a.background),
+                            Act::Set(Setting::AppBackground(f())),
+                        ),
+                        Item::new(
+                            "pin",
+                            "Pinned",
+                            Value::Toggle(a.pinned),
+                            Act::Set(Setting::AppPinned(f())),
+                        ),
+                    ]
+                    .into_iter()
+                    .chain(isolation_rows(&a))
+                    .collect(),
+                ),
                 vec![],
             )
         }
@@ -2165,6 +2223,33 @@ mod tests {
         let on: Vec<Value> = (0..2).map(|i| p.item(i).unwrap().value.clone()).collect();
         assert_eq!(on, [false, true].map(Value::Toggle).to_vec());
         assert_eq!(p.item(1).unwrap().act, Act::Set(Setting::Ip6Privacy));
+    }
+
+    #[test]
+    fn an_isolated_app_shows_what_it_may_reach_and_an_exempt_one_why() {
+        use gh0st_core::apps::Exempt;
+        let mut s = state();
+        s.apps = vec![AppRow {
+            file: "zsynth.desktop".into(),
+            name: "zsynth".into(),
+            ..AppRow::default()
+        }];
+        let id = PageId::App("zsynth.desktop".into());
+        let labels = |s: &State| {
+            let p = build(&id, s);
+            (0..p.len())
+                .map(|i| p.item(i).unwrap().label.clone())
+                .collect::<Vec<_>>()
+        };
+        let all = labels(&s);
+        assert!(all.ends_with(&["Isolation", "Network", "Camera", "Microphone"].map(String::from)));
+        s.apps[0].isolation.sandbox = false;
+        assert!(labels(&s).ends_with(&["Isolation".to_string()]));
+        s.apps[0].exempt = Some(Exempt::Root);
+        let p = build(&id, &s);
+        let last = p.item(p.len() - 1).unwrap();
+        assert_eq!(last.value, Value::Text("Runs as root".into()));
+        assert_eq!(last.act, Act::None);
     }
 
     /// Each setting has one home, so no row's action shows up on two pages.

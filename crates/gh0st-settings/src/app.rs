@@ -354,11 +354,20 @@ impl Settings {
             .unwrap_or_default();
         s.clock_24h = config.clock_24h();
         let pins = apps::load_pins();
+        let catalog = gh0st_core::store::Catalog::load();
+        let root = |a: &apps::App| {
+            catalog.as_ref().is_some_and(|c| {
+                c.by_desktop(a.id())
+                    .is_some_and(|e| e.flags.has(gh0st_core::store::Flags::ROOT))
+            })
+        };
         let mut rows: Vec<AppRow> =
             apps::scan_all(&Dirs::from_env(), &config, &pins, desktop::is_executable)
                 .into_iter()
                 .filter(|a| a.file != "settings.desktop" && !a.entry.no_display)
                 .map(|a| AppRow {
+                    isolation: apps::isolation(&config, &a, root(&a)),
+                    exempt: apps::exempt(&a, root(&a)),
                     icon: config
                         .get_str(&apps::app_key(&a.file, "icon"))
                         .unwrap_or("")
@@ -602,6 +611,24 @@ impl Settings {
                 if on {
                     cx.toast("Runs on when you leave it; it may draw over the screen");
                 }
+            }
+            Setting::AppIsolate(file) => {
+                let on = !self.app(file).is_some_and(|a| a.isolation.sandbox);
+                cx.settings().set_bool(&apps::app_key(file, "isolate"), on);
+                cx.toast(if on {
+                    "Isolated from the next time it opens"
+                } else {
+                    "Off from the next time it opens: it can reach all your files"
+                });
+            }
+            Setting::AppNetwork(file) | Setting::AppCamera(file) | Setting::AppMic(file) => {
+                let (leaf, now) = match (s, self.app(file).map(|a| a.isolation.grants)) {
+                    (Setting::AppNetwork(_), g) => ("network", g.is_none_or(|g| g.network)),
+                    (Setting::AppCamera(_), g) => ("camera", g.is_none_or(|g| g.camera)),
+                    (_, g) => ("mic", g.is_none_or(|g| g.mic)),
+                };
+                cx.settings().set_bool(&apps::app_key(file, leaf), !now);
+                cx.toast("Counts from the next time it opens");
             }
             Setting::AppPinned(file) => {
                 let name = self.app(file).map(|a| a.name.clone()).unwrap_or_default();

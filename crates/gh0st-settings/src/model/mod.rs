@@ -78,6 +78,11 @@ pub enum Setting {
     AppIcon(String),
     AppBackground(String),
     AppPinned(String),
+    /// The app's sandbox, and what it may reach there.
+    AppIsolate(String),
+    AppNetwork(String),
+    AppCamera(String),
+    AppMic(String),
     WifiRadio,
     Bluetooth,
     NetworkTime,

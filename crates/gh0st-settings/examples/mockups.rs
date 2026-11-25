@@ -87,6 +87,15 @@ fn sample_state() -> State {
         icon: String::new(),
         background: file == "music.desktop",
         pinned: matches!(file, "files.desktop" | "camera.desktop"),
+        // Music keeps its sandbox, without the microphone.
+        isolation: gh0st_core::apps::Isolation {
+            sandbox: true,
+            grants: gh0st_core::sandbox::Grants {
+                mic: false,
+                ..Default::default()
+            },
+        },
+        exempt: None,
     };
     State {
         brightness: Some(80),

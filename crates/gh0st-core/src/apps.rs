@@ -253,6 +253,16 @@ pub struct Isolation {
     pub grants: crate::sandbox::Grants,
 }
 
+impl Default for Isolation {
+    /// Sandboxed, with everything granted: an app nobody has set yet.
+    fn default() -> Isolation {
+        Isolation {
+            sandbox: true,
+            grants: crate::sandbox::Grants::default(),
+        }
+    }
+}
+
 /// Why an app runs outside the sandbox whatever the user picks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exempt {
