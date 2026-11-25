@@ -10,7 +10,9 @@ fn main() {
         std::process::exit(2);
     };
     let inner: Vec<std::ffi::OsString> = args[sep + 1..].iter().map(Into::into).collect();
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
     let run = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_default();
