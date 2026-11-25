@@ -143,6 +143,9 @@ needs the `gh0st-base` of its own build.
   namespaces work (Linux CI, the device). An app keeps Documents, new
   folders and its notices, and reaches no secret, start file, other app's
   data, process or network.
-- On the device: the escapes above, each refused; Camera photo and video
-  with sound, Media, a `Terminal=true` app, and Store apps run plain and
-  sandboxed under `strace -f -Z` with no new failures.
+- On the device: the escapes above, each refused through a real launch;
+  Camera photo and video with sound, Media, a `Terminal=true` app, the
+  Settings switches, pins, I2C, SPI, GPIO and serial ports. 19 stock and
+  Store apps ran plain and sandboxed under `strace -f -Z`, first screen and
+  no keys, with no new failures. `crates/gh0st-core/examples/sandboxed.rs`
+  runs one by hand.
