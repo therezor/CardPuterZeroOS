@@ -102,6 +102,8 @@ pub const FILES: usize = 4;
 const WRAP_MAX: u64 = 16 << 10;
 /// One step of indent when the file's own can't be told.
 const INDENT: &[u8] = b"    ";
+/// The most a copy reads.
+const COPY_MAX: u64 = 16 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyModel {
@@ -443,7 +445,11 @@ impl Editor {
             }
             (ask::RECOVER, true) => {
                 if self.files.len() >= FILES {
-                    cx.toast("Four files are open: the edits stay in the journal");
+                    // Its journal stays untouched, and the question comes
+                    // back as this file shows again.
+                    self.journal = None;
+                    self.doc.borrow_mut().buf.keep_changes(false);
+                    cx.toast("Four files are open: close one to keep the edits");
                     return;
                 }
                 let typed = r.typed();
@@ -940,7 +946,11 @@ impl Editor {
         let mut at = d.buf.line_start(a).unwrap_or(0);
         loop {
             let end = d.buf.line_end(at).unwrap_or(len);
-            let text = d.buf.bytes(at..end.min(at + 4096)).unwrap_or_default();
+            let mut text = d.buf.bytes(at..end.min(at + 4096)).unwrap_or_default();
+            // The CR of a CR LF ending is not text: a blank line stays blank.
+            if end <= at + 4096 && text.last() == Some(&b'\r') {
+                text.pop();
+            }
             lines.push((at, text));
             // A selection ending at a line's start leaves that line out.
             if end >= len || end + 1 >= b.max(a + 1) || lines.len() >= 4096 {
@@ -995,7 +1005,10 @@ impl Editor {
         let last = lines[lines.len() - 1]
             .0
             .saturating_add_signed(shift - last_shift);
-        let end = d.buf.line_end(last).unwrap_or(d.buf.len());
+        let mut end = d.buf.line_end(last).unwrap_or(d.buf.len());
+        if end > last && d.buf.bytes(end - 1..end).ok().as_deref() == Some(b"\r") {
+            end -= 1;
+        }
         drop(d);
         if self.anchor.is_some() {
             self.anchor = Some(first);
@@ -1522,14 +1535,29 @@ impl Editor {
     }
 
     /// The selection to the clipboard every app shares, bytes as they are.
-    /// This app keeps its own copy too, for when the shared one refuses.
+    /// This app keeps its own copy too, for when the shared one won't give
+    /// it back. False, and said, unless all of it was copied: a cut then
+    /// keeps the text.
     fn copy(&mut self, cx: &mut Cx) -> bool {
         let Some((a, b)) = self.selection() else {
             return false;
         };
-        let bytes = self.doc.borrow_mut().buf.bytes(a..b.min(a + (16 << 20)));
-        self.clip = bytes.unwrap_or_default();
-        cx.copy(&self.clip);
+        if b - a > COPY_MAX {
+            cx.toast_tone(Tone::Warning, "Too much to copy");
+            return false;
+        }
+        let bytes = match self.doc.borrow_mut().buf.bytes(a..b) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                cx.toast_tone(Tone::Critical, &e.to_string());
+                return false;
+            }
+        };
+        if !cx.copy(&bytes) {
+            cx.toast_tone(Tone::Warning, "Too much to copy");
+            return false;
+        }
+        self.clip = bytes;
         true
     }
 
@@ -1982,10 +2010,11 @@ impl Editor {
                 let clip = cx.paste().unwrap_or_else(|| self.clip.clone());
                 if clip.is_empty() {
                     cx.toast("Nothing copied");
+                } else {
+                    self.doc.borrow_mut().buf.seal();
+                    self.type_bytes(&clip);
+                    self.doc.borrow_mut().buf.seal();
                 }
-                self.doc.borrow_mut().buf.seal();
-                self.type_bytes(&clip);
-                self.doc.borrow_mut().buf.seal();
             }
             cmd::ALL => {
                 self.anchor = Some(0);

@@ -678,3 +678,64 @@ fn the_line_index_reads_again_after_an_undo_it_could_not_follow() {
     d.wait(100);
     assert!(std::fs::read(&p).unwrap().ends_with(b"\nXend\n"));
 }
+
+#[test]
+fn paste_with_nothing_copied_keeps_the_selection() {
+    let p = temp("nopaste.txt", b"abc\n");
+    let mut d = editing(&p);
+    d.keys("shift+fn+c\nshift+fn+c\nctrl+v");
+    assert_eq!(d.toast(), Some("Nothing copied"));
+    assert!(d.status().is_none(), "the text is as it was");
+}
+
+#[test]
+fn a_cut_that_cannot_read_its_text_keeps_it_and_the_clipboard() {
+    let p = temp("cutshort.txt", &b"line 0001\n".repeat(100));
+    let mut d = editing(&p);
+    d.set_clipboard(b"before");
+    d.keys("shift+fn+x\nshift+fn+x\nshift+fn+x");
+    // Another program cuts the file short under it.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&p)
+        .unwrap()
+        .set_len(15)
+        .unwrap();
+    d.low_memory(255);
+    d.keys("ctrl+x");
+    assert_eq!(d.clipboard(), Some(&b"before"[..]));
+    assert!(d.status().is_none(), "nothing cut");
+}
+
+#[test]
+fn comment_leaves_blank_cr_lf_lines_blank() {
+    let p = temp("dos.py", b"a = 1\r\n\r\nb = 2\r\n");
+    let mut d = editing(&p);
+    d.keys("shift+fn+x\nshift+fn+x\nshift+fn+c\nctrl+k\nfn+c\ntype Z\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"# a = 1\r\n\r\n# b = 2Z\r\n");
+}
+
+#[test]
+fn edits_that_no_longer_fit_wait_while_four_files_are_open() {
+    let data = journal_dir("full");
+    let p = temp("fourth.txt", b"base\n");
+    let mut d = journaled(&p, &data);
+    d.keys("type kept");
+    d.pause();
+    drop(d);
+    std::fs::write(&p, b"changed\n").unwrap();
+    let others: Vec<PathBuf> = ["full-a.txt", "full-b.txt", "full-c.txt"]
+        .iter()
+        .map(|n| temp(n, b"x\n"))
+        .collect();
+    let mut d = journaled(&others[0], &data);
+    d.open(&[others[1].as_path(), others[2].as_path(), p.as_path()]);
+    assert_eq!(d.dialog().map(|x| x.0), Some("Keep the unsaved edits?"));
+    d.keys("enter");
+    // No room for them: what is typed now leaves the journal as it was.
+    d.keys("type new");
+    d.pause();
+    let kept = gh0st_text::journal::read(&data, &p).expect("still kept");
+    assert_eq!(kept.typed(), b"kept\n");
+}

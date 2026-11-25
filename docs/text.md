@@ -89,7 +89,9 @@ crash or a kill loses at most two seconds of typing.
   is dropped, and only it.
 - Opened again, the file offers to restore the edits when it is unchanged
   since. If it changed, what was typed opens as a new file, Edits to its
-  name, to save somewhere.
+  name, to save somewhere. With four files open there is no room for it:
+  the journal stays as it was, and the question comes back as the file
+  shows again.
 - Journals are readable by the user alone.
 - A new file has no journal until its first save.
 
@@ -181,6 +183,7 @@ is in `panel-driver.md`.
 
 ## Limits
 
-- The clipboard is the editor's own.
+- The clipboard is the one every app shares, and takes about a megabyte:
+  a bigger copy is refused, and a cut then keeps the text.
 - Four files at once.
 - With wrap, a wide character that would cross a row's end is not drawn.
