@@ -46,6 +46,9 @@ pub struct Caller {
     pub app: String,
     /// The app's name, for prompts.
     pub label: String,
+    /// One of our apps' id from before apps had cgroups: what it made
+    /// and was allowed then is still its own.
+    pub was: Option<String>,
 }
 
 /// A question for the shell.
@@ -448,12 +451,12 @@ impl Service {
     // ---- what a caller may see ----
 
     fn may_read(&self, c: &Caller, item: &Item) -> bool {
-        item.creator == c.app
+        let is = |app: &str| {
+            item.creator == app || self.db.as_ref().is_some_and(|db| db.approved(app, item.id))
+        };
+        is(&c.app)
+            || c.was.as_deref().is_some_and(is)
             || self.once.contains(&(c.bus.clone(), item.id))
-            || self
-                .db
-                .as_ref()
-                .is_some_and(|db| db.approved(&c.app, item.id))
     }
 
     /// Locked to this caller: the vault is, or the item is someone else's.

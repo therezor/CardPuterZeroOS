@@ -250,6 +250,7 @@ fn files_kr(w: &Rc<RefCell<World>>, bus: &str) -> Keyring {
         bus: bus.into(),
         app: "files".into(),
         label: "Files".into(),
+        was: None,
     };
     Keyring::over(Some(Box::new(Local { w: w.clone(), me })))
 }
@@ -274,6 +275,7 @@ fn keyring(name: &str) -> (Rc<RefCell<World>>, Keyring) {
         bus: ":1.7".into(),
         app: "files".into(),
         label: "Files".into(),
+        was: None,
     };
     let kr = Keyring::over(Some(Box::new(Local { w: w.clone(), me })));
     (w, kr)
@@ -323,6 +325,7 @@ fn a_typed_password_is_kept_once_it_works() {
             bus: ":1.8".into(),
             app: "files".into(),
             label: "Files".into(),
+            was: None,
         };
         Keyring::over(Some(Box::new(Local { w: w.clone(), me })))
     });

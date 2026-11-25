@@ -51,6 +51,7 @@ fn app(w: &Shared, bus: &str, name: &str) -> Keyring {
         bus: bus.into(),
         app: name.into(),
         label: name.into(),
+        was: None,
     };
     Keyring::over(Some(Box::new(Local { w: w.clone(), me })))
 }

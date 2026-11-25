@@ -23,6 +23,7 @@ fn caller(bus: &str, app: &str) -> Caller {
         bus: bus.into(),
         app: app.into(),
         label: app.into(),
+        was: None,
     }
 }
 
@@ -170,6 +171,21 @@ fn an_app_stores_and_reads_its_own_secret() {
         (vec![item.clone()], vec![])
     );
     assert_eq!(t.get(&git, &item).unwrap(), b"hunter2");
+}
+
+#[test]
+fn our_app_keeps_what_it_made_before_it_had_a_cgroup() {
+    let mut t = T::new("was");
+    t.svc.unlock(b"pw", true);
+    // v0.3.0 named Files by its program's path.
+    let before = caller(":1.1", "exe:/usr/bin/gh0st-files");
+    let item = t.store(&before, "server", &[("server", "nas")], b"pw1");
+    let mut files = caller(":1.2", "files");
+    files.was = Some("exe:/usr/bin/gh0st-files".into());
+    assert_eq!(t.get(&files, &item).unwrap(), b"pw1");
+    // Another app gets no such pass.
+    let other = caller(":1.3", "zsynth");
+    assert_eq!(t.get(&other, &item).unwrap_err(), IS_LOCKED);
 }
 
 #[test]

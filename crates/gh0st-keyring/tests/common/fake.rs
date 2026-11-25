@@ -34,6 +34,7 @@ fn caller(bus: &str, app: &str) -> Caller {
         bus: bus.into(),
         app: app.into(),
         label: app.into(),
+        was: None,
     }
 }
 
