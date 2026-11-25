@@ -22,9 +22,9 @@ Mockups in `mockups/setup` (`cargo run -p gh0st-settings --example setup_mockups
 320x170: the top bar, 132 px of content, the action bar. One idea per screen and at most
 four lines of body text.
 
-First, while builds are a test release, a notice: "A beta test build. It
-can still break, and the SDK may change." Enter goes on.
-`tour::PRERELEASE` drops it.
+`tour::PRERELEASE` puts a notice first for a test build: "A beta test
+build. It can still break, and the SDK may change." Enter goes on. It is
+off.
 
 After the welcome, setup comes in two parts: a **training** of the keys and the design
 system, then the **settings**. The welcome screen offers both: Enter
@@ -47,7 +47,7 @@ real thing from the first key:
 
 **Welcome.** The mark, "Welcome to Gh0st OS", and "We know nothing about you. Let's keep
 it that way." Key pills name both ways on, "Enter take the training" and "6 I'm already a
-spy", and 6 has a Skip chip. Esc goes back to the notice.
+spy", and 6 has a Skip chip. Esc goes back to the notice when there is one.
 
 **The settings**, "Setup 1 of 8" to "Setup 8 of 8":
 

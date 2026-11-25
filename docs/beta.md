@@ -49,14 +49,13 @@ longer mounts, the device stops at a blank screen.
 
 Setup, once:
 
-1. A beta notice. Enter goes on.
-2. Welcome. Enter starts a short training of the keys. 6 skips it.
-3. The training, 9 short lessons. Skip on a lesson goes to the next one, and
+1. Welcome. Enter starts a short training of the keys. 6 skips it.
+2. The training, 9 short lessons. Skip on a lesson goes to the next one, and
    Skip training in the menu (key 8) skips the rest.
-4. The settings: country, time zone, privacy, Wi-Fi, the date and time (only
+3. The settings: country, time zone, privacy, Wi-Fi, the date and time (only
    when the network has not set the clock), your account, the device name
    and look.
-5. The home screen.
+4. The home screen.
 
 ## Keys
 

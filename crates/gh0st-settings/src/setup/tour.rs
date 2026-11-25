@@ -10,7 +10,7 @@ use gh0st_app::gfx::{Canvas, Rect, Theme};
 use gh0st_app::prelude::*;
 
 /// Shown first while builds are a test release. False drops the screen.
-pub const PRERELEASE: bool = true;
+pub const PRERELEASE: bool = false;
 
 /// The training's screens: eight lessons, then the reward.
 pub const LESSONS: usize = 9;

@@ -30,8 +30,6 @@ exit 0
 /// The welcome's Skip, then each settings step; waits let the fakes finish.
 const KEYS: &str = "\
 wait 400
-enter
-wait 300
 6
 wait 400
 type u
@@ -61,13 +59,11 @@ enter
 wait 2500
 ";
 
-/// The notice, the welcome's Enter, then every lesson passed by its keys:
+/// The welcome's Enter, then every lesson passed by its keys:
 /// the oath, the oath in caps, the sobriety walk, Tab past the email, the
 /// Don't chip, the hat and the paranoia, the menu's Next lesson, the held
 /// Boom chip, and Enter to wear the reward.
 const TOUR: &str = "\
-wait 300
-enter
 wait 300
 enter
 wait 300
@@ -176,8 +172,8 @@ fn the_tour_passes_each_lesson_by_its_keys() {
     }
     let d = scratch("tour");
     run(&d, TOUR);
-    // The notice, the welcome, eight lessons and the reward: step 11 is
-    // Country.
+    // The notice's place, the welcome, eight lessons and the reward: step
+    // 11 is Country.
     let s = state(&d);
     assert!(s.contains("step=11\n") && s.contains("tour=1"), "{s}");
     // The reward: Phantom earned and worn.
