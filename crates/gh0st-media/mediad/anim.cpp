@@ -1,5 +1,6 @@
 #include "anim.h"
 #include "pix.h"
+#include "stills.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,6 +13,14 @@
 #include <webp/demux.h>
 
 namespace mediad {
+
+namespace {
+
+// A frame shorter than this shows for SHORT_FRAME_MS, as FFmpeg does for
+// a GIF. Frames of 0 ms would make the thread spin.
+const int MIN_FRAME_MS = 20, SHORT_FRAME_MS = 100;
+
+} // namespace
 
 struct Anim::State {
     int wake;
@@ -59,19 +68,26 @@ struct Anim::State {
     {
         using clock = std::chrono::steady_clock;
         auto start = clock::now();
-        int lastEnd = 0;
+        // Where the last frame ends: on the clock from start, and in the
+        // file's own time.
+        int lastEnd = 0, lastTs = 0;
         for (;;) {
             {
                 std::unique_lock<std::mutex> l(mu);
                 cv.wait(l, [&] { return quit || !paused || restart; });
                 if (quit)
                     return;
-                if (restart || !WebPAnimDecoderHasMoreFrames(dec)) {
-                    // Round again, as a GIF does.
+                if (restart) {
                     WebPAnimDecoderReset(dec);
                     start = clock::now();
-                    lastEnd = 0;
+                    lastEnd = lastTs = 0;
                     restart = false;
+                } else if (!WebPAnimDecoderHasMoreFrames(dec)) {
+                    // Round again, as a GIF does, once the last frame has
+                    // had its time.
+                    WebPAnimDecoderReset(dec);
+                    start += std::chrono::milliseconds(lastEnd);
+                    lastEnd = lastTs = 0;
                 }
             }
             uint8_t *buf = nullptr;
@@ -86,7 +102,8 @@ struct Anim::State {
             std::vector<uint16_t> px = fit(buf);
             // A frame shows from where the last one ended.
             auto at = start + std::chrono::milliseconds(lastEnd);
-            lastEnd = ts;
+            lastEnd += ts - lastTs < MIN_FRAME_MS ? SHORT_FRAME_MS : ts - lastTs;
+            lastTs = ts;
             std::unique_lock<std::mutex> l(mu);
             cv.wait_until(l, at, [&] { return quit || restart; });
             if (quit)
@@ -125,7 +142,12 @@ bool Anim::open(const std::string &path, int w, int h, bool paused, std::string 
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
     rewind(f);
-    if (n > 0 && n < (128L << 20)) {
+    if (n > MAX_ANIM_BYTES) {
+        fclose(f);
+        why = "too big to play here";
+        return false;
+    }
+    if (n > 0) {
         s->file.resize(size_t(n));
         s->file.resize(fread(s->file.data(), 1, s->file.size(), f));
     }

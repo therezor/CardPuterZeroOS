@@ -192,9 +192,14 @@ PipeWire, so the loop's thread only moves finished pictures to the ring.
   by libass onto each picture, at 1.6 times libass's size so a line stays
   readable on 170 rows. Picture subtitles (DVD, DVB, PGS) are scaled with
   the video.
-- An animated WebP plays through libwebpdemux on a thread of its own.
-- `make playcheck`, then `playcheck --more CORPUS`, checks sound alone, a
-  turned video, a loop, A to B, a step, twice the speed and both kinds of
+- An animated WebP plays through libwebpdemux on a thread of its own. A
+  frame shorter than 20 ms shows for 100 ms, as FFmpeg shows a GIF's.
+- A sound track whose channels, sample format or rate change partway is
+  resampled afresh at the change. The sound server's stream stays as it
+  opened.
+- `make playcheck`, then `playcheck --more CORPUS`, checks sound alone,
+  sound that turns from stereo to mono, a 4K video refused, a turned
+  video, a loop, A to B, a step, twice the speed and both kinds of
   subtitle.
 - `make bench` builds `bench`, which plays or shows a file as the helper
   does and prints pictures a second, drops, CPU and peak memory.
@@ -207,6 +212,22 @@ PipeWire, so the loop's thread only moves finished pictures to the ring.
   size comes from the file's header before a decoder sees it.
 - A JPEG decodes at the size it is shown, so it may be up to 256 MP. A
   progressive one past what 96 MB holds is refused by libjpeg.
-- Each still has 10 seconds. A decoder that hangs ends the helper, and the
-  app starts it again and marks the file. `RLIMIT_AS` holds the helper to
-  1536 MB of address space; `GH0ST_MEDIAD_AS_MB` changes it, 0 turns it off.
+- A video's tile is held to 24 MP too. Playing is held to twice 1080p
+  (4.1 MP), checked before a decoder starts its threads, and every decoder
+  refuses a picture past it. A 4K video shows as a tile but doesn't play.
+  This limit is reasoned from the 1080p row in `hardware-facts.md`, not
+  measured at 4K.
+- An animated WebP is held to the same 4.1 MP, as it plays from two
+  canvases of its size, and to a 32 MB file.
+- A RAW with no JPEG preview is refused past 50 MP of mosaic, borders
+  counted. One with a preview shows at any size.
+- A `.srt` beside a video is read up to 4 MB and 20000 lines, always as
+  SRT.
+- Each still has 10 seconds, and so has each open of something to play. A
+  decoder or demuxer that hangs ends the helper, and the app starts it
+  again and marks the file.
+- The helper sets its OOM score to 1000, so out of memory the kernel ends
+  it before anything else. `RLIMIT_AS` holds it to 1536 MB of address
+  space, which stops a decoder that asks for gigabytes at once but sits
+  past the board's RAM: thread stacks, malloc's arenas and the libraries
+  count too. `GH0ST_MEDIAD_AS_MB` changes it, 0 turns it off.

@@ -1,5 +1,6 @@
 #include "stills.h"
 #include "decode.h"
+#include "player.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -79,7 +80,7 @@ namespace {
 
 Fail fromErrno(int e)
 {
-    return e == ENOMEM ? Fail::NoMem : Fail::Io;
+    return e == ENOMEM ? Fail::NoMem : e == EFBIG ? Fail::TooBig : Fail::Io;
 }
 
 Fail fromAv(int r)
@@ -153,7 +154,10 @@ bool claimedSize(const uint8_t *h, size_t n, int64_t &w, int64_t &hh)
     }
     if (n >= 26 && h[0] == 'B' && h[1] == 'M') {
         w = le32(18);
-        hh = std::abs(int32_t(le32(22)));
+        // Negative is top-down. In 64 bits, as INT32_MIN has no 32-bit
+        // opposite.
+        int64_t rows = int32_t(le32(22));
+        hh = rows < 0 ? -rows : rows;
         return true;
     }
     if (isWebp(h, n)) {
@@ -375,19 +379,23 @@ std::string clean(const char *s)
     return out;
 }
 
+// As the player finds one: a file it would read.
 bool sidecarSrt(const std::string &path)
 {
     size_t dot = path.find_last_of('.');
     if (dot == std::string::npos || dot < path.find_last_of('/'))
         return false;
     struct stat st;
-    return stat((path.substr(0, dot) + ".srt").c_str(), &st) == 0;
+    return stat((path.substr(0, dot) + ".srt").c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+           st.st_size <= gh0st::Player::MAX_SRT_BYTES;
 }
 
 // libheif decodes HEVC through libavcodec when its plugin is there.
 heif_error heifDecode(heif_image_handle *h, heif_image **img, bool alpha)
 {
     heif_decoding_options *o = lz_heif_decoding_options_alloc();
+    if (!o)
+        return {heif_error_Memory_allocation_error, heif_suberror_Unspecified, "no memory"};
     heif_chroma chroma = alpha ? heif_chroma_interleaved_RGBA : heif_chroma_interleaved_RGB;
     o->decoder_id = "ffmpeg";
     heif_error e = lz_heif_decode_image(h, img, heif_colorspace_RGB, chroma, o);
@@ -399,6 +407,7 @@ heif_error heifDecode(heif_image_handle *h, heif_image **img, bool alpha)
     return e;
 }
 
+// The whole file. Past MAX_ANIM_BYTES it is left unread, and err is EFBIG.
 std::vector<uint8_t> slurp(const std::string &path, int &err)
 {
     std::vector<uint8_t> b;
@@ -410,7 +419,9 @@ std::vector<uint8_t> slurp(const std::string &path, int &err)
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
     rewind(f);
-    if (n > 0 && n < (256L << 20)) {
+    if (n > MAX_ANIM_BYTES)
+        err = EFBIG;
+    else if (n > 0) {
         b.resize(size_t(n));
         b.resize(fread(b.data(), 1, b.size(), f));
     }
@@ -514,6 +525,8 @@ Fail Stills::probe(const std::string &path, Info &out)
     }
     if (isHeif(h, n) && gh0st::lazy::open(gh0st::lazy::HEIF)) {
         heif_context *ctx = lz_heif_context_alloc();
+        if (!ctx)
+            return Fail::NoMem;
         heif_image_handle *hh = nullptr;
         Fail fail = Fail::Corrupt;
         if (lz_heif_context_read_from_file(ctx, path.c_str(), nullptr).code == heif_error_Ok &&
@@ -539,7 +552,9 @@ Fail Stills::probe(const std::string &path, Info &out)
             out.h = ft.height;
             out.format = "webp";
             out.vcodec = "webp";
-            return double(out.w) * out.h > MAX_PIXELS ? Fail::TooBig : Fail::None;
+            // Played from two canvases of its size, RGBA: held to what
+            // the player takes.
+            return double(out.w) * out.h > gh0st::Player::MAX_PIXELS ? Fail::TooBig : Fail::None;
         }
     }
     if (rawName(path) && gh0st::lazy::open(gh0st::lazy::RAW)) {
@@ -630,7 +645,9 @@ Fail Stills::probe(const std::string &path, Info &out)
     }
     if (out.w <= 0 || out.h <= 0)
         return Fail::Corrupt;
-    if (out.kind != Kind::Video && double(out.w) * out.h > MAX_PIXELS)
+    // A video's tile decodes one picture whole, so it is held to this too.
+    // Playing holds it to less (player.h).
+    if (double(out.w) * out.h > MAX_PIXELS)
         return Fail::TooBig;
     return Fail::None;
 }
@@ -676,6 +693,8 @@ Fail Stills::base(const std::string &path, const Info &info)
     switch (info.codec) {
     case Codec::Heif: {
         heif_context *ctx = lz_heif_context_alloc();
+        if (!ctx)
+            return Fail::NoMem;
         heif_image_handle *hh = nullptr;
         heif_image *img = nullptr;
         if (lz_heif_context_read_from_file(ctx, path.c_str(), nullptr).code == heif_error_Ok &&
@@ -709,8 +728,11 @@ Fail Stills::base(const std::string &path, const Info &info)
             return Fail::NoMem;
         lr->params.half_size = 1;
         lr->params.use_camera_wb = 1;
-        if (lz_libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS &&
-            lz_libraw_unpack(lr) == LIBRAW_SUCCESS && lz_libraw_dcraw_process(lr) == LIBRAW_SUCCESS) {
+        bool open = lz_libraw_open_file(lr, path.c_str()) == LIBRAW_SUCCESS;
+        if (open && double(lr->sizes.raw_width) * lr->sizes.raw_height > MAX_RAW_PIXELS) {
+            fail = Fail::TooBig;
+        } else if (open && lz_libraw_unpack(lr) == LIBRAW_SUCCESS &&
+                   lz_libraw_dcraw_process(lr) == LIBRAW_SUCCESS) {
             int e = 0;
             libraw_processed_image_t *im = lz_libraw_dcraw_make_mem_image(lr, &e);
             if (im && im->type == LIBRAW_IMAGE_BITMAP && im->colors == 3 && im->bits == 8) {
@@ -767,6 +789,9 @@ Fail Stills::base(const std::string &path, const Info &info)
             Fail f = probe(cover, ci);
             if (f != Fail::None)
                 return f;
+            // A cover.jpg that is a song would look for its own cover.
+            if (ci.kind != Kind::Image || cover == path)
+                return Fail::Unsupported;
             f = base(cover, ci);
             // Kept under the song's name.
             basePath_ = path;

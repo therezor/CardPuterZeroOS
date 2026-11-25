@@ -59,6 +59,16 @@ Image.new("RGB", (30000, 800), (40, 160, 90)).save("pano.png")
 Image.new("RGB", (600, 9000), (160, 90, 40)).save("tall.png")
 # A decompression bomb: 40000 x 40000 of one colour packs small.
 Image.new("L", (40000, 40000), 0).save("bomb.png", optimize=True)
+# An animated WebP whose frames last 0 ms: encoders refuse to write one,
+# so each frame's duration is cleared in place.
+b = bytearray(open("anim.webp", "rb").read())
+at = 12
+while at + 8 <= len(b):
+    tag, n = bytes(b[at:at + 4]), int.from_bytes(b[at + 4:at + 8], "little")
+    if tag == b"ANMF":
+        b[at + 20:at + 23] = b"\0\0\0"
+    at += 8 + n + (n & 1)
+open("fast.webp", "wb").write(b)
 PY
 heif-enc -q 60 -o photo.heic base.png >/dev/null
 heif-enc -q 60 --cut-tiles 512 -o grid.heic base.png >/dev/null
@@ -126,6 +136,10 @@ ff $a -c:a pcm_s16be song.aiff
 # Sound with no cover anywhere near it.
 mkdir -p nocover
 ff $a -c:a pcm_s16le nocover/song.wav
+# A cover.jpg that is a song.
+mkdir -p badcover
+cp nocover/song.wav badcover/song.wav
+cp nocover/song.wav badcover/cover.jpg
 mkdir -p album
 for n in 1 2 3; do
     ff -f lavfi -i sine=frequency=$((200 * n)):duration=2 -c:a libmp3lame \

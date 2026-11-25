@@ -36,7 +36,7 @@ check: $(O)/media_check $(O)/decode_check $(O)/link_check $(O)/cache_check
 	$(O)/decode_check
 	$(O)/media_check $(CORPUS)
 
-$(O)/media_check: $(addprefix $(O)/,$(addsuffix .o,media_check stills decode cache lazy))
+$(O)/media_check: $(addprefix $(O)/,$(addsuffix .o,media_check stills decode cache lazy anim))
 	$(CXX) -o $@ $^ $(DEP_LIBS) -pthread
 
 $(O)/link_check: $(addprefix $(O)/,$(addsuffix .o,link_check link))

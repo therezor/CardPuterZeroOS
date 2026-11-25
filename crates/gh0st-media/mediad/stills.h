@@ -45,6 +45,12 @@ constexpr double MAX_PIXELS = 24e6;
 constexpr double MAX_JPEG_PIXELS = 256e6;
 // What is kept of a picture between views: pan and zoom cost no decode.
 constexpr double BASE_PIXELS = 8e6;
+// A RAW shows its JPEG preview. One without is drawn from its mosaic at
+// half size, which takes about 5 bytes a sensor pixel: past this it is
+// refused. A 45 MP camera's mosaic, borders and all, fits.
+constexpr double MAX_RAW_PIXELS = 50e6;
+// An animated WebP is read whole and played from memory.
+constexpr long MAX_ANIM_BYTES = 32L << 20;
 
 class Stills {
 public:

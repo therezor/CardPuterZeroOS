@@ -64,6 +64,13 @@ void onSignal(int)
     errno = e;
 }
 
+// Ends the helper, by SIGALRM, if what follows in its scope takes longer
+// than STILL_SECONDS.
+struct Deadline {
+    Deadline() { alarm(STILL_SECONDS); }
+    ~Deadline() { alarm(0); }
+};
+
 bool has(const std::string &flags, const char *word)
 {
     std::string w = word;
@@ -160,10 +167,12 @@ private:
     void say(const std::vector<std::string> &f) { link_.send(f); }
 
     // Opens `path` to play as `id`, fitted in w x h, as `flags` say:
-    // loop, silent, paused, audio=N, subs=N, at=MS.
+    // loop, silent, paused, audio=N, subs=N, at=MS. A demuxer that hangs
+    // here ends the helper, as a still's decoder does.
     std::unique_ptr<Playing> start(const std::string &id, int w, int h, const std::string &flags,
                                    const std::string &path, std::string &why)
     {
+        Deadline d;
         auto p = std::make_unique<Playing>();
         p->id = id;
         p->w = w;
@@ -293,7 +302,12 @@ private:
             o.startMs = p->position();
             std::string why;
             cur_->opt = o;
-            if (!p->open(cur_->path, cur_->w, cur_->h, o, why)) {
+            bool ok;
+            {
+                Deadline d;
+                ok = p->open(cur_->path, cur_->w, cur_->h, o, why);
+            }
+            if (!ok) {
                 std::string id = cur_->id;
                 cur_.reset();
                 say({"playerr", id, why});
@@ -451,8 +465,18 @@ int main()
 #endif
     if (getppid() == 1)
         return 0;
-    // A decoder that runs away stops here, not in the kernel's OOM killer.
-    // GH0ST_MEDIAD_AS_MB sets it; 0 turns it off.
+#ifdef __linux__
+    // Out of memory, the kernel ends this helper before anything else: the
+    // app starts it again and marks the file.
+    if (FILE *f = fopen("/proc/self/oom_score_adj", "w")) {
+        fputs("1000", f);
+        fclose(f);
+    }
+#endif
+    // A decoder that asks for gigabytes at once fails here. Address space
+    // counts every thread's stack, malloc's arenas and each library mapped,
+    // so the limit sits well past the board's RAM: the OOM score above is
+    // what guards real memory. GH0ST_MEDIAD_AS_MB sets it; 0 turns it off.
     const char *as = getenv("GH0ST_MEDIAD_AS_MB");
     long mb = as ? atol(as) : 1536;
     if (mb > 0) {
