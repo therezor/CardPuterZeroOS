@@ -2,7 +2,8 @@
 //! pictures. Tests, mockups and `--sim` runs use it, so a host needs no
 //! decoders. What a file is comes from its name: `pano` is a panorama,
 //! `tall` a strip, `broken` is damaged, `huge` too large, `movie` has two
-//! sound tracks and subtitles.
+//! sound tracks and subtitles, and `crash` ends the helper as a decoder
+//! crash would.
 
 use crate::helper::{ASK_SLOT, PLAY_SLOTS};
 use crate::proto::{Cmd, Event, Fail, Flags, Info, Kind, PlayState, Tags};
@@ -24,6 +25,18 @@ pub fn forgotten(dir: &Path) -> usize {
     FORGOTTEN
         .lock()
         .map(|l| l.iter().filter(|d| d.as_path() == dir).count())
+        .unwrap_or(0)
+}
+
+/// Each file that ended the fake, each time.
+static CRASHED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// How often `path` ended the fake: tests check the app doesn't ask for it
+/// again and again.
+pub fn crashes(path: &Path) -> usize {
+    CRASHED
+        .lock()
+        .map(|l| l.iter().filter(|p| p.as_path() == path).count())
         .unwrap_or(0)
 }
 
@@ -500,6 +513,20 @@ impl Fake {
     fn run(&mut self, cmd: Cmd) -> bool {
         // The fake reads names; the real helper reads bytes.
         let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
+        let read = match &cmd {
+            Cmd::Probe { path, .. }
+            | Cmd::Tags { path, .. }
+            | Cmd::Thumb { path, .. }
+            | Cmd::View { path, .. }
+            | Cmd::PlayOpen { path, .. } => Some(path),
+            _ => None,
+        };
+        if let Some(p) = read.filter(|p| name_has(&s(p), "crash")) {
+            if let Ok(mut l) = CRASHED.lock() {
+                l.push(p.clone());
+            }
+            return false;
+        }
         match cmd {
             Cmd::Hello => self.say(Event::Hello(crate::proto::VERSION.into())),
             Cmd::Quit => return false,

@@ -38,8 +38,11 @@ draws each into `mockups/media`.
   is back in front.
 - When memory runs short (`sdk.md`, Low memory), the helper drops the
   picture it keeps for pan and zoom, unless it is on screen.
-- A file that fails shows why on its own screen. If the helper dies on a
-  file, the app starts it again and that file is marked.
+- A file that fails shows why on its own screen. If the helper dies, the
+  app starts it again and marks what it was reading and what played, so
+  neither is asked for again on its own; music goes on from the next song.
+  A helper that dies three times with no answer between is left stopped
+  until a folder opens.
 - `src/fake.rs` stands in for the helper on a host: it paints each file by
   its name, so the mockups and `tests/flow.rs` need no decoders.
 

@@ -70,6 +70,9 @@ const SLIDE_MS: u64 = 4000;
 const GRID_COLS: usize = 5;
 const GRID_ROWS: usize = 3;
 const SPEEDS: [u16; 6] = [50, 75, 100, 125, 150, 200];
+/// Times the helper is started again with no answer between: one that
+/// dies whatever it is asked would otherwise start for ever.
+const RESTARTS: u32 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum View {
@@ -127,6 +130,8 @@ pub struct Media {
     helper: Option<Helper>,
     watch: Option<Watch>,
     missing: bool,
+    /// Deaths since the helper last answered.
+    crashes: u32,
     places: Vec<Place>,
     start: List,
     view: View,
@@ -202,6 +207,7 @@ impl Media {
             helper: None,
             watch: None,
             missing: false,
+            crashes: 0,
             places: files::places(&home),
             start: List::new(),
             view: View::Start,
@@ -352,10 +358,15 @@ impl Media {
 
     // ---- folders
 
-    fn open_dir(&mut self, dir: PathBuf, select: usize) {
+    fn open_dir(&mut self, dir: PathBuf, select: usize, cx: &mut Cx) {
         // Music plays on in any folder; a video or a moving picture stops.
         if !self.music {
             self.stop_play();
+        }
+        // A helper that kept dying gets another go with a new folder.
+        if self.helper.is_none() && self.crashes > RESTARTS {
+            self.crashes = 0;
+            self.launch(cx);
         }
         self.dir = dir;
         self.dir_title = self.title_of_dir();
@@ -445,7 +456,7 @@ impl Media {
         match e.look {
             Look::Folder => {
                 self.trail.push((self.dir.clone(), self.tiles.at()));
-                self.open_dir(e.path, 0);
+                self.open_dir(e.path, 0, cx);
             }
             Look::Picture | Look::Video => self.show(cx),
             // The song playing: back to its page, not from the start.
@@ -524,15 +535,21 @@ impl Media {
     }
 
     fn stop_play(&mut self) {
-        if let Some(p) = self.play.take() {
-            // Where a long clip stopped, for next time.
-            if !self.music && p.bar.dur_ms > 0 {
-                self.resume.set(&p.path, p.bar.pos_ms, p.bar.dur_ms);
-            }
+        if self.end_play().is_some() {
             self.send(&Cmd::Stop);
+        }
+    }
+
+    /// Lets go of what plays, keeping where a long clip got to: the file.
+    /// The helper is told to stop by the caller, or has stopped.
+    fn end_play(&mut self) -> Option<PathBuf> {
+        let p = self.play.take();
+        if let Some(p) = p.as_ref().filter(|p| !self.music && p.bar.dur_ms > 0) {
+            self.resume.set(&p.path, p.bar.pos_ms, p.bar.dur_ms);
         }
         self.next_track = None;
         self.music = false;
+        p.map(|p| p.path)
     }
 
     fn play_pause(&mut self, cx: &mut Cx) {
@@ -788,21 +805,34 @@ impl Media {
     /// Asks the helper to open the following track, so it starts the
     /// moment this one ends.
     fn ahead(&mut self) {
-        let next = self.qpos + 1;
-        let i = if next < self.queue.len() {
-            next
-        } else if self.repeat_all && !self.queue.is_empty() {
-            0
-        } else {
+        let Some(i) = self.next_index() else {
             self.next_track = None;
             return;
         };
-        let Some(path) = self.queue.get(i).map(|e| e.path.clone()) else {
-            return;
-        };
+        let path = self.queue[i].path.clone();
         let id = self.id();
         self.send(&Cmd::PlayNext { id, path });
         self.next_track = Some((id, i));
+    }
+
+    /// The queue's next track not known to kill the helper, round to the
+    /// first while repeating. One song on repeat is its own next.
+    fn next_index(&self) -> Option<usize> {
+        let n = self.queue.len();
+        (1..=n)
+            .map(|k| self.qpos + k)
+            .take_while(|&i| i < n || self.repeat_all)
+            .map(|i| i % n)
+            .find(|&i| !self.fails.contains_key(&self.queue[i].path))
+    }
+
+    /// The music goes on from the next track after one the helper died
+    /// under, or stops.
+    fn play_on(&mut self, cx: &mut Cx) {
+        if let Some(i) = self.next_index() {
+            self.qpos = i;
+            self.track(cx);
+        }
     }
 
     fn skip(&mut self, by: isize, cx: &mut Cx) {
@@ -829,6 +859,10 @@ impl Media {
     // ---- the helper's answers
 
     fn event(&mut self, e: Event, cx: &mut Cx) {
+        // It answered: alive past its start.
+        if !matches!(e, Event::Hello(_)) {
+            self.crashes = 0;
+        }
         match e {
             Event::Hello(_) => {}
             Event::Info { id, info } => {
@@ -1000,21 +1034,55 @@ impl Media {
             cx.unwatch(w);
         }
         self.helper = None;
+        let asked = self.asks.asking().map(|a| a.what.clone());
         self.asks.clear();
-        self.play = None;
+        let music = self.music;
+        let played = self.end_play();
         if self.quitting {
             return;
         }
-        // The file it was reading may be what killed it: marked, then the
-        // helper starts again.
-        if let Some(p) = self.current() {
-            self.fails.entry(p).or_insert(Fail::Corrupt);
+        // What it was reading or playing may be what killed it: marked, so
+        // nothing asks for it again on its own.
+        match asked {
+            Some(For::Tile(p)) => {
+                self.faces.insert(p, Picture::default());
+            }
+            Some(For::Probe(p) | For::Full(p) | For::Tags(p) | For::Cover(p)) => {
+                self.fails.entry(p).or_insert(Fail::Corrupt);
+            }
+            None => {}
+        }
+        if let Some(p) = &played {
+            self.fails.entry(p.clone()).or_insert(Fail::Corrupt);
+        }
+        cx.keep_awake(false);
+        self.crashes += 1;
+        if self.crashes > RESTARTS {
+            // It dies whatever it is asked: tried again when a folder opens.
+            eprintln!("gh0st-media: the helper keeps stopping");
+            self.missing = true;
+            return;
         }
         self.launch(cx);
+        if music && played.is_some() {
+            self.play_on(cx);
+        }
         match self.view {
             View::Grid => self.want_tiles(),
-            View::Music => self.track(cx),
+            View::Viewer | View::Player => self.ask_shown(),
             _ => {}
+        }
+    }
+
+    /// The file on screen, asked again after a restart unless it is marked.
+    fn ask_shown(&mut self) {
+        let Some(p) = self.current().filter(|p| !self.fails.contains_key(p)) else {
+            return;
+        };
+        if self.infos.contains_key(&p) {
+            self.ask(For::Full(p));
+        } else {
+            self.ask(For::Probe(p));
         }
     }
 
@@ -1069,7 +1137,7 @@ impl Media {
     /// Opens the file the app was started for, in its folder.
     fn open_given(&mut self, path: PathBuf, cx: &mut Cx) {
         let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        self.open_dir(dir, 0);
+        self.open_dir(dir, 0, cx);
         if let Some(i) = self.entries.iter().position(|e| e.path == path) {
             self.tiles.select(i);
             self.open(cx);
@@ -1587,7 +1655,7 @@ impl Page for Media {
             }
             Asked::Folder => {
                 self.trail.clear();
-                self.open_dir(first, 0);
+                self.open_dir(first, 0, cx);
             }
         }
         cx.redraw();
@@ -1630,7 +1698,7 @@ impl Page for Media {
         if front {
             // The folder may have changed meanwhile.
             if self.view == View::Grid {
-                self.open_dir(self.dir.clone(), self.tiles.at());
+                self.open_dir(self.dir.clone(), self.tiles.at(), cx);
             }
             cx.redraw();
             return;
@@ -1661,6 +1729,9 @@ impl Page for Media {
                 return;
             }
         }
+        if self.watch != Some(watch) {
+            return;
+        }
         loop {
             let Some(h) = &self.helper else {
                 return;
@@ -1679,11 +1750,16 @@ impl Page for Media {
         cx.redraw();
     }
 
-    fn exited(&mut self, _: i32, code: Option<i32>, cx: &mut Cx) {
+    fn exited(&mut self, pid: i32, code: Option<i32>, cx: &mut Cx) {
+        // Its link's hangup may have started another already.
+        if self.helper.as_ref().and_then(Helper::pid) != Some(pid) {
+            return;
+        }
         if code != Some(0) && !self.quitting {
             eprintln!("gh0st-media: the helper exited: {code:?}");
         }
         self.gone(cx);
+        self.sync_mpris(cx);
         cx.redraw();
     }
 
@@ -1705,7 +1781,7 @@ impl Page for Media {
             View::Start => true,
             View::Grid => {
                 if let Some((dir, at)) = self.trail.pop() {
-                    self.open_dir(dir, at);
+                    self.open_dir(dir, at, cx);
                 } else {
                     self.view = View::Start;
                 }
@@ -1760,7 +1836,7 @@ impl Page for Media {
                 match self.places.get(i).cloned() {
                     Some(p) => {
                         self.trail.clear();
-                        self.open_dir(p.path, 0);
+                        self.open_dir(p.path, 0, cx);
                     }
                     // The last row: any folder, through the file chooser.
                     None => self.choose_folder(cx),
@@ -1889,7 +1965,7 @@ impl Page for Media {
                     Sort::Newest
                 };
                 let at = self.entry().map(|e| e.path.clone());
-                self.open_dir(self.dir.clone(), 0);
+                self.open_dir(self.dir.clone(), 0, cx);
                 if let Some(i) = at.and_then(|p| self.entries.iter().position(|e| e.path == p)) {
                     self.tiles.select(i);
                     self.want_tiles();
@@ -2000,7 +2076,12 @@ impl Page for Media {
     fn draw(&self, ui: &mut Ui) {
         let t = *ui.theme();
         if self.missing && self.view != View::Start {
-            ui.message("triangle-alert", "The media helper is missing");
+            let why = if self.crashes > RESTARTS {
+                "The media helper keeps stopping"
+            } else {
+                "The media helper is missing"
+            };
+            ui.message("triangle-alert", why);
             return;
         }
         match self.view {
