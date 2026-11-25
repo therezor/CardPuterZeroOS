@@ -71,6 +71,10 @@ pub struct Task {
     pub keeps_on: bool,
     /// Paused with `gh0st audio park` sent: its sound waits on a null sink.
     pub sound_parked: bool,
+    /// Started in its sandbox, at this time: one that fails at once may
+    /// need more than the sandbox gives.
+    pub sandboxed: bool,
+    pub started: u64,
 }
 
 impl Task {
@@ -284,6 +288,8 @@ mod tests {
             inhibited: false,
             keeps_on: false,
             sound_parked: false,
+            sandboxed: false,
+            started: 0,
         }
     }
 

@@ -1852,7 +1852,19 @@ impl Shell {
                 }
                 continue;
             }
+            let now = rt::now_ms();
+            let early = self
+                .tasks
+                .iter()
+                .find(|t| t.pgid == pid && t.sandboxed && now < t.started + EARLY_EXIT_MS)
+                .filter(|_| libc::WIFEXITED(status) && libc::WEXITSTATUS(status) != 0)
+                .map(|t| t.name.clone());
             self.tasks.exited(pid);
+            if let Some(name) = early {
+                self.toast(format!(
+                    "{name} closed as it opened. Its sandbox may be why: Settings > Apps"
+                ));
+            }
             if let Some((_, j)) = self.jobs.iter_mut().find(|(_, j)| j.pid == pid) {
                 j.exited(status);
             }
@@ -3667,7 +3679,8 @@ impl Shell {
         // hand or by another program counts from this launch.
         let fresh = Config::load(&config::default_path());
         let iso = apps::isolation(&fresh, app, gh0st_core::store::needs_root(&stem));
-        let argv = if self.on_device && iso.sandbox {
+        let sandboxed = self.on_device && iso.sandbox;
+        let argv = if sandboxed {
             let user = notify::user_dir();
             let own = sandbox::notice_dir(&user, &stem);
             let _ = std::fs::create_dir_all(&own);
@@ -3766,6 +3779,8 @@ impl Shell {
             inhibited: false,
             keeps_on: false,
             sound_parked: false,
+            sandboxed,
+            started: now,
         });
         self.esc = EscHold::default();
         self.toast = None;
@@ -4364,6 +4379,10 @@ impl Shell {
 }
 
 /// `gh0st audio VERB [PGID]` as a child, since pactl can take a while.
+/// A sandboxed app that fails sooner than this after its start gets a
+/// hint that its sandbox may be why.
+const EARLY_EXIT_MS: u64 = 5000;
+
 fn audio(exe: Option<&Path>, verb: &str, pgid: Option<i32>) {
     audio_of(exe, verb, pgid, None);
 }
