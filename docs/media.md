@@ -194,6 +194,8 @@ PipeWire, so the loop's thread only moves finished pictures to the ring.
   the video.
 - An animated WebP plays through libwebpdemux on a thread of its own. A
   frame shorter than 20 ms shows for 100 ms, as FFmpeg shows a GIF's.
+  After a stall it goes on from the frame it is at, rather than showing
+  the ones it missed back to back.
 - A sound track whose channels, sample format or rate change partway is
   resampled afresh at the change. The sound server's stream stays as it
   opened.

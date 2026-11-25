@@ -100,8 +100,15 @@ struct Anim::State {
                 return;
             }
             std::vector<uint16_t> px = fit(buf);
-            // A frame shows from where the last one ended.
+            // A frame shows from where the last one ended. Late, after a
+            // stall or a slow decode, the clock moves on instead: the frames
+            // owed would show back to back.
             auto at = start + std::chrono::milliseconds(lastEnd);
+            auto now = clock::now();
+            if (at < now) {
+                start += now - at;
+                at = now;
+            }
             lastEnd += ts - lastTs < MIN_FRAME_MS ? SHORT_FRAME_MS : ts - lastTs;
             lastTs = ts;
             std::unique_lock<std::mutex> l(mu);
