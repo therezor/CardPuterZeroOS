@@ -51,7 +51,7 @@ jobs:
           tag="${{ github.ref_name }}"
           # apt.yml may have made the release first.
           gh release view "$tag" >/dev/null 2>&1 ||
-            gh release create "$tag" --prerelease --title "Gh0st OS $tag" \
+            gh release create "$tag" --title "Gh0st OS $tag" \
               --notes "Flash the .img.xz (scripts/flash.sh, or bmaptool with the .bmap). Updates come from the stable apt suite: docs/updates.md." ||
             true
           gh release upload "$tag" os/out/*.img.xz os/out/*.bmap os/out/*.sha256 --clobber

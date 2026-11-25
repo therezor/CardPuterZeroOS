@@ -133,7 +133,7 @@ cost more than the pages are worth here.
 Store apps. Media's helper links ffmpeg's libraries to decode, and Camera's
 for sound and playback. Debian's ffmpeg is a desktop build: its device
 library pulls OpenGL, so Mesa and LLVM, and its filters pull speech
-synthesis and recognition. That is 148 packages and 367 MB of the 928 MB
+synthesis and recognition. That is 148 packages and 367 MB of the 929 MB
 installed.
 
 **Packages.**
@@ -274,9 +274,9 @@ start is a device test.
 
 | | Stock M5 image | Gh0st OS release |
 |---|---|---|
-| Packages | 1699 | 497 |
-| Installed | 5.1 GB `/usr` | 928 MB |
-| Download | 14.8 GiB image | 224 MB `.img.xz` |
+| Packages | 1699 | 498 |
+| Installed | 5.1 GB `/usr` | 929 MB |
+| Download | 14.8 GiB image | 228 MB `.img.xz` |
 | Enabled system services | 30+ and 9 timers | 7, one timer (the daily update check) |
 
 ## Known issues
@@ -284,4 +284,3 @@ start is a device test.
 - The image redistributes Raspberry Pi debs and M5 app debs, with no
   licence and source-offer page for them.
 - Every card shares one disk ID (`docs/beta.md`, Known issues).
-- Tags publish GitHub pre-releases.
