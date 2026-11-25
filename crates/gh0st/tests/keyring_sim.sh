@@ -7,7 +7,12 @@
 #
 # GH0ST names a build of gh0st.
 set -euo pipefail
-GH0ST=$(command -v "${GH0ST:-gh0st}")
+GH0ST=${GH0ST:-gh0st}
+# Absolute: apps the shell starts run in another folder.
+case $GH0ST in
+*/*) GH0ST=$(cd "$(dirname "$GH0ST")" && pwd)/${GH0ST##*/} ;;
+*) GH0ST=$(command -v "$GH0ST") ;;
+esac
 work=$(mktemp -d)
 shell=
 fail() {

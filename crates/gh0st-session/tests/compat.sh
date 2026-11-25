@@ -5,6 +5,11 @@
 #   dbus-run-session -- crates/gh0st-session/tests/compat.sh
 set -eu
 GH0ST=${GH0ST:-gh0st}
+# Absolute, so the xdg-open link below works from any folder.
+case $GH0ST in
+*/*) GH0ST=$(cd "$(dirname "$GH0ST")" && pwd)/${GH0ST##*/} ;;
+*) GH0ST=$(command -v "$GH0ST") ;;
+esac
 work=$(mktemp -d)
 pid=
 fail() { echo "FAIL: $*" >&2; exit 1; }
