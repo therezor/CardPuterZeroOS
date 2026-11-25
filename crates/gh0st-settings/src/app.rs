@@ -114,9 +114,11 @@ fn busy_label(kind: &NetJob) -> Option<&'static str> {
                 _ => "Applying\u{2026}",
             })
         }
-        NetJob::SetRadio(_) | NetJob::TimeSet(_) | NetJob::BtPower | NetJob::BtUnblock => {
-            Some("Applying\u{2026}")
-        }
+        NetJob::SetRadio(_)
+        | NetJob::TimeSet(_)
+        | NetJob::BtPower(_)
+        | NetJob::BtUnblock
+        | NetJob::BtBlock => Some("Applying\u{2026}"),
         NetJob::Wallpaper => Some("Fitting the picture\u{2026}"),
         NetJob::KeyringPrepare | NetJob::Password { .. } => Some("Changing the password\u{2026}"),
         _ => None,
@@ -139,7 +141,8 @@ enum NetJob {
     },
     Forget(String),
     BtQuery,
-    BtPower,
+    /// Bluetooth on (true) or off.
+    BtPower(bool),
     BtScan,
     /// What to say when it works.
     BtDevice(String),
@@ -154,6 +157,10 @@ enum NetJob {
     GpuMem,
     /// After the helper unblocks the radio, power it on.
     BtUnblock,
+    /// The helper blocks the radio after power off. The image boots every
+    /// radio blocked and systemd-rfkill restores the saved state, so only
+    /// a block keeps Bluetooth off across a reboot.
+    BtBlock,
     /// The image boots with Wi-Fi blocked: setup's network step unblocks it,
     /// then turns it on.
     WifiUnblock,
@@ -218,6 +225,9 @@ pub struct Settings {
     passwd_pending: Option<(String, String)>,
     /// What is typed on the Country page, which is a search.
     search: Search,
+    /// Blocks or unblocks a radio; tests pass one that never touches the
+    /// host's.
+    radios: fn(rfkill::Radio, bool) -> std::io::Result<()>,
 }
 
 impl Settings {
@@ -242,7 +252,14 @@ impl Settings {
             finish_pending: false,
             finish_when_idle: false,
             net_again: false,
+            radios: rfkill::set,
         }
+    }
+
+    /// Settings with its own radio switch, for tests.
+    pub fn with_radios(mut self, f: fn(rfkill::Radio, bool) -> std::io::Result<()>) -> Settings {
+        self.radios = f;
+        self
     }
 
     /// One page of Settings as a step of first-boot setup.
@@ -283,8 +300,9 @@ impl Settings {
                     | NetJob::TimeSet(_)
                     | NetJob::SetRadio(_)
                     | NetJob::WifiUnblock
-                    | NetJob::BtPower
+                    | NetJob::BtPower(_)
                     | NetJob::BtUnblock
+                    | NetJob::BtBlock
                     | NetJob::Join { .. }
                     | NetJob::Forget(_)
             )
@@ -791,13 +809,13 @@ impl Settings {
                 self.state.bt_on = !on;
                 // Stock boots with the radio blocked. The session ACL
                 // usually allows the unblock; the helper covers the rest.
-                let blocked = !on && rfkill::set(rfkill::Radio::Bluetooth, false).is_err();
+                let blocked = !on && (self.radios)(rfkill::Radio::Bluetooth, false).is_err();
                 if blocked {
                     let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "on"];
                     self.run(cx, NetJob::BtUnblock, &argv);
                 } else {
                     let arg = if on { "off" } else { "on" };
-                    self.run(cx, NetJob::BtPower, &["bluetoothctl", "power", arg]);
+                    self.run(cx, NetJob::BtPower(!on), &["bluetoothctl", "power", arg]);
                 }
             }
             Setting::NetworkTime => {
@@ -1994,9 +2012,25 @@ impl Settings {
                 rescan = ok && *on;
                 requery = true;
             }
-            NetJob::BtPower | NetJob::BtRemove(_) => {
+            // Off is the block, not the power: a failed power off with the
+            // radio blocked is still off.
+            NetJob::BtPower(false) => {
+                if (self.radios)(rfkill::Radio::Bluetooth, true).is_ok() {
+                    self.query_bt(cx);
+                } else {
+                    let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "off"];
+                    self.run(cx, NetJob::BtBlock, &argv);
+                }
+            }
+            NetJob::BtPower(true) | NetJob::BtRemove(_) => {
                 if !ok {
                     fail(cx, &bt::failure(&out));
+                }
+                self.query_bt(cx);
+            }
+            NetJob::BtBlock => {
+                if !ok {
+                    fail(cx, &helper::failure(&out));
                 }
                 self.query_bt(cx);
             }
@@ -2014,7 +2048,7 @@ impl Settings {
             }
             NetJob::BtUnblock => {
                 if ok {
-                    self.run(cx, NetJob::BtPower, &["bluetoothctl", "power", "on"]);
+                    self.run(cx, NetJob::BtPower(true), &["bluetoothctl", "power", "on"]);
                 } else {
                     fail(cx, &helper::failure(&out));
                     self.query_bt(cx);

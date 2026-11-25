@@ -85,7 +85,8 @@ HID over GATT through BlueZ, on the system bus as the user. No root.
 - Devices paired in Settings, such as headphones, are not hosts: the app
   never disconnects them.
 - Bluetooth turns on when the app needs it and off on exit if the app turned
-  it on.
+  it on. A radio that was blocked is blocked again, so it stays off after a
+  reboot.
 - Hosts see the battery level, sent on connect and when the app returns.
 
 ## USB

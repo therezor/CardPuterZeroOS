@@ -343,3 +343,34 @@ fn the_usb_cable_has_a_system_too() {
         "Alt is Cmd on a Mac over USB"
     );
 }
+
+static SWITCHED: std::sync::Mutex<Vec<bool>> = std::sync::Mutex::new(Vec::new());
+
+fn switch(blocked: bool) -> std::io::Result<()> {
+    SWITCHED.lock().unwrap().push(blocked);
+    Ok(())
+}
+
+/// Bluetooth the app turned on goes back to blocked on exit, as it was: a
+/// power off alone came back on at the next boot.
+#[test]
+fn a_radio_the_app_unblocked_is_blocked_again_on_exit() {
+    let mut bt = FakeBt::new();
+    bt.powered = false;
+    let mut app = App::with(
+        Box::new(bt),
+        Box::new(FakeCable::new(UsbState::Off)),
+        dir("radio"),
+    )
+    .opening(None, Open::Pair);
+    app.s.radio = switch;
+    app.s.radio_blocked = || true;
+    let mut d = Driver::new(app);
+    d.wait(50);
+    assert_eq!(*SWITCHED.lock().unwrap(), [false], "Pair unblocks it");
+    // Esc back to the hosts, then Esc held closes the app.
+    d.keys("esc").wait(100);
+    d.keys("down esc").wait(800);
+    assert!(d.quit());
+    assert_eq!(*SWITCHED.lock().unwrap(), [false, true]);
+}
