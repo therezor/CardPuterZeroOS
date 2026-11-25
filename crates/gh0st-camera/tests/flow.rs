@@ -42,6 +42,40 @@ fn enter_saves_a_photo() {
 }
 
 #[test]
+fn a_second_press_while_the_first_photo_saves_takes_another() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "twice");
+    drv.listen();
+    drv.keys("6").pump(100);
+    drv.keys("6").pump(100);
+    assert_eq!(
+        count(&d, Kind::Photo),
+        2,
+        "the shutter answers while one saves"
+    );
+    assert_eq!(
+        sounds(&mut drv)
+            .iter()
+            .filter(|s| s.contains("shutter"))
+            .count(),
+        2
+    );
+    drv.keys("6").pump(100);
+    assert_eq!(
+        count(&d, Kind::Photo),
+        2,
+        "two may wait to be saved, not three"
+    );
+    drv.pump(700);
+    drv.keys("6").pump(100);
+    assert_eq!(
+        count(&d, Kind::Photo),
+        3,
+        "and it shoots again once they are"
+    );
+}
+
+#[test]
 fn the_helper_runs_as_a_process_too() {
     let _one = serial();
     let exe = env!("CARGO_BIN_EXE_gh0st-camera").to_string();
@@ -321,6 +355,21 @@ fn the_cpp_helper_speaks_the_same_wire() {
     drv.resume().pump(300);
     drv.keys("enter").pump(1500);
     assert_eq!(count(&d, Kind::Photo), 2, "shoots again after the return");
+    // Mono, seventh of the looks: the preview turns grey, and a photo takes it.
+    let grey = |drv: &mut Driver| {
+        drv.frame().row(85)[110..210].iter().all(|&c| {
+            let [r, g, b] = gh0st_app::gfx::color::to_rgb8(c);
+            r.abs_diff(g) <= 12 && g.abs_diff(b) <= 12
+        })
+    };
+    assert!(!grey(&mut drv), "the test pattern has colour");
+    drv.keys("l\nl\nl\nl\nl\nl\nl").pump(600);
+    assert!(grey(&mut drv), "the preview shows the look");
+    drv.keys("enter").pump(2500);
+    assert_eq!(count(&d, Kind::Photo), 3, "a photo with a look");
+    // A press while the sensor takes a photo shoots once the preview is back.
+    drv.keys("enter\nenter").pump(3000);
+    assert_eq!(count(&d, Kind::Photo), 5, "two quick presses, two photos");
 }
 
 #[test]
@@ -387,4 +436,40 @@ fn the_cpp_helper_plays_a_video() {
     drv.pump(600);
     assert_eq!(paused, drv.frame().pixels(), "a pause holds the picture");
     drv.keys("esc").pump(300);
+}
+
+/// The look the camera saved, from the test's config file.
+fn saved_look(drv: &Driver) -> Option<String> {
+    let config = drv.home().parent().unwrap().join("config.json");
+    let text = std::fs::read_to_string(config).ok()?;
+    let at = text.find("\"look\"")?;
+    let rest = &text[at + 6..];
+    let start = rest.find('"')? + 1;
+    let end = rest[start..].find('"')?;
+    Some(rest[start..start + end].to_string())
+}
+
+#[test]
+fn l_steps_the_look_round_and_keeps_it() {
+    let _one = serial();
+    let (mut drv, _) = start(Source::Fake { camera: true }, "look");
+    drv.keys("l\nl").pump(50);
+    assert_eq!(saved_look(&drv).as_deref(), Some("neg"));
+    drv.keys("l\nl\nl\nl\nl\nl\nl").pump(50);
+    assert_eq!(
+        saved_look(&drv).as_deref(),
+        Some("standard"),
+        "nine steps go round"
+    );
+    assert!(drv.lint().is_empty());
+}
+
+#[test]
+fn video_has_no_look() {
+    let _one = serial();
+    let (mut drv, _) = start(Source::Fake { camera: true }, "look-video");
+    drv.keys("l").pump(50);
+    drv.keys("tab").pump(150);
+    drv.keys("l\nl").pump(50);
+    assert_eq!(saved_look(&drv).as_deref(), Some("slide"));
 }

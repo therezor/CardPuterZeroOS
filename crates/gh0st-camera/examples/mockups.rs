@@ -55,8 +55,8 @@ fn camera(name: &str, camera: bool) -> Driver {
 fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
     let mut d = camera("photo", true);
     each("01-photo", &mut d);
-    d.keys("c\nc\nc\nf\nf\ng\nt").pump(100);
-    each("02-photo-zoom-light-grid-timer", &mut d);
+    d.keys("c\nc\nc\nf\nf\ng\nt\nl\nl").pump(100);
+    each("02-photo-zoom-light-grid-timer-look", &mut d);
     d.keys("esc\nenter").pump(100);
     each("03-photo-timer-counting", &mut d);
     d.wait(3000).pump(200);

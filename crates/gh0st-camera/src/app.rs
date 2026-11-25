@@ -29,6 +29,8 @@ pub mod key {
     pub const MIC_SOURCE: &str = "gh0st.camera.mic_source";
     pub const FLICKER: &str = "gh0st.camera.flicker";
     pub const SOUNDS: &str = "gh0st.camera.sounds";
+    /// A film look's id, `standard` for none.
+    pub const LOOK: &str = "gh0st.camera.look";
 }
 
 const SHOOT: u32 = 1;
@@ -63,6 +65,7 @@ const AHEAD: u32 = 26;
 const MIC_SOURCE: u32 = 27;
 const DELETE: u32 = 28;
 const SOUNDS: u32 = 29;
+const LOOK: u32 = 30;
 
 /// How long recording waits for its start sound, so the film doesn't catch
 /// it: the shell's sound player takes up to 190 ms to open, and the beep
@@ -102,8 +105,28 @@ const EVS: [(f32, &str); 13] = [
 ];
 const EV_ZERO: usize = 6;
 const TIMERS: [u8; 3] = [0, 3, 10];
+/// Photos that may wait to be saved, as the helper's MAX_PENDING: a press
+/// while the last one saves still shoots.
+const MAX_SAVING: usize = 2;
 /// JPEG quality: Fine, Normal.
 const QUALITIES: [(u8, &str); 2] = [(95, "Fine"), (85, "Normal")];
+/// Film looks for photos: the helper's ids (camd/look.cpp) and their names.
+const LOOKS: [(&str, &str); 9] = [
+    ("standard", "Off"),
+    ("slide", "Slide"),
+    ("neg", "Neg"),
+    ("vivid", "Vivid"),
+    ("soft", "Soft"),
+    ("cine", "Cine"),
+    ("amber", "Amber"),
+    ("mono", "Mono"),
+    ("faded", "Faded"),
+];
+
+/// A saved look's place in LOOKS: one we don't know is none.
+fn look_of(id: Option<&str>) -> usize {
+    LOOKS.iter().position(|l| Some(l.0) == id).unwrap_or(0)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 enum Phase {
@@ -167,6 +190,8 @@ pub struct Camera {
     timer: usize,
     grid: bool,
     quality: usize,
+    /// Which of LOOKS photos take.
+    look: usize,
     raw: bool,
     mic: bool,
     /// The microphone picked, empty for Auto, and the ones there are once
@@ -192,7 +217,12 @@ pub struct Camera {
     /// The full view's zoom and place over the photo's own size.
     full: PictureView,
     info: bool,
-    saving: bool,
+    /// Photos sent to the helper and not yet saved, by path. It keeps two
+    /// at most.
+    saving: Vec<PathBuf>,
+    /// A press while the sensor took the last photo: it shoots once the
+    /// preview is back.
+    queued: bool,
     flash: bool,
     rec: Option<Rec>,
     /// Recording starts when this fires, after its sound.
@@ -227,6 +257,7 @@ impl Camera {
             timer: 0,
             grid: false,
             quality: 0,
+            look: 0,
             raw: false,
             mic: true,
             mic_source: String::new(),
@@ -244,7 +275,8 @@ impl Camera {
             full_pic: Picture::default(),
             full: PictureView::new(CARDPUTER.width, CARDPUTER.height),
             info: false,
-            saving: false,
+            saving: Vec::new(),
+            queued: false,
             flash: false,
             rec: None,
             rec_wait: None,
@@ -281,6 +313,7 @@ impl Camera {
         self.timer = TIMERS.iter().position(|&v| v as i64 == t).unwrap_or(0);
         self.grid = s.get_bool(key::GRID).unwrap_or(false);
         self.quality = (s.get_str(key::QUALITY) == Some("normal")) as usize;
+        self.look = look_of(s.get_str(key::LOOK));
         self.raw = RAW_BUILT && s.get_bool(key::RAW).unwrap_or(false);
         self.mic = s.get_bool(key::MIC).unwrap_or(true);
         self.mic_source = s.get_str(key::MIC_SOURCE).unwrap_or("").to_string();
@@ -311,6 +344,7 @@ impl Camera {
             "flicker".into(),
             if self.flicker60 { "60" } else { "50" }.into(),
         ));
+        self.send(Cmd::Set("look".into(), LOOKS[self.look].0.into()));
         self.restart();
     }
 
@@ -429,7 +463,10 @@ impl Camera {
             if self.cancel_wait(cx) {
                 return;
             }
-        } else if self.state != State::Preview || self.saving {
+        } else if self.saving.len() >= MAX_SAVING {
+            return;
+        } else if self.state != State::Preview {
+            self.queued = true;
             return;
         }
         self.free = files::free_mb(&self.dir);
@@ -460,7 +497,7 @@ impl Camera {
     }
 
     fn start_rec(&mut self) {
-        let path = files::fresh(&self.dir, "VID", "mp4", files::now());
+        let path = files::fresh(&self.dir, "VID", "mp4", files::now(), &[]);
         let cmd = Cmd::RecStart {
             path: path.to_string_lossy().into_owned(),
             mic: self.mic,
@@ -485,16 +522,19 @@ impl Camera {
 
     fn take(&mut self, cx: &mut Cx) {
         self.sound(Sound::Shutter, cx);
-        let path = files::fresh(&self.dir, "CAM", "jpg", files::now());
+        let path = files::fresh(&self.dir, "CAM", "jpg", files::now(), &self.saving);
         self.send(Cmd::Shoot {
             path: path.to_string_lossy().into_owned(),
             raw: self.raw,
         });
-        self.saving = true;
+        self.saving.push(path);
         self.flash = true;
     }
 
+    /// The self-timer and a press waiting on the preview don't shoot. True
+    /// if the timer was counting.
     fn cancel_count(&mut self, cx: &mut Cx) -> bool {
+        self.queued = false;
         match self.count.take() {
             Some((_, t)) => {
                 cx.cancel(t);
@@ -511,6 +551,12 @@ impl Camera {
                 self.state = s;
                 if s == State::Preview && self.phase == Phase::Starting {
                     self.phase = Phase::Live;
+                }
+                if s == State::Preview
+                    && std::mem::take(&mut self.queued)
+                    && self.view == View::Finder
+                {
+                    self.shoot(cx);
                 }
             }
             Event::Frame { slot, seq, .. } if self.play.is_some() => {
@@ -529,7 +575,8 @@ impl Camera {
                 }
             }
             Event::Shot { path, result } => {
-                self.saving = false;
+                self.saving
+                    .retain(|p| p.as_path() != std::path::Path::new(&path));
                 match result {
                     Ok(_) => {
                         self.refresh();
@@ -606,7 +653,8 @@ impl Camera {
                     Fault::Io(e) => {
                         eprintln!("gh0st-camera: {e}");
                         self.rec = None;
-                        self.saving = false;
+                        self.saving.clear();
+                        self.queued = false;
                         cx.toast_tone(Tone::Critical, "Can't save to the card");
                         return;
                     }
@@ -666,7 +714,8 @@ impl Camera {
         // Nothing will answer a shot, and nothing should beep for one.
         self.cancel_wait(cx);
         self.cancel_count(cx);
-        self.saving = false;
+        self.saving.clear();
+        self.queued = false;
         if !self.quitting && !matches!(self.phase, Phase::Failed(_)) {
             self.phase = Phase::Failed("The camera stopped");
         }
@@ -838,6 +887,7 @@ impl Camera {
             key::QUALITY,
             if self.quality == 1 { "normal" } else { "fine" },
         );
+        s.set_str(key::LOOK, LOOKS[self.look].0);
         if RAW_BUILT {
             s.set_bool(key::RAW, self.raw);
         }
@@ -1019,9 +1069,9 @@ impl Camera {
         c.fill(Rect::new(x0, 0, rw, h), t.c.bg);
         let line = t.m.line_h;
         let s = IconSize::Small as i32;
-        // Left: zoom, and the last shot over its button on 4.
+        // Left: zoom, the look, and the last shot over its button on 4.
         let y = t.m.margin_v + 2;
-        Self::rail_control(
+        let y = Self::rail_control(
             c,
             t,
             0,
@@ -1030,7 +1080,8 @@ impl Camera {
             ZOOMS[self.zoom].1,
             self.zoom != 0,
             "z c",
-        );
+        ) + 6;
+        Self::rail_control(c, t, 0, y, "film", LOOKS[self.look].1, self.look != 0, "l");
         let (tw, th) = thumb_size(&t.m);
         let box_ = Rect::new(
             (rw - tw as i32) / 2,
@@ -1043,7 +1094,7 @@ impl Camera {
         } else {
             c.fill(box_, t.c.surface);
         }
-        if self.saving {
+        if !self.saving.is_empty() {
             plate(c, box_);
             widgets::text_centre(c, t.f.small_bold, box_, "\u{2026}", ON_PICTURE);
         }
@@ -1339,7 +1390,9 @@ impl Page for Camera {
         match self.view {
             View::Finder => {
                 let rec = self.rec.is_some();
-                let ready = self.phase == Phase::Live && !self.saving && self.count.is_none();
+                let ready = self.phase == Phase::Live
+                    && self.saving.len() < MAX_SAVING
+                    && self.count.is_none();
                 // Icons only: the buttons under the screen, the shutter in
                 // the middle.
                 let shutter = match (self.video, rec) {
@@ -1650,6 +1703,11 @@ impl Page for Camera {
         };
         c.add(Command::choice(TIMER, "Timer", timer).keys("t"));
         c.add(Command::toggle(GRID, "Grid", self.grid).keys("g"));
+        c.add(
+            Command::choice(LOOK, "Look", LOOKS[self.look].1)
+                .keys("l")
+                .enabled(!self.video),
+        );
         c.add(Command::choice(
             QUALITY,
             "Quality",
@@ -1715,6 +1773,15 @@ impl Page for Camera {
             LIGHT => self.light = true,
             GALLERY => self.open_review(cx),
             TIMER => self.timer = (self.timer + 1) % TIMERS.len(),
+            LOOK => {
+                let n = LOOKS.len();
+                self.look = if fwd {
+                    (self.look + 1) % n
+                } else {
+                    (self.look + n - 1) % n
+                };
+                self.send(Cmd::Set("look".into(), LOOKS[self.look].0.into()));
+            }
             GRID => self.grid = !self.grid,
             QUALITY => {
                 self.quality = 1 - self.quality;
@@ -1848,6 +1915,27 @@ mod tests {
         assert!(ids.contains(&MIC) && ids.contains(&MIC_SOURCE));
         assert!(cam.mic, "video has sound unless turned off");
         assert_eq!(cam.mic_label(), "Auto");
+    }
+
+    #[test]
+    fn every_look_name_fits_the_rail() {
+        let t = Theme::default();
+        for (id, name) in LOOKS {
+            let w = t.f.small_bold.measure(name);
+            assert!(w <= rail_w(&t.m), "{id}: {name} is {w} px");
+        }
+    }
+
+    #[test]
+    fn every_look_is_one_the_helper_makes() {
+        let helper = include_str!("../camd/look.cpp");
+        for (id, _) in LOOKS.iter().skip(1) {
+            assert!(helper.contains(&format!("r.id = \"{id}\";")), "{id}");
+        }
+        assert_eq!(helper.matches("r.id = ").count(), LOOKS.len() - 1);
+        assert_eq!(look_of(Some("velvet")), 0);
+        assert_eq!(look_of(None), 0);
+        assert_eq!(LOOKS[look_of(Some("mono"))].1, "Mono");
     }
 
     #[test]

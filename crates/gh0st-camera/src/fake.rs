@@ -10,6 +10,9 @@ use gh0st_app::sidecar::Link;
 
 /// A preview frame every 40 ms, as the real helper paces them.
 const FRAME_MS: u64 = 40;
+/// A photo is saved this long after it is taken, as the helper's JPEG
+/// takes: the preview is back before then.
+const SAVE_MS: u64 = 500;
 /// What a second of video "costs": 12 Mb/s and AAC.
 const VIDEO_BYTES_PER_S: u64 = 1_560_000;
 /// Every video it plays lasts this long.
@@ -40,6 +43,8 @@ struct Fake {
     next_tick: u64,
     camera: bool,
     play: Option<Play>,
+    /// Photos taken and not yet answered, oldest first: path, result, when.
+    saves: std::collections::VecDeque<(String, Result<u32, String>, u64)>,
 }
 
 /// Runs until `quit` or the app hangs up. Without a `camera`, `start`
@@ -59,6 +64,7 @@ pub fn serve(link: Link, ring: Ring, camera: bool) {
         next_tick: 0,
         camera,
         play: None,
+        saves: Default::default(),
     };
     // A process helper outlives a killed app on hosts without PDEATHSIG,
     // and a datagram pair never reports the hang-up: watch the parent.
@@ -90,6 +96,11 @@ pub fn serve(link: Link, ring: Ring, camera: bool) {
                 f.next_tick += 1000;
             }
         }
+        while f.saves.front().is_some_and(|s| now >= s.2) {
+            if let Some((path, result, _)) = f.saves.pop_front() {
+                f.say(Event::Shot { path, result });
+            }
+        }
         if f.play.as_ref().is_some_and(|p| p.since.is_some()) && now >= f.next_frame {
             f.play_frame(now);
             f.next_frame = now + FRAME_MS;
@@ -100,6 +111,9 @@ pub fn serve(link: Link, ring: Ring, camera: bool) {
         }
         if f.rec.is_some() {
             deadline = Some(deadline.map_or(f.next_tick, |d: u64| d.min(f.next_tick)));
+        }
+        if let Some(&(_, _, due)) = f.saves.front() {
+            deadline = Some(deadline.map_or(due, |d: u64| d.min(due)));
         }
         let check = rt::now_ms() + 1000;
         let deadline = Some(deadline.map_or(check, |d| d.min(check)));
@@ -171,7 +185,7 @@ impl Fake {
                 let result = std::fs::write(&path, b"\xff\xd8fake\xff\xd9")
                     .map(|_| 0)
                     .map_err(|e| e.to_string());
-                self.say(Event::Shot { path, result });
+                self.saves.push_back((path, result, rt::now_ms() + SAVE_MS));
                 self.say(Event::State(State::Preview));
             }
             Cmd::RecStart { path, .. } => {

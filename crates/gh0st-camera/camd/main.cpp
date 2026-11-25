@@ -3,6 +3,7 @@
 // a wake pipe the sensor and the JPEG worker write to, and signals.
 #include "camd.h"
 #include "link.h"
+#include "look.h"
 #include "player.h"
 #include "pulse.h"
 #include "rec.h"
@@ -60,6 +61,8 @@ public:
         ShotMeta meta;
         std::string path;
         int quality;
+        // The film look, done here rather than on the loop.
+        Look look;
         uint64_t t0;
         // A video's poster: saved without a word to the app.
         bool quiet = false;
@@ -129,6 +132,8 @@ private:
                 busy_ = 1;
             }
             Done d{j.path, false, "", 0, j.quiet};
+            if (!j.quiet)
+                lookYuv(j.img, j.look, uint32_t(j.t0));
             d.ok = saveJpeg(j.img, j.meta, j.quality, j.path, d.why);
             d.ms = nowMs() - j.t0;
             {
@@ -254,8 +259,13 @@ private:
                     int w, h;
                     size(w, h);
                     slot_ = (slot_ + 1) % PREVIEW_SLOTS;
-                    uint32_t seq =
-                        ring_.write(slot_, w, h, [&](uint16_t *px) { viewTo565(v, w, h, px); });
+                    uint32_t seq = ring_.write(slot_, w, h, [&](uint16_t *px) {
+                        viewTo565(v, w, h, px);
+                        // The photo's look, so the view shows what you get.
+                        if (mode_ == Mode::Photo && !table_.empty())
+                            for (size_t i = 0, n = size_t(w) * h; i < n; i++)
+                                px[i] = table_[px[i]];
+                    });
                     if (seq)
                         say({"frame", std::to_string(slot_), std::to_string(seq),
                              std::to_string(w), std::to_string(h)});
@@ -451,6 +461,7 @@ private:
         if (f == Fault::None) {
             j.path = path;
             j.quality = ctl_.quality;
+            j.look = look_;
             j.t0 = t0;
             worker_.push(std::move(j));
         } else {
@@ -501,6 +512,10 @@ private:
                 ctl_.flicker = int(v) == 50 || int(v) == 60 ? int(v) : 0;
             else if (at(1) == "quality")
                 ctl_.quality = std::min(100, std::max(50, int(v)));
+            else if (at(1) == "look") {
+                look_ = lookFor(at(2));
+                lookTable(look_, table_);
+            }
             if (live_)
                 be_->set(ctl_);
         } else if (verb == "shoot") {
@@ -567,6 +582,9 @@ private:
     std::vector<uint16_t> playPx_;
     Mode mode_ = Mode::Photo;
     Controls ctl_;
+    // The photo look, and its table for the preview: empty when off.
+    Look look_;
+    std::vector<uint16_t> table_;
     bool open_ = false, live_ = false, poster_ = false;
     uint32_t slot_ = 0;
     uint32_t lostAtStart_ = 0;

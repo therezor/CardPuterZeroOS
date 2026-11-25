@@ -41,9 +41,9 @@ pub fn stem(prefix: &str, epoch: i64) -> String {
     )
 }
 
-/// A path in `dir` no file has yet: `_2`, `_3` and on after a clash, for
-/// two shots in one second.
-pub fn fresh(dir: &Path, prefix: &str, ext: &str, epoch: i64) -> PathBuf {
+/// A path in `dir` no file has yet, and none of `taken` (shots still being
+/// saved): `_2`, `_3` and on after a clash, for two shots in one second.
+pub fn fresh(dir: &Path, prefix: &str, ext: &str, epoch: i64, taken: &[PathBuf]) -> PathBuf {
     let base = stem(prefix, epoch);
     let mut n = 1;
     loop {
@@ -52,7 +52,7 @@ pub fn fresh(dir: &Path, prefix: &str, ext: &str, epoch: i64) -> PathBuf {
             _ => format!("{base}_{n}.{ext}"),
         };
         let p = dir.join(name);
-        if !p.exists() {
+        if !p.exists() && !taken.contains(&p) {
             return p;
         }
         n += 1;
@@ -188,11 +188,14 @@ mod tests {
     fn a_second_shot_in_the_same_second_gets_a_suffix() {
         let dir = std::env::temp_dir().join(format!("gh0st-camera-files-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let a = fresh(&dir, "CAM", "jpg", 1_795_000_000);
+        let a = fresh(&dir, "CAM", "jpg", 1_795_000_000, &[]);
         std::fs::write(&a, b"x").unwrap();
-        let b = fresh(&dir, "CAM", "jpg", 1_795_000_000);
+        let b = fresh(&dir, "CAM", "jpg", 1_795_000_000, &[]);
         assert_ne!(a, b);
         assert!(b.to_string_lossy().ends_with("_2.jpg"));
+        // The second shot is not on the card yet, but its name is taken.
+        let c = fresh(&dir, "CAM", "jpg", 1_795_000_000, std::slice::from_ref(&b));
+        assert!(c.to_string_lossy().ends_with("_3.jpg"));
         assert!(
             a.file_name()
                 .unwrap()

@@ -3,7 +3,7 @@
 #                            DIR (os/image/build-image.sh does this)
 #   make stub O=OUT          a test-pattern sensor for any host with
 #                            ffmpeg's libraries, and no sound server
-#   make check O=OUT         host checks of the file readers
+#   make check O=OUT         host checks of the file readers and the looks
 # Everything is written under O, so the sources may be read-only. The
 # picture, player, link and ring sources are shared with gh0st-mediad, in
 # native/av.
@@ -24,7 +24,7 @@ AV_LIBS ?= $(shell pkg-config --libs $(AV) 2>/dev/null)
 PULSE_CFLAGS ?= $(shell pkg-config --cflags libpulse-simple 2>/dev/null)
 PULSE_LIBS ?= $(shell pkg-config --libs libpulse-simple libpulse 2>/dev/null)
 
-common := main link ring still decode mp4 mic player
+common := main link ring still decode mp4 mic player look
 
 ifdef SYSROOT
 LIBDIR := $(SYSROOT)/usr/lib/aarch64-linux-gnu
@@ -57,12 +57,17 @@ playcheck: $(O)/playcheck
 $(O)/playcheck: $(addprefix $(O)/,$(addsuffix .o,playcheck player pulse_stub decode))
 	$(CXX) -o $@ $^ $(AV_LIBS) $(JPEG_LIBS) -pthread
 
-# Host checks of what reads files from elsewhere (decode_check.cpp).
-check: $(O)/decode_check
+# Host checks of what reads files from elsewhere (decode_check.cpp), and
+# of the looks (look_check.cpp).
+check: $(O)/decode_check $(O)/look_check
 	$(O)/decode_check
+	$(O)/look_check
 
 $(O)/decode_check: $(O)/decode_check.o
 	$(CXX) -o $@ $^ $(JPEG_LIBS) -pthread
+
+$(O)/look_check: $(O)/look_check.o $(O)/look.o
+	$(CXX) -o $@ $^ -pthread
 
 $(O)/%.o: %.cpp | $(O)
 	$(CXX) $(CXXFLAGS) $(JPEG_CFLAGS) $(AV_CFLAGS) $(PULSE_CFLAGS) $(CAM_CFLAGS) -c -o $@ $<

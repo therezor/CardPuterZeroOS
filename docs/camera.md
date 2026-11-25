@@ -5,8 +5,8 @@ IMX219, and its gallery plays the videos back. It is an SDK app: the screen,
 the keys, the settings and the files. A helper it starts, `gh0st-camd`,
 owns libcamera, the encoders and the player.
 
-The helper (`camd/`) takes the preview, 8 MP photos with EXIF, zoom,
-thumbnails, 1080p30 and 720p30 video with AAC sound, and plays videos. The
+The helper (`camd/`) takes the preview, 8 MP photos with EXIF and a
+film look, zoom, thumbnails, 1080p30 and 720p30 video with AAC sound, and plays videos. The
 image ships it in place of
 M5's Camera, and migration `0003-camera` swaps them on older devices. What
 is missing is at the end.
@@ -84,7 +84,7 @@ words are ignored both ways.
 | `hello 1` | The protocol version |
 | `mode photo`, `mode video 1080`, `mode video 720` | What `start` streams |
 | `start`, `stop` | Open the sensor and stream; close it and free its memory |
-| `set zoom 2.0`, `set ev -0.333`, `set flicker 50`, `set quality 95` | Controls |
+| `set zoom 2.0`, `set ev -0.333`, `set flicker 50`, `set quality 95`, `set look slide` | Controls |
 | `shoot <path> [raw]` | A still to `<path>`, a DNG beside it with `raw` |
 | `rec start <path> [mic [source]]`, `rec stop` | A recording, with sound when `mic`: from `source`, or with none the helper's pick |
 | `mics` | The microphones there are |
@@ -137,7 +137,8 @@ action bar lies over the foot of the picture (`Bars::over`), so the
 picture keeps the whole height.
 
 - **Photos.** The 4:3 picture, 226x170, sits between two rails 47 px wide.
-  Left: zoom with its keys (`z c`), and the last shot over its button on 4.
+  Left: zoom with its keys (`z c`), the look with `l`, and the last shot
+  over its button on 4.
   Right: the mode and the photos left, the light with its keys (`x f`)
   over its button on 7, and the timer and grid when on. Icons, not words.
   Nothing covers the picture.
@@ -148,7 +149,9 @@ picture keeps the whole height.
   in the middle (a record dot for video, a red square while recording),
   Light, and the menu. Light opens a slider over the picture's foot; 5 and
   7 turn into − and +, and Esc closes it. While recording, Gallery and the
-  mode wait.
+  mode wait. The shutter answers while a photo saves: two may wait to be
+  saved, and a press while the sensor takes one shoots as soon as the
+  preview is back.
 - **Gallery.** The OS bars return: "Gallery 2 of 12" and a grid of tiles,
   five across and three down, newest first, a video badge on videos. The
   arrows move, Enter opens one, Delete is held on 6.
@@ -180,10 +183,11 @@ picture keeps the whole height.
 | `z` `c` (Left, Right) | Zoom out, in | Move; newer, older; look around |
 | `x` `f` (Down, Up) | Light (exposure), in thirds of a stop | Move; look around |
 | `t`, `g` | Timer (off, 3 s, 10 s), grid | |
+| `l` | The next look (photos) | |
 | 8 | Menu | Menu |
 | Esc | Cancel the timer; held, exit | Back to the viewfinder |
 
-The menu adds quality, the video size, sound, the microphone, the mains
+The menu adds quality, the look, the video size, sound, the microphone, the mains
 frequency (50 or 60 Hz, against flicker) and Shutter sound. Keep RAW joins
 it once the helper writes DNG.
 
@@ -211,6 +215,41 @@ it once the helper writes DNG.
   and closes the sensor. The return starts the preview again.
 - Shooting stops with less than 64 MB free on the card.
 
+## Looks
+
+A look is a film recipe for photos: colour, tone and grain, in the spirit
+of a film camera's. `l` or the menu's Look row steps through them; the
+left rail names the one on. Video stays as the sensor sees it: a look on
+every 1080p frame would cost more than the CPU has.
+
+| Look | Character | Grain |
+|---|---|---|
+| Off | the camera's own colour | |
+| Slide | muted colour, harder tones, deep blues, as documentary slide film | fine |
+| Neg | strong contrast, low saturation, teal shadows, amber highlights | fine |
+| Vivid | rich colour and contrast | |
+| Soft | gentle contrast, warm skin, open shadows | |
+| Cine | flat and quiet, faded blacks, cool | |
+| Amber | warm highlights, soft brown shadows | fine |
+| Mono | black and white through a yellow filter | strong |
+| Faded | lifted blacks, dull whites, magenta shadows | strong |
+
+- **One function.** `camd/look.cpp` makes each look a 3x3 colour matrix
+  (white balance, saturation, a twist that bends some colours) and then a
+  curve per channel (contrast, shadows, highlights, split tones, where
+  black and white land). A twist leaves greys grey.
+- **The photo.** The worker runs it over the full YUV picture before the
+  JPEG, in bands on every core, so the file and its EXIF thumbnail carry
+  it. Grain is noise on the brightness, strongest in the midtones; strong
+  grain clumps over 2x2 pixels. Each row's noise starts from a hash of
+  the row, so the bands agree whichever core takes them.
+- **The preview.** The same function fills a 65,536-entry RGB565 table
+  (128 KB) when the look changes; each preview pixel goes through it. The
+  viewfinder shows the photo's colour, without the grain, which a 226x170
+  picture would not show anyway.
+- **Adding one.** A recipe in `makeRecipes()`, its id and name in `LOOKS`
+  in `src/app.rs`, a row here. Tests hold the two lists to each other.
+
 ## Files and settings
 
 - Photos and videos go to `~/Pictures/DCIM/Camera`, stock's folder:
@@ -230,6 +269,7 @@ it once the helper writes DNG.
 | `gh0st.camera.grid`, `.raw`, `.mic` | true or false |
 | `gh0st.camera.mic_source` | a sound server source, or empty for Auto |
 | `gh0st.camera.quality` | `fine` (95), `normal` (85) |
+| `gh0st.camera.look` | `standard`, `slide`, `neg`, `vivid`, `soft`, `cine`, `amber`, `mono`, `faded` |
 | `gh0st.camera.flicker` | `50`, `60` |
 | `gh0st.camera.sounds` | true or false: Shutter sound |
 
@@ -278,6 +318,7 @@ are in `native/av` (`docs/media.md`), and the Makefile builds them through
   polls and the sound stream closes, so the codec sleeps. Only the
   loop thread touches the link and the ring. `make playcheck` builds a host check of play, pause, seek and the
   end.
+- `look.cpp`: the looks (above).
 - `still.cpp`: JPEG from raw YUV420 (libjpeg-turbo) and EXIF written by
   hand. `decode.cpp` (shared) reads them back, at 1/8 scale for a tile.
 - `link.cpp`, `ring.cpp` (shared): the two halves of the wire, as in `src/`.
@@ -337,8 +378,11 @@ Builds:
   `mp4cat` with an AAC file, then ffprobe, checks the two tracks' lengths
   and that a cut file still plays.
 - `make -C crates/gh0st-camera/camd check O=$PWD/target/camd` runs host
-  checks of what reads photos from elsewhere: a crafted EXIF thumbnail
-  offset and a picture past 32 MP.
+  checks of what reads photos from elsewhere (a crafted EXIF thumbnail
+  offset and a picture past 32 MP) and of the looks: Off and a neutral
+  recipe leave a photo as it was, the preview's table matches the photo's
+  path, twists keep greys grey, odd sizes stay inside the picture, and
+  grain adds no light.
 - With `GH0ST_CAMD_TEST` naming a helper build, `tests/flow.rs` drives the
   app over it: a photo with EXIF, no `.part` left, a pause that wakes for
   nothing, and a shot after the return. Without it that test is skipped.
