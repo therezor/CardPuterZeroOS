@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.0 beta
+
+- 🛡️ **Apps kept apart.** Every app runs in a sandbox of its own. It can't
+  read your SSH keys or passwords, change what your terminal runs, or see
+  other apps.
+- 🎚️ **Network, camera and microphone per app.** Turn any of them off for
+  an app in Settings > Apps.
+- 🛍️ The Store marks apps that need full access to your device, and asks
+  before it installs one.
+- 📷 **Film looks** for photos in Camera, and a shutter that answers while
+  the last photo saves.
+- 🔔 The switcher shows a bell when notifications wait.
+- 🐛 Fixes: Camera and video use less memory, the first sound after the
+  screen wakes plays whole, and an app that pauses late comes back.
+
 ## v0.3.0 alpha
 
 - 📁 **Files.** Browse the card, open zip files like folders, and connect to

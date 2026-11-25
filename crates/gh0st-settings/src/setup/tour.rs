@@ -9,8 +9,8 @@ use gh0st_app::gfx::widgets::{self, Hint, Message, Row, Trailing};
 use gh0st_app::gfx::{Canvas, Rect, Theme};
 use gh0st_app::prelude::*;
 
-/// Shown first while builds are alpha. False drops the screen.
-pub const ALPHA: bool = true;
+/// Shown first while builds are a test release. False drops the screen.
+pub const PRERELEASE: bool = true;
 
 /// The training's screens: eight lessons, then the reward.
 pub const LESSONS: usize = 9;
@@ -86,8 +86,8 @@ impl Page for Notice {
             ui,
             "triangle-alert",
             Tone::Warning,
-            "An alpha test build",
-            "It can be unstable,\nand the SDK and design may change.",
+            "A beta test build",
+            "It can still break,\nand the SDK may change.",
             &[("Enter", "go on")],
         );
     }
@@ -128,7 +128,7 @@ impl Page for Welcome {
 
     /// Back to the notice, if there is one.
     fn back(&mut self, _: &mut Cx) -> bool {
-        ALPHA
+        PRERELEASE
     }
 
     fn commands(&self, c: &mut Commands) {

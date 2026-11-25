@@ -52,7 +52,7 @@ pub fn steps(a: Shared) -> Steps {
     let at = a.borrow().step.min(ACCOUNT);
     let welcome = a.clone();
     let mut s = Steps::new("")
-        .optional(|_| tour::ALPHA.then_some(tour::Notice))
+        .optional(|_| tour::PRERELEASE.then_some(tour::Notice))
         .step(move |_| tour::Welcome::new(welcome.clone()))
         .part("Training");
     for n in 0..tour::LESSONS {

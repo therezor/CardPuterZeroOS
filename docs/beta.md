@@ -1,8 +1,8 @@
-# Gh0st OS alpha: notes for testers
+# Gh0st OS beta: notes for testers
 
-Gh0st OS for the M5Stack CardputerZero. This is an alpha build. It is ready to
-use every day, but it can still break, and the SDK and the design can still
-change. Flashing it erases the card.
+Gh0st OS for the M5Stack CardputerZero. This is a beta build. It is ready to
+use every day, but it can still break, and the SDK can still change.
+Flashing it erases the card.
 
 ## What you need
 
@@ -42,14 +42,14 @@ scripts/flash.sh gh0st-release-DATE.img.xz /dev/diskN
 
 Put the card in and power on. The M5Stack logo shows, then setup, within
 about 15 seconds. On the first boot the device grows its one partition to
-fill the card. Cards flashed with an older alpha keep a separate home
+fill the card. Cards flashed with an early alpha keep a separate home
 partition: reflash to get the space (back up your home folder first).
 Don't resize those partitions on a computer: if the home partition no
 longer mounts, the device stops at a blank screen.
 
 Setup, once:
 
-1. An alpha notice. Enter goes on.
+1. A beta notice. Enter goes on.
 2. Welcome. Enter starts a short training of the keys. 6 skips it.
 3. The training, 9 short lessons. Skip on a lesson goes to the next one, and
    Skip training in the menu (key 8) skips the rest.
@@ -75,6 +75,12 @@ Setup, once:
 
 The Wi-Fi radio stays off until setup's Wi-Fi step. Bluetooth, SSH and logs are
 off. Turn them on in Settings: SSH in System, logs in Privacy.
+
+Every app runs in a sandbox of its own: it can't read your SSH keys or your
+passwords, change what your terminal runs, or see other apps. Each keeps
+its network, camera and microphone until you turn one off in Settings >
+Apps > the app. Settings, the terminal, Files, Text and the other system
+apps run outside, as do apps that ask for root.
 
 ## Updates
 
@@ -109,3 +115,8 @@ Open an issue on GitHub and include:
   restart clears it.
 - Media plays video up to 2560x1440. Larger videos show a tile but don't
   play.
+- With its microphone turned off, Recorder never opens: it waits for a
+  microphone. Turn it back on in Settings > Apps.
+- An app that needs root as it runs, without saying so, fails in its
+  sandbox. If it closes at once, the screen points at Settings > Apps,
+  where Isolation turns off.

@@ -5,9 +5,9 @@
 **A lean, private OS for the M5Stack CardputerZero.**
 Faster than stock, private by default, and every CardputerZero app still runs.
 
-[⬇️ Download v0.3.0 alpha](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.3.0) ·
+[⬇️ Download v0.4.0 beta](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.4.0) ·
 [⚡ Flash in 5 minutes](#-flash-it) ·
-[🧪 Tester notes](docs/alpha.md) ·
+[🧪 Tester notes](docs/beta.md) ·
 [📝 Changelog](CHANGELOG.md)
 
 <img src="docs/screenshots/home.png" width="640" alt="The Gh0st OS home screen on a CardputerZero">
@@ -58,6 +58,11 @@ a computer or phone, over Bluetooth or a USB cable.
 🔑 **Keyring.** Passwords for servers and apps, locked with your login
 password. An app asks before it reads one.
 
+🛡️ **Apps kept apart.** Every app runs in a sandbox of its own. It can't
+read your SSH keys or passwords, change what your terminal runs, or see
+other apps. Take its network, camera or microphone away in Settings, app
+by app.
+
 📋 **Apps that work together.** Copy and paste between apps, open any file
 in its app, and a file chooser for apps that ask for one. Apps that use the
 standard desktop portal get it too.
@@ -92,6 +97,7 @@ Measured on a CardputerZero. Stock is the M5Stack image with APPLaunch 0.6.105.
 | 🖥️ Full-screen redraws | ❌ 40 fps, tearing | ✅ 50.8 fps, no tearing |
 | 💾 RAM used at idle | ❌ 216 MB, plus 93 MB in swap | ✅ About 140 MB, no swap |
 | 🔋 Battery current, screen off | ❌ 305 mA, no saver | ✅ 212 mA with USB power saving |
+| 🛡️ Apps | ❌ Each can read every file and every other app | ✅ Each in a sandbox; network, camera and mic per app |
 | 🔐 SSH | ❌ On by default | ✅ Off until you turn it on |
 | 📝 Logs | ❌ Kept on the SD card | ✅ Off until you turn them on |
 | 📡 Name on the network | ❌ Announced over mDNS, sent when joining | ✅ Not announced, not sent |
@@ -106,7 +112,7 @@ You need a CardputerZero, a genuine microSD card of 8 GB or more, and
 [Raspberry Pi Imager](https://www.raspberrypi.com/software/) 2.0.2 or later.
 Flashing erases the card.
 
-1. ⬇️ From the [v0.3.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.3.0),
+1. ⬇️ From the [v0.4.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.4.0),
    download `gh0st-release-DATE.img.xz`.
 2. 🍓 In Imager, pick **Raspberry Pi Zero 2 W** as the device, then
    **Use custom** as the OS, and choose the `.img.xz`. Don't unpack it.
@@ -120,7 +126,7 @@ Flashing erases the card.
 Setup starts within about 15 seconds. It teaches the keys in nine short
 lessons (6 skips them), then asks for your country, time zone, privacy
 choices, Wi-Fi, account and look. The full walk-through, checksums and known
-issues are in the [tester notes](docs/alpha.md).
+issues are in the [tester notes](docs/beta.md).
 
 ## ⌨️ Keys
 
@@ -141,10 +147,10 @@ too.
 
 ## 🚧 Status
 
-**v0.3.0 is an alpha.** It runs every day on our test device, but it can
-still break, and the SDK and the design can still change. To report a bug,
+**v0.4.0 is a beta.** It runs every day on our test device, but it can
+still break, and the SDK can still change. To report a bug,
 open an issue with the Build from Settings > About. The
-[tester notes](docs/alpha.md) list what else to include.
+[tester notes](docs/beta.md) list what else to include.
 
 ## 🛠️ For developers
 

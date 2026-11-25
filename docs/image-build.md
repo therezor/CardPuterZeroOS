@@ -283,5 +283,5 @@ start is a device test.
 
 - The image redistributes Raspberry Pi debs and M5 app debs, with no
   licence and source-offer page for them.
-- Every card shares one disk ID (`docs/alpha.md`, Known issues).
+- Every card shares one disk ID (`docs/beta.md`, Known issues).
 - Tags publish GitHub pre-releases.
