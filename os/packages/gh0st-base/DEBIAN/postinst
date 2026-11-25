@@ -28,4 +28,18 @@ if [ "$1" = configure ]; then
     # The data partition's grow unit is gone. Its card keeps the old
     # layout, and the enable link would point at nothing.
     rm -f /etc/systemd/system/local-fs.target.wants/gh0st-grow-data.service
+    # The sandbox's bus policy and audio rules hold from now, not from the
+    # next boot: an update run by an older engine restarts only the shell
+    # (docs/isolation.md). The session bus reads its policy again and the
+    # audio services start over, in the running session if there is one.
+    user=$(getent passwd 1000 | cut -d: -f1)
+    if [ -n "$user" ] && [ -S /run/user/1000/bus ]; then
+        runuser -u "$user" -- env XDG_RUNTIME_DIR=/run/user/1000 \
+            DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus sh -c '
+                dbus-send --session --type=method_call --dest=org.freedesktop.DBus \
+                    /org/freedesktop/DBus org.freedesktop.DBus.ReloadConfig
+                systemctl --user daemon-reload
+                systemctl --user try-restart pipewire-pulse.socket wireplumber.service
+            ' || true
+    fi
 fi

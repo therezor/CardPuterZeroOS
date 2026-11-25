@@ -113,8 +113,11 @@ Store's mirror, recent files, the clipboard) live in
 Stock apps write `config.json`, so a value one writes there for these keys
 is ignored. The shell moves them out of `config.json` once.
 
-A new `gh0st-base` asks for a restart of the device: its bus policy and its
-audio rules hold only from a fresh session.
+gh0st-base's postinst makes its bus policy and audio rules hold at once:
+the user's session bus reads its policy again and the audio services start
+over. An update run by an older engine restarts only the shell, and the
+session bus doesn't see a policy folder that is new until told. `gh0st`
+needs the `gh0st-base` of its own build.
 
 ## Limits
 

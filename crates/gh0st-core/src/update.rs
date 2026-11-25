@@ -51,18 +51,14 @@ pub enum Restart {
     None,
     /// Gh0st restarts: the shell and Settings run the old binary until then.
     Shell,
-    /// The device restarts: the kernel, libc, systemd, and gh0st-base,
-    /// whose bus policy and audio rules hold only from a fresh session.
+    /// The device restarts: the kernel, libc, systemd.
     Device,
 }
 
 impl Restart {
     pub fn of(name: &str) -> Restart {
         if is_kernel_set(name)
-            || matches!(
-                name,
-                "libc6" | "systemd" | "udev" | "dbus" | "libsystemd0" | "gh0st-base"
-            )
+            || matches!(name, "libc6" | "systemd" | "udev" | "dbus" | "libsystemd0")
         {
             Restart::Device
         } else if name == "gh0st" {
@@ -609,7 +605,11 @@ mod tests {
         assert_eq!(Restart::of("libc6"), Restart::Device);
         assert_eq!(Restart::of("gh0st"), Restart::Shell);
         assert_eq!(Restart::of("gh0st-term"), Restart::None);
-        assert_eq!(Restart::of("gh0st-base"), Restart::Device);
+        assert_eq!(
+            Restart::of("gh0st-base"),
+            Restart::None,
+            "its postinst does it"
+        );
     }
 
     #[test]

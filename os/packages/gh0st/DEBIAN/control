@@ -6,7 +6,8 @@ Section: x11
 Priority: optional
 Depends: gh0st-panel-modules, xdg-user-dirs, network-manager, wireplumber, pulseaudio-utils,
  bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd, apt,
- iw, dnsmasq-base, nftables, curl, sqv, libarchive-tools, openssh-client, bubblewrap
+ iw, dnsmasq-base, nftables, curl, sqv, libarchive-tools, openssh-client, bubblewrap,
+ gh0st-base (>= @BASE_VERSION@)
 Description: the Gh0st OS shell and Settings
  The home screen, switcher and OS bars (gh0st shell), Files (gh0st-files),
  Text (gh0st-text), gh0st open and xdg-open, Settings
@@ -20,4 +21,5 @@ Description: the Gh0st OS shell and Settings
  NetworkManager's shared mode runs for the hotspot: DHCP and DNS, and NAT.
  The Store's engine fetches with curl and checks the app list with sqv.
  Files opens archives with bsdtar (libarchive-tools) and reaches servers
- with ssh (openssh-client). Apps run sandboxed in bwrap (bubblewrap).
+ with ssh (openssh-client). Apps run sandboxed in bwrap (bubblewrap), under
+ gh0st-base's bus policy and audio rules.

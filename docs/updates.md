@@ -183,9 +183,8 @@ watches always have a target.
   size. It says when the device restarts at the end.
 - With the kernel set in the list and the battery at 50% or below, Install is
   not offered. The screen says why and how much charge there is.
-- Restart reboots the device when the kernel set, libc, systemd, udev,
-  D-Bus or gh0st-base changed (gh0st-base's bus policy and audio rules hold
-  only from a fresh session). When only Gh0st changed it restarts Gh0st, which closes
+- Restart reboots the device when the kernel set, libc, systemd, udev or
+  D-Bus changed. When only Gh0st changed it restarts Gh0st, which closes
   open apps and locks the screen; the screen says so first.
 - 7 List shows the packages by group, each with its versions and size. Enter
   opens one.
