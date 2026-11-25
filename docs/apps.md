@@ -67,9 +67,9 @@ An entry without a field code opens no files.
   Privacy turns it off, and its Clear empties it with where Media's clips
   stopped.
 - **Our own apps** run with the files in place of the code. A third-party
-  `Exec` still runs through `sh -c`, with the code turned into `"$1"` or
-  `"$@"` and the files passed after it as `sh`'s arguments, so no name is
-  ever part of the shell line.
+  `Exec` still runs through `sh -c`, with the code turned into `${1+"$1"}`
+  or `"$@"` and the files passed after it as `sh`'s arguments, so no name
+  is ever part of the shell line, and no file is no argument.
 - **A running app** that speaks link version 2 comes to the front and gets
   `open` with the path. One that doesn't (a stock app) is left as it is, and
   the shell says to close it first: nothing it holds is lost.

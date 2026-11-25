@@ -281,11 +281,39 @@ mod tests {
                 "-e",
                 "/bin/sh",
                 "-c",
-                "vim \"$1\"",
+                "vim ${1+\"$1\"}",
                 "sh",
                 "/home/u/notes.txt"
             ]
         );
+    }
+
+    #[test]
+    fn one_file_code_with_no_file_passes_no_argument() {
+        // Another test's waitpid(-1) would take this child's exit.
+        let _one = CHILD_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("gh0st-nofile-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let out = d.join("out");
+        let script = d.join("count");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\necho $# >> {}\n", out.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let a = app(&format!("{} %f", script.display()), false, false);
+        for files in [&[][..], &[PathBuf::from("/tmp/a b")][..]] {
+            let v = argv(&a, DEFAULT_TERMINAL, files);
+            let st = std::process::Command::new(&v[0])
+                .args(&v[1..])
+                .status()
+                .unwrap();
+            assert!(st.success());
+        }
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "0\n1\n");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

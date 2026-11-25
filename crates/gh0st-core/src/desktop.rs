@@ -266,13 +266,15 @@ fn split_words(exec: &str) -> Vec<String> {
 }
 
 /// The field code that takes files in `exec`, outside single quotes. The
-/// first one counts, as the spec allows only one.
+/// first one counts, as the spec allows only one. Quotes are read as
+/// [`shell_line`] reads them, so the two agree on every line.
 pub fn field_code(exec: &str) -> Option<FieldCode> {
-    let mut single = false;
+    let (mut single, mut double) = (false, false);
     let mut chars = exec.chars();
     while let Some(c) = chars.next() {
         match c {
-            '\'' => single = !single,
+            '\'' if !double => single = !single,
+            '"' if !single => double = !double,
             '%' if !single => match chars.next() {
                 Some(n) => {
                     if let Some(code) = FieldCode::of(n) {
@@ -318,10 +320,11 @@ pub fn expand_exec(exec: &str, files: &[PathBuf]) -> Vec<OsString> {
 }
 
 /// A third-party `Exec` as the line `sh -c` runs. The field code becomes
-/// `"$1"` or `"$@"`, so the files travel as `sh`'s positional arguments and
-/// never inside the line. Inside double quotes the code becomes `$1` or `$@`,
-/// which the quotes already guard. `exec_allowed` bans `$`, so nothing else
-/// in the line can expand.
+/// `${1+"$1"}` or `"$@"`, so the files travel as `sh`'s positional
+/// arguments and never inside the line, and no file means no argument, not
+/// an empty one. Inside double quotes the code becomes `$1` or `$@`, which
+/// the quotes already guard. `exec_allowed` bans `$`, so nothing else in
+/// the line can expand.
 pub fn shell_line(exec: &str) -> String {
     let mut out = String::with_capacity(exec.len() + 8);
     let (mut single, mut double) = (false, false);
@@ -341,14 +344,12 @@ pub fn shell_line(exec: &str) -> String {
                 // Deprecated and other codes (%i, %c, %k) drop out.
                 Some(n) => {
                     if let Some(code) = FieldCode::of(n) {
-                        let var = if code.many() { "$@" } else { "$1" };
-                        if double {
-                            out.push_str(var);
-                        } else {
-                            out.push('"');
-                            out.push_str(var);
-                            out.push('"');
-                        }
+                        out.push_str(match (code.many(), double) {
+                            (true, true) => "$@",
+                            (true, false) => "\"$@\"",
+                            (false, true) => "$1",
+                            (false, false) => "${1+\"$1\"}",
+                        });
                     }
                 }
                 None => {}
@@ -454,10 +455,26 @@ mod tests {
 
     #[test]
     fn a_shell_line_takes_files_as_positional_arguments() {
-        assert_eq!(shell_line("python3 ~/v.py %f"), "python3 ~/v.py \"$1\"");
+        assert_eq!(
+            shell_line("python3 ~/v.py %f"),
+            "python3 ~/v.py ${1+\"$1\"}"
+        );
         assert_eq!(shell_line("/opt/a \"%F\" 5%%"), "/opt/a \"$@\" 5%");
-        assert_eq!(shell_line("/opt/a %i %u"), "/opt/a  \"$1\"");
+        assert_eq!(shell_line("/opt/a %i %u"), "/opt/a  ${1+\"$1\"}");
+        assert_eq!(shell_line("/opt/a %U"), "/opt/a \"$@\"");
         assert_eq!(shell_line("/opt/a '%f'"), "/opt/a '%f'");
+    }
+
+    #[test]
+    fn quotes_read_the_same_for_the_code_and_the_line() {
+        // An apostrophe inside double quotes opens no single quote.
+        let exec = "/opt/a \"Bob's\" %f";
+        assert_eq!(field_code(exec), Some(FieldCode::File));
+        assert_eq!(shell_line(exec), "/opt/a \"Bob's\" ${1+\"$1\"}");
+        // A double quote inside single quotes opens nothing either.
+        let exec = "/opt/a 'say \"hi' %F";
+        assert_eq!(field_code(exec), Some(FieldCode::Files));
+        assert_eq!(shell_line(exec), "/opt/a 'say \"hi' \"$@\"");
     }
 
     #[test]
