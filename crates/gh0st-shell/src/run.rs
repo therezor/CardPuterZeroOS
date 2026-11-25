@@ -395,6 +395,8 @@ struct Shell {
     audio_exe: Option<PathBuf>,
     /// System sounds.
     player: Player,
+    /// A notice came in the dark: it chimes at the next wake.
+    chime_at_wake: bool,
     /// The keyring's questions.
     prompts: Prompts,
     /// The keyring said its vault is open.
@@ -586,6 +588,7 @@ impl Shell {
             } else {
                 std::env::var("GH0ST_PACAT").ok()
             }),
+            chime_at_wake: false,
             keyring_open: false,
             unlock_sent: false,
             open_asked: false,
@@ -2003,6 +2006,8 @@ impl Shell {
         if self.low.warning() == Warning::Countdown {
             if self.screen == Screen::Off {
                 self.screen_on(now);
+                // The warning is this wake's sound.
+                self.chime_at_wake = false;
                 self.sound(Sound::Warn);
             }
             self.dirty = true;
@@ -2236,8 +2241,8 @@ impl Shell {
         self.tab_down = None;
         self.pending = None;
         self.screen = Screen::Off;
-        self.player.close();
         self.off_at = rt::now_ms();
+        self.player.close(self.off_at);
         self.wifi_done = false;
         self.sync_grab();
     }
@@ -2297,7 +2302,19 @@ impl Shell {
             self.back_from_dark();
             self.refresh_status();
         }
+        self.wake_sounds(now);
         locked
+    }
+
+    /// A notice that came in the dark chimes now. Else the stream opens
+    /// ahead of the first key: after a dark the amplifier is off, and it
+    /// takes longer to start than a key sound lasts.
+    fn wake_sounds(&mut self, now: u64) {
+        if std::mem::take(&mut self.chime_at_wake) {
+            self.sound(Sound::Notice);
+        } else if self.config.sounds() && !self.quiet() {
+            self.player.warm(now);
+        }
     }
 
     /// Lit on the lock screen at rest: a wake past Lock after, or the low
@@ -2723,9 +2740,15 @@ impl Shell {
         self.notices = all;
         self.sync_notices();
         if let Some(n) = fresh.filter(|_| announce) {
-            if !self.locked() && self.screen != Screen::Off {
+            // The dark makes no sound: the chime waits for the wake. The
+            // lock screen chimes but shows nothing.
+            if self.screen == Screen::Off {
+                self.chime_at_wake = true;
+            } else {
                 self.sound(Sound::Notice);
-                self.announce(&n);
+                if !self.locked() {
+                    self.announce(&n);
+                }
             }
         }
     }
@@ -3062,10 +3085,14 @@ impl Shell {
     /// A sound an app asked for: the app checked the setting, which the
     /// shell reads again only once the app leaves the front.
     fn app_sound(&mut self, s: Sound) {
-        let quiet = self.muted == Some(true) || self.volume == Some(0);
-        if !quiet && self.screen != Screen::Off {
+        if !self.quiet() && self.screen != Screen::Off {
             self.player.play(s, rt::now_ms());
         }
+    }
+
+    /// Muted, or the volume at nothing.
+    fn quiet(&self) -> bool {
+        self.muted == Some(true) || self.volume == Some(0)
     }
 
     fn toast(&mut self, text: impl Into<String>) {

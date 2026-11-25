@@ -435,7 +435,8 @@ menu, then the page.
   wrong password, two bell notes for a notice, three beeps for a low
   battery, and a chord at power on. The camera clicks for a photo, beeps
   each second of its timer, once as a recording starts and twice once it
-  is saved. Typing, a raw-key page, a viewfinder and the dark make none.
+  is saved. Typing, a raw-key page, a viewfinder and the dark make none: a
+  notice that comes in the dark chimes at the next wake.
   Settings > Sound > System sounds turns them off.
 
 ## Home and the switcher
@@ -462,7 +463,7 @@ picture and name. It then waits in the notifications, opened from the
 switcher's 5 or home's menu: newest first, each with its app, title, a line
 under it and its age. Enter opens the app and clears the notice. 8 Clear
 clears the selected one, as Del does. 4 held clears them all, as in the
-switcher. The lock screen shows only how many.
+switcher. The lock screen shows only how many, and chimes with no toast.
 
 ## The lock screen
 

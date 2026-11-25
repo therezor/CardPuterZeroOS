@@ -1,14 +1,17 @@
 //! The shell's player for system sounds (`gh0st_core::sound`). One `pacat`
-//! child takes raw samples on a pipe. It starts with a sound and ends
-//! `HOLD_MS` after the last one, or when the screen goes dark. An open
-//! stream keeps PipeWire's graph and the codec running, about 2,000
-//! wakeups a second even when silent, so it is held only while the user is
-//! busy. A write never blocks the shell: a sound that doesn't fit is
-//! dropped, and a dead player starts again at the next sound.
+//! child takes raw samples on a pipe. It starts with a sound, or as the
+//! screen wakes, and ends `HOLD_MS` after the last sound, or when the
+//! screen goes dark. An open stream keeps PipeWire's graph and the codec
+//! running, about 2,000 wakeups a second even when silent, so it is held
+//! only while the user is busy. A write never blocks the shell: a sound
+//! that doesn't fit is dropped, and a dead player starts again at the next
+//! sound.
 //!
 //! Measured on the device: a held stream plays a sound at once; a new one
-//! takes 100 to 190 ms, so one `pacat` per sound would lag every key. A
-//! new stream on a suspended sink still plays its first sound whole.
+//! takes 100 to 190 ms, so one `pacat` per sound would lag every key. The
+//! amplifier powers down about 10 s after the last stream ends. A stream
+//! that starts after that loses most of its first sound unless silence
+//! comes first: 50 ms of it was enough.
 
 use gh0st_core::sound::{RATE, Sound};
 use std::collections::HashMap;
@@ -27,6 +30,14 @@ const SHORT_LIFE_MS: u64 = 1000;
 /// Sounds queue behind each other; past this much waiting, one is dropped
 /// rather than lag the keys.
 const QUEUE_MS: u64 = 250;
+/// The amplifier is off this long after a stream ends: PipeWire suspends
+/// the sink after 5 s, and the codec's power-down follows 5 s later.
+/// Measured at 10 s; less, so a doubt costs a lead, not a sound.
+const AMP_OFF_MS: u64 = 9_000;
+/// Silence ahead of the first sound while the amplifier starts.
+const LEAD_MS: u64 = 100;
+/// The least a warm-up writes: the stream's latency, so it starts.
+const START_MS: u64 = 30;
 /// Room in the pipe for the longest sound and a little queue.
 #[cfg(target_os = "linux")]
 const PIPE_BYTES: libc::c_int = 256 * 1024;
@@ -40,6 +51,8 @@ pub struct Player {
     failed_at: Option<u64>,
     /// When what was written so far has played.
     busy_until: u64,
+    /// When the last stream's sound ended. None: never, or unknown.
+    ended_at: Option<u64>,
     /// Each sound as bytes, made on first use.
     made: HashMap<Sound, Vec<u8>>,
 }
@@ -53,6 +66,7 @@ impl Player {
             close_at: None,
             failed_at: None,
             busy_until: 0,
+            ended_at: None,
             made: HashMap::new(),
         }
     }
@@ -63,6 +77,7 @@ impl Player {
         if (start > now && s == Sound::Move) || start > now + QUEUE_MS {
             return;
         }
+        let lead = self.lead_ms(now);
         if !self.open(now) {
             return;
         }
@@ -70,23 +85,58 @@ impl Player {
             .made
             .entry(s)
             .or_insert_with(|| s.render().iter().flat_map(|v| v.to_le_bytes()).collect());
-        let ms = bytes.len() as u64 * 1000 / (RATE as u64 * 2);
+        let ms = lead + bytes.len() as u64 * 1000 / (RATE as u64 * 2);
         let Some((_, stdin)) = &mut self.child else {
             return;
         };
-        match stdin.write(bytes) {
+        let wrote = if lead > 0 {
+            let mut all = silence(lead);
+            all.extend_from_slice(bytes);
+            stdin.write(&all)
+        } else {
+            stdin.write(bytes)
+        };
+        self.wrote(wrote, start, ms, now);
+    }
+
+    /// Opens the stream ahead of a sound that may come, as the screen
+    /// wakes: the amplifier is up by the first key. Silence starts it.
+    pub fn warm(&mut self, now: u64) {
+        if self.child.is_some() {
+            self.close_at = self.close_at.map(|t| t.max(now + HOLD_MS));
+            return;
+        }
+        let ms = self.lead_ms(now).max(START_MS);
+        if !self.open(now) {
+            return;
+        }
+        let Some((_, stdin)) = &mut self.child else {
+            return;
+        };
+        let wrote = stdin.write(&silence(ms));
+        self.wrote(wrote, now, ms, now);
+    }
+
+    /// The silence a new stream needs first: none while the amplifier is
+    /// still on from the last one.
+    fn lead_ms(&self, now: u64) -> u64 {
+        let cold = self.ended_at.is_none_or(|t| now >= t + AMP_OFF_MS);
+        if self.child.is_none() && cold {
+            LEAD_MS
+        } else {
+            0
+        }
+    }
+
+    fn wrote(&mut self, r: std::io::Result<usize>, start: u64, ms: u64, now: u64) {
+        match r {
             Ok(_) => {
                 self.busy_until = start + ms;
                 self.close_at = Some(self.busy_until + HOLD_MS);
             }
             // Full: this sound is dropped, the next may fit.
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(_) => {
-                if now < self.started_at + SHORT_LIFE_MS {
-                    self.failed_at = Some(now);
-                }
-                self.close();
-            }
+            Err(_) => self.lost(now),
         }
     }
 
@@ -138,10 +188,22 @@ impl Player {
 
     /// Ends the stream: `pacat` plays what it holds and exits, and the
     /// shell's reaper collects it.
-    pub fn close(&mut self) {
-        self.child = None;
+    pub fn close(&mut self, now: u64) {
+        if self.child.take().is_some() {
+            self.ended_at = Some(self.busy_until.max(now));
+        }
         self.close_at = None;
         self.busy_until = 0;
+    }
+
+    /// The player died under us. What the amplifier does is unknown, so
+    /// the next stream starts as a cold one.
+    fn lost(&mut self, now: u64) {
+        if now < self.started_at + SHORT_LIFE_MS {
+            self.failed_at = Some(now);
+        }
+        self.close(now);
+        self.ended_at = None;
     }
 
     /// When the stream closes if no sound comes first.
@@ -151,7 +213,7 @@ impl Player {
 
     pub fn tick(&mut self, now: u64) {
         if self.close_at.is_some_and(|t| now >= t) {
-            self.close();
+            self.close(now);
         }
     }
 
@@ -162,13 +224,14 @@ impl Player {
             .as_ref()
             .is_some_and(|(c, _)| c.id() as i32 == pid);
         if ours {
-            if now < self.started_at + SHORT_LIFE_MS {
-                self.failed_at = Some(now);
-            }
-            self.close();
+            self.lost(now);
         }
         ours
     }
+}
+
+fn silence(ms: u64) -> Vec<u8> {
+    vec![0; (ms * RATE as u64 / 1000) as usize * 2]
 }
 
 /// True once per boot: the first shell since power on plays the boot
@@ -219,22 +282,35 @@ mod tests {
         (Player::new(Some(prog.display().to_string())), out)
     }
 
-    fn played(p: &mut Player, out: &std::path::Path) -> usize {
+    fn played(p: &mut Player, out: &std::path::Path) -> Vec<u8> {
         let mut child = p.child.take().map(|(c, _)| c).unwrap();
         child.wait().unwrap();
-        std::fs::read(out).unwrap().len()
+        std::fs::read(out).unwrap()
     }
+
+    fn bytes(s: Sound) -> usize {
+        s.render().len() * 2
+    }
+
+    fn ms(s: Sound) -> u64 {
+        bytes(s) as u64 * 1000 / (RATE as u64 * 2)
+    }
+
+    const LEAD: usize = (LEAD_MS * RATE as u64 / 1000) as usize * 2;
 
     #[test]
     fn a_sound_opens_the_stream_and_the_hold_closes_it() {
         let (mut p, out) = stub("hold");
         p.play(Sound::Select, 1000);
-        let select = Sound::Select.render().len() * 2;
         let end = p.deadline().unwrap();
-        assert!(end > 1000 + HOLD_MS, "{end}");
+        assert_eq!(end, 1000 + LEAD_MS + ms(Sound::Select) + HOLD_MS);
         p.tick(end - 1);
         assert!(p.child.is_some());
-        assert_eq!(played(&mut p, &out), select);
+        // The first stream since start is a cold one: silence, then the sound.
+        let pcm = played(&mut p, &out);
+        assert_eq!(pcm.len(), LEAD + bytes(Sound::Select));
+        assert!(pcm[..LEAD].iter().all(|&b| b == 0));
+        assert!(pcm[LEAD..].iter().any(|&b| b != 0));
         p.tick(end);
         assert_eq!(p.deadline(), None);
     }
@@ -243,13 +319,14 @@ mod tests {
     fn ticks_that_would_overlap_are_dropped_and_a_queue_stays_short() {
         let (mut p, out) = stub("queue");
         p.play(Sound::Notice, 0);
+        let notice_end = LEAD_MS + ms(Sound::Notice);
         // Would wait most of the notice: past QUEUE_MS.
         p.play(Sound::Boot, 10);
         // Waits its turn, near the notice's end.
-        p.play(Sound::Select, 300);
-        p.play(Sound::Move, 310);
-        let want = (Sound::Notice.render().len() + Sound::Select.render().len()) * 2;
-        assert_eq!(played(&mut p, &out), want);
+        p.play(Sound::Select, notice_end - 100);
+        p.play(Sound::Move, notice_end - 90);
+        let want = LEAD + bytes(Sound::Notice) + bytes(Sound::Select);
+        assert_eq!(played(&mut p, &out).len(), want);
     }
 
     #[test]
@@ -288,5 +365,57 @@ mod tests {
         assert_eq!(p.failed_at, None);
         p.play(Sound::Select, SHORT_LIFE_MS + 2);
         assert!(p.child.is_some());
+    }
+
+    #[test]
+    fn only_a_stream_after_the_amplifier_went_off_leads_with_silence() {
+        let (mut p, _) = stub("lead");
+        assert_eq!(p.lead_ms(0), LEAD_MS, "nothing played yet");
+        p.play(Sound::Select, 0);
+        assert_eq!(p.lead_ms(10), 0, "the stream is open");
+        let close = p.deadline().unwrap();
+        p.tick(close);
+        // It ended when it closed, after the hold.
+        assert_eq!(p.ended_at, Some(close));
+        assert_eq!(p.lead_ms(close + AMP_OFF_MS - 1), 0);
+        assert_eq!(p.lead_ms(close + AMP_OFF_MS), LEAD_MS);
+        // Closed by the dark mid-sound: it ends once the sound has played.
+        p.play(Sound::Notice, close + 100);
+        let busy = p.busy_until;
+        p.close(close + 110);
+        assert_eq!(p.ended_at, Some(busy));
+    }
+
+    #[test]
+    fn a_warm_up_opens_the_stream_and_a_sound_follows_its_silence() {
+        let (mut p, out) = stub("warm");
+        p.warm(0);
+        assert_eq!(p.deadline(), Some(LEAD_MS + HOLD_MS));
+        // A key during the silence plays after it, with no second lead.
+        p.play(Sound::Select, 40);
+        assert_eq!(p.busy_until, LEAD_MS + ms(Sound::Select));
+        // Another warm-up while open writes nothing and keeps the hold.
+        let held = p.deadline().unwrap();
+        p.warm(50);
+        assert_eq!(p.deadline(), Some(held));
+        assert_eq!(played(&mut p, &out).len(), LEAD + bytes(Sound::Select));
+        // Soon after a stream, the amplifier is still on: just enough
+        // silence to start the stream.
+        let (mut p, _) = stub("warm-again");
+        p.ended_at = Some(1000);
+        p.warm(2000);
+        assert_eq!(p.busy_until, 2000 + START_MS);
+    }
+
+    #[test]
+    fn after_a_dead_player_the_next_stream_counts_as_cold() {
+        let (mut p, _) = stub("dead");
+        p.ended_at = Some(0);
+        p.play(Sound::Select, 1000);
+        assert_eq!(p.busy_until, 1000 + ms(Sound::Select), "warm: no lead");
+        let pid = p.child.as_ref().map(|(c, _)| c.id() as i32).unwrap();
+        assert!(p.exited(pid, 1000 + SHORT_LIFE_MS));
+        assert_eq!(p.ended_at, None);
+        assert_eq!(p.lead_ms(1000 + SHORT_LIFE_MS + 1), LEAD_MS);
     }
 }

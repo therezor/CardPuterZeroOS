@@ -26,19 +26,21 @@ struct Run {
     log: String,
     /// Bytes `pacat` was given.
     pcm: usize,
+    /// All of them zero: silence.
+    silent: bool,
     stderr: String,
 }
 
 /// Runs the shell with `apps` on home, each running `program`, and the
-/// lock off, plus `config`'s keys under `gh0st`.
-fn run(name: &str, config: &str, apps: &[&str], program: &str, keys: &str) -> Run {
+/// lock off, plus `config`'s keys under `gh0st` and `top`'s beside it.
+fn run(name: &str, top: &str, config: &str, apps: &[&str], program: &str, keys: &str) -> Run {
     let dir = std::env::temp_dir().join(format!("gh0st-sound-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let home = dir.join("home/.config/cardputerzero");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join("config.json"),
-        format!("{{\"gh0st\": {{\"lock\": {{\"password\": false}}{config}}}}}"),
+        format!("{{{top}\"gh0st\": {{\"lock\": {{\"password\": false}}{config}}}}}"),
     )
     .unwrap();
     for d in ["frames", "ours", "stock", "icons"] {
@@ -88,9 +90,11 @@ fn run(name: &str, config: &str, apps: &[&str], program: &str, keys: &str) -> Ru
     let out = child.wait_with_output().unwrap();
     // The stubs run detached; give the last one a moment to write.
     std::thread::sleep(std::time::Duration::from_millis(200));
+    let pcm = std::fs::read(dir.join("pcm")).unwrap_or_default();
     let run = Run {
         log: std::fs::read_to_string(dir.join("log")).unwrap_or_default(),
-        pcm: std::fs::metadata(dir.join("pcm")).map_or(0, |m| m.len() as usize),
+        pcm: pcm.len(),
+        silent: pcm.iter().all(|&b| b == 0),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
     };
     let _ = std::fs::remove_dir_all(&dir);
@@ -102,7 +106,7 @@ fn a_paused_app_is_parked_and_unparked() {
     // Open, pause, resume from the switcher, pause again, close it there.
     let keys = "wait 400\nenter\nwait 600\nhome\nwait 400\nenter\nwait 600\n\
                 home\nwait 400\nbackspace\nwait 1500\n";
-    let r = run("park", "", &["Player"], SLEEP, keys);
+    let r = run("park", "", "", &["Player"], SLEEP, keys);
     let calls: Vec<&str> = r.log.lines().collect();
     assert_eq!(
         calls.first(),
@@ -129,10 +133,11 @@ fn a_paused_app_is_parked_and_unparked() {
 #[test]
 fn moving_on_home_sounds_unless_sounds_are_off() {
     let keys = "wait 400\nright\nwait 300\nleft\nwait 2600\n";
-    let on = run("on", "", &["Alpha", "Beta"], SLEEP, keys);
+    let on = run("on", "", "", &["Alpha", "Beta"], SLEEP, keys);
     assert!(on.pcm > 0, "no sound: {}", on.stderr);
     let off = run(
         "off",
+        "",
         ", \"sounds\": false",
         &["Alpha", "Beta"],
         SLEEP,
@@ -145,8 +150,8 @@ fn moving_on_home_sounds_unless_sounds_are_off() {
 fn sounds_turned_off_in_an_app_stay_off_once_it_leaves_the_front() {
     // Open it (a sound), pause it, move in the switcher (a tick, or not).
     let keys = "wait 400\nenter\nwait 800\nhome\nwait 400\nleft\nwait 2600\n";
-    let kept = run("kept", "", &["Alpha"], SLEEP, keys);
-    let off = run("silenced", "", &["Alpha"], SILENCER, keys);
+    let kept = run("kept", "", "", &["Alpha"], SLEEP, keys);
+    let off = run("silenced", "", "", &["Alpha"], SILENCER, keys);
     assert!(off.pcm > 0, "the open sounds first: {}", off.stderr);
     assert!(
         kept.pcm > off.pcm,
@@ -155,4 +160,25 @@ fn sounds_turned_off_in_an_app_stay_off_once_it_leaves_the_front() {
         off.pcm,
         off.stderr
     );
+}
+
+/// Dark a second after the start.
+const DARK: &str = "\"dark_time\": 1, ";
+
+#[test]
+fn a_wake_opens_the_stream_before_the_first_key() {
+    // Dark, then a key that wakes it and makes no sound of its own.
+    let keys = "wait 2000\nright\nwait 2600\n";
+    let r = run("wake", DARK, "", &["Alpha", "Beta"], SLEEP, keys);
+    assert!(r.pcm > 0, "no stream at the wake: {}", r.stderr);
+    assert!(r.silent, "{}", r.stderr);
+    let off = run(
+        "wake-off",
+        DARK,
+        ", \"sounds\": false",
+        &["Alpha"],
+        SLEEP,
+        keys,
+    );
+    assert_eq!(off.pcm, 0, "{}", off.stderr);
 }

@@ -325,9 +325,12 @@ The baseline was dark; the switcher showed for part of the other two.
   linked to it.
 - `gh0st audio park` took 0.25 s; with no audio library mapped in the group
   it returns in 19 ms without calling pactl.
-- From source, not measured: the AW8737A amplifier's enable (GPIO24)
-  follows the stream. M5's `simple-amplifier.c` sets it in DAPM's
-  POST_PMU and clears it in PRE_PMD.
+- The AW8737A amplifier's enable (GPIO24, `pinctrl lev 24`) follows the
+  stream: M5's `simple-amplifier.c` sets it in DAPM's POST_PMU and clears
+  it in PRE_PMD. A new stream on a suspended sink set it 168 ms after
+  `pacat` started, and the PCM ran at 246 ms. The PCM closed 5 s after the
+  stream ended (the sink's suspend), and GPIO24 went low 5 s after that
+  (the card's `pmdown_time`, 5000 ms).
 
 ## System sounds through `pacat`
 
@@ -338,9 +341,17 @@ the board's own microphone, with the charger in.
   included: nothing waits for the buffer to fill.
 - With the sink suspended, a new stream's PCM was PREPARED after 169 ms
   and RUNNING after 192 ms; in a later run the first clip came about
-  120 ms after its write. Three cold streams in a row played their first
-  clip whole: the same length and energy as the same clip played warm
-  600 ms later. No lead of silence is needed.
+  120 ms after its write.
+- Levels below are the loudest 5 ms at the microphone (RMS), each against
+  the same clip 2 s later on the same stream.
+- A stream that starts while GPIO24 is still high plays its first clip
+  whole: a Select 7 s and 8.8 s after the last stream ended, with the PCM
+  closed, reached 763 and 841 (against 854 and 810).
+- One that starts after GPIO24 went low loses most of it: a Select reached
+  170 and 179 (against 861 and 707), and a Move was lost in the room's
+  noise. Behind 50 to 300 ms of silence the same Select reached 743 to 873.
+  A stream opened with 100 ms of silence, and a Select 500 ms later,
+  played it whole (766 against 758).
 - One `pacat` per clip instead adds 100 to 130 ms to every clip, the cold
   one included, and holds nothing open.
 - A held stream with nothing to play still runs the graph: about 1,970
