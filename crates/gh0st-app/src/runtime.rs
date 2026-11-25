@@ -215,7 +215,7 @@ pub(crate) struct Runtime {
     /// Files the app was started with, for [`Page::opened`] after start.
     pub files: Vec<PathBuf>,
     /// Every file a page asked to open, and in which app: what a test
-    /// reads, since no shell is there to act on it.
+    /// reads, since no shell is there to act on it. Kept in tests only.
     pub open_log: Vec<(Option<String>, PathBuf)>,
     /// A page asked to step back with no shell to do it: the app closed.
     pub(crate) left: bool,
@@ -324,6 +324,14 @@ impl Runtime {
     /// The portal's fd is ready: hand out the answers that came.
     pub fn portal_ready(&mut self, now: u64) {
         let answers = self.portal.as_mut().map(|c| c.ready()).unwrap_or_default();
+        self.hand_out(answers, now);
+    }
+
+    fn hand_out(&mut self, answers: Vec<(u64, usize, Option<Vec<PathBuf>>)>, now: u64) {
+        // A connection that failed is made again for the next pick.
+        if self.portal.as_ref().is_some_and(|c| c.dead()) {
+            self.portal = None;
+        }
         for (token, owner, paths) in answers {
             self.picked(token, owner, paths, now);
         }
@@ -531,17 +539,26 @@ impl Runtime {
                         self.pick_log.push((token, owner, spec));
                         continue;
                     }
-                    if self.portal.is_none() {
+                    if self.portal.as_ref().is_none_or(|c| c.dead()) {
                         self.portal = crate::portal::Client::connect();
                     }
                     let asked = match &mut self.portal {
                         Some(c) => c.pick(token, owner, &spec),
                         None => Err("no session bus".into()),
                     };
-                    if let Err(why) = asked {
-                        eprintln!("gh0st app: pick: {why}");
-                        self.show_toast("No file chooser".into(), Tone::Warning, now);
-                        self.picked(token, owner, None, now);
+                    match asked {
+                        Ok(()) => {
+                            // The answer may have come in with the reply,
+                            // and the fd won't say so again.
+                            let answers =
+                                self.portal.as_mut().map(|c| c.drain()).unwrap_or_default();
+                            self.hand_out(answers, now);
+                        }
+                        Err(why) => {
+                            eprintln!("gh0st app: pick: {why}");
+                            self.show_toast("No file chooser".into(), Tone::Warning, now);
+                            self.picked(token, owner, None, now);
+                        }
                     }
                 }
                 Request::OpenFile { app, path } => {
@@ -561,7 +578,10 @@ impl Runtime {
                         }
                         None => {}
                     }
-                    self.open_log.push((app, path));
+                    // For a test to read; a real run keeps none.
+                    if self.portal_offline {
+                        self.open_log.push((app, path));
+                    }
                 }
                 Request::Sound(s) => self.play(s),
                 Request::Notify(text) => match &self.link {
@@ -670,6 +690,11 @@ impl Runtime {
         self.jobs.retain(|j| j.owner < i);
         self.watches.retain(|w| w.owner < i);
         self.adopted.retain(|a| a.1 < i);
+        // An answer must not reach the page pushed in its place.
+        self.pick_log.retain(|p| p.1 < i);
+        if let Some(c) = &mut self.portal {
+            c.forget(i);
+        }
     }
 
     /// Closes every page, top first. SIGTERM and SIGINT land here.

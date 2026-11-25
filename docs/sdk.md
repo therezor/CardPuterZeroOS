@@ -1143,8 +1143,11 @@ impl Page for Editor {
 ```
 
 `PickSpec::open()`, `save(name)` and `folder()` say what to ask;
-`filter`, `multiple` and `starting_in` refine it. In tests,
-`Driver::picks` lists what was asked and `Driver::answer_pick` answers.
+`filter`, `multiple` and `starting_in` refine it. A page that closes
+takes its pick with it: the chooser goes, and no answer reaches the page
+in its place. If the session leaves before it answers, the answer is
+None. In tests, `Driver::picks` lists what was asked and
+`Driver::answer_pick` answers.
 
 `cx.post_with(tag, title, body, Post { actions, default, file })` posts a
 notice with up to three chips, the action Enter runs, and a file Enter

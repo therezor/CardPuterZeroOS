@@ -85,3 +85,66 @@ fn a_pick_is_answered_to_the_page_that_asked() {
     d.answer_pick(Some(vec![PathBuf::from("/home/u/notes.txt")]));
     assert!(d.picks().is_empty());
 }
+
+/// Pushes a page that asks for a file at once.
+struct Home {
+    heard: std::rc::Rc<std::cell::Cell<u32>>,
+}
+
+struct Asker {
+    heard: std::rc::Rc<std::cell::Cell<u32>>,
+}
+
+impl Page for Home {
+    fn title(&self) -> &str {
+        "Home"
+    }
+
+    fn draw(&self, _ui: &mut Ui) {}
+
+    fn key(&mut self, key: Key, cx: &mut Cx) {
+        if key == Key::Enter {
+            cx.push(Asker {
+                heard: self.heard.clone(),
+            });
+        }
+    }
+}
+
+impl Page for Asker {
+    fn title(&self) -> &str {
+        "Asker"
+    }
+
+    fn draw(&self, _ui: &mut Ui) {}
+
+    fn start(&mut self, cx: &mut Cx) {
+        if self.heard.get() == 0 {
+            cx.pick(gh0st_app::PickSpec::open());
+        }
+    }
+
+    fn picked(&mut self, _: gh0st_app::Pick, _: Option<Vec<PathBuf>>, _: &mut Cx) {
+        self.heard.set(self.heard.get() + 10);
+    }
+
+    fn stop(&mut self, _: &mut Cx) {
+        self.heard.set(self.heard.get() + 1);
+    }
+}
+
+#[test]
+fn a_closed_pages_pick_never_reaches_the_page_in_its_place() {
+    let heard = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut d = Driver::new(Home {
+        heard: heard.clone(),
+    });
+    d.keys("enter");
+    assert_eq!(d.picks().len(), 1);
+    // It closes; another page takes its place on the stack.
+    d.keys("esc\nenter");
+    assert_eq!(d.depth(), 2);
+    assert!(d.picks().is_empty(), "the pick went with its page");
+    d.answer_pick(Some(vec![PathBuf::from("/tmp/x")]));
+    assert_eq!(heard.get(), 1, "only the first page's stop, no answer");
+}

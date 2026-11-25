@@ -129,18 +129,46 @@ fn filter_value(f: &(String, Vec<String>)) -> Value {
     ])
 }
 
+/// A pick the portal has taken and not answered yet.
+struct Waiting {
+    token: u64,
+    owner: usize,
+    /// The request's object path, which its Response comes from.
+    path: String,
+    /// The portal's unique name when it took the pick: if that leaves the
+    /// bus, no answer will come.
+    by: Option<String>,
+}
+
 /// The portal, from an app: one connection, the picks waiting on it.
 pub(crate) struct Client {
     conn: Conn,
-    /// Token, owning page, request path.
-    waiting: Vec<(u64, usize, String)>,
+    waiting: Vec<Waiting>,
+    /// The connection failed: a new one is made for the next pick.
+    dead: bool,
 }
 
 impl Client {
+    /// Connects, and listens once for every answer this connection's
+    /// picks will get and for the portal leaving the bus.
     pub(crate) fn connect() -> Option<Client> {
+        let mut conn = Conn::session().ok()?;
+        let me = conn.name.clone().unwrap_or_default();
+        let answers = format!(
+            "type='signal',interface='{REQUEST}',member='Response',path_namespace='{}'",
+            requests(&me)
+        );
+        let gone = format!(
+            "type='signal',sender='{}',member='NameOwnerChanged',arg0='{NAME}'",
+            gh0st_dbus::bus::NAME
+        );
+        for rule in [answers, gone] {
+            gh0st_dbus::bus::add_match(&mut conn, &rule).ok()?;
+        }
         Some(Client {
-            conn: Conn::session().ok()?,
+            conn,
             waiting: Vec::new(),
+            dead: false,
         })
     }
 
@@ -156,7 +184,13 @@ impl Client {
         self.waiting.is_empty()
     }
 
-    /// Asks for a file. The answer comes from [`ready`](Client::ready).
+    pub(crate) fn dead(&self) -> bool {
+        self.dead || self.conn.closed()
+    }
+
+    /// Asks for a file. The answer comes from [`ready`](Client::ready), or
+    /// from [`drain`](Client::drain) right after: it may have come with the
+    /// reply.
     pub(crate) fn pick(&mut self, token: u64, owner: usize, spec: &PickSpec) -> Result<(), String> {
         let member = match spec.mode {
             PickMode::Save => "SaveFile",
@@ -170,49 +204,83 @@ impl Client {
                 Box::new(Value::variant(Value::str(handle.clone()))),
             ));
         }
-        // Listen first: the answer may come before the reply is read.
         let me = self.conn.name.clone().unwrap_or_default();
-        let path = format!(
-            "{PATH}/request/{}/{handle}",
-            me.trim_start_matches(':').replace('.', "_")
-        );
-        let rule = format!("type='signal',interface='{REQUEST}',member='Response',path='{path}'");
-        gh0st_dbus::bus::add_match(&mut self.conn, &rule).map_err(|e| e.to_string())?;
+        let path = format!("{}/{handle}", requests(&me));
         let m = Message::call(NAME, PATH, CHOOSER, member)
             .arg(Value::str(""))
             .arg(Value::str(""))
             .arg(o);
-        let r = self.conn.call(m, CALL_MS).map_err(|e| e.to_string())?;
+        let r = self.conn.call(m, CALL_MS).map_err(|e| {
+            if !matches!(e, gh0st_dbus::Error::Remote { .. }) {
+                self.dead = true;
+            }
+            e.to_string()
+        })?;
         let got = r
             .body
             .first()
             .and_then(Value::as_str)
             .unwrap_or(&path)
             .to_string();
-        self.waiting.push((token, owner, got));
+        self.waiting.push(Waiting {
+            token,
+            owner,
+            path: got,
+            by: r.sender.clone(),
+        });
         Ok(())
     }
 
-    /// Answers that arrived: token, owner, the paths or None.
+    /// Ends the picks of page `from` and every page above it: they closed.
+    /// The chooser is told so it goes; no reply is waited for.
+    pub(crate) fn forget(&mut self, from: usize) {
+        for w in split_off(&mut self.waiting, |w| w.owner >= from) {
+            let m = Message::call(NAME, &w.path, REQUEST, "Close").flags(gh0st_dbus::message::NO_REPLY);
+            if self.conn.send(m).is_err() {
+                self.dead = true;
+            }
+        }
+    }
+
+    /// The fd is ready: answers that arrived, as [`drain`](Client::drain).
     pub(crate) fn ready(&mut self) -> Vec<(u64, usize, Option<Vec<PathBuf>>)> {
-        let mut out = Vec::new();
         if self.conn.flush().and_then(|()| self.conn.fill()).is_err() || self.conn.closed() {
             // The bus went away: every pick waiting ends unanswered.
+            self.dead = true;
             return self
                 .waiting
                 .drain(..)
-                .map(|(t, o, _)| (t, o, None))
+                .map(|w| (w.token, w.owner, None))
                 .collect();
         }
+        self.drain()
+    }
+
+    /// Answers already read: token, owner, the paths or None. A pick whose
+    /// portal left the bus ends with None.
+    pub(crate) fn drain(&mut self) -> Vec<(u64, usize, Option<Vec<PathBuf>>)> {
+        let mut out = Vec::new();
         while let Ok(Some(m)) = self.conn.recv() {
-            if m.kind != Kind::Signal || !m.is(REQUEST, "Response") {
+            if m.kind != Kind::Signal {
+                continue;
+            }
+            if m.is(gh0st_dbus::bus::NAME, "NameOwnerChanged") {
+                let arg = |i: usize| m.body.get(i).and_then(Value::as_str);
+                let bus = m.sender.as_deref() == Some(gh0st_dbus::bus::NAME);
+                if let (true, Some(NAME), Some(old)) = (bus, arg(0), arg(1)) {
+                    let gone = split_off(&mut self.waiting, |w| w.by.as_deref() == Some(old));
+                    out.extend(gone.into_iter().map(|w| (w.token, w.owner, None)));
+                }
+                continue;
+            }
+            if !m.is(REQUEST, "Response") {
                 continue;
             }
             let path = m.path.as_deref().unwrap_or("");
-            let Some(at) = self.waiting.iter().position(|w| w.2 == path) else {
+            let Some(at) = self.waiting.iter().position(|w| w.path == path) else {
                 continue;
             };
-            let (token, owner, _) = self.waiting.remove(at);
+            let w = self.waiting.remove(at);
             let ok = m.body.first().and_then(Value::as_u32) == Some(0);
             let paths = ok.then(|| {
                 m.body
@@ -226,10 +294,26 @@ impl Client {
                     .filter_map(gh0st_core::uri::to_path)
                     .collect()
             });
-            out.push((token, owner, paths));
+            out.push((w.token, w.owner, paths));
         }
         out
     }
+}
+
+/// Takes the picks `f` says out of `waiting`.
+fn split_off(waiting: &mut Vec<Waiting>, f: impl Fn(&Waiting) -> bool) -> Vec<Waiting> {
+    let (gone, kept) = std::mem::take(waiting).into_iter().partition(f);
+    *waiting = kept;
+    gone
+}
+
+/// Where the portal puts this connection's requests (`unique` is its
+/// name on the bus).
+fn requests(unique: &str) -> String {
+    format!(
+        "{PATH}/request/{}",
+        unique.trim_start_matches(':').replace('.', "_")
+    )
 }
 
 /// What the shell's chooser is asked, from `gh0st session`.
@@ -329,4 +413,101 @@ pub fn done(
         .arg(Value::Array(Ty::Array(Box::new(Ty::Byte)), list))
         .arg(Value::I32(filter.map(|f| f as i32).unwrap_or(-1)));
     conn.call(m, CALL_MS).map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ME: &str = ":1.42";
+    const PORTAL: &str = ":1.7";
+
+    fn client() -> (Client, Conn) {
+        let (a, b) = gh0st_dbus::conn::pair().unwrap();
+        let mut conn = Conn::raw(a).unwrap();
+        conn.name = Some(ME.into());
+        let client = Client {
+            conn,
+            waiting: Vec::new(),
+            dead: false,
+        };
+        (client, Conn::raw(b).unwrap())
+    }
+
+    /// The portal's reply to the client's call number `serial`.
+    fn reply(serial: u32, path: &str) -> Message {
+        let mut call = Message::call(NAME, PATH, CHOOSER, "OpenFile");
+        call.serial = serial;
+        let mut r = Message::reply(&call).arg(Value::str(path));
+        r.sender = Some(PORTAL.into());
+        r
+    }
+
+    fn response(path: &str, uri: &str) -> Message {
+        let uris = Value::Array(Ty::Str, vec![Value::str(uri)]);
+        Message::signal(path, REQUEST, "Response")
+            .arg(Value::U32(0))
+            .arg(Value::props([("uris", Value::variant(uris))]))
+    }
+
+    #[test]
+    fn an_answer_read_with_the_reply_is_handed_out_at_once() {
+        let (mut c, mut portal) = client();
+        let path = format!("{}/gh0st7", requests(ME));
+        // Both are in the socket before the call reads anything.
+        portal.send(response(&path, "file:///tmp/a.txt")).unwrap();
+        portal.send(reply(1, &path)).unwrap();
+        c.pick(7, 1, &PickSpec::open()).unwrap();
+        assert_eq!(
+            c.drain(),
+            [(7, 1, Some(vec![PathBuf::from("/tmp/a.txt")]))]
+        );
+        assert!(c.idle());
+    }
+
+    #[test]
+    fn a_closed_page_loses_its_pick_and_the_chooser_is_told() {
+        let (mut c, mut portal) = client();
+        let path = format!("{}/gh0st3", requests(ME));
+        portal.send(reply(1, &path)).unwrap();
+        c.pick(3, 2, &PickSpec::open()).unwrap();
+        c.forget(2);
+        assert!(c.idle());
+        portal.fill().unwrap();
+        let mut close = None;
+        while let Some(m) = portal.recv().unwrap() {
+            if m.is(REQUEST, "Close") {
+                close = Some(m);
+            }
+        }
+        let close = close.expect("Close sent");
+        assert_eq!(close.path.as_deref(), Some(path.as_str()));
+        assert!(close.no_reply());
+        // A late answer for it goes nowhere.
+        portal.send(response(&path, "file:///tmp/b.txt")).unwrap();
+        assert!(c.ready().is_empty());
+    }
+
+    #[test]
+    fn the_portal_leaving_ends_its_picks() {
+        let (mut c, mut portal) = client();
+        let path = format!("{}/gh0st5", requests(ME));
+        portal.send(reply(1, &path)).unwrap();
+        c.pick(5, 0, &PickSpec::open()).unwrap();
+        let mut gone = Message::signal(gh0st_dbus::bus::PATH, gh0st_dbus::bus::NAME, "NameOwnerChanged")
+            .arg(Value::str(NAME))
+            .arg(Value::str(PORTAL))
+            .arg(Value::str(""));
+        // Only the bus says who left.
+        gone.sender = Some(":1.99".into());
+        portal.send(gone).unwrap();
+        assert!(c.ready().is_empty());
+        let mut gone = Message::signal(gh0st_dbus::bus::PATH, gh0st_dbus::bus::NAME, "NameOwnerChanged")
+            .arg(Value::str(NAME))
+            .arg(Value::str(PORTAL))
+            .arg(Value::str(""));
+        gone.sender = Some(gh0st_dbus::bus::NAME.into());
+        portal.send(gone).unwrap();
+        assert_eq!(c.ready(), [(5, 0, None)]);
+    }
 }
