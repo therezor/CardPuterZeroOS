@@ -10,12 +10,14 @@
 //! - Home is read-only at the top. Every entry in it is bound back
 //!   writable unless locked, so an app can't make a new start file.
 //! - The runtime folder holds only the bus, PipeWire and pulse sockets.
-//! - Network, camera and mic go when the user turns them off.
+//! - Network, camera and mic go when the user turns them off. Without the
+//!   mic an app hears neither it nor what the device plays.
 //!
 //! No `--die-with-parent`: the shell's SIGTERM would kill bwrap at once
 //! and bwrap the app, before the app's own handler could save.
 
 use std::ffi::OsString;
+use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
 pub const BWRAP: &str = "/usr/bin/bwrap";
@@ -99,6 +101,8 @@ pub struct Host {
     pub camera_nodes: Vec<PathBuf>,
     /// ALSA capture nodes.
     pub capture_nodes: Vec<PathBuf>,
+    /// Every other node in `/dev/snd`: kept when the capture ones go.
+    pub sound_nodes: Vec<PathBuf>,
     /// Runtime sockets that exist, relative to `runtime`.
     pub sockets: Vec<String>,
     /// The keyring's vault folder exists, so it can be hidden.
@@ -132,6 +136,7 @@ impl Host {
             home_entries,
             camera_nodes: camera_nodes(Path::new("/sys")),
             capture_nodes: capture_nodes(Path::new("/dev/snd")),
+            sound_nodes: sound_nodes(Path::new("/dev/snd")),
             sockets,
             vaults: Path::new(VAULTS).is_dir(),
         }
@@ -196,6 +201,23 @@ pub fn capture_nodes(snd: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// The nodes in `snd` that aren't for capture: playback, controls, the
+/// sequencer and the timer. Folders and links are left out.
+pub fn sound_nodes(snd: &Path) -> Vec<PathBuf> {
+    let capture = capture_nodes(snd);
+    let mut out: Vec<PathBuf> = std::fs::read_dir(snd)
+        .map(|d| {
+            d.flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_char_device()))
+                .map(|e| e.path())
+                .filter(|p| !capture.contains(p))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
 /// Where a sandboxed app's notices go on the host: its own folder, bound
 /// over the shared one, so it can't post as another app.
 pub fn notice_dir(notify: &Path, stem: &str) -> PathBuf {
@@ -238,9 +260,12 @@ pub fn argv(
             a.pair("--dev-bind", "/dev/null", n);
         }
     }
-    if !grants.mic {
-        for n in &host.capture_nodes {
-            a.pair("--dev-bind", "/dev/null", n);
+    if !grants.mic && !host.capture_nodes.is_empty() {
+        // Gone, not stood in for: ALSA then sees a card with no capture,
+        // as on a device without a mic.
+        a.one("--tmpfs", "/dev/snd");
+        for n in &host.sound_nodes {
+            a.pair("--dev-bind", n, n);
         }
     }
     a.raw("--");
@@ -384,6 +409,7 @@ mod tests {
             .to_vec(),
             camera_nodes: vec!["/dev/video0".into(), "/dev/media1".into()],
             capture_nodes: vec!["/dev/snd/pcmC1D0c".into()],
+            sound_nodes: vec!["/dev/snd/controlC1".into(), "/dev/snd/pcmC1D0p".into()],
             sockets: ["bus", "pipewire-0", "pulse/native", PULSE_NOMIC]
                 .map(String::from)
                 .to_vec(),
@@ -516,7 +542,7 @@ mod tests {
         });
         assert!(has(&v, &["--dev-bind", "/dev/null", "/dev/video0"]));
         assert!(has(&v, &["--dev-bind", "/dev/null", "/dev/media1"]));
-        assert!(!v.iter().any(|s| s == "/dev/snd/pcmC1D0c"));
+        assert!(!v.iter().any(|s| s == "/dev/snd"));
     }
 
     #[test]
@@ -525,7 +551,12 @@ mod tests {
             mic: false,
             ..Grants::default()
         });
-        assert!(has(&v, &["--dev-bind", "/dev/null", "/dev/snd/pcmC1D0c"]));
+        assert!(has(&v, &["--tmpfs", "/dev/snd"]));
+        assert!(has(
+            &v,
+            &["--dev-bind", "/dev/snd/pcmC1D0p", "/dev/snd/pcmC1D0p"]
+        ));
+        assert!(!v.iter().any(|s| s == "/dev/snd/pcmC1D0c"));
         assert!(has(
             &v,
             &[

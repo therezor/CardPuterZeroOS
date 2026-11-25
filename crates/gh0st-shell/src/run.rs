@@ -3663,7 +3663,10 @@ impl Shell {
     fn launch(&mut self, app: &App, files: &[PathBuf]) {
         let argv = child::argv(app, &self.terminal, files);
         let stem = app.id().to_string();
-        let iso = apps::isolation(&self.config, app, gh0st_core::store::needs_root(&stem));
+        // Read now, not from the copy the shell keeps: a grant changed by
+        // hand or by another program counts from this launch.
+        let fresh = Config::load(&config::default_path());
+        let iso = apps::isolation(&fresh, app, gh0st_core::store::needs_root(&stem));
         let argv = if self.sandboxing && iso.sandbox {
             let user = notify::user_dir();
             let own = sandbox::notice_dir(&user, &stem);
