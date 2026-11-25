@@ -265,11 +265,6 @@ device contacts.
 
 Repeat the same set on each build to track the effect of every change.
 
-## 9. Roadmap
-
-See `roadmap.md`. Stock apps and the Store keep working, so the base is Debian, not
-Buildroot.
-
 ## Sources
 
 - M5Stack docs: https://docs.m5stack.com/en/CardputerZero ,

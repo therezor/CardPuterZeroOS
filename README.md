@@ -8,8 +8,7 @@ Faster than stock, private by default, and every CardputerZero app still runs.
 [⬇️ Download v0.3.0 alpha](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.3.0) ·
 [⚡ Flash in 5 minutes](#-flash-it) ·
 [🧪 Tester notes](docs/alpha.md) ·
-[📝 Changelog](CHANGELOG.md) ·
-[🗺️ Roadmap](docs/roadmap.md)
+[📝 Changelog](CHANGELOG.md)
 
 <img src="docs/screenshots/home.png" width="640" alt="The Gh0st OS home screen on a CardputerZero">
 
@@ -146,11 +145,6 @@ too.
 still break, and the SDK and the design can still change. To report a bug,
 open an issue with the Build from Settings > About. The
 [tester notes](docs/alpha.md) list what else to include.
-
-Next on the [roadmap](docs/roadmap.md):
-
-- ⌨️ Bluetooth and USB keyboards for the device itself.
-- 🛡️ App isolation: network, files, camera and mic per app.
 
 ## 🛠️ For developers
 
