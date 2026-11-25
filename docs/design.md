@@ -452,8 +452,8 @@ The switcher: 4 All is held: its chip fills red, and at 0.7 s every app
 closes. Del held on Home does the same. A shorter press shows "Hold to close
 all". 6 Lock locks. 8 Close closes the selected app at once, and so does Del.
 All and Close sit at the two ends, so one is never pressed for the other, and
-nothing sits next to Close. While notifications wait, 5 shows a bell and how
-many, and opens them.
+nothing sits next to Close. While notifications wait, 5 shows a bell and
+opens them; the top bar says how many.
 
 ## Notifications
 

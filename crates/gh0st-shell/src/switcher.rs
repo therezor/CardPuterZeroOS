@@ -101,8 +101,8 @@ pub struct Switcher {
     meters: Option<Meters>,
     /// 4, or Del on Home, held to close every app.
     hold: HeldKey,
-    /// How many notices wait, as chip 5's word. Empty: no chip.
-    notices: String,
+    /// How many notices wait. 0: no bell on 5.
+    notices: usize,
 }
 
 /// The system's figures under the cards.
@@ -126,7 +126,7 @@ impl Switcher {
             stats: Vec::new(),
             meters: None,
             hold: HeldKey::default(),
-            notices: String::new(),
+            notices: 0,
         }
     }
 
@@ -290,7 +290,7 @@ impl Switcher {
 
     /// How many notices wait: chip 5 opens them. 0 hides it.
     pub fn set_notices(&mut self, n: usize) {
-        self.notices = if n == 0 { String::new() } else { n.to_string() };
+        self.notices = n;
     }
 
     /// Starts the hold that closes every app, while key `code` is down.
@@ -388,6 +388,11 @@ impl Switcher {
         }
         c.set_clip(old);
         self.meters(c, t);
+        widgets::action_bar(c, t, &self.chips());
+    }
+
+    /// The chips over keys 4 to 8.
+    fn chips(&self) -> [widgets::Chip<'static>; 5] {
         // 8 closes the app in front of you, at once; 4 held closes them
         // all. At the two ends, so neither is pressed for the other, and
         // nothing sits next to Close. 6 locks in the middle. The switcher
@@ -417,17 +422,18 @@ impl Switcher {
             word: "Lock",
             look: Look::Normal,
         };
-        // 5 opens the notifications, while there are any.
-        let bell = if self.notices.is_empty() {
+        // 5 opens the notifications, while there are any: a bell alone,
+        // as the top bar already counts them.
+        let bell = if self.notices == 0 {
             none
         } else {
             Chip {
                 icon: "bell",
-                word: &self.notices,
+                word: "",
                 look: Look::Normal,
             }
         };
-        widgets::action_bar(c, t, &[all, bell, lock, none, close]);
+        [all, bell, lock, none, close]
     }
 
     /// CPU and memory, side by side across the cards' width. The top bar's
@@ -483,6 +489,17 @@ mod tests {
         let mut s = Switcher::new(&Theme::default());
         s.set_apps(ids.iter().map(|i| card(i)).collect());
         s
+    }
+
+    #[test]
+    fn waiting_notices_show_a_bell_on_5_not_a_count() {
+        let mut s = switcher(&["a"]);
+        assert!(s.chips()[1].is_empty());
+        s.set_notices(3);
+        let bell = s.chips()[1];
+        assert_eq!((bell.icon, bell.word), ("bell", ""));
+        s.set_notices(0);
+        assert!(s.chips()[1].is_empty());
     }
 
     #[test]
