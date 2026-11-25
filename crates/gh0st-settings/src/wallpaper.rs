@@ -5,7 +5,7 @@
 
 use gh0st_app::gfx::theme::CARDPUTER;
 use gh0st_app::gfx::wallpaper;
-use gh0st_core::config;
+use gh0st_core::{config, rt};
 use std::fs::File;
 use std::io::Read;
 use std::os::unix::fs::FileExt;
@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+/// ffmpeg's time by the clock, however it spends it: an input that never
+/// ends uses no CPU, so its CPU limit never comes.
+const FFMPEG_MS: u64 = 60_000;
 /// What the page offers: PNG, and what ffmpeg reads on the image.
 const TYPES: [&str; 13] = [
     "png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "jxl", "bmp", "gif", "tif", "tiff", "tga",
@@ -88,7 +91,7 @@ fn import_file(file: File, dst: &Path) -> Result<(), String> {
     let pic = if png {
         wallpaper::import(FromStart { file, at: 0 }, w, h)?
     } else {
-        through_ffmpeg(file, w, h)?
+        through_ffmpeg(file, w, h, FFMPEG_MS)?
     };
     if let Some(dir) = dst.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -96,21 +99,44 @@ fn import_file(file: File, dst: &Path) -> Result<(), String> {
     config::write_atomic(dst, &wallpaper::encode(&pic)).map_err(|e| e.to_string())
 }
 
+/// ffmpeg's output, read against a deadline.
+struct Deadline<R> {
+    out: R,
+    until: u64,
+}
+
+impl<R: Read + std::os::fd::AsRawFd> Read for Deadline<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            if rt::now_ms() >= self.until {
+                return Err(std::io::ErrorKind::TimedOut.into());
+            }
+            let mut fds = [rt::pollfd(self.out.as_raw_fd())];
+            rt::wait(&mut fds, Some(self.until))?;
+            if rt::readable(&fds[0]) {
+                return self.out.read(buf);
+            }
+        }
+    }
+}
+
 /// Any picture ffmpeg reads, as a PNG twice the screen's size: the crop
-/// then averages it down as it does a PNG.
-fn through_ffmpeg(file: File, w: usize, h: usize) -> Result<wallpaper::Picture, String> {
+/// then averages it down as it does a PNG. `ms` is ffmpeg's time.
+fn through_ffmpeg(file: File, w: usize, h: usize, ms: u64) -> Result<wallpaper::Picture, String> {
     let scale = format!(
         "scale=w={}:h={}:force_original_aspect_ratio=increase",
         w * 2,
         h * 2
     );
     // /dev/stdin opens the file again, with its own offset. A hostile
-    // picture gets 30 s of CPU and 64 MP at most.
+    // picture gets 24 MP (as Media's helper), 30 s of CPU and a minute
+    // in all, and no protocol but the file it was given.
     let mut child = Command::new("ffmpeg")
         .args(["-v", "error", "-nostdin", "-timelimit", "30"])
+        .args(["-protocol_whitelist", "file,pipe"])
         .args([
             "-max_pixels",
-            "64000000",
+            "24000000",
             "-i",
             "/dev/stdin",
             "-frames:v",
@@ -121,10 +147,21 @@ fn through_ffmpeg(file: File, w: usize, h: usize) -> Result<wallpaper::Picture, 
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|e| format!("ffmpeg: {e}"))?;
-    let pic = match child.stdout.take() {
-        Some(out) => wallpaper::import(out, w, h),
-        None => Err("ffmpeg: no output".into()),
+    let until = rt::now_ms() + ms;
+    let (pic, ended) = match child.stdout.take() {
+        Some(out) => {
+            let mut out = Deadline { out, until };
+            let pic = wallpaper::import(&mut out, w, h);
+            // To its end, which ffmpeg closes as it exits, so the wait
+            // below can't hang.
+            let ended = pic.is_ok() && std::io::copy(&mut out, &mut std::io::sink()).is_ok();
+            (pic, ended)
+        }
+        None => (Err("ffmpeg: no output".into()), false),
     };
+    if !ended {
+        let _ = child.kill();
+    }
     let ok = child.wait().is_ok_and(|s| s.success());
     match pic {
         Ok(p) if ok => Ok(p),
@@ -163,6 +200,50 @@ mod tests {
         std::fs::remove_file(&dst).unwrap();
         import_file(f, &dst).unwrap();
         assert!(dst.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ffmpeg_reads_a_jpeg_and_the_clock_stops_an_input_that_never_ends() {
+        // A host without ffmpeg can't run this.
+        if Command::new("ffmpeg").arg("-version").output().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("gh0st-pics-ff-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let jpg = dir.join("a.jpg");
+        let made = Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=640x480",
+            ])
+            .args(["-frames:v", "1"])
+            .arg(&jpg)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let m = CARDPUTER;
+        let (w, h) = (m.width as usize, m.height as usize);
+        let pic = through_ffmpeg(File::open(&jpg).unwrap(), w, h, 20_000).unwrap();
+        assert_eq!((pic.w, pic.h), (w, h));
+
+        // A pipe whose writer never writes nor closes.
+        let mut sleeper = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pipe = std::os::fd::OwnedFd::from(sleeper.stdout.take().unwrap());
+        let t0 = rt::now_ms();
+        assert!(through_ffmpeg(File::from(pipe), w, h, 500).is_err());
+        assert!(rt::now_ms() - t0 < 5_000, "stopped at its time");
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
