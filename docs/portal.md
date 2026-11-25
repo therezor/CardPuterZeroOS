@@ -168,7 +168,10 @@ answers `1` done, `0` not: a folder on another drive has no Trash here.
 - `GetStatus`, `GetAvailable`, `GetMetered` and `GetConnectivity` read
   NetworkManager on the system bus. The connection opens on the first
   call, so a session no app asks keeps none. Its PropertiesChanged signals
-  then wake the loop, and `changed` goes out when the answer moves.
+  then wake the loop, and `changed` goes out when the answer moves. Only
+  signals from NetworkManager's own name count.
+- Without NetworkManager the connection stays open. When it starts, its
+  NameOwnerChanged wakes the loop and it is read then.
 - Connectivity is NetworkManager's, as `1` local, `2` limited, `3` captive
   portal, `4` full. Its check is off on the image, so its state stands in:
   connected to the internet is `4`, to a site `2`.

@@ -3,7 +3,8 @@
 //! NetworkMonitor follows NetworkManager on the system bus. The connection
 //! opens when an app first asks, so a session no app asks keeps none. Its
 //! PropertiesChanged signals then join the poll loop; `changed` goes out
-//! when what apps see moves.
+//! when what apps see moves. Without NetworkManager the connection stays,
+//! and NameOwnerChanged says when it starts.
 //!
 //! PowerProfileMonitor is Settings' CPU mode: Power Saver is the
 //! `powersave` governor. Settings writes the mode as a udev rule as well
@@ -91,11 +92,22 @@ impl Nm {
 #[derive(Default)]
 pub struct Network {
     conn: Option<Conn>,
-    /// The connection was tried and failed: answers stay unknown.
+    /// The system bus was tried: without one, answers stay unknown.
     tried: bool,
+    /// NetworkManager's unique name, once read: only its signals count.
+    owner: Option<String>,
     nm: Nm,
+    /// The serial of a GetAll on its way.
+    asked: Option<u32>,
     /// Signals for the session bus.
     pub out: Vec<Message>,
+}
+
+/// NetworkManager's properties, without starting it.
+fn get_all() -> Message {
+    let mut m = Message::call(NM, NM_PATH, bus::PROPERTIES, "GetAll").arg(Value::str(NM));
+    m.flags |= gh0st_dbus::message::NO_AUTO_START;
+    m
 }
 
 impl Network {
@@ -109,14 +121,14 @@ impl Network {
     }
 
     fn status(&self) -> Status {
-        match self.conn {
-            Some(_) => self.nm.status(),
-            None => Status::UNKNOWN,
+        match (&self.conn, &self.owner) {
+            (Some(_), Some(_)) => self.nm.status(),
+            _ => Status::UNKNOWN,
         }
     }
 
-    /// Opens the system bus and reads NetworkManager once. A missing bus
-    /// or NetworkManager leaves the status unknown.
+    /// Opens the system bus and reads NetworkManager once. Until it is
+    /// read, the status is unknown.
     fn connect(&mut self) {
         if self.conn.is_some() || self.tried {
             return;
@@ -125,25 +137,67 @@ impl Network {
         let Ok(mut c) = Conn::system() else {
             return;
         };
-        let rule = format!(
-            "type='signal',sender='{NM}',path='{NM_PATH}',interface='{}',member='PropertiesChanged'",
-            bus::PROPERTIES
-        );
-        if bus::add_match(&mut c, &rule).is_err() {
+        let rules = [
+            format!(
+                "type='signal',sender='{NM}',path='{NM_PATH}',interface='{}',member='PropertiesChanged'",
+                bus::PROPERTIES
+            ),
+            format!(
+                "type='signal',sender='{}',member='NameOwnerChanged',arg0='{NM}'",
+                bus::NAME
+            ),
+        ];
+        if rules.iter().any(|r| bus::add_match(&mut c, r).is_err()) {
             return;
         }
-        // A bus without NetworkManager knows nothing: the status stays
-        // unknown, as with no bus.
-        let get = Message::call(NM, NM_PATH, bus::PROPERTIES, "GetAll").arg(Value::str(NM));
-        let Some(props) = c
-            .call(get, 1000)
-            .ok()
-            .and_then(|r| r.body.into_iter().next())
-        else {
-            return;
-        };
-        self.nm.apply(&props);
+        if let Ok(r) = c.call(get_all(), 1000) {
+            self.read(r);
+        }
         self.conn = Some(c);
+    }
+
+    /// A GetAll reply: what NetworkManager says, and who it is.
+    fn read(&mut self, r: Message) {
+        if let Some(props) = r.body.first() {
+            self.nm = Nm::default();
+            self.nm.apply(props);
+            self.owner = r.sender;
+        }
+    }
+
+    /// One message from the system bus. Anyone there may send us a signal,
+    /// so a change counts only from NetworkManager's own name.
+    fn take(&mut self, m: Message) {
+        match m.kind {
+            Kind::Signal
+                if m.is(bus::NAME, "NameOwnerChanged")
+                    && m.sender.as_deref() == Some(bus::NAME) =>
+            {
+                if m.body.first().and_then(Value::as_str) != Some(NM) {
+                    return;
+                }
+                // Gone, or started again: what it said before no longer holds.
+                self.owner = None;
+                self.asked = None;
+                let new = m.body.get(2).and_then(Value::as_str).unwrap_or("");
+                if let (false, Some(c)) = (new.is_empty(), &mut self.conn) {
+                    self.asked = c.send(get_all()).ok();
+                }
+            }
+            Kind::Signal if m.is(bus::PROPERTIES, "PropertiesChanged") => {
+                let ours = m.sender.is_some() && m.sender == self.owner;
+                if ours && m.body.first().and_then(Value::as_str) == Some(NM) {
+                    if let Some(changed) = m.body.get(1) {
+                        self.nm.apply(changed);
+                    }
+                }
+            }
+            Kind::Return if self.asked.is_some() && m.reply_serial == self.asked => {
+                self.asked = None;
+                self.read(m);
+            }
+            _ => {}
+        }
     }
 
     pub fn call(&mut self, m: &Message) -> Message {
@@ -169,25 +223,24 @@ impl Network {
     pub fn ready(&mut self) {
         let before = self.status();
         let mut lost = false;
+        let mut got = Vec::new();
         if let Some(c) = &mut self.conn {
             if c.flush().and_then(|()| c.fill()).is_err() || c.closed() {
                 lost = true;
             }
             while let Ok(Some(m)) = c.recv() {
-                if m.kind == Kind::Signal
-                    && m.is(bus::PROPERTIES, "PropertiesChanged")
-                    && m.body.first().and_then(Value::as_str) == Some(NM)
-                {
-                    if let Some(changed) = m.body.get(1) {
-                        self.nm.apply(changed);
-                    }
-                }
+                got.push(m);
             }
+        }
+        for m in got {
+            self.take(m);
         }
         if lost {
             // The bus went away: ask again on the next call.
             self.conn = None;
             self.tried = false;
+            self.owner = None;
+            self.asked = None;
         }
         if self.status() != before {
             self.out.push(Message::signal(PATH, NETWORK, "changed"));
@@ -320,6 +373,53 @@ mod tests {
         let mut m = Message::call("x", PATH, NETWORK, "GetConnectivity");
         m.serial = 1;
         assert_eq!(n.call(&m).body[0], Value::U32(4));
+    }
+
+    #[test]
+    fn only_networkmanager_speaks_for_itself() {
+        let mut n = Network::default();
+        let reply = |sender: &str| {
+            let mut call = Message::call(NM, NM_PATH, bus::PROPERTIES, "GetAll");
+            call.serial = 4;
+            let mut r = Message::reply(&call);
+            r.sender = Some(sender.into());
+            r.body = vec![Value::props([
+                ("Connectivity", Value::U32(0)),
+                ("State", Value::U32(20)),
+            ])];
+            r
+        };
+        n.read(reply(":1.7"));
+        assert_eq!(n.owner.as_deref(), Some(":1.7"));
+        assert!(!n.nm.status().available);
+        let changed = |sender: &str| {
+            let mut m = Message::signal(NM_PATH, bus::PROPERTIES, "PropertiesChanged")
+                .arg(Value::str(NM))
+                .arg(Value::props([("State", Value::U32(70))]))
+                .arg(Value::strs(Vec::<String>::new()));
+            m.sender = Some(sender.into());
+            m
+        };
+        n.take(changed(":1.66"));
+        assert!(!n.nm.status().available, "another peer's signal");
+        n.take(changed(":1.7"));
+        assert!(n.nm.status().available);
+        // It leaves: nothing it said counts. It comes back: its reply does.
+        let owner = |new: &str| {
+            let mut m = Message::signal("/org/freedesktop/DBus", bus::NAME, "NameOwnerChanged")
+                .arg(Value::str(NM))
+                .arg(Value::str(":1.7"))
+                .arg(Value::str(new));
+            m.sender = Some(bus::NAME.into());
+            m
+        };
+        n.take(owner(""));
+        assert_eq!(n.owner, None);
+        n.take(owner(":1.9"));
+        n.asked = Some(4);
+        n.take(reply(":1.9"));
+        assert_eq!(n.owner.as_deref(), Some(":1.9"));
+        assert_eq!(n.asked, None);
     }
 
     #[test]

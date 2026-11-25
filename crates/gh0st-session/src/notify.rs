@@ -35,6 +35,15 @@ struct Live {
 /// A portal notification's actions, each with the target it goes back with.
 type Targets = Vec<(String, Option<Value>)>;
 
+/// A target as sent: what the dict's variant holds, one layer off, so
+/// `ActionInvoked` wraps it once.
+fn target(v: Option<&Value>) -> Option<Value> {
+    match v? {
+        Value::Variant(t) => Some((**t).clone()),
+        _ => None,
+    }
+}
+
 /// Lowercase letters and digits of `s`: a tag from a portal id.
 fn tag_of(prefix: &str, s: &str) -> String {
     let mut h: u32 = 2_166_136_261;
@@ -220,17 +229,15 @@ impl Notifications {
                         if chips.len() < notice::MAX_ACTIONS {
                             let id = format!("a{}", chips.len());
                             chips.push((id.clone(), plain(l)));
-                            targets.push((a.to_string(), b.get("target").cloned()));
+                            targets.push((a.to_string(), target(b.get("target"))));
                         }
                     }
                 }
                 let mut default = String::new();
                 if let Some(a) = get("default-action").and_then(Value::as_str) {
                     default = "default".into();
-                    targets.push((
-                        a.to_string(),
-                        o.and_then(|o| o.get("default-action-target")).cloned(),
-                    ));
+                    let t = target(o.and_then(|o| o.get("default-action-target")));
+                    targets.push((a.to_string(), t));
                 }
                 let n = Notice {
                     app: app.clone(),
@@ -552,7 +559,11 @@ mod tests {
         assert!(s.is(PORTAL_IFACE, "ActionInvoked"));
         assert_eq!(s.body[0].as_str(), Some("now-playing"));
         assert_eq!(s.body[1].as_str(), Some("app.next"));
-        assert_eq!(s.body[2].as_array().map(|a| a.len()), Some(1));
+        assert_eq!(
+            s.body[2],
+            Value::Array(gh0st_dbus::Ty::Variant, vec![Value::variant(Value::U32(7))]),
+            "the target in one variant"
+        );
         n.shell_said(&["action".into(), format!("player.{tag}"), "default".into()]);
         assert_eq!(n.out.pop().unwrap().body[1].as_str(), Some("app.show"));
         let mut rm = Message::call(NAME, PORTAL_PATH, PORTAL_IFACE, "RemoveNotification")

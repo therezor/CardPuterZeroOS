@@ -299,6 +299,8 @@ got = {}
 loop = GLib.MainLoop()
 def invoked(conn, sender, obj, iface, sig, params):
     got["a"] = params.unpack()
+    # unpack() flattens variants: the type shows a variant in a variant.
+    got["t"] = params.get_child_value(2).get_child_value(0).get_variant().get_type_string()
     loop.quit()
 bus.signal_subscribe(None, "org.freedesktop.portal.Notification", "ActionInvoked",
                      "/org/freedesktop/portal/desktop", None, Gio.DBusSignalFlags.NONE, invoked)
@@ -310,10 +312,10 @@ bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop
               GLib.Variant("(sa{sv})", ("song", n)), None, Gio.DBusCallFlags.NONE, -1, None)
 GLib.timeout_add(5000, loop.quit)
 loop.run()
-print(got.get("a"))
+print(got.get("a"), got.get("t"))
 PY
 out=$(timeout 10 python3 "$work/note.py") || fail "portal notification: $out"
-echo "$out" | grep -q "('song', 'app.next', \[7\])" || fail "portal ActionInvoked: $out"
+echo "$out" | grep -q "('song', 'app.next', \[7\]) u$" || fail "portal ActionInvoked: $out"
 
 if [ -n "${GH0ST_FILES:-}" ]; then
     echo "portal: the real chooser picks a file with keys"
