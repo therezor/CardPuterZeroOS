@@ -63,7 +63,8 @@ pub trait Page {
     }
 
     /// True while keys should make no sound: a page that records sound, as
-    /// a camera does in video mode. A raw-key page is always quiet.
+    /// a camera does in video mode. A raw-key page is always quiet. What
+    /// the page asks for with [`Cx::sound`] still plays.
     fn quiet(&self) -> bool {
         false
     }
@@ -798,7 +799,8 @@ impl Cx<'_> {
     /// Asks the shell for a system sound, for an event the SDK can't see:
     /// a scan that found nothing ([`Sound::Error`]), a download done
     /// ([`Sound::Notice`]). Moving, choosing and going back already sound.
-    /// Only in front, and only while the user has sounds on.
+    /// Only in front, and only while the user has sounds on. A quiet page's
+    /// ask plays too: the page knows when a sound would spoil a recording.
     ///
     /// [`Sound::Error`]: gh0st_core::sound::Sound::Error
     /// [`Sound::Notice`]: gh0st_core::sound::Sound::Notice

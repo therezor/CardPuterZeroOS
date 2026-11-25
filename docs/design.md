@@ -432,8 +432,10 @@ menu, then the page.
   rising blip to choose or open, a falling one to go back or close, a
   rising chord to unlock and a falling one to lock, a low double buzz for a
   wrong password, two bell notes for a notice, three beeps for a low
-  battery, and a chord at power on. Typing, a raw-key page and the dark
-  make none. Settings > Sound > System sounds turns them off.
+  battery, and a chord at power on. The camera clicks for a photo, beeps
+  each second of its timer, once as a recording starts and twice once it
+  is saved. Typing, a raw-key page, a viewfinder and the dark make none.
+  Settings > Sound > System sounds turns them off.
 
 ## Home and the switcher
 

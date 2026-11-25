@@ -29,10 +29,18 @@ pub enum Sound {
     Warn,
     /// The first lock screen after power on.
     Boot,
+    /// A photo taken: two clicks, as a shutter's blades.
+    Shutter,
+    /// Recording starts: one beep.
+    RecStart,
+    /// Recording stopped and saved: two beeps.
+    RecStop,
+    /// A second of a self-timer.
+    Count,
 }
 
 impl Sound {
-    pub const ALL: [Sound; 11] = [
+    pub const ALL: [Sound; 15] = [
         Sound::Move,
         Sound::Select,
         Sound::Back,
@@ -44,6 +52,10 @@ impl Sound {
         Sound::Notice,
         Sound::Warn,
         Sound::Boot,
+        Sound::Shutter,
+        Sound::RecStart,
+        Sound::RecStop,
+        Sound::Count,
     ];
 
     /// Its word on the link.
@@ -60,6 +72,10 @@ impl Sound {
             Sound::Notice => "notice",
             Sound::Warn => "warn",
             Sound::Boot => "boot",
+            Sound::Shutter => "shutter",
+            Sound::RecStart => "rec-start",
+            Sound::RecStop => "rec-stop",
+            Sound::Count => "count",
         }
     }
 
@@ -159,6 +175,22 @@ impl Sound {
                 ],
                 0.24,
             ),
+            Sound::Shutter => (
+                &[
+                    Note::new(0, 4200.0, 24, 5.0, Voice::Noise),
+                    Note::new(70, 2400.0, 40, 8.0, Voice::Noise),
+                ],
+                0.28,
+            ),
+            Sound::RecStart => (&[Note::new(0, E6, 140, 90.0, plain)], 0.22),
+            Sound::RecStop => (
+                &[
+                    Note::new(0, E6, 70, 40.0, plain),
+                    Note::new(110, E6, 70, 40.0, plain),
+                ],
+                0.22,
+            ),
+            Sound::Count => (&[Note::new(0, A5, 50, 25.0, plain)], 0.18),
         };
         mix(notes, peak)
     }
@@ -172,6 +204,8 @@ enum Voice {
     Hollow,
     /// A sine with the inharmonic partials of a small bell.
     Bell,
+    /// Noise through a band around the note's pitch: a click.
+    Noise,
 }
 
 #[derive(Clone, Copy)]
@@ -217,6 +251,9 @@ fn mix(notes: &[Note], peak: f32) -> Vec<i16> {
         let start = ms(n.at_ms);
         let count = ms(n.len_ms);
         let decay = n.decay_ms / 1000.0 * RATE as f32;
+        let mut noise = Band::new(n.hz, 1.2);
+        // Fixed, so a sound is the same every time.
+        let mut seed = 0x2545_f491u32;
         for i in 0..count {
             let t = i as f32 / RATE as f32;
             let w = std::f32::consts::TAU * n.hz * t;
@@ -224,6 +261,11 @@ fn mix(notes: &[Note], peak: f32) -> Vec<i16> {
                 Voice::Sine => w.sin() + 0.15 * (2.0 * w).sin(),
                 Voice::Hollow => w.sin() + (3.0 * w).sin() / 3.0 + (5.0 * w).sin() / 5.0,
                 Voice::Bell => w.sin() + 0.4 * (2.76 * w).sin() * (-t * 30.0).exp(),
+                Voice::Noise => {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let white = (seed >> 8) as f32 / (1u32 << 23) as f32 - 1.0;
+                    noise.run(white)
+                }
             };
             let rise = (i as f32 / attack).min(1.0);
             let fall = ((count - i) as f32 / release).min(1.0);
@@ -235,6 +277,37 @@ fn mix(notes: &[Note], peak: f32) -> Vec<i16> {
     out.iter()
         .map(|s| (s * gain * i16::MAX as f32) as i16)
         .collect()
+}
+
+/// A band-pass filter (RBJ's biquad, 0 dB at the centre).
+struct Band {
+    b0: f32,
+    a1: f32,
+    a2: f32,
+    x: [f32; 2],
+    y: [f32; 2],
+}
+
+impl Band {
+    fn new(hz: f32, q: f32) -> Band {
+        let w = std::f32::consts::TAU * hz / RATE as f32;
+        let alpha = w.sin() / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        Band {
+            b0: alpha / a0,
+            a1: -2.0 * w.cos() / a0,
+            a2: (1.0 - alpha) / a0,
+            x: [0.0; 2],
+            y: [0.0; 2],
+        }
+    }
+
+    fn run(&mut self, x: f32) -> f32 {
+        let y = self.b0 * (x - self.x[1]) - self.a1 * self.y[0] - self.a2 * self.y[1];
+        self.x = [x, self.x[0]];
+        self.y = [y, self.y[0]];
+        y
+    }
 }
 
 /// A WAV file of the samples, to listen to a sound off the device.

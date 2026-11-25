@@ -183,9 +183,15 @@ picture keeps the whole height.
 | 8 | Menu | Menu |
 | Esc | Cancel the timer; held, exit | Back to the viewfinder |
 
-The menu adds quality, the video size, sound, the microphone and the mains
-frequency (50 or 60 Hz, against flicker). Keep RAW joins it once the helper
-writes DNG.
+The menu adds quality, the video size, sound, the microphone, the mains
+frequency (50 or 60 Hz, against flicker) and Shutter sound. Keep RAW joins
+it once the helper writes DNG.
+
+- **Sounds.** A photo clicks. The self-timer beeps each second. A
+  recording beeps once and starts 350 ms later, so the film doesn't catch
+  the beep, and beeps twice once the file is saved. The viewfinder's keys
+  make no sound. Shutter sound in the menu turns these off; System sounds
+  in Settings turns off every sound, these too.
 
 - **Microphone.** Auto, or one the sound server lists. Auto takes a
   plugged-in microphone (USB, Bluetooth) over the board's own. The headset
@@ -222,6 +228,7 @@ writes DNG.
 | `gh0st.camera.mic_source` | a sound server source, or empty for Auto |
 | `gh0st.camera.quality` | `fine` (95), `normal` (85) |
 | `gh0st.camera.flicker` | `50`, `60` |
+| `gh0st.camera.sounds` | true or false: Shutter sound |
 
 Zoom and exposure start at 1x and ±0 on every launch.
 

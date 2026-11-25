@@ -28,6 +28,7 @@ pub mod key {
     /// The sound server's source, or empty for Auto.
     pub const MIC_SOURCE: &str = "gh0st.camera.mic_source";
     pub const FLICKER: &str = "gh0st.camera.flicker";
+    pub const SOUNDS: &str = "gh0st.camera.sounds";
 }
 
 const SHOOT: u32 = 1;
@@ -61,6 +62,12 @@ const BACK: u32 = 25;
 const AHEAD: u32 = 26;
 const MIC_SOURCE: u32 = 27;
 const DELETE: u32 = 28;
+const SOUNDS: u32 = 29;
+
+/// How long recording waits for its start sound, so the film doesn't catch
+/// it: the shell's sound player takes up to 190 ms to open, and the beep
+/// lasts 140.
+const REC_LEAD_MS: u64 = 350;
 
 /// How far the arrows and 5 and 7 move a video.
 const SEEK_MS: u64 = 5000;
@@ -169,6 +176,8 @@ pub struct Camera {
     /// A step of the Microphone row waiting for that answer.
     mic_step: Option<bool>,
     flicker60: bool,
+    /// The shutter and recording sounds, while System sounds are on too.
+    sounds: bool,
     /// The light control is open over the picture: 5 and 7 are − and +.
     light: bool,
     frame: Picture,
@@ -186,6 +195,8 @@ pub struct Camera {
     saving: bool,
     flash: bool,
     rec: Option<Rec>,
+    /// Recording starts when this fires, after its sound.
+    rec_wait: Option<Timer>,
     play: Option<Playback>,
     count: Option<(u8, Timer)>,
     free: Option<u64>,
@@ -222,6 +233,7 @@ impl Camera {
             mics: None,
             mic_step: None,
             flicker60: false,
+            sounds: true,
             light: false,
             frame: Picture::default(),
             last: None,
@@ -235,6 +247,7 @@ impl Camera {
             saving: false,
             flash: false,
             rec: None,
+            rec_wait: None,
             play: None,
             count: None,
             free: None,
@@ -272,6 +285,7 @@ impl Camera {
         self.mic = s.get_bool(key::MIC).unwrap_or(true);
         self.mic_source = s.get_str(key::MIC_SOURCE).unwrap_or("").to_string();
         self.flicker60 = s.get_int(key::FLICKER) == Some(60);
+        self.sounds = s.get_bool(key::SOUNDS).unwrap_or(true);
     }
 
     fn launch(&mut self, cx: &mut Cx) {
@@ -412,6 +426,9 @@ impl Camera {
                 self.send(Cmd::RecStop);
                 return;
             }
+            if self.cancel_wait(cx) {
+                return;
+            }
         } else if self.state != State::Preview || self.saving {
             return;
         }
@@ -426,24 +443,45 @@ impl Camera {
             return;
         }
         if self.video {
-            let path = files::fresh(&self.dir, "VID", "mp4", files::now());
-            self.send(Cmd::RecStart {
-                path: path.to_string_lossy().into_owned(),
-                mic: self.mic,
-                source: self.mic_source.clone(),
-            });
-            self.rec = Some(Rec { ms: 0 });
+            if self.sound(Sound::RecStart, cx) {
+                self.rec_wait = Some(cx.after(REC_LEAD_MS));
+            } else {
+                self.start_rec();
+            }
             return;
         }
         if TIMERS[self.timer] > 0 && self.count.is_none() {
             let t = cx.every(1000);
             self.count = Some((TIMERS[self.timer], t));
+            self.sound(Sound::Count, cx);
             return;
         }
-        self.take();
+        self.take(cx);
     }
 
-    fn take(&mut self) {
+    fn start_rec(&mut self) {
+        let path = files::fresh(&self.dir, "VID", "mp4", files::now());
+        self.send(Cmd::RecStart {
+            path: path.to_string_lossy().into_owned(),
+            mic: self.mic,
+            source: self.mic_source.clone(),
+        });
+        self.rec = Some(Rec { ms: 0 });
+    }
+
+    /// A recording waiting for its start sound doesn't start.
+    fn cancel_wait(&mut self, cx: &mut Cx) -> bool {
+        match self.rec_wait.take() {
+            Some(t) => {
+                cx.cancel(t);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn take(&mut self, cx: &mut Cx) {
+        self.sound(Sound::Shutter, cx);
         let path = files::fresh(&self.dir, "CAM", "jpg", files::now());
         self.send(Cmd::Shoot {
             path: path.to_string_lossy().into_owned(),
@@ -512,6 +550,10 @@ impl Camera {
                 }
             }
             Event::RecDone { .. } => {
+                // After the file is shut, so the film doesn't end on it.
+                if self.rec.is_some() {
+                    self.sound(Sound::RecStop, cx);
+                }
                 self.rec = None;
                 self.refresh();
                 self.want_last_thumb();
@@ -789,6 +831,17 @@ impl Camera {
         s.set_bool(key::MIC, self.mic);
         s.set_str(key::MIC_SOURCE, &self.mic_source);
         s.set_int(key::FLICKER, if self.flicker60 { 60 } else { 50 });
+        s.set_bool(key::SOUNDS, self.sounds);
+    }
+
+    /// One of the camera's sounds, while the user has them on here and in
+    /// Settings. True if it was asked for.
+    fn sound(&self, s: Sound, cx: &mut Cx) -> bool {
+        let on = self.sounds && cx.settings().config().sounds();
+        if on {
+            cx.sound(s);
+        }
+        on
     }
 }
 
@@ -1263,9 +1316,10 @@ impl Page for Camera {
         self.rec.as_ref().map(|_| ("REC", Tone::Critical))
     }
 
-    // The finder in video mode: a key's blip would end up in the film.
+    // The finder's keys make no sound: the shutter has its own, and in
+    // video mode a key's blip would end up in the film.
     fn quiet(&self) -> bool {
-        self.view == View::Finder && (self.video || self.rec.is_some())
+        self.view == View::Finder
     }
 
     fn bars(&self) -> Bars {
@@ -1357,6 +1411,7 @@ impl Page for Camera {
     fn stop(&mut self, cx: &mut Cx) {
         self.quitting = true;
         self.cancel_count(cx);
+        self.cancel_wait(cx);
         // Quit finishes a recording before the helper exits.
         self.send(Cmd::Quit);
     }
@@ -1371,6 +1426,7 @@ impl Page for Camera {
             return;
         }
         self.cancel_count(cx);
+        self.cancel_wait(cx);
         // The app is stopped right after this, so it can't wait for
         // `recdone`: the helper finishes the file on its own.
         if self.rec.take().is_some() {
@@ -1408,7 +1464,13 @@ impl Page for Camera {
         cx.redraw();
     }
 
-    fn timer(&mut self, _: Timer, cx: &mut Cx) {
+    fn timer(&mut self, t: Timer, cx: &mut Cx) {
+        if self.rec_wait == Some(t) {
+            self.rec_wait = None;
+            self.start_rec();
+            cx.redraw();
+            return;
+        }
         let Some((n, t)) = &mut self.count else {
             return;
         };
@@ -1417,7 +1479,9 @@ impl Page for Camera {
             let t = *t;
             cx.cancel(t);
             self.count = None;
-            self.take();
+            self.take(cx);
+        } else {
+            self.sound(Sound::Count, cx);
         }
     }
 
@@ -1587,6 +1651,7 @@ impl Page for Camera {
         c.group("Camera");
         let hz = if self.flicker60 { "60 Hz" } else { "50 Hz" };
         c.add(Command::choice(FLICKER, "Mains", hz));
+        c.add(Command::toggle(SOUNDS, "Shutter sound", self.sounds));
     }
 
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
@@ -1602,6 +1667,7 @@ impl Page for Camera {
             SHOOT => self.shoot(cx),
             MODE => {
                 self.cancel_count(cx);
+                self.cancel_wait(cx);
                 self.video = !self.video;
                 self.frame = Picture::default();
                 self.send(Cmd::Stop);
@@ -1649,6 +1715,7 @@ impl Page for Camera {
                 }
             }
             MIC => self.mic = !self.mic,
+            SOUNDS => self.sounds = !self.sounds,
             MIC_SOURCE if self.mics.is_none() => {
                 self.mic_step = Some(fwd);
                 self.send(Cmd::Mics);

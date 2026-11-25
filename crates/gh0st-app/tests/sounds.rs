@@ -95,15 +95,18 @@ fn moving_choosing_and_going_back_sound() {
 }
 
 #[test]
-fn a_raw_key_page_a_quiet_one_and_a_paused_app_make_none() {
+fn keys_on_a_raw_key_page_or_a_quiet_one_and_a_paused_app_make_none() {
     let mut d = Driver::new(Game);
     d.listen();
     d.keys("x\nenter\nz");
     assert!(d.heard().iter().all(|m| !m.starts_with("sound")));
     let mut d = Driver::new(Recorder);
     d.listen();
-    d.keys("x\nenter\ne");
+    d.keys("x\nenter");
     assert!(d.heard().iter().all(|m| !m.starts_with("sound")));
+    // What a quiet page asks for itself still plays.
+    d.keys("e");
+    assert_eq!(d.heard(), ["sound error"]);
     let (mut d, _) = menu();
     d.pause().keys("x");
     assert!(d.heard().iter().all(|m| !m.starts_with("sound")));

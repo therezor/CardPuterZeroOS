@@ -563,7 +563,7 @@ impl Runtime {
                     }
                     self.open_log.push((app, path));
                 }
-                Request::Sound(s) => self.sound(s),
+                Request::Sound(s) => self.play(s),
                 Request::Notify(text) => match &self.link {
                     Some(l) if self.paused => {
                         l.send(&["toast", &text]);
@@ -869,11 +869,17 @@ impl Runtime {
         }
     }
 
+    /// A key's sound: none on a quiet page or a raw-key one.
+    fn sound(&mut self, s: Sound) {
+        if !self.stack.last().is_some_and(|p| p.quiet() || p.raw_keys()) {
+            self.play(s);
+        }
+    }
+
     /// A system sound through the shell: only in front, only while the
     /// user has sounds on. Without a shell, nothing plays.
-    fn sound(&mut self, s: Sound) {
-        let quiet = self.stack.last().is_some_and(|p| p.quiet() || p.raw_keys());
-        if quiet || self.s.paused || !self.s.settings.config().sounds() {
+    fn play(&mut self, s: Sound) {
+        if self.s.paused || !self.s.settings.config().sounds() {
             return;
         }
         if let Some(l) = &self.link {

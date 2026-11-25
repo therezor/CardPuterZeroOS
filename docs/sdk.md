@@ -1015,9 +1015,11 @@ the screen is the biggest drain after Wi-Fi.
 Keys sound on their own while the user has System sounds on: a tick when
 the selection moves, a blip for Enter, a chip, a command or a menu entry,
 and a falling blip for a step back. A raw-key page makes none, so a game
-or the terminal stays quiet. For an event no key shows, ask for one:
+or the terminal stays quiet, and so does a page whose `quiet` is true, as
+a camera's viewfinder. For an event no key shows, ask for one:
 `cx.sound(Sound::Error)` when a scan finds nothing, `Sound::Notice` when a
-download is done. The shell plays them, and only for the app in front.
+download is done, `Sound::Shutter` for a photo. An ask plays on a quiet
+page too. The shell plays them, and only for the app in front.
 
 ## Settings and files
 

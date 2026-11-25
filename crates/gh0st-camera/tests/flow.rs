@@ -76,7 +76,7 @@ fn the_screen_stays_on_while_the_camera_is_in_front() {
     drv.pump(100);
     assert!(drv.awake(), "framing a shot");
     drv.keys("tab").pump(100);
-    drv.keys("enter").pump(100);
+    drv.keys("enter").wait(400).pump(100);
     assert!(drv.awake());
     drv.keys("enter").pump(150);
     // A board is slower to hear the helper stop.
@@ -97,11 +97,111 @@ fn the_screen_stays_on_while_the_camera_is_in_front() {
     assert!(drv.awake());
 }
 
+/// Opens the menu and flips Shutter sound, the camera's last row, above
+/// Help and Close app.
+const MENU_SHUTTER_SOUND: &str = "8\nfn+f\nfn+f\nfn+f\nenter\nesc";
+
+/// The sounds the camera asked the shell for since the last call.
+fn sounds(drv: &mut Driver) -> Vec<String> {
+    drv.heard()
+        .into_iter()
+        .filter(|m| m.starts_with("sound"))
+        .collect()
+}
+
+#[test]
+fn a_photo_clicks_and_the_finders_keys_make_none() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "click");
+    drv.listen();
+    drv.keys("z\nc\nx\nenter").pump(150);
+    assert_eq!(sounds(&mut drv), ["sound shutter"]);
+    assert_eq!(count(&d, Kind::Photo), 1);
+}
+
+#[test]
+fn the_timer_counts_each_second_then_clicks() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "count");
+    drv.listen();
+    drv.keys("t\nenter").wait(3000).pump(150);
+    assert_eq!(
+        sounds(&mut drv),
+        ["sound count", "sound count", "sound count", "sound shutter"]
+    );
+    assert_eq!(count(&d, Kind::Photo), 1);
+}
+
+#[test]
+fn recording_starts_after_its_sound_and_ends_with_one() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "recsound");
+    drv.listen();
+    drv.keys("tab\nenter").pump(100);
+    assert_eq!(sounds(&mut drv), ["sound rec-start"]);
+    assert_eq!(drv.status(), None, "the film waits for the beep");
+    drv.wait(400).pump(150);
+    assert_eq!(drv.status().as_deref(), Some("REC"));
+    drv.keys("enter");
+    for _ in 0..20 {
+        if count(&d, Kind::Video) == 1 {
+            break;
+        }
+        drv.pump(50);
+    }
+    drv.pump(100);
+    assert_eq!(count(&d, Kind::Video), 1);
+    assert_eq!(
+        sounds(&mut drv),
+        ["sound rec-stop"],
+        "once the file is shut"
+    );
+}
+
+#[test]
+fn a_second_press_before_the_film_starts_calls_it_off() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "recoff");
+    drv.keys("tab\nenter\nenter").wait(1000).pump(150);
+    assert_eq!(drv.status(), None);
+    assert_eq!(count(&d, Kind::Video), 0);
+}
+
+#[test]
+fn shutter_sound_off_in_the_menu_is_quiet_and_films_at_once() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "nosound");
+    drv.listen();
+    drv.keys(MENU_SHUTTER_SOUND).pump(100);
+    drv.keys("enter").pump(150);
+    assert_eq!(count(&d, Kind::Photo), 1);
+    drv.keys("tab\nenter").pump(150);
+    assert_eq!(drv.status().as_deref(), Some("REC"), "no beep to wait for");
+    assert!(sounds(&mut drv).is_empty());
+}
+
+#[test]
+fn with_system_sounds_off_it_is_quiet_and_films_at_once() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "nosystem");
+    drv.listen();
+    // Settings turned them off while the camera was behind.
+    let config = drv.home().parent().unwrap().join("config.json");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&config, r#"{"gh0st": {"sounds": false}}"#).unwrap();
+    drv.pause().resume().pump(150);
+    drv.keys("enter").pump(150);
+    assert_eq!(count(&d, Kind::Photo), 1);
+    drv.keys("tab\nenter").pump(150);
+    assert_eq!(drv.status().as_deref(), Some("REC"));
+    assert!(sounds(&mut drv).is_empty());
+}
+
 #[test]
 fn a_pause_ends_the_recording_and_rests() {
     let _one = serial();
     let (mut drv, d) = start(Source::Fake { camera: true }, "pause");
-    drv.keys("tab\nenter").pump(150);
+    drv.keys("tab\nenter").wait(400).pump(150);
     assert!(drv.awake());
     drv.pause().pump(150);
     assert!(!drv.awake());
@@ -109,7 +209,7 @@ fn a_pause_ends_the_recording_and_rests() {
     // Stopped, the camera wakes for nothing.
     assert_eq!(drv.idle_wakes(30_000), 0);
     drv.resume().pump(150);
-    drv.keys("enter").pump(150);
+    drv.keys("enter").wait(400).pump(150);
     assert!(drv.awake(), "recording again after the return");
 }
 
@@ -184,7 +284,7 @@ fn the_cpp_helper_speaks_the_same_wire() {
 fn a_video_plays_pauses_and_stops_in_the_gallery() {
     let _one = serial();
     let (mut drv, _d) = start(Source::Fake { camera: true }, "play");
-    drv.keys("tab\nenter").pump(1200);
+    drv.keys("tab\nenter").wait(400).pump(1200);
     drv.keys("enter").pump(150);
     drv.keys("p").pump(200);
     drv.keys("enter").pump(200);
