@@ -267,8 +267,19 @@ fn settings_page(c: &mut Canvas, t: &Theme, id: PageId, selected: usize) {
 fn country(t: &Theme) -> Canvas {
     let mut c = frame(t);
     top(&mut c, t, "globe", "Country", &setup(1), Net::None);
-    settings_page(&mut c, t, PageId::Country(Some('U')), 1);
-    chips(&mut c, t, NONE, NONE, NONE);
+    let st = State {
+        country_query: "un".into(),
+        country_skip: true,
+        ..sample_state()
+    };
+    let page = pages::build(&PageId::Country, &st);
+    let mut cur = Cursor {
+        selected: 1,
+        top: 0,
+    };
+    cur.fit(page.len(), model::rows(t).1);
+    model::draw(&mut c, t, &page, cur, None);
+    widgets::search_bar(&mut c, t, &st.country_query);
     c
 }
 

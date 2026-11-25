@@ -214,6 +214,8 @@ pub struct Settings {
     dialog_error: Option<String>,
     /// The current and new password while the keyring prepares.
     passwd_pending: Option<(String, String)>,
+    /// What is typed on the Country page, which is a search.
+    search: Search,
 }
 
 impl Settings {
@@ -229,6 +231,7 @@ impl Settings {
             answering: None,
             dialog_error: None,
             passwd_pending: None,
+            search: Search::new(),
             asked: false,
             jobs: HashMap::new(),
             backlight: Backlight::find(Path::new("/sys/class/backlight")),
@@ -244,9 +247,19 @@ impl Settings {
     pub fn embedded(embed: Embed) -> Settings {
         let mut s = Settings::new();
         s.stack = vec![(embed.page.clone(), Cursor::default())];
+        if embed.page == PageId::Country {
+            s.search.start();
+            s.state.country_skip = embed.skip;
+        }
         s.view = pages::build(&embed.page, &s.state);
         s.embed = Some(embed);
         s
+    }
+
+    /// The Country page closed: its query goes with it.
+    fn leave_search(&mut self) {
+        self.search.cancel();
+        self.state.country_query.clear();
     }
 
     /// The step's work is done: on to the next.
@@ -463,6 +476,10 @@ impl Settings {
         }
         if matches!(id, PageId::System | PageId::Advanced | PageId::Swap) {
             self.query_advanced(cx);
+        }
+        if id == PageId::Country {
+            self.search.start();
+            self.state.country_query.clear();
         }
         self.stack.push((id, Cursor::default()));
         self.net_catch_up(cx);
@@ -1111,6 +1128,7 @@ impl Settings {
                 },
                 Ask::PasswordCurrent,
             ),
+            Command::SkipCountry => self.finish_soon(cx),
             Command::SetCountry(cc) => {
                 let change = self.state.country.as_deref() != Some(cc.as_str());
                 if change {
@@ -1129,7 +1147,10 @@ impl Settings {
                 match (&self.embed, change) {
                     (Some(_), true) => self.finish_pending = true,
                     (Some(_), false) => self.finish(cx),
-                    (None, _) => self.stack.retain(|(p, _)| !matches!(p, PageId::Country(_))),
+                    (None, _) => {
+                        self.stack.retain(|(p, _)| *p != PageId::Country);
+                        self.leave_search();
+                    }
                 }
                 self.refresh(cx);
             }
@@ -1545,25 +1566,6 @@ impl Settings {
                     cx.toast(&format!("{ssid} is not saved"));
                 } else if self.pressed_again(&act) {
                     self.forget(cx, ssid);
-                }
-                true
-            }
-            PageId::Country(None) => {
-                let Key::Char(c) = k else { return false };
-                if !c.is_ascii_alphabetic() {
-                    return false;
-                }
-                let label = c.to_ascii_uppercase().to_string();
-                let found = match &self.view.body {
-                    Body::List(items) => items.iter().position(|i| i.label == label),
-                    Body::Info(_) | Body::Qr { .. } => None,
-                };
-                if let Some(i) = found {
-                    let per = page_rows(cx.theme(), &self.view);
-                    let len = self.view.len();
-                    let cur = self.cursor_mut();
-                    cur.selected = i;
-                    cur.fit(len, per);
                 }
                 true
             }
@@ -2270,7 +2272,7 @@ impl Page for Settings {
         // One SDK page holds Settings' own stack: name the app above the
         // first page, as the SDK would. The country list says how to jump.
         match self.top().0 {
-            PageId::Country(None) => Some("type a letter"),
+            PageId::Country => Some("type to find"),
             _ => (self.stack.len() > 1).then_some("Settings"),
         }
     }
@@ -2320,7 +2322,15 @@ impl Page for Settings {
         }
     }
 
+    /// The Country page types into its search: letters and digits too.
+    fn typing(&self) -> bool {
+        self.top().0 == PageId::Country
+    }
+
     fn bars(&self) -> Bars {
+        if self.typing() {
+            return Bars::top().search(&self.search);
+        }
         if self.state.moving.is_some() {
             return Bars::top().hints([("Up Down", "move"), ("Enter", "done")]);
         }
@@ -2380,6 +2390,20 @@ impl Page for Settings {
     }
 
     fn key(&mut self, key: Key, cx: &mut Cx) {
+        if self.typing() {
+            match self.search.key(key) {
+                Some(Edit::Changed) => {
+                    self.state.country_query = self.search.query().to_string();
+                    self.cursor_mut().selected = 0;
+                    self.refresh(cx);
+                }
+                Some(Edit::Submit) => self.activate(cx),
+                // Fn+F and Fn+X move, as in any search.
+                None => self.page_or_list_key(key, cx),
+            }
+            self.flush(cx);
+            return;
+        }
         // A chip runs what its key would.
         let key = match key {
             Key::Soft(n) => match self.chips().into_iter().find(|c| c.0 == n) {
@@ -2400,12 +2424,21 @@ impl Page for Settings {
             cx.toast("One moment");
             return false;
         }
+        // Esc clears what was typed first, then leaves.
+        if self.typing() && !self.search.query().is_empty() {
+            self.search.start();
+            self.state.country_query.clear();
+            self.refresh(cx);
+            return false;
+        }
         if self.state.moving.take().is_some() {
             self.refresh(cx);
             return false;
         }
         if self.stack.len() > 1 {
-            self.stack.pop();
+            if self.stack.pop().is_some_and(|(p, _)| p == PageId::Country) {
+                self.leave_search();
+            }
             self.refresh(cx);
             self.net_catch_up(cx);
             return false;

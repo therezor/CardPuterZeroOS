@@ -83,12 +83,32 @@ fn a_lone_skip_sits_on_six() {
     stub_tools();
     let log = Log::default();
     let steps = Steps::new("Setup")
-        .step(step(PageId::Country(None), true, false))
+        .step(step(PageId::CountryZones, true, false))
         .step(mark(&log));
     let mut d = Driver::new(steps);
     d.keys("7");
     assert!(taken(&log).is_empty(), "7 has no chip here");
     d.keys("6");
+    assert_eq!(taken(&log), ["Setup 2 of 2"]);
+}
+
+/// The Country step is a search: digits and letters type, and its first
+/// row keeps the world setting, as Skip does on other steps.
+#[test]
+fn the_country_step_types_and_its_first_row_skips() {
+    stub_tools();
+    let log = Log::default();
+    let steps = Steps::new("Setup")
+        .step(step(PageId::Country, true, false))
+        .step(mark(&log));
+    let mut d = Driver::new(steps);
+    d.keys("6");
+    assert!(taken(&log).is_empty(), "6 types into the search");
+    d.keys("enter");
+    assert!(taken(&log).is_empty(), "nothing matches 6 to pick");
+    d.keys("esc");
+    assert!(taken(&log).is_empty(), "Esc clears what was typed first");
+    d.keys("enter");
     assert_eq!(taken(&log), ["Setup 2 of 2"]);
 }
 

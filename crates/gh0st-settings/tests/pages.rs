@@ -27,7 +27,7 @@ fn pages() -> Vec<PageId> {
         PageId::TimeZone(None),
         PageId::Advanced,
         PageId::Swap,
-        PageId::Country(None),
+        PageId::Country,
         PageId::Privacy,
         PageId::Updates,
         PageId::About,

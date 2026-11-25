@@ -327,6 +327,10 @@ pub struct State {
     pub country_running: Option<String>,
     /// (code, name), sorted by name. Loaded when the picker opens.
     pub countries: Vec<(String, String)>,
+    /// What is typed on the Country page.
+    pub country_query: String,
+    /// Setup's Country step: a row keeps the world setting, as Skip would.
+    pub country_skip: bool,
     /// The Wi-Fi country's zones from `zone.tab`.
     pub country_zones: Vec<String>,
     pub governor: String,
@@ -747,15 +751,7 @@ pub fn build(id: &PageId, s: &State) -> Page {
             Body::List(options(s, *c)),
             vec![],
         ),
-        PageId::Country(initial) => (
-            "Wi-Fi country",
-            Body::List(countries(s, *initial)),
-            if initial.is_none() {
-                vec![("A-Z", "jump")]
-            } else {
-                vec![]
-            },
-        ),
+        PageId::Country => ("Wi-Fi country", Body::List(countries(s)), vec![]),
         PageId::Privacy => ("Privacy", Body::List(privacy(s)), vec![]),
         PageId::Updates => ("Updates", Body::List(updates(s)), vec![]),
         PageId::Look => ("Device and look", Body::List(look(s)), vec![]),
@@ -1521,7 +1517,7 @@ fn advanced(s: &State) -> Vec<Item> {
                     .as_deref()
                     .map_or_else(String::new, |c| s.country_name(c)),
             ),
-            Act::Open(PageId::Country(None)),
+            Act::Open(PageId::Country),
         ),
         Item::new(
             "cpu",
@@ -1711,39 +1707,68 @@ pub fn initial(name: &str) -> char {
     name.chars().next().map_or(' ', |c| c.to_ascii_uppercase())
 }
 
-/// Initials first, then the countries under one, like the time zones.
-fn countries(s: &State, at: Option<char>) -> Vec<Item> {
+/// Every country, narrowed and ranked by what is typed: the whole of a
+/// name, code or other name it goes by first ("uk" is the United Kingdom),
+/// then a match in its name, then in its code or other names.
+fn countries(s: &State) -> Vec<Item> {
     let here = s.country.as_deref();
+    let q = s.country_query.trim().to_lowercase();
     let mark = |yes: bool| Some(if yes { "check" } else { "" });
-    match at {
-        None => {
-            let mut letters: Vec<char> = s.countries.iter().map(|(_, n)| initial(n)).collect();
-            letters.dedup();
-            let current = here.map(|c| initial(&s.country_name(c)));
-            letters
-                .into_iter()
-                .map(|l| Item {
-                    icon: mark(current == Some(l)),
-                    label: l.to_string(),
-                    value: Value::Chevron,
-                    act: Act::Open(PageId::Country(Some(l))),
-                    danger: false,
-                })
-                .collect()
+    let rank = |cc: &str, name: &str| -> Option<u16> {
+        if q.is_empty() {
+            return Some(0);
         }
-        Some(l) => s
-            .countries
+        let others: Vec<String> = std::iter::once(cc)
+            .chain(gh0st_core::sysconf::country_aliases(cc).iter().copied())
+            .map(str::to_lowercase)
+            .collect();
+        if name.to_lowercase() == q || others.contains(&q) {
+            return Some(0);
+        }
+        let named = gh0st_core::search::score(&name.to_lowercase(), &q).map(|x| u16::from(x) + 1);
+        let other = others
             .iter()
-            .filter(|(_, n)| initial(n) == l)
-            .map(|(cc, n)| Item {
-                icon: mark(here == Some(cc.as_str())),
-                label: n.clone(),
-                value: Value::Text(cc.clone()),
-                act: Act::Run(Command::SetCountry(cc.clone())),
-                danger: false,
-            })
-            .collect(),
+            .filter_map(|o| gh0st_core::search::score(o, &q))
+            .map(|x| u16::from(x) + 2)
+            .min();
+        named.into_iter().chain(other).min()
+    };
+    let mut rows: Vec<(u16, usize, Item)> = Vec::new();
+    if s.country_skip {
+        if let Some(r) = rank("", "Skip for now").or_else(|| rank("", "world")) {
+            rows.push((
+                r,
+                0,
+                Item::new(
+                    "",
+                    "Skip for now",
+                    Value::Text("world".into()),
+                    Act::Run(Command::SkipCountry),
+                ),
+            ));
+        }
     }
+    for (i, (cc, name)) in s.countries.iter().enumerate() {
+        if let Some(r) = rank(cc, name) {
+            rows.push((
+                r,
+                i + 1,
+                Item {
+                    icon: mark(here == Some(cc.as_str())),
+                    label: name.clone(),
+                    value: Value::Text(cc.clone()),
+                    act: Act::Run(Command::SetCountry(cc.clone())),
+                    danger: false,
+                },
+            ));
+        }
+    }
+    if rows.is_empty() {
+        let none = format!("No country matches \u{201c}{}\u{201d}", s.country_query);
+        return vec![Item::new("search", &none, Value::None, Act::None)];
+    }
+    rows.sort_by_key(|&(r, i, _)| (r, i));
+    rows.into_iter().map(|(_, _, item)| item).collect()
 }
 
 /// Regions first (the part before the slash), then a region's cities.
@@ -2159,29 +2184,60 @@ mod tests {
     }
 
     #[test]
-    fn countries_go_initial_then_name() {
-        let s = State {
+    fn countries_narrow_as_you_type_and_find_other_names() {
+        let mut s = State {
             countries: [
                 ("AD", "Andorra"),
+                ("GB", "United Kingdom"),
+                ("UA", "Ukraine"),
                 ("AE", "United Arab Emirates"),
-                ("GB", "Britain (UK)"),
             ]
             .map(|(c, n)| (c.to_string(), n.to_string()))
             .to_vec(),
             country: Some("AE".into()),
             ..state()
         };
-        let mut sorted = s.clone();
-        sorted.countries.sort_by(|a, b| a.1.cmp(&b.1));
-        let letters = build(&PageId::Country(None), &sorted);
-        assert_eq!(letters.len(), 3);
-        assert_eq!(letters.item(2).unwrap().icon, Some("check"));
-        let u = build(&PageId::Country(Some('U')), &sorted);
-        assert_eq!(u.len(), 1);
+        let labels = |s: &State| {
+            let p = build(&PageId::Country, s);
+            (0..p.len())
+                .map(|i| p.item(i).unwrap().label.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labels(&s).len(), 4);
         assert_eq!(
-            u.item(0).unwrap().act,
+            build(&PageId::Country, &s).item(3).unwrap().icon,
+            Some("check")
+        );
+        s.country_query = "uk".into();
+        // The UK goes by it, whole; Ukraine only starts with it.
+        assert_eq!(labels(&s), ["United Kingdom", "Ukraine"]);
+        s.country_query = "england".into();
+        assert_eq!(labels(&s), ["United Kingdom"]);
+        s.country_query = "uae".into();
+        let p = build(&PageId::Country, &s);
+        assert_eq!(
+            p.item(0).unwrap().act,
             Act::Run(Command::SetCountry("AE".into()))
         );
+        s.country_query = "zz".into();
+        let p = build(&PageId::Country, &s);
+        assert_eq!((p.len(), p.item(0).unwrap().act.clone()), (1, Act::None));
+    }
+
+    #[test]
+    fn setup_can_keep_the_world_setting_from_the_list() {
+        let mut s = State {
+            countries: vec![("AD".into(), "Andorra".into())],
+            country_skip: true,
+            ..state()
+        };
+        let p = build(&PageId::Country, &s);
+        assert_eq!(p.item(0).unwrap().act, Act::Run(Command::SkipCountry));
+        s.country_query = "andorra".into();
+        assert_eq!(build(&PageId::Country, &s).len(), 1);
+        s.country_query = "world".into();
+        let p = build(&PageId::Country, &s);
+        assert_eq!(p.item(0).unwrap().act, Act::Run(Command::SkipCountry));
     }
 
     #[test]

@@ -242,6 +242,8 @@ fn sample_state() -> State {
             "AE\tUnited Arab Emirates\nDE\tGermany\nGB\tBritain (UK)\nUA\tUkraine\n\
              UG\tUganda\nUS\tUnited States\nUY\tUruguay\nUZ\tUzbekistan\nAD\tAndorra\n",
         ),
+        country_query: String::new(),
+        country_skip: false,
         governor: "schedutil".into(),
         hostname: "RZR-ZERO".into(),
         swap_mb: None,
@@ -335,6 +337,8 @@ fn scene(t: &Theme, st: &State, id: PageId, selected: usize, dialog: Option<Dial
                 widgets::action_bar(&mut c, t, &[none; 5]);
             }
         }
+        // The Country page is a search: its query takes the action bar.
+        None if id == PageId::Country => widgets::search_bar(&mut c, t, &st.country_query),
         None => {
             let found = model::chips(&id, &page, cur, false, false);
             let mut chips = [none; 5];
@@ -541,8 +545,20 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                 ("gpu-memory", s(PageId::Choose(Choice::GpuMem), 4)),
                 ("cpu-mode", s(PageId::Choose(Choice::CpuMode), 0)),
                 ("logs", s(PageId::Choose(Choice::Logs), 0)),
-                ("country", s(PageId::Country(None), 1)),
-                ("country-u", s(PageId::Country(Some('U')), 1)),
+                ("country", s(PageId::Country, 0)),
+                (
+                    "country-search",
+                    scene(
+                        &t,
+                        &State {
+                            country_query: "uk".into(),
+                            ..sample_state()
+                        },
+                        PageId::Country,
+                        1,
+                        None,
+                    ),
+                ),
                 (
                     "auth",
                     scene(&t, &st, PageId::Advanced, 0, Some(password("Password"))),

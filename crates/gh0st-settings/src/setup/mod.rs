@@ -64,7 +64,7 @@ pub fn steps(a: Shared) -> Steps {
     }
     let (acct, fin, save) = (a.clone(), a.clone(), a);
     s.part("Setup")
-        .step(embed(PageId::Country(None), true, false))
+        .step(embed(PageId::Country, true, false))
         .step(embed(PageId::CountryZones, true, false))
         .step(embed(PageId::Privacy, false, true))
         .step(embed(PageId::Wifi, true, false))

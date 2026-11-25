@@ -33,8 +33,8 @@ pub enum PageId {
     Advanced,
     /// The zram swap: size, compression and swappiness.
     Swap,
-    /// Initials, then the countries under one.
-    Country(Option<char>),
+    /// Every country, narrowed by what is typed.
+    Country,
     Choose(Choice),
     Privacy,
     /// System > Updates: the last check, daily checks and the channel.
@@ -147,6 +147,8 @@ pub enum Command {
     PowerOff,
     /// Wi-Fi country, by ISO code.
     SetCountry(String),
+    /// Setup's Country step left as it is: the world setting.
+    SkipCountry,
     /// An option of a choice, in the helper's word: "64", "power-saver".
     Choose(Choice, String),
     /// Kind `0` opens with app `1` (a `.desktop` file name) from now on.
@@ -492,7 +494,7 @@ pub fn icon(id: &PageId) -> &'static str {
         }
         PageId::System | PageId::Advanced | PageId::Swap => "cpu",
         PageId::TimeZone(_) | PageId::CountryZones => "clock",
-        PageId::Country(_) => "globe",
+        PageId::Country => "globe",
         PageId::Privacy => "shield",
         PageId::Updates => "download",
         PageId::Hotspot | PageId::HotspotQr => "radio-tower",

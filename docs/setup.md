@@ -46,14 +46,14 @@ real thing from the first key:
 - Fn+H lists every key on the step, as everywhere.
 
 **Welcome.** The mark, "Welcome to Gh0st OS", and "We know nothing about you. Let's keep
-it that way." Key pills name both ways on, "Enter take the training" and "6 I'm already a
-spy", and 6 has a Skip chip. Esc goes back to the notice when there is one.
+it that way." A key pill, "Enter take the training", names the way on, and 6 has a Skip
+chip. Esc goes back to the notice when there is one.
 
 **The settings**, "Setup 1 of 8" to "Setup 8 of 8":
 
 | # | Step | What it does |
 |---|---|---|
-| 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. 7 Skip keeps the world country. |
+| 1 | Country | A search over the `iso3166.tab` list, as in Settings: type and the list narrows, a name, code or other name (UK, England, USA) whole first. Sets the Wi-Fi country (`regdom`) and narrows the time zones. Its first row, Skip for now, keeps the world country. |
 | 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. "Other" opens the region list. 7 Skip keeps the zone. |
 | 3 | Privacy | The private defaults, five rows: Send device name (off), IPv6 privacy address (on), Keep copied text when locked, Remember recent files, and Keep logs (Off). Network time and SSH are on System, the daily update check on Updates, Bluetooth on its page: each setting has one home. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
 | 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. A cable needs no step: NetworkManager connects it as soon as it is in, before setup too, and network time then syncs (System turns it off). The address and hostname defaults cover a cable from the start. Wi-Fi goes online only here. |

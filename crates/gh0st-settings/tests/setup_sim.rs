@@ -32,9 +32,7 @@ const KEYS: &str = "\
 wait 400
 6
 wait 400
-type u
-enter
-wait 300
+type uganda
 enter
 wait 1000
 enter

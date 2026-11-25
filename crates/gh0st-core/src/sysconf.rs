@@ -152,13 +152,46 @@ pub fn countries(tab: &str) -> Vec<(String, String)> {
         .filter(|l| !l.starts_with('#'))
         .filter_map(|l| {
             let (cc, name) = l.split_once('\t')?;
-            valid_country(cc).then(|| (cc.to_string(), name.trim().to_string()))
+            let name = match cc {
+                // tzdata's "Britain (UK)" files it under B.
+                "GB" => "United Kingdom",
+                _ => name.trim(),
+            };
+            valid_country(cc).then(|| (cc.to_string(), name.to_string()))
         })
         .collect();
     // By name as a person reads it: "US minor outlying islands" after
     // "Uganda", not before.
     out.sort_by_key(|(_, name)| name.to_lowercase());
     out
+}
+
+/// Other names people look a country up by, beside tzdata's.
+pub fn country_aliases(cc: &str) -> &'static [&'static str] {
+    match cc {
+        "GB" => &[
+            "UK",
+            "Great Britain",
+            "Britain",
+            "England",
+            "Scotland",
+            "Wales",
+        ],
+        "US" => &["USA", "America", "United States of America"],
+        "AE" => &["UAE", "Emirates"],
+        "KR" => &["South Korea"],
+        "KP" => &["North Korea"],
+        "NL" => &["Holland"],
+        "CZ" => &["Czechia"],
+        "CH" => &["Swiss"],
+        "DE" => &["Deutschland"],
+        "CI" => &["Ivory Coast"],
+        "TR" => &["Turkey", "Türkiye"],
+        "MK" => &["Macedonia"],
+        "VA" => &["Vatican"],
+        "CD" | "CG" => &["Congo"],
+        _ => &[],
+    }
 }
 
 /// One label of RFC 1123. Upper case is fine: stock names it `RZR-ZERO`.
@@ -740,7 +773,9 @@ mod tests {
         let tab = "# comment\nGB\tBritain (UK)\nAE\tUnited Arab Emirates\nAD\tAndorra\nxx\tbad\n";
         let c = countries(tab);
         let names: Vec<&str> = c.iter().map(|(_, n)| n.as_str()).collect();
-        assert_eq!(names, ["Andorra", "Britain (UK)", "United Arab Emirates"]);
+        // tzdata's "Britain (UK)" is the United Kingdom, filed under U.
+        assert_eq!(names, ["Andorra", "United Arab Emirates", "United Kingdom"]);
+        assert!(country_aliases("GB").contains(&"UK"));
     }
 
     #[test]
