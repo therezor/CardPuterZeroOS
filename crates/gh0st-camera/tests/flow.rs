@@ -168,6 +168,49 @@ fn a_second_press_before_the_film_starts_calls_it_off() {
 }
 
 #[test]
+fn the_gallery_calls_off_a_recording_waiting_on_its_beep() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "recgallery");
+    // A photo first: an empty gallery doesn't open.
+    drv.keys("enter").pump(150);
+    drv.keys("tab\nenter\np").wait(600).pump(150);
+    assert_eq!(drv.title(), "Gallery");
+    assert_eq!(drv.status(), None);
+    assert_eq!(count(&d, Kind::Video), 0);
+}
+
+#[test]
+fn the_gallery_calls_off_the_timer() {
+    let _one = serial();
+    let (mut drv, d) = start(Source::Fake { camera: true }, "timergallery");
+    drv.keys("enter").pump(150);
+    drv.listen();
+    drv.keys("t\nenter\np").wait(4000).pump(150);
+    assert_eq!(sounds(&mut drv), ["sound count"]);
+    assert_eq!(count(&d, Kind::Photo), 1);
+}
+
+#[test]
+fn a_helper_that_dies_calls_off_the_timer() {
+    let _one = serial();
+    let exe = env!("CARGO_BIN_EXE_gh0st-camera").to_string();
+    // The fake helper as a process that is killed two seconds in.
+    let script = "\"$0\" --fake-helper & sleep 2; kill $!".to_string();
+    let argv = vec!["/bin/sh".into(), "-c".into(), script, exe];
+    let (mut drv, d) = start(Source::Exec(argv), "dies");
+    drv.pump(350);
+    drv.listen();
+    drv.keys("t\nenter").pump(2500);
+    drv.wait(4000).pump(150);
+    assert_eq!(
+        sounds(&mut drv),
+        ["sound count"],
+        "no more beeps, no shutter"
+    );
+    assert_eq!(count(&d, Kind::Photo), 0);
+}
+
+#[test]
 fn shutter_sound_off_in_the_menu_is_quiet_and_films_at_once() {
     let _one = serial();
     let (mut drv, d) = start(Source::Fake { camera: true }, "nosound");

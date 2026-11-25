@@ -461,12 +461,15 @@ impl Camera {
 
     fn start_rec(&mut self) {
         let path = files::fresh(&self.dir, "VID", "mp4", files::now());
-        self.send(Cmd::RecStart {
+        let cmd = Cmd::RecStart {
             path: path.to_string_lossy().into_owned(),
             mic: self.mic,
             source: self.mic_source.clone(),
-        });
-        self.rec = Some(Rec { ms: 0 });
+        };
+        // REC shows only for a start the helper was given.
+        if self.helper.as_ref().is_some_and(|h| h.send(&cmd)) {
+            self.rec = Some(Rec { ms: 0 });
+        }
     }
 
     /// A recording waiting for its start sound doesn't start.
@@ -595,6 +598,7 @@ impl Camera {
                 cx.toast_tone(Tone::Critical, "Can't play this video");
             }
             Event::Error(f) => {
+                self.cancel_wait(cx);
                 let why = match f {
                     Fault::NoCamera => "No camera on this device",
                     Fault::NoMemory => "Not enough memory for the camera",
@@ -611,6 +615,7 @@ impl Camera {
                         "The camera stopped"
                     }
                 };
+                self.cancel_count(cx);
                 self.phase = Phase::Failed(why);
             }
         }
@@ -658,6 +663,10 @@ impl Camera {
         self.helper = None;
         self.asks.clear();
         self.rec = None;
+        // Nothing will answer a shot, and nothing should beep for one.
+        self.cancel_wait(cx);
+        self.cancel_count(cx);
+        self.saving = false;
         if !self.quitting && !matches!(self.phase, Phase::Failed(_)) {
             self.phase = Phase::Failed("The camera stopped");
         }
@@ -669,6 +678,10 @@ impl Camera {
             cx.toast("Nothing shot yet");
             return;
         }
+        // A self-timer or a recording waiting on its beep would go off
+        // behind the gallery.
+        self.cancel_count(cx);
+        self.cancel_wait(cx);
         self.tiles = gh0st_app::Tiles::new(GRID_COLS, GRID_ROWS);
         self.tiles.set_len(self.shots.len());
         self.view = View::Gallery;
@@ -1467,7 +1480,14 @@ impl Page for Camera {
     fn timer(&mut self, t: Timer, cx: &mut Cx) {
         if self.rec_wait == Some(t) {
             self.rec_wait = None;
-            self.start_rec();
+            // Only if the finder still films, live.
+            if self.view == View::Finder
+                && self.video
+                && self.phase == Phase::Live
+                && self.helper.is_some()
+            {
+                self.start_rec();
+            }
             cx.redraw();
             return;
         }
@@ -1705,6 +1725,7 @@ impl Page for Camera {
             }
             RAW => self.raw = !self.raw,
             VIDEO => {
+                self.cancel_wait(cx);
                 self.size = match self.size {
                     VideoSize::Sharp1080 => VideoSize::Wide720,
                     VideoSize::Wide720 => VideoSize::Sharp1080,
