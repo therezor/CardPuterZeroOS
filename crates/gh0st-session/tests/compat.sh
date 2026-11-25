@@ -235,6 +235,14 @@ out=$(timeout 15 python3 "$work/fd.py" wallpaper "$work/files/pic.png") || fail 
 grep -q '"wallpaper": *"picture"' "$work/.config/cardputerzero/config.json" || fail "wallpaper setting"
 ls "$work/.cache/gh0st/" 2>/dev/null | grep -q wallpaper && fail "a fitted picture was left behind"
 
+echo "portal: SetWallpaperURI refuses a FIFO without waiting on it"
+mkfifo "$work/fifo"
+timeout 5 gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+    --method org.freedesktop.portal.Wallpaper.SetWallpaperURI '' "file://$work/fifo" '{}' 2>/dev/null \
+    && fail "SetWallpaperURI took a FIFO"
+timeout 5 gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications \
+    --method org.freedesktop.Notifications.GetServerInformation >/dev/null || fail "a FIFO hung the daemon"
+
 echo "portal: Screenshot and PickColor answer through their requests"
 cat >"$work/screen.py" <<'PY'
 import sys

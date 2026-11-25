@@ -43,6 +43,8 @@ const PER_CALLER: usize = 4;
 const MAX_FILTERS: usize = 32;
 const MAX_PATTERNS: usize = 64;
 const MAX_TEXT: usize = 1024;
+/// A path as a shell line's field: the line must fit the link.
+const MAX_PATH_FIELD: usize = 4096;
 
 pub const RESPONSE_OK: u32 = 0;
 pub const RESPONSE_CANCELLED: u32 = 1;
@@ -99,10 +101,10 @@ pub struct Question {
 enum Kind {
     Pick(Box<Question>),
     Open,
-    /// Keeps the caller's app awake until Close or the caller leaves; pid 0
-    /// holds nothing.
+    /// Keeps `key` (the caller's app, as the shell names it) awake until
+    /// Close or the caller leaves; None holds nothing.
     Inhibit {
-        pid: i32,
+        key: Option<String>,
     },
     /// Asks the user before giving the caller the user's name. `app` is
     /// the caller's id, which Always is kept by.
@@ -150,6 +152,8 @@ pub struct Portal {
     reqs: Vec<Req>,
     next: u64,
     pub out: Vec<Out>,
+    /// Keys whose inhibitors changed, for the session to tell the shell.
+    pub touched: Vec<String>,
     /// Where the apps the user answered Always are kept; None: nowhere.
     pub remember: Option<PathBuf>,
     /// The shared config.json: the wallpaper's setting.
@@ -367,6 +371,15 @@ impl Question {
 }
 
 impl Portal {
+    /// Ids start at a random point: the shell may still hold a question
+    /// from a session that died, and its answer must not reach a new
+    /// request.
+    pub fn seed_ids(&mut self) {
+        use std::hash::{BuildHasher, Hasher};
+        let r = std::collections::hash_map::RandomState::new().build_hasher();
+        self.next = r.finish() >> 16;
+    }
+
     /// A new request's id and path, or None past the caller's limit.
     fn new_request(&mut self, m: &Message, sender: &str, kind: Kind) -> Option<(u64, String)> {
         if self.reqs.iter().filter(|r| r.sender == sender).count() >= PER_CALLER {
@@ -396,8 +409,16 @@ impl Portal {
     }
 
     /// A call to the portal from `sender`, process `pid`. Always is kept by
-    /// `who.app`; the user knows it as `who.label`.
-    pub fn call(&mut self, m: &Message, sender: &str, pid: Option<i32>, who: &Who) -> Message {
+    /// `who.app`; the user knows it as `who.label`. An inhibitor keeps
+    /// `awake` awake.
+    pub fn call(
+        &mut self,
+        m: &Message,
+        sender: &str,
+        pid: Option<i32>,
+        who: &Who,
+        awake: Option<&str>,
+    ) -> Message {
         let path = m.path.as_deref().unwrap_or("");
         if path.starts_with(REQUEST_ROOT) {
             return self.request_call(m, sender, path);
@@ -414,7 +435,7 @@ impl Portal {
         let pid = pid.unwrap_or(0);
         let (app, label) = (who.app.as_str(), who.label.as_str());
         if m.interface.as_deref() == Some(INHIBIT) {
-            return self.inhibit_call(m, sender, pid);
+            return self.inhibit_call(m, sender, awake);
         }
         if m.is(TRASH, "TrashFile") {
             let ok = match m.body.first() {
@@ -503,14 +524,13 @@ impl Portal {
                 if member == "OpenDirectory" && !target.is_dir() {
                     target = target.parent().map(Path::to_path_buf).unwrap_or(target);
                 }
+                let field = gh0st_core::link::path_field(&target);
+                if field.len() > MAX_PATH_FIELD {
+                    return Message::error(m, bus::err::INVALID_ARGS, "path too long");
+                }
                 match self.new_request(m, sender, Kind::Open) {
                     Some((id, rp)) => {
-                        self.shell(&[
-                            "open",
-                            &id.to_string(),
-                            &pid.to_string(),
-                            &gh0st_core::link::path_field(&target),
-                        ]);
+                        self.shell(&["open", &id.to_string(), &pid.to_string(), &field]);
                         Message::reply(m).arg(Value::path(rp))
                     }
                     None => Message::error(m, bus::err::LIMITS, "too many requests"),
@@ -520,14 +540,16 @@ impl Portal {
         }
     }
 
-    fn inhibit_call(&mut self, m: &Message, sender: &str, pid: i32) -> Message {
+    fn inhibit_call(&mut self, m: &Message, sender: &str, awake: Option<&str>) -> Message {
         match m.member.as_deref().unwrap_or("") {
             "Inhibit" => {
                 let flags = m.body.get(1).and_then(Value::as_u32).unwrap_or(0);
-                let pid = if flags & KEEP_AWAKE != 0 { pid } else { 0 };
-                match self.new_request(m, sender, Kind::Inhibit { pid }) {
+                let key = awake.filter(|_| flags & KEEP_AWAKE != 0).map(String::from);
+                match self.new_request(m, sender, Kind::Inhibit { key: key.clone() }) {
                     Some((_, rp)) => {
-                        self.awake(pid, true);
+                        self.touched.extend(key);
+                        // Held: done. The request stays until Close.
+                        self.respond(sender, &rp, RESPONSE_OK, Vec::new());
                         Message::reply(m).arg(Value::path(rp))
                     }
                     None => Message::error(m, bus::err::LIMITS, "too many requests"),
@@ -567,20 +589,12 @@ impl Portal {
         }
     }
 
-    /// Keeps the app holding `pid` awake, or lets it sleep once no other
-    /// inhibitor of that pid is left.
-    fn awake(&mut self, pid: i32, on: bool) {
-        if pid <= 0 {
-            return;
-        }
-        let held = self
-            .reqs
+    /// Inhibitors that keep `key` awake.
+    pub fn holds(&self, key: &str) -> usize {
+        self.reqs
             .iter()
-            .filter(|r| matches!(r.kind, Kind::Inhibit { pid: p } if p == pid))
-            .count();
-        if (on && held == 1) || (!on && held == 0) {
-            self.shell(&["awake", &format!("pid:{pid}"), if on { "1" } else { "0" }]);
-        }
+            .filter(|r| matches!(&r.kind, Kind::Inhibit { key: Some(k) } if k == key))
+            .count()
     }
 
     /// Whether the user answered Always to `what` (account, wallpaper,
@@ -625,33 +639,38 @@ impl Portal {
 
     fn wallpaper_call(&mut self, m: &Message, sender: &str, pid: i32, who: &Who) -> Message {
         let app = who.app.as_str();
-        let file = match m.member.as_deref() {
-            Some("SetWallpaperURI") => m
-                .body
+        let by_uri = match m.member.as_deref() {
+            Some("SetWallpaperURI") => true,
+            Some("SetWallpaperFile") => false,
+            _ => return Message::error(m, bus::err::UNKNOWN_METHOD, "no such method"),
+        };
+        if self.job.is_some() {
+            return Message::error(m, bus::err::LIMITS, "a wallpaper is being set");
+        }
+        // The fit runs ffmpeg: for the app in front, or one the user trusts.
+        // Asked before the file is touched.
+        if !self.in_front(pid) && !self.always("wallpaper", app, pid) {
+            return Message::error(m, bus::err::ACCESS_DENIED, "only the app in front may");
+        }
+        let file = if by_uri {
+            m.body
                 .get(1)
                 .and_then(Value::as_str)
                 .and_then(gh0st_core::uri::to_path)
-                .and_then(|p| std::fs::File::open(p).ok()),
-            Some("SetWallpaperFile") => match m.body.get(1) {
+                .and_then(|p| open_regular(&p))
+        } else {
+            match m.body.get(1) {
                 Some(Value::Fd(i)) => m
                     .fds
                     .get(*i as usize)
                     .and_then(|f| f.try_clone().ok())
                     .map(std::fs::File::from),
                 _ => None,
-            },
-            _ => return Message::error(m, bus::err::UNKNOWN_METHOD, "no such method"),
+            }
         };
         let Some(file) = file.filter(|f| f.metadata().is_ok_and(|md| md.is_file())) else {
             return Message::error(m, bus::err::INVALID_ARGS, "not a local file");
         };
-        if self.job.is_some() {
-            return Message::error(m, bus::err::LIMITS, "a wallpaper is being set");
-        }
-        // The fit runs ffmpeg: for the app in front, or one the user trusts.
-        if !self.in_front(pid) && !self.always("wallpaper", app, pid) {
-            return Message::error(m, bus::err::ACCESS_DENIED, "only the app in front may");
-        }
         let tmp = self
             .scratch
             .join(format!("wallpaper-{}.png", self.next + 1));
@@ -816,7 +835,7 @@ impl Portal {
     /// What a request leaves behind when it ends, answered or not.
     fn forget(&mut self, r: &Req) {
         if let Kind::Wallpaper { tmp, .. } = &r.kind {
-            let _ = std::fs::remove_file(tmp);
+            // The fit first, or it could write the file again.
             if let Some(mut j) = self.job.take_if(|j| j.id == r.id) {
                 if let Ok(g) = i32::try_from(j.child.id()) {
                     // SAFETY: a signal to the group the child leads.
@@ -824,6 +843,7 @@ impl Portal {
                 }
                 let _ = j.child.wait();
             }
+            let _ = std::fs::remove_file(tmp);
         }
     }
 
@@ -831,7 +851,7 @@ impl Portal {
     fn drop_req(&mut self, r: Req) {
         self.forget(&r);
         match r.kind {
-            Kind::Inhibit { pid } => self.awake(pid, false),
+            Kind::Inhibit { key } => self.touched.extend(key),
             Kind::Monitor { .. } => {}
             _ => self.shell(&["cancel", &r.id.to_string()]),
         }
@@ -839,7 +859,11 @@ impl Portal {
 
     /// The user's answer about their name: once, always or deny.
     fn account_answer(&mut self, id: u64, answer: &str) {
-        let Some(at) = self.reqs.iter().position(|r| r.id == id) else {
+        let at = self
+            .reqs
+            .iter()
+            .position(|r| r.id == id && matches!(r.kind, Kind::Account { .. }));
+        let Some(at) = at else {
             return;
         };
         let r = self.reqs.remove(at);
@@ -896,11 +920,11 @@ impl Portal {
         let Some(at) = at.filter(|&i| pid.is_some() && self.reqs[i].picker == pid) else {
             return Message::error(m, bus::err::ACCESS_DENIED, "not this request's chooser");
         };
+        let Kind::Pick(q) = &self.reqs[at].kind else {
+            return Message::error(m, bus::err::INVALID_ARGS, "not a chooser");
+        };
         if m.is(OURS, "Take") {
-            return match &self.reqs[at].kind {
-                Kind::Pick(q) => Message::reply(m).arg(q.to_value()),
-                _ => Message::error(m, bus::err::INVALID_ARGS, "not a chooser"),
-            };
+            return Message::reply(m).arg(q.to_value());
         }
         if !m.is(OURS, "Done") {
             return Message::error(m, bus::err::UNKNOWN_METHOD, "no such method");
@@ -1006,6 +1030,19 @@ impl Portal {
         }
     }
 
+    /// A line to the shell didn't go: too long, or the shell not reading.
+    /// The request it asked about ends with 2, or it would wait for ever.
+    pub fn unsent(&mut self, fields: &[String]) {
+        let verb = fields.first().map(String::as_str);
+        let asks = matches!(
+            verb,
+            Some("pick" | "open" | "account" | "shot" | "color" | "wallpaper")
+        );
+        if let Some(id) = fields.get(1).and_then(|i| i.parse().ok()).filter(|_| asks) {
+            self.finish(id, RESPONSE_OTHER);
+        }
+    }
+
     /// A caller left the bus: its requests go, its inhibitors let go, and
     /// its choosers close.
     pub fn gone(&mut self, sender: &str) {
@@ -1061,8 +1098,25 @@ impl Portal {
     /// program's path is its label), so control characters go.
     fn shell(&mut self, fields: &[&str]) {
         let clean = |f: &&str| f.replace(|c: char| c.is_control(), "\u{fffd}");
-        self.out.push(Out::Shell(fields.iter().map(clean).collect()));
+        self.out
+            .push(Out::Shell(fields.iter().map(clean).collect()));
     }
+}
+
+/// A regular file at `p`, opened for reading. A FIFO or a device would
+/// block the loop or wake hardware, so neither is opened: the path is
+/// checked first, and the file again once open.
+fn open_regular(p: &Path) -> Option<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if !std::fs::metadata(p).is_ok_and(|md| md.is_file()) {
+        return None;
+    }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(p)
+        .ok()?;
+    f.metadata().is_ok_and(|md| md.is_file()).then_some(f)
 }
 
 /// Moves the file `fd` names to the Trash, if the name still is that file.
@@ -1226,7 +1280,7 @@ mod tests {
                 ),
             ),
         ]);
-        let reply = p.call(&open_file(options), ME, Some(500), &who("Text"));
+        let reply = p.call(&open_file(options), ME, Some(500), &who("Text"), None);
         let path = "/org/freedesktop/portal/desktop/request/1_42/t1";
         assert_eq!(reply.body[0].as_str(), Some(path));
         assert_eq!(shell_lines(&mut p), [["pick", "1", "500"]]);
@@ -1278,9 +1332,27 @@ mod tests {
     #[test]
     fn refusals_closes_and_departures_end_requests() {
         let mut p = Portal::default();
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
+        p.call(
+            &open_file(Value::props::<&str>([])),
+            ME,
+            Some(1),
+            &who("A"),
+            None,
+        );
+        p.call(
+            &open_file(Value::props::<&str>([])),
+            ME,
+            Some(1),
+            &who("A"),
+            None,
+        );
+        p.call(
+            &open_file(Value::props::<&str>([])),
+            ME,
+            Some(1),
+            &who("A"),
+            None,
+        );
         p.out.clear();
         p.shell_said(&["refuse".into(), "1".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OTHER);
@@ -1290,11 +1362,25 @@ mod tests {
         let path = "/org/freedesktop/portal/desktop/request/1_42/gh0st3";
         let mut close = Message::call(NAME, path, REQUEST, "Close");
         close.sender = Some(":1.5".into());
-        assert!(p.call(&close, ":1.5", None, &who("x")).error_name.is_some());
+        assert!(
+            p.call(&close, ":1.5", None, &who("x"), None)
+                .error_name
+                .is_some()
+        );
         close.sender = Some(ME.into());
-        assert!(p.call(&close, ME, None, &who("x")).error_name.is_none());
+        assert!(
+            p.call(&close, ME, None, &who("x"), None)
+                .error_name
+                .is_none()
+        );
         assert_eq!(shell_lines(&mut p), [["cancel", "3"]]);
-        p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"));
+        p.call(
+            &open_file(Value::props::<&str>([])),
+            ME,
+            Some(1),
+            &who("A"),
+            None,
+        );
         p.out.clear();
         p.gone(ME);
         assert_eq!(shell_lines(&mut p), [["cancel", "4"]]);
@@ -1311,19 +1397,27 @@ mod tests {
                 vec![Value::str(""), Value::U32(flags), Value::props::<&str>([])],
             )
         };
-        let first = p.call(&idle(8), ME, Some(300), &who("mpv")).body[0]
+        let key = Some("pid:300");
+        let first = p.call(&idle(8), ME, Some(300), &who("mpv"), key).body[0]
             .as_str()
             .unwrap()
             .to_string();
-        p.call(&idle(8), ME, Some(300), &who("mpv"));
-        p.call(&idle(1), ME, Some(300), &who("mpv"));
-        assert_eq!(shell_lines(&mut p), [["awake", "pid:300", "1"]]);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OK, "held at once");
+        p.call(&idle(8), ME, Some(300), &who("mpv"), key);
+        p.call(&idle(1), ME, Some(300), &who("mpv"), key);
+        assert_eq!(p.holds("pid:300"), 2, "flag 1 holds nothing");
+        assert_eq!(std::mem::take(&mut p.touched), ["pid:300", "pid:300"]);
         let mut close = Message::call(NAME, &first, REQUEST, "Close");
         close.sender = Some(ME.into());
-        p.call(&close, ME, None, &who("mpv"));
-        assert!(shell_lines(&mut p).is_empty(), "the second still holds");
+        p.call(&close, ME, None, &who("mpv"), None);
+        assert_eq!(p.holds("pid:300"), 1, "the second still holds");
         p.gone(ME);
-        assert_eq!(shell_lines(&mut p), [["awake", "pid:300", "0"]]);
+        assert_eq!(p.holds("pid:300"), 0);
+        assert_eq!(p.touched.len(), 2);
+        assert!(
+            shell_lines(&mut p).is_empty(),
+            "the session tells the shell"
+        );
         let monitor = call(
             INHIBIT,
             "CreateMonitor",
@@ -1332,7 +1426,7 @@ mod tests {
                 Value::props([("session_handle_token", Value::str("m"))]),
             ],
         );
-        p.call(&monitor, ME, Some(300), &who("mpv"));
+        p.call(&monitor, ME, Some(300), &who("mpv"), None);
         let session = "/org/freedesktop/portal/desktop/session/1_42/m";
         let r = responses(&mut p);
         assert_eq!(
@@ -1344,7 +1438,11 @@ mod tests {
         );
         let mut end = Message::call(NAME, session, SESSION, "Close");
         end.sender = Some(ME.into());
-        assert!(p.call(&end, ME, None, &who("mpv")).error_name.is_none());
+        assert!(
+            p.call(&end, ME, None, &who("mpv"), None)
+                .error_name
+                .is_none()
+        );
         assert_eq!(p.open(), 0);
     }
 
@@ -1362,18 +1460,18 @@ mod tests {
                 vec![Value::str(""), Value::props::<&str>([])],
             )
         };
-        p.call(&ask(), ME, Some(300), &who("Chat"));
+        p.call(&ask(), ME, Some(300), &who("Chat"), None);
         assert_eq!(shell_lines(&mut p), [["account", "1", "300", "Chat"]]);
         p.shell_said(&["account".into(), "1".into(), "deny".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
-        p.call(&ask(), ME, Some(300), &who("Chat"));
+        p.call(&ask(), ME, Some(300), &who("Chat"), None);
         p.out.clear();
         p.shell_said(&["account".into(), "2".into(), "always".into()]);
         let r = responses(&mut p);
         assert_eq!(r[0].1, RESPONSE_OK);
         assert!(r[0].2.get("name").is_some() && r[0].2.get("id").is_some());
         // Asked again, the answer comes without the shell.
-        p.call(&ask(), ME, Some(300), &who("Chat"));
+        p.call(&ask(), ME, Some(300), &who("Chat"), None);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
         assert!(shell_lines(&mut p).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1407,14 +1505,22 @@ mod tests {
             m
         };
         assert_eq!(
-            p.call(&set(), ME, Some(300), &who("Media")).error_name.as_deref(),
+            p.call(&set(), ME, Some(300), &who("Media"), None)
+                .error_name
+                .as_deref(),
             Some(bus::err::ACCESS_DENIED),
             "nothing in front: no fit"
         );
         p.open = true;
-        assert!(p.call(&set(), ME, Some(300), &who("Media")).error_name.is_none());
         assert!(
-            p.call(&set(), ME, Some(300), &who("Media")).error_name.is_some(),
+            p.call(&set(), ME, Some(300), &who("Media"), None)
+                .error_name
+                .is_none()
+        );
+        assert!(
+            p.call(&set(), ME, Some(300), &who("Media"), None)
+                .error_name
+                .is_some(),
             "one at a time"
         );
         p.job_done();
@@ -1426,7 +1532,7 @@ mod tests {
         assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
         assert!(!tmp.exists());
 
-        p.call(&set(), ME, Some(300), &who("Media"));
+        p.call(&set(), ME, Some(300), &who("Media"), None);
         p.job_done();
         p.out.clear();
         p.shell_said(&["wallpaper".into(), "2".into(), "always".into()]);
@@ -1439,11 +1545,106 @@ mod tests {
         assert_eq!(conf.wallpaper(), gh0st_ui::wallpaper::OWN);
         // Always: the next one is kept without a question, from behind too.
         p.open = false;
-        p.call(&set(), ME, Some(300), &who("Media"));
+        p.call(&set(), ME, Some(300), &who("Media"), None);
         p.job_done();
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
         assert!(shell_lines(&mut p).is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_wallpaper_uri_never_opens_a_fifo() {
+        let dir = std::env::temp_dir().join(format!("gh0st-wall-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("fifo");
+        let c = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: mkfifo on a NUL-ended path.
+        assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let uri = gh0st_core::uri::from_path(&fifo);
+        let set = call(
+            WALLPAPER,
+            "SetWallpaperURI",
+            vec![Value::str(""), Value::str(uri), Value::props::<&str>([])],
+        );
+        let mut p = Portal::default();
+        assert_eq!(
+            p.call(&set, ME, Some(300), &who("Media"), None)
+                .error_name
+                .as_deref(),
+            Some(bus::err::ACCESS_DENIED),
+            "behind: refused before the path is touched"
+        );
+        p.open = true;
+        assert_eq!(
+            p.call(&set, ME, Some(300), &who("Media"), None)
+                .error_name
+                .as_deref(),
+            Some(bus::err::INVALID_ARGS),
+            "in front: not a file, and no wait for a writer"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_line_the_shell_never_got_ends_its_request() {
+        let mut p = Portal::default();
+        p.call(
+            &open_file(Value::props::<&str>([])),
+            ME,
+            Some(1),
+            &who("A"),
+            None,
+        );
+        let line = shell_lines(&mut p).remove(0);
+        p.unsent(&line);
+        assert_eq!(responses(&mut p)[0].1, RESPONSE_OTHER);
+        assert_eq!(p.open(), 0);
+        let long = format!("file:///{}", "%01".repeat(MAX_PATH_FIELD / 3 + 1));
+        let m = call(
+            OPEN_URI,
+            "OpenURI",
+            vec![Value::str(""), Value::str(long), Value::props::<&str>([])],
+        );
+        let r = p.call(&m, ME, Some(9), &who("A"), None);
+        assert_eq!(r.error_text(), "path too long");
+        assert_eq!(p.open(), 0);
+    }
+
+    #[test]
+    fn an_answer_for_another_kind_leaves_the_request() {
+        let mut p = Portal::default();
+        p.call(
+            &open_file(Value::props::<&str>([])),
+            ME,
+            Some(1),
+            &who("A"),
+            None,
+        );
+        p.out.clear();
+        p.shell_said(&["account".into(), "1".into(), "once".into()]);
+        assert!(
+            p.out.is_empty() && p.open() == 1,
+            "a pick is not an account"
+        );
+        let open = call(
+            OPEN_URI,
+            "OpenURI",
+            vec![
+                Value::str(""),
+                Value::str("file:///tmp"),
+                Value::props::<&str>([]),
+            ],
+        );
+        p.call(&open, ME, Some(1), &who("A"), None);
+        p.shell_said(&["picker".into(), "2".into(), "777".into()]);
+        let (done, pid) = chooser(
+            "Done",
+            777,
+            vec![Value::U64(2), Value::U32(0), Value::Array(Ty::Byte, vec![])],
+        );
+        assert!(p.chooser_call(&done, pid).error_name.is_some());
+        assert_eq!(p.open(), 2, "an open is not a pick");
     }
 
     #[test]
@@ -1459,7 +1660,7 @@ mod tests {
             "Screenshot",
             vec![Value::str(""), Value::props::<&str>([])],
         );
-        p.call(&shot, ME, Some(300), &w);
+        p.call(&shot, ME, Some(300), &w, None);
         let lines = shell_lines(&mut p);
         assert_eq!(lines[0], ["shot", "1", "300", "/home/u/x\u{fffd}quiet"]);
     }
@@ -1483,25 +1684,25 @@ mod tests {
             label: "/usr/bin/python3".into(),
             installed: true,
         };
-        p.call(&ask(), ME, Some(300), &python);
+        p.call(&ask(), ME, Some(300), &python, None);
         p.out.clear();
         p.shell_said(&["account".into(), "1".into(), "always".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK);
         // Every script shares the path: behind, the shell is asked, and
         // refuses.
-        p.call(&ask(), ME, Some(300), &python);
+        p.call(&ask(), ME, Some(300), &python, None);
         assert_eq!(shell_lines(&mut p).len(), 1, "asked, not answered");
         p.shell_said(&["account".into(), "2".into(), "deny".into()]);
         p.out.clear();
         p.open = true;
-        p.call(&ask(), ME, Some(300), &python);
+        p.call(&ask(), ME, Some(300), &python, None);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OK, "in front: no question");
         // The label is not the grant.
         let twin = Who {
             app: "exe:/tmp/python3".into(),
             ..python.clone()
         };
-        p.call(&ask(), ME, Some(300), &twin);
+        p.call(&ask(), ME, Some(300), &twin, None);
         assert_eq!(shell_lines(&mut p).len(), 1, "another program is asked");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1520,7 +1721,7 @@ mod tests {
                 vec![Value::str(""), Value::props::<&str>([])],
             )
         };
-        p.call(&shot(), ME, Some(300), &who("Chat"));
+        p.call(&shot(), ME, Some(300), &who("Chat"), None);
         assert_eq!(shell_lines(&mut p), [["shot", "1", "300", "Chat"]]);
         let saved = gh0st_core::link::path_field(Path::new("/home/u/Pictures/Screenshots/a b.png"));
         p.shell_said(&["shot".into(), "1".into(), "always".into(), saved]);
@@ -1531,7 +1732,7 @@ mod tests {
             Some("file:///home/u/Pictures/Screenshots/a%20b.png")
         );
         // Always: the shell takes the next one without asking.
-        p.call(&shot(), ME, Some(300), &who("Chat"));
+        p.call(&shot(), ME, Some(300), &who("Chat"), None);
         assert_eq!(shell_lines(&mut p), [["shot", "2", "300", "Chat", "quiet"]]);
         p.shell_said(&["shot".into(), "2".into(), "fail".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_OTHER);
@@ -1541,7 +1742,7 @@ mod tests {
             "PickColor",
             vec![Value::str(""), Value::props::<&str>([])],
         );
-        p.call(&pick, ME, Some(300), &who("Chat"));
+        p.call(&pick, ME, Some(300), &who("Chat"), None);
         assert_eq!(shell_lines(&mut p), [["color", "3", "300", "Chat"]]);
         let said = ["color", "3", "ok", "255", "0", "51"].map(String::from);
         p.shell_said(&said);
@@ -1551,7 +1752,7 @@ mod tests {
             c,
             &Value::Struct(vec![Value::F64(1.0), Value::F64(0.0), Value::F64(0.2)])
         );
-        p.call(&pick, ME, Some(300), &who("Chat"));
+        p.call(&pick, ME, Some(300), &who("Chat"), None);
         p.out.clear();
         p.shell_said(&["color".into(), "4".into(), "deny".into()]);
         assert_eq!(responses(&mut p)[0].1, RESPONSE_CANCELLED);
@@ -1565,7 +1766,10 @@ mod tests {
         m.fds = vec![std::fs::File::open("/").unwrap().into()];
         // No name to move: refused, answered 0.
         assert_eq!(
-            Portal::default().call(&m, ME, Some(1), &who("A")).body[0].as_u32(),
+            Portal::default()
+                .call(&m, ME, Some(1), &who("A"), None)
+                .body[0]
+                .as_u32(),
             Some(0)
         );
     }
@@ -1575,15 +1779,27 @@ mod tests {
         let mut p = Portal::default();
         for _ in 0..PER_CALLER {
             assert!(
-                p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"))
-                    .error_name
-                    .is_none()
+                p.call(
+                    &open_file(Value::props::<&str>([])),
+                    ME,
+                    Some(1),
+                    &who("A"),
+                    None
+                )
+                .error_name
+                .is_none()
             );
         }
         assert!(
-            p.call(&open_file(Value::props::<&str>([])), ME, Some(1), &who("A"))
-                .error_name
-                .is_some()
+            p.call(
+                &open_file(Value::props::<&str>([])),
+                ME,
+                Some(1),
+                &who("A"),
+                None
+            )
+            .error_name
+            .is_some()
         );
     }
 
@@ -1629,7 +1845,11 @@ mod tests {
                 Value::props::<&str>([]),
             ],
         );
-        assert!(p.call(&m, ME, Some(9), &who("A")).error_name.is_none());
+        assert!(
+            p.call(&m, ME, Some(9), &who("A"), None)
+                .error_name
+                .is_none()
+        );
         assert_eq!(shell_lines(&mut p), [["open", "1", "9", "/tmp"]]);
         let web = call(
             OPEN_URI,
@@ -1640,15 +1860,25 @@ mod tests {
                 Value::props::<&str>([]),
             ],
         );
-        assert!(p.call(&web, ME, Some(9), &who("A")).error_name.is_some());
+        assert!(
+            p.call(&web, ME, Some(9), &who("A"), None)
+                .error_name
+                .is_some()
+        );
         let ask = call(
             OPEN_URI,
             "SchemeSupported",
             vec![Value::str("file"), Value::props::<&str>([])],
         );
-        assert_eq!(p.call(&ask, ME, None, &who("A")).body[0], Value::Bool(true));
+        assert_eq!(
+            p.call(&ask, ME, None, &who("A"), None).body[0],
+            Value::Bool(true)
+        );
         let mut get = Message::call(NAME, PATH, bus::PROPERTIES, "Get");
         get.body = vec![Value::str(CHOOSER), Value::str("version")];
-        assert_eq!(p.call(&get, ME, None, &who("A")).body[0].inner(), &Value::U32(4));
+        assert_eq!(
+            p.call(&get, ME, None, &who("A"), None).body[0].inner(),
+            &Value::U32(4)
+        );
     }
 }

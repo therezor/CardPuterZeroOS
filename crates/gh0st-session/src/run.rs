@@ -25,6 +25,8 @@ struct Caller {
     pid: Option<i32>,
     /// Says whether `pid` is still that process.
     pidfd: Option<OwnedFd>,
+    /// What its inhibitors keep awake.
+    awake: Option<String>,
 }
 
 struct Session {
@@ -32,6 +34,10 @@ struct Session {
     link: Option<Link>,
     /// Each caller once.
     who: HashMap<String, Caller>,
+    /// The shell: our parent, and every app's.
+    shell: i32,
+    /// What the shell was told is awake.
+    told: inhibit::Told,
     notes: Notifications,
     inhibit: Inhibit,
     portal: Portal,
@@ -115,10 +121,14 @@ pub fn main(args: &[String]) -> i32 {
         .unwrap_or_else(|| "/usr/bin/gh0st-settings".into())
         .into();
     portal.open = test;
+    portal.seed_ids();
     let mut s = Session {
         bus: conn,
         link,
         who: HashMap::new(),
+        // SAFETY: getppid has no preconditions.
+        shell: unsafe { libc::getppid() },
+        told: inhibit::Told::default(),
         notes: Notifications::new(gh0st_core::notify::user_dir()),
         inhibit: Inhibit::default(),
         portal,
@@ -139,12 +149,14 @@ pub fn main(args: &[String]) -> i32 {
 }
 
 impl Session {
-    fn say(&self, fields: &[&str]) {
+    /// A line for the shell; false if it didn't go.
+    fn say(&self, fields: &[&str]) -> bool {
         match &self.link {
-            Some(l) => {
-                l.send(fields);
+            Some(l) => l.send(fields),
+            None => {
+                println!("{}", fields.join(" "));
+                true
             }
-            None => println!("{}", fields.join(" ")),
         }
     }
 
@@ -219,12 +231,13 @@ impl Session {
                     return 1;
                 }
             }
+            // The shell first: a call is judged against the app in front now.
+            if !self.shell_lines() {
+                return 0;
+            }
             if let Err(e) = self.messages() {
                 eprintln!("gh0st session: bus: {e}");
                 return 1;
-            }
-            if !self.shell_lines() {
-                return 0;
             }
             if let Err(e) = self.flush_out() {
                 eprintln!("gh0st session: bus: {e}");
@@ -237,7 +250,10 @@ impl Session {
         while let Some(m) = self.bus.recv()? {
             match m.kind {
                 Kind::Call => self.call(m)?,
-                Kind::Signal if m.is(bus::NAME, "NameOwnerChanged") => {
+                Kind::Signal
+                    if m.is(bus::NAME, "NameOwnerChanged")
+                        && m.sender.as_deref() == Some(bus::NAME) =>
+                {
                     let name = m.body.first().and_then(Value::as_str).unwrap_or("");
                     let new = m.body.get(2).and_then(Value::as_str).unwrap_or("x");
                     if new.is_empty() && name.starts_with(':') {
@@ -258,7 +274,7 @@ impl Session {
         let Some(sender) = m.sender.clone() else {
             return Ok(());
         };
-        let (who, pid) = self.caller(&sender);
+        let (who, pid, awake) = self.caller(&sender);
         let path = m.path.as_deref().unwrap_or("");
         let reply = if path == portal::OURS_PATH {
             // The shell names the chooser it started before the chooser can
@@ -279,7 +295,7 @@ impl Session {
         } else if path == portal::PATH && m.interface.as_deref() == Some(settings::IFACE) {
             self.settings.call(&m)
         } else if path.starts_with(portal::PATH) {
-            self.portal.call(&m, &sender, pid, &who)
+            self.portal.call(&m, &sender, pid, &who, awake.as_deref())
         } else if path == clipboard::PATH {
             self.clipboard.call(&m, pid)
         } else if path == notify::PATH {
@@ -287,7 +303,7 @@ impl Session {
             self.test_press();
             r
         } else if inhibit::PATHS.contains(&path) {
-            self.inhibit.call(&m, &who, &sender, pid)
+            self.inhibit.call(&m, &sender, awake.as_deref())
         } else if m.is(bus::INTROSPECTABLE, "Introspect") {
             let child = match path {
                 "/" => vec!["org", "ScreenSaver"],
@@ -315,12 +331,13 @@ impl Session {
         Ok(())
     }
 
-    /// Who `sender` is, and its pid while that is still the process the bus
-    /// named. A lookup that failed is not kept: the next call asks again.
-    fn caller(&mut self, sender: &str) -> (Who, Option<i32>) {
+    /// Who `sender` is, its pid while that is still the process the bus
+    /// named, and what its inhibitors keep awake. A lookup that failed is
+    /// not kept: the next call asks again.
+    fn caller(&mut self, sender: &str) -> (Who, Option<i32>, Option<String>) {
         if let Some(c) = self.who.get(sender) {
             let live = c.pidfd.as_ref().is_none_or(ident::alive);
-            return (c.who.clone(), c.pid.filter(|_| live));
+            return (c.who.clone(), c.pid.filter(|_| live), c.awake.clone());
         }
         let unknown = Who {
             app: "exe:unknown".into(),
@@ -328,23 +345,25 @@ impl Session {
             installed: false,
         };
         let Ok(creds) = bus::credentials(&mut self.bus, sender) else {
-            return (unknown, None);
+            return (unknown, None, None);
         };
         let Some(p) = creds.pid else {
-            return (unknown, None);
+            return (unknown, None, None);
         };
         let pidfd = creds.pidfd.or_else(|| ident::pidfd_open(p));
         let Some(who) = ident::of_pid(p, pidfd.as_ref()) else {
-            return (unknown, None);
+            return (unknown, None, None);
         };
         let pid = i32::try_from(p).ok();
+        let awake = inhibit::key(&who, pid, self.shell);
         let c = Caller {
             who: who.clone(),
             pid,
             pidfd,
+            awake: awake.clone(),
         };
         self.who.insert(sender.to_string(), c);
-        (who, pid)
+        (who, pid, awake)
     }
 
     /// Memory is short: every listener on the bus hears it, and the shell
@@ -479,14 +498,23 @@ impl Session {
                     }
                     portal::Out::Shell(f) => {
                         let fields: Vec<&str> = f.iter().map(String::as_str).collect();
-                        self.say(&fields);
+                        if !self.say(&fields) {
+                            self.portal.unsent(&f);
+                        }
                         self.test_answer(&f);
                     }
                 }
             }
         }
-        for (app, on) in std::mem::take(&mut self.inhibit.out) {
-            self.say(&["awake", &app, if on { "1" } else { "0" }]);
+        let touched: Vec<String> = std::mem::take(&mut self.inhibit.out)
+            .into_iter()
+            .chain(std::mem::take(&mut self.portal.touched))
+            .collect();
+        for k in touched {
+            let held = self.inhibit.holds(&k) + self.portal.holds(&k);
+            if let Some(on) = self.told.update(&k, held) {
+                self.say(&["awake", &k, if on { "1" } else { "0" }]);
+            }
         }
         Ok(())
     }

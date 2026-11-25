@@ -26,7 +26,7 @@ which the device has none of.
 
 ## Requests
 
-Every method answers at once with a request object, then sends its
+A method that returns a request object answers at once, then sends its
 `Response(u, a{sv})` signal there when the user is done:
 
 - The path is
@@ -36,6 +36,10 @@ Every method answers at once with a request object, then sends its
 - The response is `0` done, `1` cancelled, `2` anything else.
 - `Request.Close()` gives up the request. No response follows.
 - A caller that leaves the bus cancels its requests.
+- A request the shell can't be told about, such as a path too long for
+  the shell link, answers `2`.
+- Request ids start at a random number, so an answer meant for a session
+  that died reaches no request of the next.
 
 ## FileChooser
 
@@ -69,8 +73,9 @@ travel the shell link.
   (`apps.md`, Opening files), as Files' Enter does. `OpenDirectory` opens
   its folder in Files. `ask` is not offered yet: the default app opens.
 - `OpenURI` takes `file://` and acts as `OpenFile`. The spec sends those to
-  `OpenFile`; we take them anyway. Other schemes answer 2: there is no
-  browser. `SchemeSupported` is true for `file` alone.
+  `OpenFile`; we take them anyway. Other schemes are refused with
+  `InvalidArgs`: there is no browser. `SchemeSupported` is true for `file`
+  alone.
 - `gh0st open <path>` calls `OpenURI` from the terminal.
 
 ## Notification
@@ -102,7 +107,10 @@ A change to config.json sends `SettingChanged` for each key that moved.
 - `Inhibit` with flag `4` (suspend) or `8` (idle) keeps the screen on, as
   `awake 1` does for the app the caller belongs to. Flags `1` and `2` hold
   nothing: there is no logout and no user switch.
-- It ends with `Request.Close` or when the caller leaves the bus.
+- It answers `0` at once and holds until `Request.Close`, or until the
+  caller leaves the bus.
+- An app's holds count together, with ScreenSaver's too, across all its
+  processes: the screen may dim once the last one ends.
 - `CreateMonitor` answers with a session at
   `/org/freedesktop/portal/desktop/session/SENDER/TOKEN` and one
   `StateChanged`: running, the screen saver off. `Session.Close` ends it.
@@ -127,6 +135,9 @@ answers `1` done, `0` not: a folder on another drive has no Trash here.
 
 - `SetWallpaperFile(s parent, h fd, a{sv})` and `SetWallpaperURI` with a
   `file://` URI. Other schemes are refused: there is no download.
+- Only the app in front, or one with Always, may ask. The URI's file is
+  opened after that check, and only a regular file: a FIFO or a device is
+  refused unopened.
 - `gh0st-settings --import-wallpaper - TMP` fits the picture to the screen
   in a child, reading the fd as its stdin. A PNG is read directly; any
   other picture goes through ffmpeg first.
