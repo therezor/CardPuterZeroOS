@@ -72,7 +72,9 @@ cargo run --release -p gh0st-text --example bench -- FILE   # timings
 
 Wrap long lines, in the menu, breaks a line into rows the screen's width;
 it is kept. Up and down move by rows. A line over 16 KB never wraps: it
-scrolls sideways, as all lines do with wrap off.
+scrolls sideways, as all lines do with wrap off. Its columns count bytes,
+so a tab or a character of several bytes there takes a column a byte, and
+only the part on screen is read.
 
 ## Unsaved edits
 
@@ -186,4 +188,6 @@ is in `panel-driver.md`.
 - The clipboard is the one every app shares, and takes about a megabyte:
   a bigger copy is refused, and a cut then keeps the text.
 - Four files at once.
+- Each key finds the ends of the cursor's line, so moving in a line of
+  many megabytes is slow.
 - With wrap, a wide character that would cross a row's end is not drawn.

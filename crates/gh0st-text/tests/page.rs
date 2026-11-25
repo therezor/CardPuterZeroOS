@@ -739,3 +739,31 @@ fn edits_that_no_longer_fit_wait_while_four_files_are_open() {
     let kept = gh0st_text::journal::read(&data, &p).expect("still kept");
     assert_eq!(kept.typed(), b"kept\n");
 }
+
+#[test]
+fn keys_deep_in_a_long_line_step_one_character_and_show_it() {
+    let line = |mid: &[u8]| {
+        let mut t = vec![b'a'; 499_999];
+        t.extend_from_slice(mid);
+        t.extend(std::iter::repeat_n(b'b', 500_000));
+        t.push(b'\n');
+        t
+    };
+    let p = temp("oneline.json", &line(b"aNEEDLE"));
+    let mut d = editing(&p);
+    d.keys("ctrl+f\ntype needle\nenter");
+    d.wait(100);
+    d.keys("esc");
+    assert!(shows_cursor(&mut d), "scrolled to the match");
+    // Backspace takes one byte, Right steps one character.
+    d.keys("backspace\nfn+c\ntype X\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), line(b"NXEEDLE"));
+    // With wrap on, a long line scrolls sideways too.
+    let mut d = wrapping(&p, true);
+    d.keys("ctrl+f\ntype nxeedle\nenter");
+    d.wait(100);
+    d.keys("esc");
+    assert!(shows_cursor(&mut d), "scrolled with wrap on");
+    assert!(d.lint().is_empty());
+}

@@ -97,9 +97,12 @@ const JOURNAL_MS: u64 = 2000;
 const PAIR_REACH: u64 = 64 << 10;
 /// Files open at once.
 pub const FILES: usize = 4;
-/// Lines longer than this never wrap: they scroll sideways. A key on a
+/// Lines longer than this never wrap: they scroll sideways, a column to a
+/// byte, so only the part on screen or near the cursor is read. A key on a
 /// wrapped 64 KB line took 20 ms on the device.
-const WRAP_MAX: u64 = 16 << 10;
+const LONG: u64 = 16 << 10;
+/// How far either side of the cursor a long line is read for a key.
+const NEAR: u64 = 4 << 10;
 /// One step of indent when the file's own can't be told.
 const INDENT: &[u8] = b"    ";
 /// The most a copy reads.
@@ -1029,10 +1032,9 @@ impl Editor {
     /// A closing bracket typed on a line of blanks: one step of indent
     /// less first.
     fn close_bracket(&mut self, c: u8) {
-        let (start, _, line) = self.line_at(self.cursor);
-        let at = (self.cursor - start) as usize;
-        let before = &line[..at.min(line.len())];
-        if self.selection().is_none()
+        let line = self.line_at(self.cursor);
+        if let Some(before) = line.before(self.cursor)
+            && self.selection().is_none()
             && !before.is_empty()
             && before.iter().all(|&x| x == b' ' || x == b'\t')
         {
@@ -1113,20 +1115,71 @@ impl Editor {
         (a != self.cursor).then(|| (a.min(self.cursor), a.max(self.cursor)))
     }
 
-    /// The line holding `off`: its start, end and bytes up to the lex
-    /// limit. The CR of a CR LF ending is part of the ending, not the text:
-    /// the end is where the CR is.
-    fn line_at(&self, off: u64) -> (u64, u64, Vec<u8>) {
+    /// Where the line holding `off` starts and its text ends. The CR of a
+    /// CR LF ending is part of the ending, not the text: the end is where
+    /// the CR is.
+    fn bounds(&self, off: u64) -> (u64, u64) {
         let mut d = self.doc.borrow_mut();
         let start = d.buf.line_start(off).unwrap_or(0);
         let mut end = d.buf.line_end(off).unwrap_or(start);
-        let take = (end - start).min(lex::LINE_MAX as u64 * 4);
-        let mut bytes = d.buf.bytes(start..start + take).unwrap_or_default();
-        if take == end - start && bytes.last() == Some(&b'\r') {
-            bytes.pop();
+        if end > start && d.buf.bytes(end - 1..end).ok().as_deref() == Some(b"\r") {
             end -= 1;
         }
-        (start, end, bytes)
+        (start, end)
+    }
+
+    /// The line holding `off`: all of it, or of a long line the bytes near
+    /// `off`.
+    fn line_at(&self, off: u64) -> Line {
+        let (start, end) = self.bounds(off);
+        let (base, to) = if end - start > LONG {
+            let off = off.clamp(start, end);
+            (
+                off.saturating_sub(NEAR).max(start),
+                off.saturating_add(NEAR).min(end),
+            )
+        } else {
+            (start, end)
+        };
+        let bytes = self
+            .doc
+            .borrow_mut()
+            .buf
+            .bytes(base..to)
+            .unwrap_or_default();
+        Line {
+            start,
+            end,
+            base,
+            bytes,
+        }
+    }
+
+    /// The offset at column `col` of the line holding `at`.
+    fn at_col(&self, at: u64, col: u32) -> u64 {
+        let (start, end) = self.bounds(at);
+        if end - start > LONG {
+            let to = start.saturating_add(col as u64).min(end);
+            return self.line_at(to).char_at(to);
+        }
+        let line = self.line_at(start);
+        start + view::byte_at(&line.bytes, col) as u64
+    }
+
+    /// The blanks `line` starts with, read from its start when `line` holds
+    /// only the part near the cursor.
+    fn indent_of(&self, line: &Line) -> Vec<u8> {
+        if line.base == line.start {
+            return view::indent(&line.bytes).to_vec();
+        }
+        let to = line.base.min(line.start + NEAR);
+        let head = self
+            .doc
+            .borrow_mut()
+            .buf
+            .bytes(line.start..to)
+            .unwrap_or_default();
+        view::indent(&head).to_vec()
     }
 
     /// Where the next line starts, after the line ending at `end`.
@@ -1152,8 +1205,7 @@ impl Editor {
 
     fn col_of(&self, off: u64) -> u32 {
         remember(&self.cursor_col, self.memo(off), || {
-            let (start, _, line) = self.line_at(off);
-            view::col_of(&line, (off - start) as usize)
+            self.line_at(off).col(off)
         })
     }
 
@@ -1181,12 +1233,12 @@ impl Editor {
         {
             end -= 1;
         }
-        if !self.wrap || end - start > WRAP_MAX {
+        if !self.wrap || end - start > LONG {
             return (1, end - start);
         }
         let w = remember(&self.line_cols, self.memo(start), || {
-            let (_, _, l) = self.line_at(start);
-            view::col_of(&l, l.len())
+            let l = self.line_at(start);
+            view::col_of(&l.bytes, l.bytes.len())
         });
         (w.div_ceil(self.cols()).max(1), end - start)
     }
@@ -1208,14 +1260,13 @@ impl Editor {
             self.go(a, false);
             return;
         }
-        let (start, _, line) = self.line_at(self.cursor);
-        let at = (self.cursor - start) as usize;
-        let to = if at == 0 {
+        let line = self.line_at(self.cursor);
+        let to = if self.cursor <= line.start {
             self.end_before(self.cursor)
         } else if word {
-            start + view::word_left(&line, at) as u64
+            line.word_left(self.cursor)
         } else {
-            start + view::prev_char(&line, at) as u64
+            line.prev_char(self.cursor)
         };
         self.want = None;
         self.go(to, select);
@@ -1226,14 +1277,13 @@ impl Editor {
             self.go(b, false);
             return;
         }
-        let (start, end, line) = self.line_at(self.cursor);
-        let at = (self.cursor - start) as usize;
-        let to = if self.cursor >= end {
-            end + self.eol_len(end)
+        let line = self.line_at(self.cursor);
+        let to = if self.cursor >= line.end {
+            line.end + self.eol_len(line.end)
         } else if word {
-            start + view::word_right(&line, at) as u64
+            line.word_right(self.cursor)
         } else {
-            start + view::next_char(&line, at) as u64
+            line.next_char(self.cursor)
         };
         self.want = None;
         self.go(to, select);
@@ -1250,7 +1300,7 @@ impl Editor {
         let mut at = self.cursor;
         let len = self.doc.borrow().buf.len();
         for _ in 0..lines.unsigned_abs() {
-            let (start, end, _) = self.line_at(at);
+            let (start, end) = self.bounds(at);
             if lines < 0 {
                 if start == 0 {
                     break;
@@ -1263,20 +1313,19 @@ impl Editor {
                 at = end + self.eol_len(end);
             }
         }
-        let (start, _, line) = self.line_at(at);
-        let to = start + view::byte_at(&line, col) as u64;
+        let to = self.at_col(at, col);
         self.go(to, select);
         self.want = Some(col);
     }
 
     fn line_edge(&mut self, end: bool, select: bool) {
-        let (start, stop, line) = self.line_at(self.cursor);
+        let line = self.line_at(self.cursor);
         let to = if end {
-            stop
+            line.end
         } else {
             // First to the indent, then to the very start.
-            let ind = start + view::indent(&line).len() as u64;
-            if self.cursor == ind { start } else { ind }
+            let ind = line.start + self.indent_of(&line).len() as u64;
+            if self.cursor == ind { line.start } else { ind }
         };
         self.want = None;
         self.go(to, select);
@@ -1296,7 +1345,13 @@ impl Editor {
     fn reveal_wrapped(&mut self) {
         let rows = self.rows() as u32;
         let (cur, cs) = self.seg_of(self.cursor);
-        self.pan = 0;
+        // A long line never wraps: it scrolls sideways.
+        let (start, end) = self.bounds(self.cursor);
+        if end - start > LONG {
+            self.follow();
+        } else {
+            self.pan = 0;
+        }
         if (cur, cs) < (self.top, self.top_seg) {
             self.top = cur;
             self.top_seg = cs;
@@ -1371,13 +1426,20 @@ impl Editor {
                 }
             }
         }
-        let (_, _, bytes) = self.line_at(line);
-        // The row's last cell, not the next row's first.
-        let col = seg * cols + vcol.min(cols - 1);
-        let mut to = line + view::byte_at(&bytes, col) as u64;
-        if self.seg_of(to).1 > seg {
-            to = line + view::prev_char(&bytes, (to - line) as usize) as u64;
-        }
+        let (start, end) = self.bounds(line);
+        let to = if end - start > LONG {
+            self.at_col(line, vcol)
+        } else {
+            let bytes = self.line_at(line).bytes;
+            // The row's last cell, not the next row's first.
+            let col = seg * cols + vcol.min(cols - 1);
+            let to = line + view::byte_at(&bytes, col) as u64;
+            if self.seg_of(to).1 > seg {
+                line + view::prev_char(&bytes, (to - line) as usize) as u64
+            } else {
+                to
+            }
+        };
         self.go(to, select);
         self.want = Some(vcol);
     }
@@ -1426,12 +1488,17 @@ impl Editor {
             }
         }
         drop(d);
+        self.follow();
+    }
+
+    /// Pans so the cursor's column is on screen.
+    fn follow(&mut self) {
         let col = self.col_of(self.cursor);
         let cols = self.cols();
         if col < self.pan {
             self.pan = col.saturating_sub(cols / 4);
-        } else if col >= self.pan + cols {
-            self.pan = col + cols / 4 - cols + 1;
+        } else if col >= self.pan.saturating_add(cols) {
+            self.pan = col.saturating_add(cols / 4) - cols + 1;
         }
     }
 
@@ -1456,11 +1523,14 @@ impl Editor {
     /// bracket (or a colon in Python and YAML). Between a bracket and its
     /// closer, the closer goes on a line of its own.
     fn newline(&mut self) {
-        let (start, _, line) = self.line_at(self.cursor);
-        let at = (self.cursor - start) as usize;
-        let before = &line[..at.min(line.len())];
-        let indent = view::indent(before).to_vec();
-        let last = before
+        let line = self.line_at(self.cursor);
+        let (start, end) = (line.start, line.end);
+        let at = line.at(self.cursor);
+        let full = self.indent_of(&line);
+        let unit = Self::unit(&full);
+        let mut indent = full;
+        indent.truncate((self.cursor - start) as usize);
+        let last = line.bytes[..at]
             .iter()
             .rev()
             .find(|&&b| b != b' ' && b != b'\t')
@@ -1468,14 +1538,13 @@ impl Editor {
         let lang = self.doc.borrow().cache.lang();
         let opens = matches!(last, Some(b'{' | b'(' | b'['))
             || (last == Some(b':') && matches!(lang, Lang::Python | Lang::Yaml));
-        let next = line.get(at).copied();
+        let next = line.bytes.get(at).copied();
         let closes = matches!(
             (last, next),
             (Some(b'{'), Some(b'}')) | (Some(b'('), Some(b')')) | (Some(b'['), Some(b']'))
         );
         // A CR LF file gets CR LF: as this line ends, or the one before
         // when this one is the last and has no ending.
-        let (_, end, _) = self.line_at(self.cursor);
         let len = self.doc.borrow().buf.len();
         let crlf = if end < len {
             self.eol_len(end) == 2
@@ -1486,7 +1555,7 @@ impl Editor {
         let mut ins = eol.to_vec();
         ins.extend_from_slice(&indent);
         if opens {
-            ins.extend_from_slice(Self::unit(&line));
+            ins.extend_from_slice(unit);
         }
         let land = ins.len() as u64;
         if closes {
@@ -1506,19 +1575,18 @@ impl Editor {
         let (a, b) = match self.selection() {
             Some(s) => s,
             None => {
-                let (start, end, line) = self.line_at(self.cursor);
-                let at = (self.cursor - start) as usize;
+                let line = self.line_at(self.cursor);
                 if forward {
-                    let to = if self.cursor >= end {
-                        end + self.eol_len(end)
+                    let to = if self.cursor >= line.end {
+                        line.end + self.eol_len(line.end)
                     } else {
-                        start + view::next_char(&line, at) as u64
+                        line.next_char(self.cursor)
                     };
                     (self.cursor, to.min(self.doc.borrow().buf.len()))
-                } else if at == 0 {
+                } else if self.cursor <= line.start {
                     (self.end_before(self.cursor), self.cursor)
                 } else {
-                    (start + view::prev_char(&line, at) as u64, self.cursor)
+                    (line.prev_char(self.cursor), self.cursor)
                 }
             }
         };
@@ -2109,6 +2177,71 @@ fn layer(k: &RawKey) -> u16 {
     }
 }
 
+/// A line, or the part of a long one near an offset.
+struct Line {
+    start: u64,
+    /// Where its text ends: at its newline, or the CR of a CR LF.
+    end: u64,
+    /// Where `bytes` start: `start`, or near the offset on a long line.
+    base: u64,
+    bytes: Vec<u8>,
+}
+
+impl Line {
+    fn long(&self) -> bool {
+        self.end - self.start > LONG
+    }
+
+    /// Where `off` falls in `bytes`.
+    fn at(&self, off: u64) -> usize {
+        off.saturating_sub(self.base).min(self.bytes.len() as u64) as usize
+    }
+
+    /// The text before `off`, when it was read from the line's start.
+    fn before(&self, off: u64) -> Option<&[u8]> {
+        (self.base == self.start).then(|| &self.bytes[..self.at(off)])
+    }
+
+    fn prev_char(&self, off: u64) -> u64 {
+        self.base + view::prev_char(&self.bytes, self.at(off)) as u64
+    }
+
+    fn next_char(&self, off: u64) -> u64 {
+        self.base + view::next_char(&self.bytes, self.at(off)) as u64
+    }
+
+    fn word_left(&self, off: u64) -> u64 {
+        self.base + view::word_left(&self.bytes, self.at(off)) as u64
+    }
+
+    fn word_right(&self, off: u64) -> u64 {
+        self.base + view::word_right(&self.bytes, self.at(off)) as u64
+    }
+
+    /// Where the character holding `off` starts.
+    fn char_at(&self, off: u64) -> u64 {
+        if off >= self.end {
+            self.end
+        } else {
+            self.prev_char(off + 1)
+        }
+    }
+
+    /// The column `off` starts in.
+    fn col(&self, off: u64) -> u32 {
+        if self.long() {
+            byte_col(off.min(self.end) - self.start)
+        } else {
+            view::col_of(&self.bytes, self.at(off))
+        }
+    }
+}
+
+/// The column `n` bytes into a long line.
+fn byte_col(n: u64) -> u32 {
+    n.min(u32::MAX as u64) as u32
+}
+
 /// A face and the cell it sets in.
 #[derive(Clone, Copy)]
 struct Look {
@@ -2660,22 +2793,39 @@ impl Page for Editor {
                 break;
             }
             let end = d.buf.line_end(start).unwrap_or(len);
-            let wraps = self.wrap && end - start <= WRAP_MAX;
-            let take = (end - start).min(if wraps {
-                WRAP_MAX
-            } else {
-                lex::LINE_MAX as u64
-            });
+            let long = end - start > LONG;
+            let wraps = self.wrap && !long;
+            let take = (end - start).min(if wraps { LONG } else { lex::LINE_MAX as u64 });
             d.line.clear();
             let line = &mut d.line;
             let _ = d.buf.for_each(start..start + take, |ch| {
                 line.extend_from_slice(ch);
                 true
             });
-            if d.line.last() == Some(&b'\r') {
+            if take == end - start && d.line.last() == Some(&b'\r') {
                 d.line.pop();
             }
             state = lex::lex(lang, state, &d.line, &mut d.spans);
+            // A long line shows from the pan on, a column to a byte: only
+            // that part is read, from a few bytes before so a character cut
+            // at the edge decodes.
+            let rel = if long {
+                let n = end - start;
+                let from = (self.pan as u64).saturating_sub(4).min(n);
+                let to = (self.pan as u64 + cols as u64 + 4).min(n);
+                d.line.clear();
+                let line = &mut d.line;
+                let _ = d.buf.for_each(start + from..start + to, |ch| {
+                    line.extend_from_slice(ch);
+                    true
+                });
+                if to == n && d.line.last() == Some(&b'\r') {
+                    d.line.pop();
+                }
+                from as usize
+            } else {
+                0
+            };
             let on_line = self.cursor >= start && self.cursor <= end;
             // A wrapped line is read whole, as the measures read it, so
             // they hold for it.
@@ -2690,6 +2840,9 @@ impl Page for Editor {
                 1
             };
             let cur_col = on_line.then(|| {
+                if long {
+                    return byte_col(self.cursor - start);
+                }
                 let at = (self.cursor - start).min(d.line.len() as u64) as usize;
                 if wraps {
                     remember(&self.cursor_col, (self.shown, version, self.cursor), || {
@@ -2699,8 +2852,18 @@ impl Page for Editor {
                     view::col_of(&d.line, at)
                 }
             });
-            // One walk over the line's cells for all its rows.
-            let mut cells = view::cells(&d.line).peekable();
+            // One walk over the line's cells for all its rows. A long
+            // line's are counted from its start, a column a byte.
+            let mut cells = view::cells(&d.line)
+                .map(|mut cell| {
+                    if long {
+                        cell.byte += rel;
+                        cell.col = byte_col(cell.byte as u64);
+                        cell.width = cell.len as u32;
+                    }
+                    cell
+                })
+                .peekable();
             for seg in first_seg..segs {
                 if r >= rows {
                     break;
@@ -2741,7 +2904,9 @@ impl Page for Editor {
                     }
                 };
                 while let Some(&cell) = cells.peek() {
-                    if cell.col >= c0 + cols || (wraps && cell.col + cell.width > c0 + cols) {
+                    if cell.col >= c0.saturating_add(cols)
+                        || (wraps && cell.col + cell.width > c0 + cols)
+                    {
                         break;
                     }
                     cells.next();
@@ -2806,7 +2971,7 @@ impl Page for Editor {
                     let on_row = if wraps {
                         (col / cols).min(segs - 1) == seg
                     } else {
-                        col >= self.pan && col < self.pan + cols
+                        col >= self.pan && col < self.pan.saturating_add(cols)
                     };
                     if on_row {
                         let x = x0 + (col - c0).min(cols - 1) as i32 * look.cw;
@@ -2952,5 +3117,23 @@ mod tests {
         let mut open = editor(b"(((");
         open.cursor = 0;
         assert_eq!(open.find_pair(), None, "no pair, no mark");
+    }
+
+    #[test]
+    fn a_long_line_steps_whole_characters_read_near_the_cursor() {
+        let d = std::env::temp_dir().join(format!("gh0st-text-long-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("euro.txt");
+        // Three bytes a character, so the part read starts inside one.
+        std::fs::write(&p, "\u{20ac}".repeat(20_000)).unwrap();
+        let e = Editor::open(Some(&p), Options::default());
+        let at = 30_000;
+        let line = e.line_at(at);
+        assert!(line.long() && line.base > line.start);
+        assert_eq!(line.prev_char(at), at - 3);
+        assert_eq!(line.next_char(at), at + 3);
+        assert_eq!(line.char_at(at + 1), at);
+        assert_eq!(line.col(at), 30_000, "a column a byte");
+        assert_eq!(e.at_col(0, 30_001), at);
     }
 }
