@@ -172,14 +172,13 @@ mod tests {
     #[test]
     fn only_the_app_in_front_may() {
         let me = std::process::id() as i32;
-        // SAFETY: getpgrp has no preconditions.
-        let group = unsafe { libc::getpgrp() };
         let mut c = Clipboard::new(false);
         assert!(
             call(&mut c, "Set", set(b"hi"), me).error_name.is_some(),
             "nothing in front"
         );
-        c.shell_said(&["front".into(), group.to_string()]);
+        // This process stands for the app in front: it leads the group.
+        c.shell_said(&["front".into(), me.to_string()]);
         assert!(call(&mut c, "Set", set(b"hi"), me).error_name.is_none());
         c.shell_said(&["front".into(), "999999".into()]);
         let behind = call(&mut c, "Get", vec![Value::str("text/plain")], me);

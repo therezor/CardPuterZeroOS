@@ -38,27 +38,59 @@ pub fn parse_stat(stat: &str) -> Option<ProcStat> {
     })
 }
 
-/// Whether process `pid` is in group `pgid` or descends from a process
-/// in it: an app, or a program it started (the terminal's shell, a
-/// script). Walks up at most 32 parents.
+fn stat_of(pid: i32) -> Option<ProcStat> {
+    parse_stat(&fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
+}
+
+/// Whether process `pid` is the app whose group is `pgid`, or descends
+/// from it: a program it started (the terminal's shell, a script). An app
+/// leads its group, so its pid is `pgid`. Ancestry decides, not the
+/// group: apps share a session, so any of them may join another's group.
+/// A program orphaned to the shell no longer counts.
 pub fn belongs_to(pid: i32, pgid: i32) -> bool {
+    descends(pid, pgid, stat_of)
+}
+
+fn descends(pid: i32, leader: i32, stat: impl Fn(i32) -> Option<ProcStat>) -> bool {
+    if leader <= 1 {
+        return false;
+    }
     let mut at = pid;
     for _ in 0..32 {
-        let Some(st) = fs::read_to_string(format!("/proc/{at}/stat"))
-            .ok()
-            .and_then(|s| parse_stat(&s))
-        else {
-            return false;
-        };
-        if st.pgrp == pgid || st.pid == pgid {
+        if at == leader {
             return true;
         }
-        if st.ppid <= 1 {
+        if at <= 1 {
             return false;
+        }
+        match stat(at) {
+            Some(st) => at = st.ppid,
+            None => return false,
+        }
+    }
+    false
+}
+
+/// The process `pid` descends from, or is, whose parent is `parent`: for
+/// a child of the shell, the app that started it. Walks up at most 32
+/// parents.
+pub fn child_of(pid: i32, parent: i32) -> Option<i32> {
+    under(pid, parent, stat_of)
+}
+
+fn under(pid: i32, parent: i32, stat: impl Fn(i32) -> Option<ProcStat>) -> Option<i32> {
+    let mut at = pid;
+    for _ in 0..32 {
+        if at <= 1 {
+            return None;
+        }
+        let st = stat(at)?;
+        if st.ppid == parent {
+            return Some(at);
         }
         at = st.ppid;
     }
-    false
+    None
 }
 
 /// Every process, read one stat file at a time. Processes that exit
@@ -162,6 +194,43 @@ mod tests {
         );
         assert_eq!(parse_stat("garbage"), None);
         assert_eq!(parse_stat("123 (x) S 1 120"), None);
+    }
+
+    /// pid, ppid, pgrp: the shell 10 runs the app 20 (its group), which
+    /// runs a script 21 in a group of its own. 30 is another app, which
+    /// joined group 20.
+    fn table(pid: i32) -> Option<ProcStat> {
+        let row = |pid, ppid, pgrp| ProcStat {
+            pid,
+            state: 'S',
+            ppid,
+            pgrp,
+            ticks: 0,
+        };
+        match pid {
+            10 => Some(row(10, 1, 10)),
+            20 => Some(row(20, 10, 20)),
+            21 => Some(row(21, 20, 21)),
+            30 => Some(row(30, 10, 20)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn belonging_follows_ancestry_not_the_group() {
+        assert!(descends(20, 20, table));
+        assert!(descends(21, 20, table), "a program the app started");
+        assert!(!descends(30, 20, table), "a joined group is not the app");
+        assert!(!descends(10, 20, table));
+        assert!(!descends(99, 20, table), "unreadable: no");
+        assert!(!descends(20, 1, table));
+    }
+
+    #[test]
+    fn the_shells_child_is_the_app_a_program_runs_under() {
+        assert_eq!(under(21, 10, table), Some(20));
+        assert_eq!(under(20, 10, table), Some(20));
+        assert_eq!(under(21, 99, table), None);
     }
 
     #[test]

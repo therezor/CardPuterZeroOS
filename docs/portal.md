@@ -186,6 +186,9 @@ The shell decides, as it does for the keyring's questions:
   an app, or asks the user about their name, the wallpaper, a screenshot
   or a colour. Anything
   running behind gets `2`, or `1` for those questions.
+- A program is the app's when the app is among its parents. Joining the
+  app's process group does not count, and neither does a program left to
+  the shell when its parent exited.
 - Not while the device is locked or dark: the request waits.
 - The caller is parked as Fn+K parks it, and comes back when the chooser or
   the opened app closes.
