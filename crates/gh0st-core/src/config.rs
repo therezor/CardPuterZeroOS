@@ -52,12 +52,12 @@ pub mod key {
     pub const STORE_MIRROR: &str = "gh0st.store.mirror";
     /// The Store's home: `grid` or `list`.
     pub const STORE_LAYOUT: &str = "gh0st.store.layout";
-    /// The picture behind home and the lock: a built-in's name, `picture`
-    /// for the user's own crop, or `off`.
     /// Add files opened to the shared recent list. Off: nothing is added.
     pub const RECENT_REMEMBER: &str = "gh0st.recent.remember";
     /// Keep what was copied through the lock. Off: the lock clears it.
     pub const CLIPBOARD_KEEP: &str = "gh0st.clipboard.keep";
+    /// The picture behind home and the lock: a built-in's name, `picture`
+    /// for the user's own crop, or `off`.
     pub const WALLPAPER: &str = "gh0st.wallpaper";
 }
 
@@ -315,14 +315,32 @@ fn holder_stopped(f: &std::fs::File) -> bool {
 
 /// Writes through a temp file named for this process and this write, so two
 /// saving at once never write the same temp file, then fsync and rename.
+/// The file keeps its mode: a private one stays private. A symlink is
+/// replaced by a file, as GLib's `g_file_set_contents` does. Followed, a
+/// link in a folder a user can write would aim a root write anywhere.
 pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = path.with_file_name(format!(".{name}.{}.{n}.tmp", std::process::id()));
-    let mut f = std::fs::File::create(&tmp)?;
-    let r = f.write_all(data).and_then(|_| f.sync_all());
+    let mode = std::fs::metadata(path)
+        .ok()
+        .map(|m| m.permissions().mode() & 0o777);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(mode.unwrap_or(0o666))
+        .open(&tmp)?;
+    // The umask may have narrowed it: the old mode exactly, before any data.
+    let r = match mode {
+        Some(m) => f.set_permissions(std::fs::Permissions::from_mode(m)),
+        None => Ok(()),
+    }
+    .and_then(|_| f.write_all(data))
+    .and_then(|_| f.sync_all());
     drop(f);
     if let Err(e) = r {
         let _ = std::fs::remove_file(&tmp);
@@ -651,6 +669,18 @@ mod tests {
         Config::update(&path, |c| c.set_int("volume", 50)).unwrap();
         let again = std::fs::read_to_string(path.with_extension("json.broken")).unwrap();
         assert_eq!(kept, again);
+    }
+
+    #[test]
+    fn a_rewrite_keeps_the_files_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = scratch("mode");
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_atomic(&path, b"{\"a\": 1}").unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"a\": 1}");
     }
 
     #[test]

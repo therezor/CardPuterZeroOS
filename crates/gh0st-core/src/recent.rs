@@ -50,45 +50,83 @@ fn escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn read_marks(file: &Path) -> Option<Vec<Mark>> {
+/// The bookmarks in `file`, and whether they are all of it: every one read
+/// whole, and nothing around them but the XML frame. Only then may a write
+/// put back the file from them. None when the file can't be read.
+fn read_marks(file: &Path) -> Option<(Vec<Mark>, bool)> {
     match std::fs::metadata(file) {
         Ok(m) if m.len() > MAX_FILE => return None,
         Ok(_) => {}
-        Err(_) => return Some(Vec::new()),
+        Err(_) => return Some((Vec::new(), true)),
     }
     let text = std::fs::read_to_string(file).ok()?;
     let mut marks = Vec::new();
+    let mut whole = true;
+    let mut outside = String::new();
     let mut rest = text.as_str();
     while let Some(start) = rest.find("<bookmark ") {
+        outside.push_str(&rest[..start]);
         let after = &rest[start..];
         let end = match (after.find("</bookmark>"), after.find("/>")) {
             // A bookmark with nothing inside closes itself.
             (_, Some(s)) if after[..s].find('>').is_none() => s + 2,
             (Some(e), _) => e + "</bookmark>".len(),
-            _ => break,
+            _ => {
+                whole = false;
+                rest = "";
+                break;
+            }
         };
         let raw = &after[..end];
         let head = &raw[..raw.find('>').unwrap_or(raw.len())];
-        if let Some(href) = attr(head, "href") {
-            let modified = attr(head, "modified").unwrap_or_default();
-            marks.push(Mark {
-                href,
-                modified,
-                raw: raw.to_string(),
-            });
+        match attr(head, "href") {
+            Some(href) => {
+                let modified = attr(head, "modified").unwrap_or_default();
+                marks.push(Mark {
+                    href,
+                    modified,
+                    raw: raw.to_string(),
+                });
+            }
+            None => whole = false,
         }
         rest = &after[end..];
     }
-    Some(marks)
+    outside.push_str(rest);
+    Some((marks, whole && only_frame(&outside)))
 }
 
-/// The local files in the list, newest first, at most `n`.
+/// `outside` is no more than the XML declaration, `<xbel ...>` and
+/// `</xbel>`: what [`write`] puts back.
+fn only_frame(outside: &str) -> bool {
+    let mut s = outside.trim_start();
+    if let Some(r) = s.strip_prefix("<?xml") {
+        let Some(i) = r.find("?>") else {
+            return false;
+        };
+        s = r[i + 2..].trim_start();
+    }
+    if s.is_empty() {
+        return true;
+    }
+    let Some(r) = s.strip_prefix("<xbel") else {
+        return false;
+    };
+    let Some(i) = r.find('>') else {
+        return false;
+    };
+    r[i + 1..].trim() == "</xbel>"
+}
+
+/// The local files in the list, newest first, each once, at most `n`.
 pub fn list(home: &Path, n: usize) -> Vec<PathBuf> {
-    let mut marks = read_marks(&path(home)).unwrap_or_default();
+    let (mut marks, _) = read_marks(&path(home)).unwrap_or_default();
     marks.sort_by(|a, b| b.modified.cmp(&a.modified));
+    let mut seen = std::collections::HashSet::new();
     marks
         .iter()
         .filter_map(|m| crate::uri::to_path(&m.href))
+        .filter(|p| seen.insert(p.clone()))
         .take(n)
         .collect()
 }
@@ -120,22 +158,25 @@ fn now_iso() -> String {
 
 /// Adds `file`, opened by `app` (its name, and the command line that
 /// opens it), or moves it to the top.
+/// A list we can't read whole is left as it is.
 pub fn add(home: &Path, file: &Path, mime: &str, app: &str, exec: &str) -> std::io::Result<()> {
     let list = path(home);
-    let Some(mut marks) = read_marks(&list) else {
+    let Some((mut marks, true)) = read_marks(&list) else {
         return Ok(());
     };
     let href = crate::uri::from_path(file);
     let now = now_iso();
+    // By path: GTK leaves some bytes unescaped that we escape.
+    let same = |m: &Mark| crate::uri::to_path(&m.href).as_deref() == Some(file);
     let added = marks
         .iter()
-        .find(|m| m.href == href)
+        .find(|m| same(m))
         .and_then(|m| {
             let head = &m.raw[..m.raw.find('>').unwrap_or(m.raw.len())];
             attr(head, "added")
         })
         .unwrap_or_else(|| now.clone());
-    marks.retain(|m| m.href != href);
+    marks.retain(|m| !same(m));
     let raw = format!(
         "<bookmark href=\"{}\" added=\"{}\" modified=\"{now}\" visited=\"{now}\">\n\
          \x20   <info>\n\
@@ -153,13 +194,18 @@ pub fn add(home: &Path, file: &Path, mime: &str, app: &str, exec: &str) -> std::
         escape(app),
         escape(exec),
     );
-    marks.push(Mark {
-        href,
-        modified: now,
-        raw,
-    });
+    // The new one stays even when the clock is behind the others' times:
+    // with no RTC it may read any year.
     marks.sort_by(|a, b| b.modified.cmp(&a.modified));
-    marks.truncate(KEEP);
+    marks.truncate(KEEP - 1);
+    marks.insert(
+        0,
+        Mark {
+            href,
+            modified: now,
+            raw,
+        },
+    );
     write(&list, &marks)
 }
 
@@ -235,6 +281,87 @@ mod tests {
         assert_eq!(text.matches("a%20%26%20b.txt").count(), 1, "once");
         clear(&home).unwrap();
         assert!(list(&home, 10).is_empty());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let home = std::env::temp_dir().join(format!("gh0st-recent-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".local/share")).unwrap();
+        home
+    }
+
+    fn mark(href: &str, when: &str) -> String {
+        format!(
+            "  <bookmark href=\"{href}\" added=\"{when}\" modified=\"{when}\" visited=\"{when}\">\
+             <info/></bookmark>\n"
+        )
+    }
+
+    #[test]
+    fn a_list_not_read_whole_is_left_as_it_is() {
+        let home = scratch("whole");
+        let good = mark("file:///srv/a.txt", "2020-01-01T00:00:00Z");
+        for text in [
+            // Cut off mid-bookmark.
+            format!("<xbel version=\"1.0\">\n{good}  <bookmark href=\"file:///srv/b.txt\"\n"),
+            // Something that is not a bookmark.
+            format!("<xbel version=\"1.0\">\n<title>Mine</title>\n{good}</xbel>\n"),
+            // A bookmark with no href.
+            format!("<xbel version=\"1.0\">\n{good}<bookmark added=\"x\"/>\n</xbel>\n"),
+        ] {
+            std::fs::write(path(&home), &text).unwrap();
+            add(&home, Path::new("/srv/c.txt"), "text/plain", "Text", "t").unwrap();
+            assert_eq!(std::fs::read_to_string(path(&home)).unwrap(), text);
+            assert_eq!(list(&home, 10), [PathBuf::from("/srv/a.txt")]);
+        }
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn the_same_file_is_one_entry_however_its_uri_is_escaped() {
+        let home = scratch("escaped");
+        // GTK leaves `+` and `,` as they are.
+        let text = format!(
+            "<?xml version=\"1.0\"?>\n<xbel version=\"1.0\">\n{}</xbel>\n",
+            mark("file:///srv/a+b,c.txt", "2020-01-01T00:00:00Z")
+        );
+        std::fs::write(path(&home), text).unwrap();
+        add(
+            &home,
+            Path::new("/srv/a+b,c.txt"),
+            "text/plain",
+            "Text",
+            "t",
+        )
+        .unwrap();
+        assert_eq!(list(&home, 10), [PathBuf::from("/srv/a+b,c.txt")]);
+        let text = std::fs::read_to_string(path(&home)).unwrap();
+        assert_eq!(text.matches("<bookmark ").count(), 1, "{text}");
+        assert!(
+            text.contains("added=\"2020-01-01T00:00:00Z\""),
+            "kept its first time"
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn a_file_just_opened_stays_when_the_clock_is_behind() {
+        let home = scratch("clock");
+        let mut text = String::from("<xbel version=\"1.0\">\n");
+        for i in 0..KEEP {
+            text.push_str(&mark(
+                &format!("file:///srv/{i}.txt"),
+                "2099-01-01T00:00:00Z",
+            ));
+        }
+        text.push_str("</xbel>\n");
+        std::fs::write(path(&home), text).unwrap();
+        let new = Path::new("/srv/new.txt");
+        add(&home, new, "text/plain", "Text", "t").unwrap();
+        let l = list(&home, 1000);
+        assert_eq!(l.len(), KEEP);
+        assert!(l.iter().any(|p| p == new), "{l:?}");
         std::fs::remove_dir_all(&home).unwrap();
     }
 

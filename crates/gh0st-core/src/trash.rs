@@ -2,8 +2,14 @@
 //! an `.trashinfo` in `info/` says where it came from, so any file manager
 //! can put it back.
 
-use std::io;
+use std::ffi::OsStr;
+use std::io::{self, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+
+/// The longest file name most file systems take.
+const NAME_MAX: usize = 255;
+const INFO: &str = ".trashinfo";
 
 /// `~/.local/share/Trash` under `home`.
 pub fn dir(home: &Path) -> PathBuf {
@@ -12,6 +18,10 @@ pub fn dir(home: &Path) -> PathBuf {
 
 /// Moves `path` into the Trash under `home`. Returns where it went. A file
 /// on another drive fails with `EXDEV`: that drive has no Trash here.
+///
+/// The `.trashinfo` is made first and only if new, as the spec asks, so
+/// two putting the same name at once (Files and the portal) each get their
+/// own. A name keeps every byte.
 pub fn put(home: &Path, path: &Path) -> io::Result<PathBuf> {
     let base = dir(home);
     let (files, info) = (base.join("files"), base.join("info"));
@@ -19,29 +29,64 @@ pub fn put(home: &Path, path: &Path) -> io::Result<PathBuf> {
     std::fs::create_dir_all(&info)?;
     let name = path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
-    let mut pick = name.clone();
-    let mut n = 2;
-    while files.join(&pick).symlink_metadata().is_ok()
-        || info.join(format!("{pick}.trashinfo")).exists()
-    {
-        pick = numbered(&name, n);
-        n += 1;
-    }
-    let info_file = info.join(format!("{pick}.trashinfo"));
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?
+        .as_bytes();
     let body = format!(
         "[Trash Info]\nPath={}\nDeletionDate={}\n",
-        pct(&path.to_string_lossy()),
+        pct(path.as_os_str().as_bytes()),
         now_iso()
     );
-    std::fs::write(&info_file, body)?;
-    let to = files.join(&pick);
-    if let Err(e) = std::fs::rename(path, &to) {
-        let _ = std::fs::remove_file(&info_file);
-        return Err(e);
+    for n in 1.. {
+        let pick = pick(name, n);
+        let to = files.join(OsStr::from_bytes(&pick));
+        let info_file = info.join(OsStr::from_bytes(&[&pick[..], INFO.as_bytes()].concat()));
+        // Exclusive, so it never follows a link left in info/ either.
+        let mut f = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&info_file)
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        // A file with no info of its own still holds its name.
+        if to.symlink_metadata().is_ok() {
+            drop(f);
+            let _ = std::fs::remove_file(&info_file);
+            continue;
+        }
+        let moved = f
+            .write_all(body.as_bytes())
+            .and_then(|_| std::fs::rename(path, &to));
+        if let Err(e) = moved {
+            let _ = std::fs::remove_file(&info_file);
+            return Err(e);
+        }
+        return Ok(to);
     }
-    Ok(to)
+    Err(io::Error::other("no free name in the Trash"))
+}
+
+/// The name in the Trash: `name`, numbered from 2 as [`numbered`] does,
+/// cut so its `.trashinfo` still fits in a file name.
+fn pick(name: &[u8], n: u32) -> Vec<u8> {
+    let tag = if n < 2 {
+        String::new()
+    } else {
+        format!(" {n}")
+    };
+    let room = NAME_MAX - INFO.len() - tag.len();
+    let (stem, ext) = match name.iter().rposition(|&b| b == b'.') {
+        Some(i) if i > 0 && name.len() - i < room / 2 => name.split_at(i),
+        _ => (name, &[][..]),
+    };
+    let mut keep = stem.len().min(room - ext.len());
+    // Never inside a UTF-8 character.
+    while keep > 0 && keep < stem.len() && stem[keep] & 0xC0 == 0x80 {
+        keep -= 1;
+    }
+    [&stem[..keep], tag.as_bytes(), ext].concat()
 }
 
 /// "photo 2.png" for "photo.png", n = 2.
@@ -52,9 +97,10 @@ pub fn numbered(name: &str, n: u32) -> String {
     }
 }
 
-fn pct(s: &str) -> String {
+/// The spec's URL escaping, of the raw bytes: any name survives.
+fn pct(s: &[u8]) -> String {
     let mut out = String::new();
-    for b in s.bytes() {
+    for &b in s {
         if b.is_ascii_alphanumeric() || b"/-_.~".contains(&b) {
             out.push(b as char);
         } else {
@@ -114,5 +160,46 @@ mod tests {
         assert_eq!(numbered("photo.png", 2), "photo 2.png");
         assert_eq!(numbered(".bashrc", 3), ".bashrc 3");
         assert_eq!(numbered("notes", 2), "notes 2");
+        for (name, n) in [("photo.png", 2), (".bashrc", 3), ("notes", 2), ("a.b.c", 4)] {
+            assert_eq!(pick(name.as_bytes(), n), numbered(name, n).as_bytes());
+        }
+        assert_eq!(pick(b"photo.png", 1), b"photo.png");
+    }
+
+    #[test]
+    fn a_long_name_is_cut_to_leave_room_for_its_info() {
+        let long = format!("{}.txt", "\u{e9}".repeat(200));
+        for n in [1, 2, 12345] {
+            let p = pick(long.as_bytes(), n);
+            assert!(p.len() + INFO.len() <= NAME_MAX, "{}", p.len());
+            assert!(std::str::from_utf8(&p).is_ok(), "no character is split");
+            assert!(p.ends_with(format!(" {n}.txt").as_bytes()) || n == 1);
+        }
+        let home = std::env::temp_dir().join(format!("gh0st-trash-long-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        let f = home.join("x".repeat(250));
+        std::fs::write(&f, b"1").unwrap();
+        let to = put(&home, &f).unwrap();
+        assert!(to.exists() && !f.exists());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn every_byte_of_the_path_is_escaped() {
+        assert_eq!(pct(b"/home/u/a b\xff%.txt"), "/home/u/a%20b%FF%25.txt");
+    }
+
+    #[test]
+    fn a_link_in_info_is_never_written_through() {
+        let home = std::env::temp_dir().join(format!("gh0st-trash-link-{}", std::process::id()));
+        let info = dir(&home).join("info");
+        std::fs::create_dir_all(&info).unwrap();
+        let aim = home.join("aim");
+        std::os::unix::fs::symlink(&aim, info.join("x.txt.trashinfo")).unwrap();
+        std::fs::write(home.join("x.txt"), b"1").unwrap();
+        let to = put(&home, &home.join("x.txt")).unwrap();
+        assert_eq!(to.file_name().unwrap(), "x 2.txt");
+        assert!(!aim.exists(), "the link was not followed");
+        std::fs::remove_dir_all(&home).unwrap();
     }
 }

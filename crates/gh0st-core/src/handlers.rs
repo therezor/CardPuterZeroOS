@@ -36,14 +36,28 @@ pub struct MimeApps {
 }
 
 impl MimeApps {
+    /// The list, or none when it can't be read: fine for finding an app.
     pub fn load(path: &Path) -> MimeApps {
-        // A list past 256 KB is not one a person keeps: ignore it.
-        let text = std::fs::metadata(path)
-            .ok()
-            .filter(|m| m.len() <= 256 * 1024)
-            .and_then(|_| std::fs::read_to_string(path).ok())
-            .unwrap_or_default();
-        MimeApps::parse(&text)
+        MimeApps::read(path).unwrap_or_default()
+    }
+
+    /// The list for a change. Only a missing file reads as empty: one we
+    /// can't read whole must not be written over with our one line.
+    pub fn read(path: &Path) -> std::io::Result<MimeApps> {
+        use std::io::{Error, ErrorKind};
+        match std::fs::metadata(path) {
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(MimeApps::default()),
+            Err(e) => return Err(e),
+            // A list past 256 KB is not one a person keeps.
+            Ok(m) if m.len() > 256 * 1024 => {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "mimeapps.list is too large",
+                ));
+            }
+            Ok(_) => {}
+        }
+        Ok(MimeApps::parse(&std::fs::read_to_string(path)?))
     }
 
     pub fn parse(text: &str) -> MimeApps {
@@ -168,8 +182,12 @@ pub fn all_for<'a>(apps: &'a [App], list: &MimeApps, mime: &str) -> Vec<&'a App>
         }
     };
     for m in mime::ancestry(mime) {
-        let removed = list.get(REMOVED, &m);
-        let ok = |a: &&App| a.opens_files() && !removed.contains(&a.file.as_str());
+        let removed: Vec<&App> = list
+            .get(REMOVED, &m)
+            .into_iter()
+            .filter_map(|id| named(apps, id))
+            .collect();
+        let ok = |a: &&App| a.opens_files() && !removed.iter().any(|r| std::ptr::eq(*r, *a));
         for id in list
             .get(DEFAULTS, &m)
             .into_iter()
@@ -195,14 +213,14 @@ pub fn default_for<'a>(apps: &'a [App], list: &MimeApps, mime: &str) -> Option<&
 
 /// "Always open this type with `app`": the user's default for `mime`.
 pub fn set_default(path: &Path, mime: &str, app_file: &str) -> std::io::Result<()> {
-    let mut list = MimeApps::load(path);
+    let mut list = MimeApps::read(path)?;
     list.set(DEFAULTS, mime, &[app_file]);
     list.save(path)
 }
 
 /// Forgets the user's default for `mime`.
 pub fn clear_default(path: &Path, mime: &str) -> std::io::Result<()> {
-    let mut list = MimeApps::load(path);
+    let mut list = MimeApps::read(path)?;
     list.set(DEFAULTS, mime, &[]);
     list.save(path)
 }
@@ -297,7 +315,7 @@ impl Category {
 
     /// Makes `app_file` the default for every type here.
     pub fn set(&self, path: &Path, app_file: &str) -> std::io::Result<()> {
-        let mut list = MimeApps::load(path);
+        let mut list = MimeApps::read(path)?;
         for m in self.types() {
             list.set(DEFAULTS, m, &[app_file]);
         }
@@ -306,7 +324,7 @@ impl Category {
 
     /// Back to the built-in order for every type here.
     pub fn reset(&self, path: &Path) -> std::io::Result<()> {
-        let mut list = MimeApps::load(path);
+        let mut list = MimeApps::read(path)?;
         for m in self.types() {
             list.set(DEFAULTS, m, &[]);
         }
@@ -400,6 +418,11 @@ mod tests {
             ids(all_for(&apps, &gone, "text/plain")),
             ["store-ed.desktop"]
         );
+        let alias = MimeApps::parse("[Removed Associations]\ntext/plain=gh0st-text.desktop\n");
+        assert_eq!(
+            ids(all_for(&apps, &alias, "text/plain")),
+            ["store-ed.desktop"]
+        );
         let named = MimeApps::parse("[Default Applications]\nimage/png=gh0st-text.desktop\n");
         assert_eq!(
             default_for(&apps, &named, "image/png").map(|a| a.file.as_str()),
@@ -477,6 +500,25 @@ mod tests {
         );
         clear_default(&p, "text/plain").unwrap();
         assert!(MimeApps::load(&p).get(DEFAULTS, "text/plain").is_empty());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_list_it_cannot_read_is_never_written_over() {
+        let d = std::env::temp_dir().join(format!("gh0st-handlers-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("mimeapps.list");
+        // Latin-1, as another tool may write it.
+        let latin1 = b"[Default Applications]\nimage/png=caf\xe9.desktop;\ntext/x-c=vim.desktop;\n";
+        std::fs::write(&p, latin1).unwrap();
+        assert!(set_default(&p, "text/plain", "text.desktop").is_err());
+        assert!(clear_default(&p, "text/x-c").is_err());
+        assert!(CATEGORIES[1].set(&p, "media.desktop").is_err());
+        assert!(CATEGORIES[1].reset(&p).is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), latin1);
+        std::fs::write(&p, vec![b'#'; 300 * 1024]).unwrap();
+        assert!(set_default(&p, "text/plain", "text.desktop").is_err());
+        assert_eq!(std::fs::metadata(&p).unwrap().len(), 300 * 1024);
         std::fs::remove_dir_all(&d).unwrap();
     }
 }
