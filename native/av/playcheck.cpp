@@ -3,8 +3,9 @@
 // A second file, whose picture won't decode, must end in an error.
 //   make playcheck O=out && out/playcheck in.mp4 [broken.mp4]
 // With --more and the media corpus (crates/gh0st-media/mediad/corpus.sh),
-// it also plays sound alone, a turned video, a loop, A to B and a step,
-// and in the media helper's build speed and subtitles:
+// it also plays sound alone, sound whose channels change, a turned video,
+// a loop, A to B and a step, refuses a 4K video, and in the media helper's
+// build checks speed and subtitles:
 //   out/playcheck --more CORPUS_DIR
 #include "player.h"
 
@@ -113,6 +114,14 @@ int more(const std::string &dir, int wakeW)
         watch(p, 2500);
         check(last.ended, "sound alone ends");
     }
+    if (open("layout.aac", plain)) {
+        watch(p, 5000);
+        check(last.ended && last.posMs > 3500 && last.error.empty(),
+              "sound that turns from stereo to mono plays to its end");
+    }
+    last = Player::Status();
+    check(!p.open(dir + "/4k.mp4", 320, 170, plain, why) && why == "too big to play here",
+          "a video past twice 1080p is refused");
     Player::Options turned;
     turned.orient = 6;
     if (open("rotated.mp4", turned)) {

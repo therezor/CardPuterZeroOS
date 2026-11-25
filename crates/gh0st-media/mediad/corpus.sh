@@ -102,6 +102,14 @@ ff $src -f lavfi -i sine=frequency=880:duration=2 -i subs.srt \
 ff $src -c:v libx264 -pix_fmt yuv420p -c:a aac sidecar.mp4
 cp subs.srt sidecar.srt
 head -c 30000 h264.mp4 > truncated.mp4
+# Too big: 4K shows as a tile but doesn't play, 8K isn't even a tile.
+ff -f lavfi -i testsrc2=size=3840x2160:rate=30:duration=0.2 -c:v libx264 -pix_fmt yuv420p 4k.mp4
+ff -f lavfi -i testsrc2=size=8192x4320:rate=30:duration=0.1 -c:v libx264 -pix_fmt yuv420p 8k.mp4
+# Sound whose channels change partway: stereo, then mono.
+ff -f lavfi -i sine=duration=2 -ac 2 -c:a aac -f adts stereo.aac
+ff -f lavfi -i sine=frequency=660:duration=2 -ac 1 -c:a aac -f adts mono.aac
+cat stereo.aac mono.aac > layout.aac
+rm stereo.aac mono.aac
 
 # Sound alone, tagged, some with a cover.
 a="-f lavfi -i sine=frequency=330:duration=3"

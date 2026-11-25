@@ -15,6 +15,14 @@ namespace gh0st {
 
 class Player {
 public:
+    // A picture larger than this is refused before a decoder starts its
+    // threads: twice 1080p, where a software decoder's threads already
+    // hold 95 MB (docs/hardware-facts.md, Media).
+    static constexpr int64_t MAX_PIXELS = 2 * 1920 * 1080;
+    // A .srt beside the file is read whole as it opens; a larger one is
+    // left out.
+    static constexpr int64_t MAX_SRT_BYTES = 4 << 20;
+
     struct Options {
         // EXIF orientation the pictures are turned by, 1 upright.
         int orient = 1;

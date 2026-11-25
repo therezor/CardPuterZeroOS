@@ -106,6 +106,9 @@ inline uint16_t mix565(uint16_t d, int r, int g, int b, int a)
 }
 
 #ifdef GH0ST_PLAYER_EXTRAS
+// Lines read from a .srt beside the file. A long film has a few thousand.
+const int SRT_EVENTS = 20000;
+
 std::string sidecarSrt(const std::string &path)
 {
     size_t dot = path.find_last_of('.');
@@ -113,7 +116,10 @@ std::string sidecarSrt(const std::string &path)
         return "";
     std::string srt = path.substr(0, dot) + ".srt";
     struct stat st;
-    return stat(srt.c_str(), &st) == 0 ? srt : "";
+    return stat(srt.c_str(), &st) == 0 && S_ISREG(st.st_mode) &&
+                   st.st_size <= Player::MAX_SRT_BYTES
+               ? srt
+               : "";
 }
 #endif
 
@@ -129,10 +135,17 @@ struct Player::State {
     AVRational vtb{1, 1}, atb{1, 1}, stb{1, 1};
     SwsContext *sws = nullptr;
     SwrContext *swr = nullptr;
+    // The sound swr takes. swr reads the planes it was built for, so a
+    // frame unlike it (a header that lied, a change mid-stream) gets a
+    // new one.
+    int swrFmt = AV_SAMPLE_FMT_NONE, swrRate = 0;
+    AVChannelLayout swrLayout{};
+    // The server's stream, which every frame is turned into.
+    int outRate = 0, outCh = 0;
     // atempo, while the speed is not 100.
     AVFilterGraph *graph = nullptr;
     AVFilterContext *asrc = nullptr, *asink = nullptr;
-    int graphSpeed = 100;
+    int graphSpeed = 0;
     PaOut out;
     bool sound = false;
     // The picture as shown, and as decoded before it is turned.
@@ -291,9 +304,14 @@ struct Player::State {
                 cv.notify_all();
                 continue;
             }
-            if (p->stream_index == vi || p->stream_index == ai) {
+            // A null packet means the end: one that can't be copied is
+            // dropped instead.
+            AVPacket *k = nullptr;
+            if (p->stream_index == vi || p->stream_index == ai)
+                k = av_packet_clone(p);
+            if (k) {
                 auto &q = p->stream_index == vi ? vq : aq;
-                q.push_back({av_packet_clone(p), serial});
+                q.push_back({k, serial});
                 cv.notify_all();
             }
             av_packet_unref(p);
@@ -629,11 +647,35 @@ struct Player::State {
         av_frame_free(&f);
     }
 
-    // The tempo filter for `sp`, between the decoder and the server.
-    bool tempo(int sp, int ch)
+    // swr for sound in `fmt`, `layout` and `rate`, into the server's
+    // stream. False: this sound can't be turned.
+    bool resampler(int fmt, const AVChannelLayout &layout, int rate)
+    {
+        if (swr && fmt == swrFmt && rate == swrRate && !av_channel_layout_compare(&layout, &swrLayout))
+            return true;
+        swr_free(&swr);
+        av_channel_layout_uninit(&swrLayout);
+        // The tempo filter takes the same sound: it is built again too.
+        graphSpeed = 0;
+        AVChannelLayout to;
+        av_channel_layout_default(&to, outCh);
+        if (swr_alloc_set_opts2(&swr, &to, AV_SAMPLE_FMT_S16, outRate, &layout, AVSampleFormat(fmt),
+                                rate, 0, nullptr) < 0 ||
+            swr_init(swr) < 0 || av_channel_layout_copy(&swrLayout, &layout) < 0) {
+            swr_free(&swr);
+            return false;
+        }
+        swrFmt = fmt;
+        swrRate = rate;
+        return true;
+    }
+
+    // The tempo filter for `sp`, between the decoder and the server, for
+    // sound like `f`'s.
+    bool tempo(int sp, const AVFrame *f)
     {
 #ifndef GH0ST_PLAYER_EXTRAS
-        (void)ch;
+        (void)f;
         graphSpeed = sp;
         return sp == 100;
 #else
@@ -646,14 +688,14 @@ struct Player::State {
         if (!gh0st::lazy::open(gh0st::lazy::AVFILTER))
             return false;
         char layout[64] = "mono";
-        av_channel_layout_describe(&adec->ch_layout, layout, sizeof layout);
+        av_channel_layout_describe(&f->ch_layout, layout, sizeof layout);
         char desc[512];
         snprintf(desc, sizeof desc,
                  "abuffer=time_base=1/%d:sample_rate=%d:sample_fmt=%s:channel_layout=%s,"
                  "atempo=%.3f,aformat=sample_fmts=s16:channel_layouts=%s:sample_rates=%d,"
                  "abuffersink",
-                 adec->sample_rate, adec->sample_rate, av_get_sample_fmt_name(adec->sample_fmt),
-                 layout, sp / 100.0, ch > 1 ? "stereo" : "mono", adec->sample_rate);
+                 f->sample_rate, f->sample_rate, av_get_sample_fmt_name(AVSampleFormat(f->format)),
+                 layout, sp / 100.0, outCh > 1 ? "stereo" : "mono", outRate);
         graph = lz_avfilter_graph_alloc();
         if (!graph || lz_avfilter_graph_parse_ptr(graph, desc, nullptr, nullptr, nullptr) < 0 ||
             lz_avfilter_graph_config(graph, nullptr) < 0) {
@@ -678,7 +720,6 @@ struct Player::State {
         bool seeked;
         Pkt k;
         std::vector<int16_t> pcm;
-        int ch = adec->ch_layout.nb_channels > 1 ? 2 : 1;
         // Paused or played out, the stream closes so the codec can sleep.
         auto rest = [&](auto until) {
             std::unique_lock<std::mutex> l(mu);
@@ -730,9 +771,11 @@ struct Player::State {
                 if (wait && !waitFor(us - 100000, mine))
                     drop = true;
                 std::string why;
-                if (!drop && !out.isOpen() && !out.open(adec->sample_rate, ch, why))
+                if (!drop && !resampler(f->format, f->ch_layout, f->sample_rate))
                     drop = true;
-                if (!drop && sp != graphSpeed && !tempo(sp, ch))
+                if (!drop && !out.isOpen() && !out.open(outRate, outCh, why))
+                    drop = true;
+                if (!drop && sp != graphSpeed && !tempo(sp, f))
                     drop = true;
 #ifdef GH0ST_PLAYER_EXTRAS
                 if (!drop && graph) {
@@ -745,10 +788,12 @@ struct Player::State {
                     continue;
                 }
 #endif
-                if (!drop) {
-                    pcm.resize(size_t(f->nb_samples) * ch + 64);
+                // Room for what a change of rate makes of these samples.
+                int room = drop ? 0 : swr_get_out_samples(swr, f->nb_samples);
+                if (room > 0) {
+                    pcm.resize(size_t(room) * outCh);
                     uint8_t *dst = reinterpret_cast<uint8_t *>(pcm.data());
-                    int n = swr_convert(swr, &dst, f->nb_samples, f->extended_data, f->nb_samples);
+                    int n = swr_convert(swr, &dst, room, f->extended_data, f->nb_samples);
                     if (n > 0)
                         out.write(pcm.data(), n);
                 }
@@ -808,6 +853,9 @@ struct Player::State {
             ctx = avcodec_alloc_context3(codec);
             avcodec_parameters_to_context(ctx, st->codecpar);
             ctx->pkt_timebase = st->time_base;
+            // A stream that grows past this later is refused by the
+            // decoder.
+            ctx->max_pixels = MAX_PIXELS;
             if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !(codec->capabilities & AV_CODEC_CAP_HARDWARE)) {
                 // Each frame thread holds pictures of its own: a small video
                 // keeps up with fewer, and costs less memory.
@@ -827,6 +875,19 @@ struct Player::State {
         }
         why = "can't decode this video";
         return false;
+    }
+
+    // Finds the streams, each stream's decoder held to MAX_PIXELS: a file
+    // that claims a huge picture gets no room for it.
+    bool findStreams()
+    {
+        std::vector<AVDictionary *> o(fmt->nb_streams, nullptr);
+        for (auto &d : o)
+            av_dict_set_int(&d, "max_pixels", MAX_PIXELS, 0);
+        int r = avformat_find_stream_info(fmt, o.data());
+        for (auto &d : o)
+            av_dict_free(&d);
+        return r >= 0;
     }
 
     // The n-th stream of a type, cover pictures left out.
@@ -887,12 +948,14 @@ struct Player::State {
             }
             return;
         }
-        // A .srt beside the file: read whole now, it is small.
+        // A .srt beside the file: read whole now, it is small. It is read
+        // as SRT whatever it holds, so a film named .srt is never decoded.
         std::string srt = sidecarSrt(path);
+        const AVInputFormat *as = av_find_input_format("srt");
         AVFormatContext *sf = nullptr;
-        if (srt.empty() || avformat_open_input(&sf, srt.c_str(), nullptr, nullptr) < 0)
+        if (srt.empty() || !as || avformat_open_input(&sf, srt.c_str(), as, nullptr) < 0)
             return;
-        if (avformat_find_stream_info(sf, nullptr) >= 0 && sf->nb_streams > 0) {
+        if (sf->nb_streams > 0 && sf->streams[0]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
             AVStream *st = sf->streams[0];
             const AVCodec *c = avcodec_find_decoder(st->codecpar->codec_id);
             AVCodecContext *d = c ? avcodec_alloc_context3(c) : nullptr;
@@ -902,7 +965,7 @@ struct Player::State {
                     lz_ass_process_codec_private(assT, reinterpret_cast<char *>(d->subtitle_header),
                                               d->subtitle_header_size);
                 AVPacket *p = av_packet_alloc();
-                while (av_read_frame(sf, p) >= 0) {
+                for (int n = 0; p && n < SRT_EVENTS && av_read_frame(sf, p) >= 0; n++) {
                     subtitle(d, st->time_base, p);
                     av_packet_unref(p);
                 }
@@ -936,6 +999,7 @@ struct Player::State {
         sws_freeContext(sws);
         sws = nullptr;
         swr_free(&swr);
+        av_channel_layout_uninit(&swrLayout);
         avformat_close_input(&fmt);
 #ifdef GH0ST_PLAYER_EXTRAS
         if (graph)
@@ -973,8 +1037,7 @@ bool Player::open(const std::string &path, int w, int h, const Options &o, std::
     s.wake = wake_;
     s.opt = o;
     s.path = path;
-    if (avformat_open_input(&s.fmt, path.c_str(), nullptr, nullptr) < 0 ||
-        avformat_find_stream_info(s.fmt, nullptr) < 0) {
+    if (avformat_open_input(&s.fmt, path.c_str(), nullptr, nullptr) < 0 || !s.findStreams()) {
         why = "can't read this file";
         close();
         return false;
@@ -992,6 +1055,12 @@ bool Player::open(const std::string &path, int w, int h, const Options &o, std::
     }
     int vw = 0, vh = 0;
     if (s.vi >= 0) {
+        const AVCodecParameters *cp = s.fmt->streams[s.vi]->codecpar;
+        if (int64_t(cp->width) * cp->height > MAX_PIXELS) {
+            why = "too big to play here";
+            close();
+            return false;
+        }
         if (!s.openDecoder(s.vi, s.vdec, why, true, false)) {
             close();
             return false;
@@ -1025,13 +1094,10 @@ bool Player::open(const std::string &path, int w, int h, const Options &o, std::
     std::string none;
     if (s.ai >= 0 && s.openDecoder(s.ai, s.adec, none, false, false)) {
         s.atb = s.fmt->streams[s.ai]->time_base;
-        int ch = s.adec->ch_layout.nb_channels > 1 ? 2 : 1;
-        AVChannelLayout layout;
-        av_channel_layout_default(&layout, ch);
-        if (swr_alloc_set_opts2(&s.swr, &layout, AV_SAMPLE_FMT_S16, s.adec->sample_rate,
-                                &s.adec->ch_layout, s.adec->sample_fmt, s.adec->sample_rate, 0,
-                                nullptr) == 0 &&
-            swr_init(s.swr) == 0 && (o.paused || s.out.open(s.adec->sample_rate, ch, none))) {
+        s.outRate = s.adec->sample_rate;
+        s.outCh = s.adec->ch_layout.nb_channels > 1 ? 2 : 1;
+        if (s.resampler(s.adec->sample_fmt, s.adec->ch_layout, s.adec->sample_rate) &&
+            (o.paused || s.out.open(s.outRate, s.outCh, none))) {
             s.sound = true;
         } else {
             // No sound server: the picture plays on, silent.
