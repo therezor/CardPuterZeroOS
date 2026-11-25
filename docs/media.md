@@ -25,7 +25,9 @@ draws each into `mockups/media`.
   songs, several at once, or a folder for the grid. A file picked shows
   with its folder's others; Esc goes back to that folder.
 - The music queue keeps its songs whatever folder the grid shows, so
-  music plays on while you look through pictures.
+  music plays on while you look through pictures. Shuffle reorders it at
+  once, the song playing first. Past the last song, Next does nothing
+  and the music ends there, unless Repeat is on.
 - A clip of five minutes or more goes on from where it stopped, unless it
   was near its start or end: the newest 64 places, in
   `~/.local/share/gh0st-media/positions`. Only while Settings > Privacy

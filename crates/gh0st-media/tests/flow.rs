@@ -305,3 +305,61 @@ fn the_helper_lets_go_of_a_picture_once_nothing_shows_it() {
     step(&mut d, "esc");
     assert_eq!(forgotten(&trip), before + 1, "back to the grid");
 }
+
+/// Seeks `song` to its end and presses `then` with the last keys: the end
+/// is heard after it. A key at a time to 25 s short, so the link keeps up,
+/// then 60 s at once, for a helper slow to say where it is.
+fn to_the_end(d: &mut Driver, song: &std::path::Path, then: &str) {
+    let dur = gh0st_media::fake::info_of(&song.to_string_lossy())
+        .unwrap()
+        .dur_ms;
+    for _ in 0..(dur - 25_000) / 10_000 {
+        d.keys("f").pump(30);
+    }
+    d.keys(&format!("f\nf\nf\nf\nf\nf{then}"));
+    d.pump(500);
+}
+
+#[test]
+fn behind_the_grid_the_next_song_is_the_one_named() {
+    let h = songs("handover");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "x\nx\nx\nenter\nenter\nenter");
+    // The song ends while the grid shows its tile: the next one plays.
+    to_the_end(&mut d, &h.join("Music/Album/1.mp3"), "\nesc");
+    assert_eq!(d.status().as_deref(), Some("Playing"));
+    d.pause().pump(300);
+    assert_eq!(d.notices()[0].title, "2", "not the tile selected");
+}
+
+#[test]
+fn repeat_turned_off_on_the_last_song_ends_the_music_there() {
+    let h = songs("repeat");
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    // The album's last song, repeat on and off again.
+    step(&mut d, "x\nx\nx\nenter\nenter\nright\nenter\nr\nr");
+    to_the_end(&mut d, &h.join("Music/Album/2.mp3"), "");
+    d.pause().pump(300);
+    assert!(d.notices().is_empty(), "nothing plays on");
+    d.resume().pump(100);
+    // Play again: the queue, as music.
+    step(&mut d, "enter\nesc");
+    assert_eq!(d.status().as_deref(), Some("Playing"));
+}
+
+#[test]
+fn a_song_that_cant_play_leaves_no_word_that_it_plays() {
+    let h = songs("playerr");
+    std::fs::write(h.join("Music/Album/0 broken.mp3"), b"x").unwrap();
+    let mut d = Driver::new(Media::with(Source::Fake, h.clone(), None));
+    d.pump(300);
+    d.frame();
+    step(&mut d, "x\nx\nx\nenter\nenter\nenter");
+    assert!(d.toast().is_some_and(|t| t.starts_with("Can't play")));
+    step(&mut d, "esc");
+    assert_eq!(d.status(), None);
+}

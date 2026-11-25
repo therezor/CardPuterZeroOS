@@ -159,13 +159,17 @@ pub struct Media {
     play: Option<Playback>,
     tags: Option<Tags>,
     cover: Picture,
-    /// Music: entries in play order, and which plays.
     /// The songs to play, kept apart from the folder on screen: music plays
-    /// on while the grid shows another.
+    /// on while the grid shows another. In the folder's order, and in
+    /// play order with the one playing at qpos.
+    plain: Vec<Entry>,
     queue: Vec<Entry>,
     qpos: usize,
     /// The id the next track will play under, once asked ahead.
     next_track: Option<(u32, usize)>,
+    /// A next track given up on that the helper still holds: nothing takes
+    /// back `play next`, so it plays it when this one ends.
+    dropped_next: Option<u32>,
     shuffle: bool,
     repeat_all: bool,
     showing_queue: bool,
@@ -231,9 +235,11 @@ impl Media {
             play: None,
             tags: None,
             cover: Picture::default(),
+            plain: Vec::new(),
             queue: Vec::new(),
             qpos: 0,
             next_track: None,
+            dropped_next: None,
             shuffle: false,
             repeat_all: false,
             showing_queue: false,
@@ -548,6 +554,7 @@ impl Media {
             self.resume.set(&p.path, p.bar.pos_ms, p.bar.dur_ms);
         }
         self.next_track = None;
+        self.dropped_next = None;
         self.music = false;
         p.map(|p| p.path)
     }
@@ -557,6 +564,8 @@ impl Media {
             return;
         };
         match self.play.as_ref().map(|p| p.state) {
+            // The queue again, as music: ahead, MPRIS and the notice.
+            None if self.view == View::Music => self.track(cx),
             None => {
                 // A long clip goes on from where it stopped.
                 let at = if self.view == View::Player {
@@ -636,17 +645,31 @@ impl Media {
     /// Plays the selected song, the folder's songs as the queue.
     fn music(&mut self, cx: &mut Cx) {
         self.stop_play();
-        let at = self.tiles.at();
-        let mut q: Vec<usize> = (0..self.entries.len())
-            .filter(|&i| self.entries[i].look == Look::Sound)
+        let at = self.entry().map(|e| e.path.clone());
+        self.plain = self
+            .entries
+            .iter()
+            .filter(|e| e.look == Look::Sound)
+            .cloned()
             .collect();
-        if self.shuffle {
-            shuffle_from(&mut q, at, self.entries.len() as u64);
-        }
-        self.qpos = q.iter().position(|&i| i == at).unwrap_or(0);
-        self.queue = q.into_iter().map(|i| self.entries[i].clone()).collect();
+        self.order_queue(at);
         self.view = View::Music;
         self.track(cx);
+    }
+
+    /// The queue in the folder's order, or shuffled with `at` first; `at`
+    /// is at qpos either way.
+    fn order_queue(&mut self, at: Option<PathBuf>) {
+        let first = at
+            .as_ref()
+            .and_then(|p| self.plain.iter().position(|e| &e.path == p))
+            .unwrap_or(0);
+        let mut q: Vec<usize> = (0..self.plain.len()).collect();
+        if self.shuffle {
+            shuffle_from(&mut q, first, gh0st_app::rt::now_ms());
+        }
+        self.queue = q.iter().map(|&i| self.plain[i].clone()).collect();
+        self.qpos = q.iter().position(|&i| i == first).unwrap_or(0);
     }
 
     /// Starts the queue's track at qpos.
@@ -785,8 +808,14 @@ impl Media {
             mpris::Control::Previous => self.skip(-1, cx),
             mpris::Control::Seek(d) => {
                 if let Some(p) = &self.play {
-                    let to = (p.bar.pos_ms as i64 + d).clamp(0, p.bar.dur_ms as i64);
-                    self.send(&Cmd::Seek(to as u64));
+                    let to = (p.bar.pos_ms as i64 + d).max(0) as u64;
+                    // A length not known yet holds nothing back.
+                    let to = if p.bar.dur_ms > 0 {
+                        to.min(p.bar.dur_ms)
+                    } else {
+                        to
+                    };
+                    self.send(&Cmd::Seek(to));
                 }
             }
             mpris::Control::SetPosition(ms) => self.send(&Cmd::Seek(ms)),
@@ -806,13 +835,17 @@ impl Media {
     /// moment this one ends.
     fn ahead(&mut self) {
         let Some(i) = self.next_index() else {
-            self.next_track = None;
+            if let Some((id, _)) = self.next_track.take() {
+                self.dropped_next = Some(id);
+            }
             return;
         };
         let path = self.queue[i].path.clone();
         let id = self.id();
+        // It takes the place of any the helper held.
         self.send(&Cmd::PlayNext { id, path });
         self.next_track = Some((id, i));
+        self.dropped_next = None;
     }
 
     /// The queue's next track not known to kill the helper, round to the
@@ -836,23 +869,16 @@ impl Media {
     }
 
     fn skip(&mut self, by: isize, cx: &mut Cx) {
-        let n = self.queue.len() as isize;
-        if n == 0 {
-            return;
-        }
         // Back from past a few seconds in: the start of this one.
         if by < 0 && self.play.as_ref().is_some_and(|p| p.bar.pos_ms > 3000) {
             self.send(&Cmd::Seek(0));
             return;
         }
-        let i = self.qpos as isize + by;
-        let i = if self.repeat_all {
-            i.rem_euclid(n)
-        } else {
-            i.clamp(0, n - 1)
+        let Some(i) = skip_to(self.qpos, by, self.queue.len(), self.repeat_all) else {
+            return;
         };
         self.stop_play();
-        self.qpos = i as usize;
+        self.qpos = i;
         self.track(cx);
     }
 
@@ -874,7 +900,7 @@ impl Media {
             }
             Event::Tags { id, tags } => {
                 if let Some(a) = self.answered(id) {
-                    if matches!(a.what, For::Tags(ref p) if Some(p) == self.current().as_ref()) {
+                    if matches!(a.what, For::Tags(ref p) if Some(p) == self.track_path().as_ref()) {
                         self.tags = Some(tags);
                     }
                 }
@@ -927,7 +953,7 @@ impl Media {
             Event::PlayErr { id, why } => {
                 if self.play.as_ref().is_some_and(|p| p.id == id) {
                     eprintln!("gh0st-media: playing: {why}");
-                    self.play = None;
+                    self.end_play();
                     cx.toast_tone(Tone::Critical, "Can't play this file");
                     cx.keep_awake(false);
                 }
@@ -978,7 +1004,7 @@ impl Media {
                 }
             }
             For::Cover(p) => {
-                if self.current().as_ref() == Some(&p) {
+                if self.track_path().as_ref() == Some(&p) {
                     self.cover = pic;
                 }
             }
@@ -992,9 +1018,16 @@ impl Media {
     }
 
     fn played(&mut self, id: u32, pos_ms: u64, dur_ms: u64, state: PlayState, cx: &mut Cx) {
+        // This one ended and the helper went on to a track given up on.
+        if self.dropped_next == Some(id) {
+            self.stop_play();
+            cx.keep_awake(false);
+            return;
+        }
         // The next track has begun.
         if let Some((nid, i)) = self.next_track {
             if nid == id {
+                self.next_track = None;
                 self.qpos = i;
                 if let Some(p) = &mut self.play {
                     p.id = id;
@@ -1002,7 +1035,7 @@ impl Media {
                 }
                 self.tags = None;
                 self.cover = Picture::default();
-                if let Some(path) = self.current() {
+                if let Some(path) = self.track_path() {
                     if let Some(p) = &mut self.play {
                         p.path = path.clone();
                     }
@@ -1151,6 +1184,20 @@ impl Media {
 impl Default for Media {
     fn default() -> Media {
         Media::new(None)
+    }
+}
+
+/// Where Next (`by` 1) or Previous (-1) goes from `at` in a queue of `n`:
+/// round while repeating, else nowhere past the last, and the first again
+/// before it.
+fn skip_to(at: usize, by: isize, n: usize, repeat: bool) -> Option<usize> {
+    let (i, n) = (at as isize + by, n as isize);
+    if n == 0 || (!repeat && i >= n) {
+        None
+    } else if repeat {
+        Some(i.rem_euclid(n) as usize)
+    } else {
+        Some(i.max(0) as usize)
     }
 }
 
@@ -2027,11 +2074,17 @@ impl Page for Media {
             }
             (View::Music, SHUFFLE) => {
                 self.shuffle = !self.shuffle;
+                self.order_queue(self.track_path());
+                if self.music {
+                    self.ahead();
+                }
                 self.save(cx);
             }
             (View::Music, REPEAT) => {
                 self.repeat_all = !self.repeat_all;
-                self.ahead();
+                if self.music {
+                    self.ahead();
+                }
                 self.save(cx);
             }
             (_, SPEED) => {
@@ -2176,6 +2229,16 @@ mod tests {
         let mut sorted = q.clone();
         sorted.sort();
         assert_eq!(sorted, (0..9).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn next_stops_at_the_last_song_unless_repeating() {
+        assert_eq!(skip_to(1, 1, 2, false), None);
+        assert_eq!(skip_to(1, 1, 2, true), Some(0));
+        assert_eq!(skip_to(0, 1, 1, true), Some(0), "one song on repeat");
+        assert_eq!(skip_to(0, -1, 2, false), Some(0), "the first again");
+        assert_eq!(skip_to(0, -1, 3, true), Some(2));
+        assert_eq!(skip_to(0, 1, 0, true), None);
     }
 
     #[test]
