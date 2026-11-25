@@ -580,3 +580,37 @@ fn an_opened_file_goes_to_the_shared_recent_list() {
     let d = open(&p, KeyModel::Modal);
     assert_eq!(d.recent().first(), Some(&p));
 }
+
+#[test]
+fn a_save_as_that_fails_keeps_the_name_and_the_journal() {
+    let data = journal_dir("saveas-fail");
+    let p = temp("stays.txt", b"x\n");
+    let mut d = journaled(&p, &data);
+    d.keys("type a\nhelp\n8\nx\nenter");
+    assert_eq!(d.picks().last().map(|s| s.mode), Some(PickMode::Save));
+    d.answer_pick(Some(vec![data.join("no/such/folder/t.txt")]));
+    d.wait(200);
+    assert_eq!(d.title(), "stays.txt");
+    d.pause();
+    assert!(
+        gh0st_text::journal::read(&data, &p).is_some(),
+        "the edit is still kept for this file"
+    );
+    d.keys("ctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"ax\n");
+}
+
+#[test]
+fn a_file_new_when_opened_keeps_a_journal_once_saved() {
+    let data = journal_dir("new-named");
+    let p = data.join("fresh.txt");
+    let mut d = journaled(&p, &data);
+    d.keys("type one\nctrl+s");
+    d.wait(100);
+    assert_eq!(std::fs::read(&p).unwrap(), b"one");
+    d.keys("type two");
+    d.pause();
+    let kept = gh0st_text::journal::read(&data, &p).expect("a journal");
+    assert_eq!(kept.typed(), b"two\n");
+}

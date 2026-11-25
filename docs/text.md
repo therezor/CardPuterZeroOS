@@ -63,8 +63,9 @@ cargo run --release -p gh0st-text --example bench -- FILE   # timings
 - Ctrl W closes the file on screen. With changes it asks first. Esc on a
   file with no changes closes it while others are open. The last one
   closes Text.
-- Save as, in the menu, saves to a name the chooser gives, and the file is
-  called that from then on. A new file asks for a name on its first save.
+- Save as, in the menu, saves to a name the chooser gives. Once that save
+  is done the file is called that; one that fails keeps the old name. A
+  new file asks for a name on its first save.
 - Files the shell hands over open the same way.
 
 ## Wrap
@@ -135,7 +136,8 @@ held discards them. Close without saving is in the menu too.
 
 - The text goes to a new file beside the old one, which is synced, renamed
   over the old one, and the folder synced. A crash or a full card part way
-  leaves the old file whole. A big file saves in slices.
+  leaves the old file whole. A big file saves in slices; meanwhile the
+  text can't change, and a key that would change it says so.
 - Symlinks are followed: the link stays, its target changes. The mode stays.
 - A file with other hard links, or in a folder the user can't write, is
   written in place after a question, up to 64 MB.

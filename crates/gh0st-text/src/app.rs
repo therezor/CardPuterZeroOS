@@ -227,7 +227,13 @@ pub struct Editor {
     index: Option<Timer>,
     budget: u64,
     finder: Option<(Finder, Timer)>,
-    saving: Option<(Saver, Timer)>,
+    /// A save under way, and the file it writes: the page takes that name
+    /// once it is done.
+    saving: Option<(Saver, Timer, PathBuf)>,
+    /// Close the file once the save under way is done.
+    close_after: bool,
+    /// Where a save goes while the user is asked to write it in place.
+    in_place: Option<PathBuf>,
     search: Search,
     /// The query of the last find, for find next.
     needle: Vec<u8>,
@@ -330,6 +336,8 @@ impl Editor {
             budget: 1 << 20,
             finder: None,
             saving: None,
+            close_after: false,
+            in_place: None,
             search: Search::new(),
             needle: Vec::new(),
             hit: None,
@@ -516,9 +524,15 @@ impl Editor {
         self.picking = Some((cx.pick(spec), Purpose::SaveAs));
     }
 
-    /// Saves the file on screen to `path`, which it is called from now on.
+    /// Saves the file on screen to `path`. It is called that once the save
+    /// is done; a save that fails or is declined leaves it as it was.
     fn save_as(&mut self, path: PathBuf, cx: &mut Cx) {
         let path = std::path::absolute(&path).unwrap_or(path);
+        self.save_to(path, cx);
+    }
+
+    /// The text is saved to `path`: the file on screen is that one now.
+    fn bind(&mut self, path: PathBuf, cx: &mut Cx) {
         if let Some((_, w)) = self.watch.take() {
             cx.unwatch(w);
         }
@@ -536,14 +550,10 @@ impl Editor {
         self.path = Some(path.clone());
         // The journal follows the new name: edits kept from here on are
         // that file's.
-        if let Some(j) = &mut self.journal {
+        if let Some(mut j) = self.journal.take() {
             j.discard();
         }
-        if !self.binary {
-            let data = self.data_dir(cx);
-            self.doc.borrow_mut().buf.keep_changes(true);
-            self.journal = Some(Journal::new(&data, &path));
-        }
+        self.new_journal(cx);
         let w = FileWatch::new(&path);
         if let Some(fd) = w.fd() {
             let id = cx.watch(fd);
@@ -551,7 +561,19 @@ impl Editor {
         }
         self.recent.add(&path);
         cx.recent(&path);
-        self.save(cx);
+    }
+
+    /// A journal for the file on screen, from now on.
+    fn new_journal(&mut self, cx: &mut Cx) {
+        let Some(p) = self.path.clone() else {
+            return;
+        };
+        if self.binary || self.read_only || self.journal.is_some() {
+            return;
+        }
+        let data = self.data_dir(cx);
+        self.doc.borrow_mut().buf.keep_changes(true);
+        self.journal = Some(Journal::new(&data, &p));
     }
 
     fn start_pick(&mut self, i: usize, cx: &mut Cx) {
@@ -722,8 +744,12 @@ impl Editor {
     }
 
     /// Closes the file on screen, changes and all, and shows the one
-    /// before it. The last one closes the app.
+    /// before it. The last one closes the app. Not while it saves.
     fn close_file(&mut self, cx: &mut Cx) {
+        if self.saving.is_some() {
+            cx.toast("Saving: close it when that is done");
+            return;
+        }
         // Closed on purpose: its unsaved edits go with it.
         if let Some(j) = &mut self.journal {
             j.discard();
@@ -956,6 +982,15 @@ impl Editor {
 
     fn dirty(&self) -> bool {
         self.doc.borrow().buf.state() != self.saved
+    }
+
+    /// True while a save runs, and says so: the text stays as the save
+    /// found it.
+    fn held(&self, cx: &mut Cx) -> bool {
+        if self.saving.is_some() {
+            cx.toast("Saving: edit when that is done");
+        }
+        self.saving.is_some()
     }
 
     fn look(&self) -> Look {
@@ -1515,23 +1550,35 @@ impl Editor {
             cx.toast_tone(Tone::Warning, "Read only");
             return;
         }
+        self.save_to(path, cx);
+    }
+
+    /// Saves the text to `path`, asking first when it must go in place.
+    fn save_to(&mut self, path: PathBuf, cx: &mut Cx) {
+        if self.saving.is_some() {
+            cx.toast("Saving already");
+            return;
+        }
         match save::way(&path) {
-            Ok(Way::Replace) => self.start_save(&path, Way::Replace, cx),
-            Ok(Way::InPlace) => cx.ask(
-                ask::IN_PLACE,
-                Dialog::confirm(
-                    "Save over the file?",
-                    "It has other links or its folder is read only. A crash while saving loses it.",
-                )
-                .yes("save"),
-            ),
+            Ok(Way::Replace) => self.start_save(path, Way::Replace, cx),
+            Ok(Way::InPlace) => {
+                self.in_place = Some(path);
+                cx.ask(
+                    ask::IN_PLACE,
+                    Dialog::confirm(
+                        "Save over the file?",
+                        "It has other links or its folder is read only. A crash while saving loses it.",
+                    )
+                    .yes("save"),
+                );
+            }
             Ok(Way::ReadOnly) => cx.toast_tone(Tone::Warning, "Read only"),
             Err(e) => cx.toast_tone(Tone::Critical, &e.to_string()),
         }
     }
 
-    fn start_save(&mut self, path: &Path, how: Way, cx: &mut Cx) {
-        let started = Saver::start(&mut self.doc.borrow_mut().buf, path, how);
+    fn start_save(&mut self, path: PathBuf, how: Way, cx: &mut Cx) {
+        let started = Saver::start(&mut self.doc.borrow_mut().buf, &path, how);
         match started {
             Ok(s) => {
                 let big = self.doc.borrow().buf.len() > SAVE_AT_ONCE;
@@ -1539,14 +1586,17 @@ impl Editor {
                     cx.busy("Saving");
                     self.warm_from(0, cx);
                 }
-                self.saving = Some((s, cx.after(0)));
+                self.saving = Some((s, cx.after(0), path));
             }
-            Err(e) => cx.toast_tone(Tone::Critical, &e.to_string()),
+            Err(e) => {
+                self.close_after = false;
+                cx.toast_tone(Tone::Critical, &e.to_string());
+            }
         }
     }
 
     fn save_step(&mut self, cx: &mut Cx) {
-        let Some((mut s, _)) = self.saving.take() else {
+        let Some((mut s, _, path)) = self.saving.take() else {
             return;
         };
         let t0 = Instant::now();
@@ -1554,28 +1604,37 @@ impl Editor {
             let r = s.step(&mut self.doc.borrow_mut().buf, 1 << 20);
             match r {
                 Ok(true) => {
+                    if self.path.as_ref() != Some(&path) {
+                        self.bind(path, cx);
+                    }
                     self.saved = self.doc.borrow().buf.state();
                     if let Some((w, _)) = &mut self.watch {
                         w.saved();
                     }
                     self.doc.borrow_mut().buf.take_changes();
+                    // A file new when opened has one from its first save.
+                    self.new_journal(cx);
                     if let Some(j) = &mut self.journal {
                         j.discard();
                     }
                     cx.idle();
                     cx.toast_tone(Tone::Ok, "Saved");
+                    if std::mem::take(&mut self.close_after) && !self.dirty() {
+                        self.close_file(cx);
+                    }
                     return;
                 }
                 Ok(false) if (t0.elapsed().as_millis() as u64) < SLICE_MS => {}
                 Ok(false) => {
-                    self.saving = Some((s, cx.after(0)));
+                    self.saving = Some((s, cx.after(0), path));
                     return;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    self.saving = Some((s, cx.after(DISK_WAIT_MS)));
+                    self.saving = Some((s, cx.after(DISK_WAIT_MS), path));
                     return;
                 }
                 Err(e) => {
+                    self.close_after = false;
                     cx.idle();
                     cx.toast_tone(Tone::Critical, &e.to_string());
                     return;
@@ -1667,7 +1726,7 @@ impl Editor {
         match self.mode {
             Mode::Find | Mode::Goto => self.query_key(k, cx),
             Mode::View => {}
-            Mode::Edit => self.edit_key(k),
+            Mode::Edit => self.edit_key(k, cx),
         }
     }
 
@@ -1746,7 +1805,7 @@ impl Editor {
         }
     }
 
-    fn edit_key(&mut self, k: &RawKey) {
+    fn edit_key(&mut self, k: &RawKey, cx: &mut Cx) {
         let sel = k.shift;
         match k.nav(false) {
             Some(Nav::Up) => return self.vertical(-1, sel),
@@ -1755,11 +1814,14 @@ impl Editor {
             Some(Nav::Right) => return self.right(sel, k.ctrl),
             None => {}
         }
+        let types = !k.fn_ && k.ch.is_some_and(|c| !c.is_control());
         match layer(k) {
             code::PAGEUP => self.vertical(-(self.rows() as i64 - 1), sel),
             code::PAGEDOWN => self.vertical(self.rows() as i64 - 1, sel),
             code::END => self.line_edge(true, sel),
             _ if self.read_only => {}
+            code::ENTER | code::BACKSPACE | code::DELETE | code::TAB if self.held(cx) => {}
+            _ if types && self.held(cx) => {}
             code::ENTER => self.newline(),
             code::BACKSPACE => self.backspace(false),
             code::DELETE => self.backspace(true),
@@ -1779,6 +1841,13 @@ impl Editor {
 
     fn run(&mut self, id: u32, step: Step, cx: &mut Cx) {
         let edit_ok = !self.read_only;
+        let edits = matches!(
+            id,
+            cmd::UNDO | cmd::REDO | cmd::CUT | cmd::PASTE | cmd::COMMENT
+        );
+        if edit_ok && edits && self.held(cx) {
+            return;
+        }
         match id {
             cmd::SAVE => self.save(cx),
             cmd::UNDO if edit_ok => self.undo(false),
@@ -2261,20 +2330,15 @@ impl Page for Editor {
             (ask::QUIT, Answer::Also) => self.close_file(cx),
             (ask::QUIT, Answer::Yes(_)) => {
                 self.save(cx);
-                if self.saving.is_some() {
-                    while self.saving.is_some() {
-                        self.save_step(cx);
-                    }
-                    if !self.dirty() {
-                        self.close_file(cx);
-                    }
-                }
+                // Closes once saved, on the save's own timer. A save that
+                // fails, or goes to the chooser, leaves the file open.
+                self.close_after = self.saving.is_some() || self.in_place.is_some();
             }
-            (ask::IN_PLACE, Answer::Yes(_)) => {
-                if let Some(p) = self.path.clone() {
-                    self.start_save(&p, Way::InPlace, cx);
-                }
-            }
+            (ask::IN_PLACE, a) => match (self.in_place.take(), a) {
+                (Some(p), Answer::Yes(_)) => self.start_save(p, Way::InPlace, cx),
+                _ => self.close_after = false,
+            },
+            (ask::REPLACE, Answer::Yes(_)) if self.held(cx) => {}
             (ask::REPLACE, Answer::Yes(with)) => {
                 if let Some((a, b)) = self.hit {
                     self.anchor = Some(a);
