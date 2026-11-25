@@ -151,3 +151,80 @@ fn a_late_answer_from_a_left_check_opens_nothing() {
     assert_eq!(r.checks(), 2, "{}", r.log);
     assert_eq!(r.unlocks(), 0, "{}", r.stderr);
 }
+
+/// A linked app that answers `pause` and logs `resume`.
+const APP: &str = r#"#!/usr/bin/env python3
+import os, select, socket
+d = os.environ["SIM_DIR"]
+s = socket.socket(fileno=int(os.environ["GH0ST_SHELL_FD"]))
+s.send(b"hello\t2")
+while True:
+    select.select([s], [], [])
+    m = s.recv(8192)
+    if not m:
+        break
+    f = m.decode().split("\t")
+    if f[0] == "pause":
+        s.send(b"paused")
+    with open(d + "/log", "a") as out:
+        out.write("got " + f[0] + "\n")
+"#;
+
+/// Enter in the switcher waits for a held key to come up. 6 locks first:
+/// the app must not come back over the lock when the key comes up, only
+/// after the unlock.
+#[test]
+fn a_resume_waiting_for_a_key_does_not_pass_the_lock() {
+    let dir = std::env::temp_dir().join(format!("gh0st-lock-pending-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let config = dir.join("home/.config/cardputerzero");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.json"),
+        "{\"gh0st\": {\"lock\": {\"password\": false}}}",
+    )
+    .unwrap();
+    for d in ["frames", "ours", "stock", "icons"] {
+        std::fs::create_dir_all(dir.join(d)).unwrap();
+    }
+    let exe = script(&dir, "a", APP);
+    std::fs::write(
+        dir.join("ours/a.desktop"),
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Alpha\nExec={}\n",
+            exe.display()
+        ),
+    )
+    .unwrap();
+    // Alpha up; Fn+K parks it and opens the switcher on it. Q held, Enter
+    // tapped, 6 locks, Z up. Then Tab and Enter unlock.
+    let keys = "wait 600\nenter\nwait 800\nhome\nwait 400\ndown q\nenter\nwait 100\n6\n\
+                wait 100\nup q\nwait 600\ntab\nenter\nwait 800\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gh0st"))
+        .args(["shell", "--sim"])
+        .arg(dir.join("frames"))
+        .env("HOME", dir.join("home"))
+        .env("GH0ST_APPS_OURS", dir.join("ours"))
+        .env("GH0ST_APPS_STOCK", dir.join("stock"))
+        .env("GH0ST_ICON_ROOT", dir.join("icons"))
+        .env("GH0ST_LOG", "debug")
+        .env("SIM_DIR", &dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(keys.as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let shell = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    let paused = shell.find("paused Alpha").expect(&shell);
+    let unlocked = shell.find("gh0st shell: unlocked").expect(&shell);
+    assert_eq!(shell.matches("resumed Alpha").count(), 1, "{shell}");
+    let resumed = shell.find("resumed Alpha").unwrap_or(0);
+    assert!(paused < unlocked && unlocked < resumed, "{shell}");
+}

@@ -1024,6 +1024,12 @@ impl Shell {
 
     /// What waited for every key to come up.
     fn run_pending(&mut self, now: u64) {
+        if self.lock_holds() {
+            // Queued before the lock, it dies with it. Kept, it would stop
+            // the lock screen drawing and bring the app up past it.
+            self.pending = None;
+            return;
+        }
         if !self.held.is_empty() {
             return;
         }
@@ -2172,6 +2178,7 @@ impl Shell {
         self.home_menu = None;
         self.switcher.cancel_hold();
         self.tab_down = None;
+        self.pending = None;
         self.screen = Screen::Off;
         self.player.close();
         self.off_at = rt::now_ms();
@@ -2288,6 +2295,8 @@ impl Shell {
     }
 
     fn enter_locked(&mut self, now: u64) {
+        // Nothing queued before the lock may run past it.
+        self.pending = None;
         self.services.tell(&ToDaemon::Lock);
         // What was copied may be a password: it goes with the lock, unless
         // Settings keeps it.
@@ -2365,6 +2374,12 @@ impl Shell {
     /// The lock screen or the dark, with no app in front.
     fn locked(&self) -> bool {
         !self.app_front() && matches!(self.screen, Screen::Locked | Screen::Off)
+    }
+
+    /// A lock or a dark that was not passed yet. Unlike [`Self::locked`],
+    /// false once `unlock` ran, while the lock screen waits for the app.
+    fn lock_holds(&self) -> bool {
+        !self.app_front() && (self.lock_secure || self.dark_since.is_some())
     }
 
     /// Runs `unix_chkpwd` on what was typed. The try counts before the
