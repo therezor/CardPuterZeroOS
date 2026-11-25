@@ -172,6 +172,16 @@ impl Client {
         })
     }
 
+    /// A client over `conn`, for tests: no rules are added.
+    #[cfg(test)]
+    pub(crate) fn over(conn: Conn) -> Client {
+        Client {
+            conn,
+            waiting: Vec::new(),
+            dead: false,
+        }
+    }
+
     pub(crate) fn fd(&self) -> std::os::fd::RawFd {
         self.conn.fd()
     }
@@ -427,12 +437,7 @@ mod tests {
         let (a, b) = gh0st_dbus::conn::pair().unwrap();
         let mut conn = Conn::raw(a).unwrap();
         conn.name = Some(ME.into());
-        let client = Client {
-            conn,
-            waiting: Vec::new(),
-            dead: false,
-        };
-        (client, Conn::raw(b).unwrap())
+        (Client::over(conn), Conn::raw(b).unwrap())
     }
 
     /// The portal's reply to the client's call number `serial`.

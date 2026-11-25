@@ -1783,6 +1783,89 @@ mod tests {
         assert_eq!(run(true, true), (0, 0));
     }
 
+    mod portal {
+        use super::*;
+        use crate::page::Pick;
+        use crate::portal::{Client, PickSpec};
+        use gh0st_dbus::{Conn, Message, Ty, Value};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        type Heard = Rc<RefCell<Vec<Option<Vec<PathBuf>>>>>;
+
+        /// Asks for a file as it starts.
+        struct Asker(Heard);
+
+        impl Page for Asker {
+            fn title(&self) -> &str {
+                "Asker"
+            }
+            fn draw(&self, _: &mut Ui) {}
+            fn start(&mut self, cx: &mut Cx) {
+                cx.pick(PickSpec::open());
+            }
+            fn picked(&mut self, _: Pick, paths: Option<Vec<PathBuf>>, _: &mut Cx) {
+                self.0.borrow_mut().push(paths);
+            }
+        }
+
+        /// A runtime whose portal is the returned peer's other end. In the
+        /// socket already: `first`, then the reply to the first call,
+        /// naming request `/r/1`.
+        fn runtime(root: Box<dyn Page>, first: Option<Message>) -> (Runtime, Conn) {
+            let (a, b) = gh0st_dbus::conn::pair().unwrap();
+            let mut peer = Conn::raw(b).unwrap();
+            if let Some(m) = first {
+                peer.send(m).unwrap();
+            }
+            let mut call = Message::call("x", "/x", "x", "OpenFile");
+            call.serial = 1;
+            peer.send(Message::reply(&call).arg(Value::str("/r/1")))
+                .unwrap();
+            let dir = std::env::temp_dir().join(format!("gh0st-rt-portal-{}", std::process::id()));
+            let mut rt = Runtime::new(root, Some(dir.join("config.json")));
+            rt.off_device();
+            rt.portal = Some(Client::over(Conn::raw(a).unwrap()));
+            (rt, peer)
+        }
+
+        #[test]
+        fn an_answer_in_with_the_reply_reaches_the_page_at_once() {
+            let heard: Heard = Rc::default();
+            let uris = Value::Array(Ty::Str, vec![Value::str("file:///tmp/a.txt")]);
+            let answer = Message::signal("/r/1", "org.freedesktop.portal.Request", "Response")
+                .arg(Value::U32(0))
+                .arg(Value::props([("uris", Value::variant(uris))]));
+            // The answer comes before the reply: the call parks it.
+            let (mut rt, _peer) = runtime(Box::new(Asker(heard.clone())), Some(answer));
+            rt.start(0);
+            assert_eq!(*heard.borrow(), [Some(vec![PathBuf::from("/tmp/a.txt")])]);
+            assert!(rt.portal_fd().is_none(), "nothing left to wait for");
+        }
+
+        #[test]
+        fn a_page_that_closes_closes_its_chooser() {
+            let heard: Heard = Rc::default();
+            let (mut rt, mut peer) = runtime(Box::new(Plain(true)), None);
+            rt.start(0);
+            let h = heard.clone();
+            rt.call(0, 0, |_, cx| cx.push(Asker(h)));
+            assert_eq!(rt.depth(), 2);
+            assert!(rt.portal_fd().is_some());
+            rt.pop(0);
+            assert!(rt.portal_fd().is_none());
+            peer.fill().unwrap();
+            let mut closed = Vec::new();
+            while let Some(m) = peer.recv().unwrap() {
+                if m.is("org.freedesktop.portal.Request", "Close") {
+                    closed.push(m.path.clone());
+                }
+            }
+            assert_eq!(closed, [Some("/r/1".to_string())]);
+            assert!(heard.borrow().is_empty());
+        }
+    }
+
     mod keys {
         use crate::prelude::*;
         use crate::testing::Driver;
