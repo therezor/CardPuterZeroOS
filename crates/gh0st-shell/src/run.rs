@@ -394,8 +394,8 @@ struct Shell {
     sim: bool,
     /// Where each app's cgroup goes, when the unit delegates one.
     cgroups: Option<Cgroups>,
-    /// bwrap is there and this is the device: apps run sandboxed.
-    sandboxing: bool,
+    /// The real device, not `--sim`: apps run sandboxed.
+    on_device: bool,
     /// The binary `gh0st audio` runs from. In a sim, only a test's stub.
     audio_exe: Option<PathBuf>,
     /// System sounds.
@@ -457,7 +457,7 @@ impl Shell {
         if let Err(e) = Config::migrate(&config::default_path()) {
             eprintln!("gh0st shell: settings: {e}");
         }
-        if let Some(home) = std::env::var_os("HOME") {
+        if let (None, Some(home)) = (&sim, std::env::var_os("HOME")) {
             sandbox::prepare(Path::new(&home), &notify::user_dir());
         }
         let config = Config::load(&config::default_path());
@@ -591,7 +591,7 @@ impl Shell {
             prompts: Prompts::default(),
             sim: sim.is_some(),
             cgroups: if on_device { Cgroups::own() } else { None },
-            sandboxing: on_device && Path::new(sandbox::BWRAP).exists(),
+            on_device,
             audio_exe: if on_device {
                 Some(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/gh0st")))
             } else {
@@ -3667,7 +3667,7 @@ impl Shell {
         // hand or by another program counts from this launch.
         let fresh = Config::load(&config::default_path());
         let iso = apps::isolation(&fresh, app, gh0st_core::store::needs_root(&stem));
-        let argv = if self.sandboxing && iso.sandbox {
+        let argv = if self.on_device && iso.sandbox {
             let user = notify::user_dir();
             let own = sandbox::notice_dir(&user, &stem);
             let _ = std::fs::create_dir_all(&own);
@@ -3679,7 +3679,18 @@ impl Shell {
                 .map(PathBuf::from)
                 .unwrap_or_default();
             let host = sandbox::Host::read(&home, &runtime);
-            sandbox::argv(&host, iso.grants, &stem, &user, &argv)
+            // Fail closed: an app the user expects isolated never starts
+            // outside its sandbox.
+            match sandbox::argv(&host, iso.grants, &stem, &user, &argv)
+                .filter(|_| Path::new(sandbox::BWRAP).exists())
+            {
+                Some(a) => a,
+                None => {
+                    self.sound(Sound::Error);
+                    self.toast(format!("Couldn't open {}: no sandbox", app.entry.name));
+                    return;
+                }
+            }
         } else {
             argv
         };

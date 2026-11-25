@@ -4,11 +4,11 @@
 //!
 //! - It sees only its own processes, so it can't trace or signal another
 //!   app, or read another's memory.
-//! - Secrets are hidden, and what an unsandboxed program later runs or
-//!   loads is read-only: shell start files, `~/.local/bin`, user units,
-//!   D-Bus and PipeWire config.
-//! - Home is read-only at the top. Every entry in it is bound back
-//!   writable unless locked, so an app can't make a new start file.
+//! - Home stays writable, as stock apps expect, but secrets are hidden and
+//!   what an unsandboxed program later runs or loads is read-only: shell
+//!   start files, `~/bin`, `~/.local/bin`, user units, D-Bus and PipeWire
+//!   config, and our other apps' data. `prepare` makes the ones that are
+//!   missing, so an app can't make them first.
 //! - The runtime folder holds only the bus, PipeWire and pulse sockets.
 //! - Network, camera and mic go when the user turns them off. Without the
 //!   mic an app hears neither it nor what the device plays.
@@ -43,15 +43,15 @@ impl Default for Grants {
 /// Home entries an app never sees.
 const HIDDEN: [&str; 2] = [".ssh", ".gnupg"];
 
-/// Top-level home files an app may read but not write. bash reads the
-/// missing ones too, so they must not be made either.
-const LOCKED_TOP: [&str; 14] = [
+/// Top-level home entries an app may read but not write. Some shells
+/// read them only if there: `prepare` makes the ones ours read, so they
+/// are there to lock. The others are locked once someone makes them.
+const LOCKED_TOP: [&str; 13] = [
     ".bashrc",
     ".bash_profile",
     ".bash_login",
     ".profile",
     ".bash_logout",
-    ".bash_history",
     ".zshrc",
     ".zshenv",
     ".zprofile",
@@ -61,6 +61,37 @@ const LOCKED_TOP: [&str; 14] = [
     "bin",
     ".xsessionrc",
 ];
+
+/// What `prepare` writes where nothing is: each reads the same as no file.
+const STARTERS: [(&str, &str); 5] = [
+    (".profile", ""),
+    (".bashrc", ""),
+    (".bash_logout", ""),
+    // bash reads this instead of .profile once it exists, so it reads that.
+    (
+        ".bash_profile",
+        "[ -f \"$HOME/.profile\" ] && . \"$HOME/.profile\"\n",
+    ),
+    (".inputrc", "$include /etc/inputrc\n"),
+];
+
+/// Our apps' ids, which name their data and cache folders. In a sandbox
+/// only the app's own are writable.
+const OUR_APPS: [&str; 10] = [
+    "gh0st-settings",
+    "gh0st-files",
+    "gh0st-text",
+    "gh0st-keyboard",
+    "gh0st-keyring",
+    "gh0st-store",
+    "gh0st-update",
+    "gh0st-term",
+    "gh0st-camera",
+    "gh0st-media",
+];
+
+/// Where our programs keep data, under home.
+const DATA_ROOTS: [&str; 4] = [".local/share", ".cache", ".config", ".local/state"];
 
 /// Folders an unsandboxed program runs or loads from. `prepare` makes them,
 /// so they exist to be locked; a missing one could be made by an app.
@@ -93,9 +124,11 @@ pub const PULSE_NOMIC: &str = "pulse/native-nomic";
 pub struct Host {
     pub home: PathBuf,
     pub runtime: PathBuf,
-    /// Names of home's entries, links left out: they resolve through the
-    /// read-only home to wherever they point.
+    /// Names of home's entries.
     pub home_entries: Vec<String>,
+    /// Our programs' data folders, `gh0st` and `gh0st-*` under
+    /// `DATA_ROOTS`, relative to home.
+    pub ours: Vec<PathBuf>,
     /// The camera's nodes: the sensor, unicam, the ISP and their media
     /// devices. The codec's nodes, which Media plays through, are not.
     pub camera_nodes: Vec<PathBuf>,
@@ -120,11 +153,26 @@ impl Host {
         let home_entries = std::fs::read_dir(home)
             .map(|d| {
                 d.flatten()
-                    .filter(|e| e.file_type().is_ok_and(|t| !t.is_symlink()))
                     .filter_map(|e| e.file_name().into_string().ok())
                     .collect()
             })
             .unwrap_or_default();
+        let mut ours = Vec::new();
+        for root in DATA_ROOTS {
+            for e in std::fs::read_dir(home.join(root))
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                let n = e.file_name().to_string_lossy().into_owned();
+                if (n == "gh0st" || n.starts_with("gh0st-"))
+                    && e.file_type().is_ok_and(|t| t.is_dir())
+                {
+                    ours.push(Path::new(root).join(n));
+                }
+            }
+        }
+        ours.sort();
         let sockets = SOCKETS
             .iter()
             .filter(|s| runtime.join(s).exists())
@@ -134,6 +182,7 @@ impl Host {
             home: home.to_path_buf(),
             runtime: runtime.to_path_buf(),
             home_entries,
+            ours,
             camera_nodes: camera_nodes(Path::new("/sys")),
             capture_nodes: capture_nodes(Path::new("/dev/snd")),
             sound_nodes: sound_nodes(Path::new("/dev/snd")),
@@ -143,20 +192,41 @@ impl Host {
     }
 }
 
-/// Makes the locked folders, so a sandbox can lock them. The shell runs it
-/// at start.
+/// Makes what a sandbox locks or hides where it is missing, so an app
+/// can't make it first. The shell runs it at start on the device.
 pub fn prepare(home: &Path, notify: &Path) {
-    use std::os::unix::fs::DirBuilderExt;
-    for d in LOCKED_DIRS
-        .iter()
-        .map(|d| home.join(d))
-        .chain([notify.to_path_buf()])
-    {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let dir = |p: PathBuf| {
         let _ = std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
-            .create(d);
+            .create(p);
+    };
+    for d in LOCKED_DIRS.iter().chain(&HIDDEN).chain(&["bin"]) {
+        dir(home.join(d));
     }
+    for app in OUR_APPS {
+        dir(home.join(".local/share").join(app));
+        dir(home.join(".cache").join(app));
+    }
+    dir(notify.to_path_buf());
+    let new_file = |name: &str, mode: u32| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(home.join(name))
+    };
+    for (name, text) in STARTERS {
+        if name == ".bash_profile" && home.join(".bash_login").exists() {
+            continue;
+        }
+        if let Ok(mut f) = new_file(name, 0o644) {
+            let _ = f.write_all(text.as_bytes());
+        }
+    }
+    let _ = new_file(".bash_history", 0o600);
 }
 
 /// The camera's device nodes, by driver, from sysfs under `sys`.
@@ -226,13 +296,18 @@ pub fn notice_dir(notify: &Path, stem: &str) -> PathBuf {
 
 /// The bwrap command that runs `inner` for app `stem` with `grants`.
 /// `notify` is the shared notice folder; the app's own one is bound there.
+/// None without a home or a runtime folder: no sandbox is better than one
+/// missing its rules, and the shell then won't start the app.
 pub fn argv(
     host: &Host,
     grants: Grants,
     stem: &str,
     notify: &Path,
     inner: &[OsString],
-) -> Vec<OsString> {
+) -> Option<Vec<OsString>> {
+    if host.home.as_os_str().is_empty() || host.runtime.as_os_str().is_empty() {
+        return None;
+    }
     let mut a = Args(Vec::new());
     a.raw(BWRAP);
     a.raw("--unshare-user");
@@ -270,14 +345,11 @@ pub fn argv(
     }
     a.raw("--");
     a.0.extend(inner.iter().cloned());
-    a.0
+    Some(a.0)
 }
 
 fn runtime(a: &mut Args, host: &Host, grants: Grants) {
     let r = &host.runtime;
-    if r.as_os_str().is_empty() {
-        return;
-    }
     a.one("--tmpfs", r);
     let has = |s: &str| host.sockets.iter().any(|x| x == s);
     if has("bus") {
@@ -301,19 +373,21 @@ fn runtime(a: &mut Args, host: &Host, grants: Grants) {
 
 fn home(a: &mut Args, host: &Host, stem: &str, notify: &Path) {
     let h = &host.home;
-    if h.as_os_str().is_empty() {
-        return;
-    }
-    a.pair("--ro-bind", h, h);
-    for name in &host.home_entries {
-        if HIDDEN.contains(&name.as_str()) || LOCKED_TOP.contains(&name.as_str()) {
-            continue;
+    for name in LOCKED_TOP {
+        if host.home_entries.iter().any(|e| e == name) {
+            a.pair("--ro-bind", h.join(name), h.join(name));
         }
-        a.pair("--bind", h.join(name), h.join(name));
     }
     for d in LOCKED_DIRS {
         let p = h.join(d);
         a.pair("--ro-bind-try", &p, &p);
+    }
+    // Our other apps' data: Text's unsaved edits, Keyboard's snippets.
+    let own = format!("gh0st-{stem}");
+    for d in &host.ours {
+        if d.file_name() != Some(std::ffi::OsStr::new(&own)) {
+            a.pair("--ro-bind-try", h.join(d), h.join(d));
+        }
     }
     // The app's own notice folder, writable, where it posts.
     if notify.starts_with(h) {
@@ -407,6 +481,13 @@ mod tests {
             ]
             .map(String::from)
             .to_vec(),
+            ours: [
+                ".local/share/gh0st-text",
+                ".local/share/gh0st-media",
+                ".cache/gh0st",
+            ]
+            .map(PathBuf::from)
+            .to_vec(),
             camera_nodes: vec!["/dev/video0".into(), "/dev/media1".into()],
             capture_nodes: vec!["/dev/snd/pcmC1D0c".into()],
             sound_nodes: vec!["/dev/snd/controlC1".into(), "/dev/snd/pcmC1D0p".into()],
@@ -417,17 +498,22 @@ mod tests {
         }
     }
 
-    fn run(g: Grants) -> Vec<String> {
+    fn run_as(stem: &str, g: Grants) -> Vec<String> {
         argv(
             &host(),
             g,
-            "zsynth",
+            stem,
             Path::new("/home/u/.local/state/gh0st/notify"),
             &["/bin/sh".into(), "-c".into(), "exec zsynth".into()],
         )
+        .unwrap()
         .into_iter()
         .map(|s| s.into_string().unwrap())
         .collect()
+    }
+
+    fn run(g: Grants) -> Vec<String> {
+        run_as("zsynth", g)
     }
 
     /// The flag and its arguments, `n` of them, wherever it appears.
@@ -445,45 +531,77 @@ mod tests {
     }
 
     #[test]
-    fn home_is_read_only_with_entries_bound_back_but_not_locked_ones() {
+    fn home_stays_writable_but_start_files_and_secrets_do_not() {
         let v = run(Grants::default());
-        assert!(has(&v, &["--ro-bind", "/home/u", "/home/u"]));
+        assert!(!v.iter().any(|s| s == "/home/u"), "home itself is as it is");
         assert!(has(
             &v,
-            &["--bind", "/home/u/Documents", "/home/u/Documents"]
+            &["--ro-bind", "/home/u/.bashrc", "/home/u/.bashrc"]
         ));
-        assert!(has(&v, &["--bind", "/home/u/.config", "/home/u/.config"]));
-        assert!(!has(&v, &["--bind", "/home/u/.bashrc", "/home/u/.bashrc"]));
-        assert!(!has(&v, &["--bind", "/home/u/bin", "/home/u/bin"]));
-        assert!(!has(&v, &["--bind", "/home/u/.ssh", "/home/u/.ssh"]));
+        assert!(has(&v, &["--ro-bind", "/home/u/bin", "/home/u/bin"]));
+        assert!(!v.iter().any(|s| s == "/home/u/Documents"));
+        assert!(
+            !v.iter().any(|s| s == "/home/u/.zshrc"),
+            "only what is there"
+        );
         assert!(has(&v, &["--tmpfs", "/home/u/.ssh"]));
         assert!(has(
             &v,
             &["--ro-bind", "/dev/null", "/home/u/.bash_history"]
         ));
-        assert!(has(
-            &v,
-            &[
-                "--ro-bind-try",
-                "/home/u/.config/systemd",
-                "/home/u/.config/systemd"
-            ]
-        ));
-        assert!(has(
-            &v,
-            &["--ro-bind-try", "/home/u/.local/bin", "/home/u/.local/bin"]
-        ));
+        let systemd = "/home/u/.config/systemd";
+        assert!(has(&v, &["--ro-bind-try", systemd, systemd]));
+        let bin = "/home/u/.local/bin";
+        assert!(has(&v, &["--ro-bind-try", bin, bin]));
     }
 
     #[test]
-    fn locked_folders_come_after_the_entries_that_hold_them() {
+    fn our_other_apps_data_is_read_only_but_the_apps_own_is_not() {
+        let text = "/home/u/.local/share/gh0st-text";
+        let media = "/home/u/.local/share/gh0st-media";
+        let cache = "/home/u/.cache/gh0st";
         let v = run(Grants::default());
-        let config = v.iter().position(|s| s == "/home/u/.config").unwrap();
-        let systemd = v
-            .iter()
-            .position(|s| s == "/home/u/.config/systemd")
-            .unwrap();
-        assert!(config < systemd, "a later bind would cover the lock");
+        assert!(has(&v, &["--ro-bind-try", text, text]));
+        assert!(has(&v, &["--ro-bind-try", media, media]));
+        assert!(has(&v, &["--ro-bind-try", cache, cache]));
+        let v = run_as("media", Grants::default());
+        assert!(has(&v, &["--ro-bind-try", text, text]));
+        assert!(!v.iter().any(|s| s == media));
+    }
+
+    #[test]
+    fn no_home_or_runtime_means_no_sandbox_rather_than_half_of_one() {
+        let mut h = host();
+        h.runtime = PathBuf::new();
+        assert!(argv(&h, Grants::default(), "x", Path::new("/n"), &[]).is_none());
+        let mut h = host();
+        h.home = PathBuf::new();
+        assert!(argv(&h, Grants::default(), "x", Path::new("/n"), &[]).is_none());
+    }
+
+    #[test]
+    fn prepare_makes_what_a_sandbox_locks_and_keeps_what_is_there() {
+        let home = std::env::temp_dir().join(format!("gh0st-sb-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join(".profile"), "PATH=mine\n").unwrap();
+        prepare(&home, &home.join(".local/state/gh0st/notify"));
+        for d in [
+            ".ssh",
+            "bin",
+            ".local/bin",
+            ".config/systemd",
+            ".local/share/gh0st-text",
+        ] {
+            assert!(home.join(d).is_dir(), "{d}");
+        }
+        let profile = std::fs::read_to_string(home.join(".profile")).unwrap();
+        assert_eq!(profile, "PATH=mine\n");
+        let bp = std::fs::read_to_string(home.join(".bash_profile")).unwrap();
+        assert!(bp.contains(". \"$HOME/.profile\""), "{bp}");
+        assert!(home.join(".bash_history").is_file());
+        assert!(home.join(".local/state/gh0st/notify").is_dir());
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
