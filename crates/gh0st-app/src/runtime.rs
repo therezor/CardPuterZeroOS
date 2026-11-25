@@ -208,6 +208,8 @@ pub(crate) struct Runtime {
     /// The shell has another app or itself in front: draw nothing, and
     /// keep no deadline that only the screen needs.
     pub paused: bool,
+    /// The network changed while paused: the pages hear it on resume.
+    net_behind: bool,
     /// The shell link, when the shell started the app.
     pub link: Option<gh0st_core::link::Link>,
     /// The link version the shell's `hello` gave; 0 before it says.
@@ -268,6 +270,7 @@ impl Runtime {
             adopted: Vec::new(),
             last_frame: 0,
             paused: false,
+            net_behind: false,
             link: None,
             shell_v: 0,
             files: Vec::new(),
@@ -353,10 +356,13 @@ impl Runtime {
         self.call_quiet(0, now, |p, cx| p.notice_action(tag, id, cx));
     }
 
-    /// Memory is short: every page hears it, top first.
     /// A link or an address changed: the top bar's network, then every
-    /// page.
+    /// page. Behind another app, once when it is back.
     pub fn network_changed(&mut self, now: u64) {
+        if self.paused {
+            self.net_behind = true;
+            return;
+        }
         self.bar.links();
         self.dirty = true;
         for i in (0..self.stack.len()).rev() {
@@ -364,6 +370,7 @@ impl Runtime {
         }
     }
 
+    /// Memory is short: every page hears it, top first.
     pub fn low_memory(&mut self, level: u8, now: u64) {
         for i in (0..self.stack.len()).rev() {
             self.call_quiet(i, now, |p, cx| p.low_memory(level, cx));
@@ -1302,6 +1309,9 @@ impl Runtime {
         self.s.paused = false;
         self.dirty = true;
         self.tell_front(true, now);
+        if std::mem::take(&mut self.net_behind) {
+            self.network_changed(now);
+        }
     }
 
     fn frame_at(&self) -> u64 {

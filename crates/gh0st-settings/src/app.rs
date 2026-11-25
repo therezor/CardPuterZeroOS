@@ -456,6 +456,7 @@ impl Settings {
             self.query_advanced(cx);
         }
         self.stack.push((id, Cursor::default()));
+        self.net_catch_up(cx);
         self.refresh(cx);
         // A picker opens on the option in use.
         let here = match &self.view.body {
@@ -1760,6 +1761,23 @@ impl Settings {
         }
     }
 
+    /// The page in front shows what `query_net` reads.
+    fn shows_net(&self) -> bool {
+        matches!(
+            self.top().0,
+            PageId::Root | PageId::Wifi | PageId::Network | PageId::NetInfo
+        )
+    }
+
+    /// A network change that waited is read now, if the page in front
+    /// shows it and nmcli isn't being asked already.
+    fn net_catch_up(&mut self, cx: &mut Cx) {
+        if self.net_again && !self.asking_net() && cx.in_front() && self.shows_net() {
+            self.net_again = false;
+            self.query_net(cx, false);
+        }
+    }
+
     /// nmcli is being asked what `query_net` asks.
     fn asking_net(&self) -> bool {
         self.jobs.values().any(|(k, _)| {
@@ -2174,10 +2192,7 @@ impl Settings {
         }
         // Skip pressed while this ran: the step is closing, so don't start
         // jobs it would only kill.
-        if self.net_again && !self.asking_net() && cx.in_front() {
-            self.net_again = false;
-            self.query_net(cx, false);
-        }
+        self.net_catch_up(cx);
         if requery && !self.finish_when_idle {
             self.query_net(cx, rescan);
         }
@@ -2201,22 +2216,19 @@ impl Page for Settings {
 
     /// A cable out, Wi-Fi joined, an address renewed: the Network row,
     /// Wi-Fi and Network details read again. Once at a time: a change while
-    /// nmcli answers asks again after. Behind another app, once it is back.
+    /// nmcli answers asks again after. Behind another app, or under a page
+    /// that shows none of it, once one that does is in front.
     fn network_changed(&mut self, cx: &mut Cx) {
         if self.embed.is_some() {
             return;
         }
-        if self.asking_net() || !cx.in_front() {
-            self.net_again = true;
-        } else {
-            self.query_net(cx, false);
-        }
+        self.net_again = true;
+        self.net_catch_up(cx);
     }
 
     fn front(&mut self, front: bool, cx: &mut Cx) {
-        if front && self.net_again && !self.asking_net() {
-            self.net_again = false;
-            self.query_net(cx, false);
+        if front {
+            self.net_catch_up(cx);
         }
     }
 
@@ -2368,6 +2380,7 @@ impl Page for Settings {
         if self.stack.len() > 1 {
             self.stack.pop();
             self.refresh(cx);
+            self.net_catch_up(cx);
             return false;
         }
         true

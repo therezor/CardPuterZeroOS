@@ -59,3 +59,19 @@ fn a_network_change_reaches_every_page() {
     d.network_changed();
     assert_eq!(*heard.borrow(), [("Above", 0), ("Below", 0)]);
 }
+
+#[test]
+fn a_network_change_behind_another_app_is_heard_once_on_return() {
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let mut d = Driver::new(Cached {
+        name: "Below",
+        heard: heard.clone(),
+    });
+    d.pause();
+    d.network_changed().network_changed();
+    assert!(heard.borrow().is_empty(), "nothing wakes behind");
+    d.resume();
+    assert_eq!(*heard.borrow(), [("Below", 0)]);
+    d.pause().resume();
+    assert_eq!(heard.borrow().len(), 1, "no change, nothing heard");
+}

@@ -941,8 +941,10 @@ empties it as the lock does.
 A link or an address that comes or goes (a cable pulled, Wi-Fi joined, an
 address renewed) redraws the top bar at once, and every page hears
 `Page::network_changed(cx)`: read again what the page shows of the
-network. The SDK learns it from netlink; nothing polls.
-`Driver::network_changed()` sends it in a test.
+network. The SDK learns it from netlink; nothing polls. Behind another
+app the SDK doesn't listen, and the pages hear it once when the app is
+back, if anything changed meanwhile. `Driver::network_changed()` sends it
+in a test.
 
 ### Low memory
 

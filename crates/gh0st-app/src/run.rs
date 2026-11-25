@@ -170,8 +170,10 @@ fn main_loop(
             fds.push(rt::pollfd_rw(fd, true, out));
             fds.len() - 1
         });
+        // Not while paused: nothing shows it then, and what came waits in
+        // the socket to be read once on resume.
         #[cfg(target_os = "linux")]
-        let net_at = net.as_ref().map(|w| {
+        let net_at = net.as_ref().filter(|_| !rt_.paused).map(|w| {
             fds.push(rt::pollfd(w.fd()));
             fds.len() - 1
         });
