@@ -1,6 +1,7 @@
 // Host checks of the tile cache: a kept tile comes back, a failed file is
 // remembered, a changed file misses, a broken tile is no tile, and trim
-// drops the oldest tiles first down to its floor. `make check` runs it.
+// drops the least used tiles first down to its floor, when the helper
+// starts and as tiles are added. `make check` runs it.
 #include "cache.h"
 
 #include <cstdio>
@@ -119,6 +120,30 @@ int main()
     auto left = files(dir);
     expect(!left.count(ta) && !left.count(tb) && left.count(td) && left.count(tbad),
            "over it, the oldest go first down to the floor");
+
+    // A tile seen again counts as new.
+    c.put(a, 80, 60, &pa);
+    age(ta, 1000);
+    struct stat st;
+    expect(c.get(a, 80, 60, got, was_bad) && stat(ta.c_str(), &st) == 0 && st.st_mtime > 1000,
+           "a tile used is new again");
+
+    // Past the cap as tiles are added, not only when the helper starts.
+    std::string dir2 = root + "/thumbs2";
+    ThumbCache c2(dir2);
+    c2.trim(500, 300);
+    std::set<std::string> seen2;
+    c2.put(a, 80, 60, &pa);
+    std::string ua = added(dir2, seen2);
+    age(ua, 1000);
+    c2.put(b, 80, 60, &pb);
+    std::string ub = added(dir2, seen2);
+    age(ub, 2000);
+    expect(files(dir2).size() == 2, "under the cap, tiles stay");
+    c2.put(d, 80, 60, &pd);
+    std::string ud = added(dir2, seen2);
+    auto left2 = files(dir2);
+    expect(left2.size() == 1 && left2.count(ud), "a tile past the cap trims the folder");
 
     ThumbCache none("");
     none.put(a, 80, 60, &pa);

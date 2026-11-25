@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -16,6 +17,8 @@ namespace {
 const char MAGIC[4] = {'G', '0', 'T', 'H'};
 // Bump when tiles are drawn differently, so old ones are not reused.
 const uint32_t VERSION = 1;
+// A tile seen again is marked new at most this often.
+const time_t TOUCH_SECONDS = 24 * 3600;
 
 uint64_t fnv(uint64_t h, const void *p, size_t n)
 {
@@ -85,11 +88,14 @@ bool ThumbCache::get(const std::string &path, int w, int h, gh0st::Pic &out, boo
         out.px.resize(size_t(tw) * th);
         ok = fread(out.px.data(), 2, out.px.size(), f) == out.px.size();
     }
+    struct stat st;
+    if (ok && fstat(fileno(f), &st) == 0 && st.st_mtime < time(nullptr) - TOUCH_SECONDS)
+        futimens(fileno(f), nullptr);
     fclose(f);
     return ok;
 }
 
-void ThumbCache::put(const std::string &path, int w, int h, const gh0st::Pic *pic) const
+void ThumbCache::put(const std::string &path, int w, int h, const gh0st::Pic *pic)
 {
     std::string n = name(path, w, h);
     if (n.empty())
@@ -99,8 +105,8 @@ void ThumbCache::put(const std::string &path, int w, int h, const gh0st::Pic *pi
     if (!f)
         return;
     bool ok = true;
+    uint8_t head[16] = {};
     if (pic) {
-        uint8_t head[16] = {};
         memcpy(head, MAGIC, 4);
         uint16_t tw = uint16_t(pic->w), th = uint16_t(pic->h);
         memcpy(head + 4, &tw, 2);
@@ -109,12 +115,21 @@ void ThumbCache::put(const std::string &path, int w, int h, const gh0st::Pic *pi
              fwrite(pic->px.data(), 2, pic->px.size(), f) == pic->px.size();
     }
     ok = fclose(f) == 0 && ok;
-    if (!ok || rename(part.c_str(), n.c_str()) != 0)
+    if (!ok || rename(part.c_str(), n.c_str()) != 0) {
         unlink(part.c_str());
+        return;
+    }
+    // A tile written over another counts twice until the next trim, which
+    // counts the folder afresh.
+    total_ += pic ? sizeof head + pic->px.size() * 2 : 0;
+    if (most_ && total_ > most_)
+        trim(most_, keep_);
 }
 
-void ThumbCache::trim(size_t most, size_t keep) const
+void ThumbCache::trim(size_t most, size_t keep)
 {
+    most_ = most;
+    keep_ = keep;
     DIR *d = dir_.empty() ? nullptr : opendir(dir_.c_str());
     if (!d)
         return;
@@ -136,6 +151,7 @@ void ThumbCache::trim(size_t most, size_t keep) const
         total += size_t(st.st_size);
     }
     closedir(d);
+    total_ = total;
     if (total <= most)
         return;
     std::sort(all.begin(), all.end(), [](const Entry &a, const Entry &b) { return a.when < b.when; });
@@ -145,6 +161,7 @@ void ThumbCache::trim(size_t most, size_t keep) const
         if (unlink(e.path.c_str()) == 0)
             total -= e.size;
     }
+    total_ = total;
 }
 
 } // namespace mediad

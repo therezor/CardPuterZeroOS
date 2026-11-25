@@ -163,7 +163,9 @@ Playing:
 - Tiles are kept in `~/.cache/gh0st-media/thumbs`, one raw RGB565 file each,
   named by the path, the file's time and size, and the tile's size. A file
   that failed is kept as an empty one, so it is not decoded again. Past
-  32 MB the oldest go when the helper starts.
+  32 MB the least used go, down to 24 MB, when the helper starts and as
+  tiles are added. A tile shown again counts as new, once a day at most,
+  so the card isn't written on every look.
 
 ### Playing
 
