@@ -1,5 +1,6 @@
 // Host checks for decode.cpp's readers of files from elsewhere: a crafted
-// EXIF and a huge picture. `make check` builds and runs them.
+// EXIF and a huge picture, and a view of odd width. `make check` builds
+// and runs them.
 #include "decode.cpp"
 
 #include <cstdio>
@@ -66,10 +67,24 @@ std::string hugeJpeg()
     return path;
 }
 
+// A 5x2 grey picture in 4:2:0: an odd width has three chroma samples a
+// row, and the last column reads the third.
+void oddWidth()
+{
+    const uint8_t y[10] = {128, 128, 128, 128, 128, 128, 128, 128, 128, 128};
+    const uint8_t uv[3] = {128, 128, 128};
+    gh0st::View v{gh0st::View::YUV420, 5, 2, {y, uv, uv}, {5, 3, 3}, false};
+    uint16_t out[10];
+    gh0st::viewTo565(v, 5, 2, out);
+    expect(out[4] == gh0st::yuv565(128, 128, 128) && out[9] == out[0],
+           "an odd width's last column keeps its colour");
+}
+
 } // namespace
 
 int main()
 {
+    oddWidth();
     std::vector<uint8_t> b = wrappingExif();
     FILE *f = std::tmpfile();
     std::fwrite(b.data(), 1, b.size(), f);

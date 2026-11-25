@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
+#include <new>
 
 namespace gh0st {
 
@@ -37,6 +39,26 @@ namespace {
 constexpr long DECODE_MEMORY = 96L << 20;
 // Four times the sensor's 8 MP.
 constexpr double DECODE_PIXELS = 32e6;
+
+// The rows a decode reads into. They grow after setjmp, and a local
+// changed between setjmp and longjmp is indeterminate after the jump: on
+// the heap they stay whole.
+std::unique_ptr<std::vector<uint8_t>> scratch()
+{
+    return std::make_unique<std::vector<uint8_t>>();
+}
+
+// False when memory runs out. A throw here would skip
+// jpeg_destroy_decompress.
+bool grow(std::vector<uint8_t> &v, size_t n)
+{
+    try {
+        v.resize(n);
+        return true;
+    } catch (const std::bad_alloc &) {
+        return false;
+    }
+}
 
 // The JPEG thumbnail in a photo's EXIF (IFD1), as our stills carry one.
 bool exifThumb(FILE *f, std::vector<uint8_t> &jpg)
@@ -82,7 +104,8 @@ bool exifThumb(FILE *f, std::vector<uint8_t> &jpg)
 bool decodeView(FILE *f, const std::vector<uint8_t> *mem, int w, int h, float zoom, float cx,
                 float cy, std::vector<uint16_t> &out)
 {
-    std::vector<uint8_t> rows, fit;
+    std::unique_ptr<std::vector<uint8_t>> rows = scratch();
+    std::vector<uint8_t> fit;
     jpeg_decompress_struct d;
     JpegErr err;
     d.err = jpeg_std_error(&err.pub);
@@ -131,16 +154,19 @@ bool decodeView(FILE *f, const std::vector<uint8_t> *mem, int w, int h, float zo
     if (dy)
         jpeg_skip_scanlines(&d, dy);
     const int stride = int(d.output_width) * 3;
-    rows.resize(size_t(stride) * dh);
+    if (!grow(*rows, size_t(stride) * dh)) {
+        jpeg_destroy_decompress(&d);
+        return false;
+    }
     for (JDIMENSION y = 0; y < dh; y++) {
-        JSAMPROW r = &rows[size_t(y) * stride];
+        JSAMPROW r = &(*rows)[size_t(y) * stride];
         jpeg_read_scanlines(&d, &r, 1);
     }
     jpeg_abort_decompress(&d);
     jpeg_destroy_decompress(&d);
 
     fit.resize(size_t(ow) * oh * 3);
-    box(rows.data() + size_t(dx - xoff) * 3, int(dw), int(dh), stride, 3, fit.data(), ow, oh,
+    box(rows->data() + size_t(dx - xoff) * 3, int(dw), int(dh), stride, 3, fit.data(), ow, oh,
         ow * 3);
     out.assign(size_t(w) * h, 0);
     int ox = (w - ow) / 2, oy = (h - oh) / 2;
@@ -194,9 +220,10 @@ void viewTo565(const View &v, int w, int h, uint16_t *out)
                    v.fmt == View::RGB565 ? size_t(v.w) * 2 : size_t(v.w));
             lastY = sy;
         }
+        // An odd width's last column has a chroma sample of its own.
         if (v.fmt == View::YUV420 && sy / 2 != lastC) {
-            memcpy(urow.data(), v.p[1] + size_t(sy / 2) * v.stride[1], v.w / 2);
-            memcpy(vrow.data(), v.p[2] + size_t(sy / 2) * v.stride[2], v.w / 2);
+            memcpy(urow.data(), v.p[1] + size_t(sy / 2) * v.stride[1], (v.w + 1) / 2);
+            memcpy(vrow.data(), v.p[2] + size_t(sy / 2) * v.stride[2], (v.w + 1) / 2);
             lastC = sy / 2;
         }
         uint16_t *o = out + size_t(y) * w;
@@ -267,7 +294,8 @@ bool jpegHeader(FILE *f, const std::vector<uint8_t> *mem, int &w, int &h, int &o
 bool jpegRegion(FILE *f, const std::vector<uint8_t> *mem, double sx, double sy, double sw,
                 double sh, int ow, int oh, double maxPixels, Pic &out)
 {
-    std::vector<uint8_t> rows, fit;
+    std::unique_ptr<std::vector<uint8_t>> rows = scratch();
+    std::vector<uint8_t> fit;
     jpeg_decompress_struct d;
     JpegErr err;
     d.err = jpeg_std_error(&err.pub);
@@ -311,16 +339,19 @@ bool jpegRegion(FILE *f, const std::vector<uint8_t> *mem, double sx, double sy, 
     if (dy)
         jpeg_skip_scanlines(&d, dy);
     const int stride = int(d.output_width) * 3;
-    rows.resize(size_t(stride) * dh);
+    if (!grow(*rows, size_t(stride) * dh)) {
+        jpeg_destroy_decompress(&d);
+        return false;
+    }
     for (JDIMENSION y = 0; y < dh; y++) {
-        JSAMPROW r = &rows[size_t(y) * stride];
+        JSAMPROW r = &(*rows)[size_t(y) * stride];
         jpeg_read_scanlines(&d, &r, 1);
     }
     jpeg_abort_decompress(&d);
     jpeg_destroy_decompress(&d);
 
     fit.resize(size_t(ow) * oh * 3);
-    box(rows.data() + size_t(dx - xoff) * 3, int(dw), int(dh), stride, 3, fit.data(), ow, oh,
+    box(rows->data() + size_t(dx - xoff) * 3, int(dw), int(dh), stride, 3, fit.data(), ow, oh,
         ow * 3);
     out.w = ow;
     out.h = oh;
