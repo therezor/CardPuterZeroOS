@@ -29,9 +29,10 @@ launcher-v0.6.111 pins) and measured on the device (`hardware-facts.md`):
 ```text
 M5's registry.json ──CI, daily──> catalog + catalog.sig, about, icons
                                      (our Pages, next to the apt repo)
-device: gh0st store refresh ──> checks the signature with sqv ──> /var/lib/gh0st/store
-        gh0st store install ──> deb from M5's release ──> SHA-256 ──> apt-get install ./x.deb
-Store app: reads those files, watches them with inotify, asks gh0st-helper
+Store app ──> gh0st-helper store-install ──> /run/gh0st-store/job ──> gh0st-store.service
+gh0st store job: refresh ──> checks the signature with sqv ──> /var/lib/gh0st/store
+                 install ──> deb from M5's release ──> SHA-256 ──> apt-get install ./x.deb
+Store app: reads those files and watches them with inotify
 ```
 
 - **The catalog is ours, signed.** CI reads M5's registry and writes a small

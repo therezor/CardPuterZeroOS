@@ -22,7 +22,7 @@ Read from M5's page and the stock app's EXIF strings, then measured with
 | Lens | 2.85 mm f/2.0, fixed focus (10 cm to infinity), about 77° across |
 | Driver | `dtoverlay=imx219` (2 lanes), unicam, libcamera 0.7 `vc4` with the VPU's ISP |
 | Modes | 3280x2464 at 21 fps, 1920x1080 crop at 47, 1640x1232 binned at 41, 640x480 at 200 |
-| H.264 | `/dev/video11`, level 4.0, at most 1920 wide: 1080p30 is the ceiling |
+| H.264 | `/dev/video11`, level 4.1 (4.0 if the encoder refuses it), at most 1920 wide: 1080p30 is the ceiling |
 | JPEG | `/dev/video31` stops at 1920 wide, so 8 MP stills encode in software |
 
 What that means for the best result:

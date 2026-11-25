@@ -39,9 +39,8 @@ From M5's documentation and device tree (Sources, below), not measured.
   The sym map file exists. Fn sends 389 (`KEY_DVD`) and Sym 383 (`KEY_CD`),
   not `KEY_FN`. The kernel driver applies their layers itself: Fn+F/Z/X/C
   arrive as Up/Left/Down/Right, Fn+K as Home (102), Fn+H as Help (138),
-  Fn+G as SysRq, Fn+A/S/D as
-  mute and volume, Fn+Y/U as brightness. Ctrl 29, Alt 56. The device tree
-  below says Fn+J for SysRq and Fn+U/I for brightness: press them to settle it.
+  Fn+J as SysRq, Fn+A/S/D as mute and volume, Fn+U/I as brightness.
+  Ctrl 29, Alt 56.
 - The driver's layers are in the device tree (`tca8418@34`: `linux,keymap`,
   `keymap1` for Sym, `keymap2` for Fn). Fn changes every key but R, T, Y, G,
   V, Space, Enter, Tab, Esc and the modifiers: Fn+Q/W/E media keys,
@@ -234,10 +233,10 @@ through the shell on the panel: that needs the engine deployed as root.
   from tmpfs, so its 1.3 MB of pages count as shared memory; 1.0 MB is
   anonymous.
 - **At rest: nothing.** 0 CPU ticks in 10 s, 0 wakeups in 5 s.
-- **What a refresh downloads**, from the dry run of CI's mirror: the
-  catalog, 74 KB (23 KB compressed); the descriptions, 257 KB (108 KB), and
-  the icon pack, 532 KB, only when their hash changes. Opening the Store
-  downloads nothing.
+- **What a refresh downloads**, from a dry run of CI's mirror: the
+  catalog, 76 KB (23 KB compressed); the descriptions, 266 KB, and the icon
+  pack, 551 KB, only when their hash changes. Opening the Store downloads
+  nothing.
 
 ## The stock system
 
@@ -629,8 +628,9 @@ Read on the stock Raspberry Pi OS card (pi-gen 2026-09-29), kernel
 - IMX219 at `/base/soc/i2c0mux/i2c@1/imx219@10`, libcamera v0.7.2+rpt20260817.
   Pixel array 3280x2464. Modes: 640x480, 1640x1232, 1920x1080, 3280x2464.
 - `Rotation` is 180: the sensor sits upside down, and libcamera flips it.
-- The ISP gives RGB565 at the preview's own size, 226x170 (stride 480) and
-  302x170 (stride 608). Nothing is scaled or converted on the CPU.
+- The ISP gives the preview at its own size: 226x170 (stride 480) for
+  photos, 302x170 for video. In photo mode it is RGB565, and nothing is
+  scaled or converted on the CPU. In video mode it is YUV420 (below).
 - `ScalerCrop` max is 3280x2464 at (0, 0) in the binned mode and
   1920x1080 at (680, 692) in the 1080p crop.
 - CMA: with libcamera's defaults (four raw buffers) an 8 MP still fails to
@@ -748,20 +748,11 @@ Checked in a container with trixie's packages, not on a device.
 
 ## Still to check
 
-
-
 | Check | Assumed now | Where it matters |
 |---|---|---|
-| Panel device and bpp | `/dev/fb_lcd`, 16 bpp RGB565, no byte swap | `gh0st-ui/src/fb.rs` |
-| Boot splash `fb_load` | May hold DRM until the stock binary path runs | first frame of gh0st |
-| Keyboard device | `/dev/input/by-path/platform-3f804000.i2c-event` | `gh0st-core/src/evdev.rs` |
 | Kernel key repeat | Ignored; gh0st repeats at 500/50 ms | `keys.rs` |
-| Sym map file | `/usr/share/keymaps/tca8418_keypad_m5stack_keymap.map` | `keys.rs` |
-| Backlight | `/sys/class/backlight/backlight`, writable by UID 1000 | `backlight.rs` |
 | Backlight GPIO | stock drives M5IOE1 line 9 low at boot; gh0st does not yet | cold boot |
 | Remaining tearing | check by eye with `scripts/tear-test.sh`; if it tears, widen `te_margin_us` or slow the refresh (FRCTRL2). No faster SPI clock (above the DT cap and the ST7789V rating) | driver |
-| Battery | a `type=Battery` supply under `/sys/class/power_supply` | `battery.rs` |
-| `wpctl`, `pw-play`, `bluetoothctl` | installed | volume, sounds, Settings |
 | Root actions | time and ADB need root; reboot, power off, 5V rails do not | Settings |
 | `unix_chkpwd` right password | exits 0 with `password\0` on stdin, run by root | helper auth |
 | `unix_chkpwd` as the user | exits 0 for the user's own password and 7 (`PAM_AUTH_ERR`) for a wrong one, run by UID 1000 (setgid `shadow`). Any other exit lets the user in and stops the lock asking | lock screen |
@@ -780,9 +771,6 @@ Checked in a container with trixie's packages, not on a device.
 | `61-gh0st-cpu.rules` | runs after stock's rule, so the governor survives a restart | Advanced |
 | Swap on the image | `zram-size` in `/etc/systemd/zram-generator.conf.d/90-gh0st-swap-size.conf` beats `50-gh0st.conf`; 0 leaves no zram0 | Advanced |
 | Swap compression and swappiness on the image | the same drop-ins work without rpi-swap | Advanced |
-| Argon2id time and memory | m=64 MiB, t=3, p=1 unlocks in about 1 s; tune to that (`vault.rs`) | keyring unlock |
-| Keyring and session PSS, idle wakeups | zero wakeups at idle (`scripts/measure.sh "gh0st keyring"`) | memory budget |
-| `PR_SET_DUMPABLE 0` | blocks `ptrace` and `/proc/<pid>/mem` from UID 1000 with `ptrace_scope=1` | keyring memory |
 | NetworkManager secret agent | accepted from UID 1000 with linger and no logind session; `psk-flags 1` calls `SaveSecrets`; registering clears `NO_SECRETS` | Wi-Fi in the keyring |
 | cgroup delegation | `Delegate=yes` on `gh0st.service` gives the shell a writable subtree | app identity |
 

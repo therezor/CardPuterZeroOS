@@ -170,9 +170,11 @@ so a scheme file colours code too.
 
 ## Budgets
 
-Measured by `examples/bench.rs` on the device, over the 1 GB log from
-`examples/corpus.rs`. The panel's send comes on top of a key's time; it
-is in `panel-driver.md`.
+What Text must meet. `examples/bench.rs` checks the times and heap use
+against them, on a host or the device, over the 1 GB log from
+`examples/corpus.rs`. `scripts/measure.sh gh0st-text` reads PSS and
+wakes. The panel's send comes on top of a key's time; it is in
+`panel-driver.md`.
 
 | | Budget |
 |---|---|

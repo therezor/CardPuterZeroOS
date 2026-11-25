@@ -1,8 +1,10 @@
 # Testing
 
 What keeps bugs out, the look the same and the device fast. CI
-(`.github/workflows/ci.yml`) runs all of it on every push and PR, on the
-same arm64 runner the image builds on.
+(`.github/workflows/ci.yml`) runs every layer but the device on a push to
+main or a PR that touches the code, assets, docs or `os/store`. It runs on
+the same arm64 runner the image builds on, and also makes the static
+device build. The device layer is run by hand.
 
 ```sh
 cargo fmt --all -- --check
@@ -20,6 +22,8 @@ cargo test --workspace
 | Design lint | `gh0st_ui::lint`, the mockups, `crates/gh0st-settings/tests/pages.rs` | every screen in every palette keeps design.md's rules |
 | Source rules | `crates/gh0st-ui/tests/rules.rs` | colours and faces only from the theme; no em dash |
 | Idle budget | `Driver::idle_wakes`, `crates/gh0st-settings/tests/pages.rs` | an idle page wakes for the clock and nothing else |
+| Store mirror | `os/store/test_mirror.py` | CI's mirror of M5's catalog, from a fixture registry |
+| Compat suites | `crates/gh0st-keyringd/tests/compat.sh`, `crates/gh0st-session/tests/compat.sh`, `crates/gh0st/tests/keyring_sim.sh` | real D-Bus clients against our session services on a private bus, and the shell with both daemons |
 | Device | `scripts/measure.sh` | PSS, wakeups and CPU at idle, before a release |
 
 ## On a device

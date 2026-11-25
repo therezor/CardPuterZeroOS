@@ -1,8 +1,8 @@
 # CardPuterZeroOS
 
 **Gh0st OS**, a lean OS for the M5Stack CardputerZero. This workspace is its
-Rust shell: the launcher, plus Settings and the terminal as apps. They
-replace the stock C++/LVGL APPLaunch and keep its app contract. The image
+Rust shell (the launcher) and the apps that ship with it. The shell
+replaces the stock C++/LVGL APPLaunch and keeps its app contract. The image
 side is in `docs/image-build.md`.
 
 ## Writing style
@@ -39,8 +39,8 @@ are in `docs/hardware-facts.md`.
 - `crates/gh0st-keyring`: the Keyring app, an SDK app with its own binary.
   `examples/mockups.rs` renders its screens into `mockups/keyring` from the
   real Secret Service (`tests/common/fake.rs`).
-- `crates/gh0st-session`: `gh0st session`, Notifications and ScreenSaver on
-  gh0st's notices and `awake`.
+- `crates/gh0st-session`: `gh0st session`, Notifications, ScreenSaver, the
+  XDG portal and the clipboard on the session bus.
 - `crates/gh0st-app`: the app SDK. Pages, OS bars, soft keys, lists, jobs,
   a sim backend and a test driver. Apps depend on it alone. The guide is
   `docs/sdk.md`, which is also the crate's rustdoc, so its examples compile in
@@ -69,6 +69,9 @@ are in `docs/hardware-facts.md`.
   `examples/mockups.rs` renders its screens into `mockups/media`.
 - `native/av`: the C++ both helpers share: the JPEG reader, the player,
   the link and the frame ring.
+- `crates/gh0st-text`: Text, an SDK app with its own binary. A code and text
+  editor that reads only what is on screen, so a gigabyte file opens at
+  once. `examples/bench.rs` times it; `docs/text.md` is its guide.
 - `crates/gh0st-files`: Files, an SDK app with its own binary. One pane with
   two sides, archives as folders, SFTP, FTP(S) and WebDAV servers with their
   passwords in the keyring. `src/engine.rs` is what the page asks of its
@@ -93,7 +96,7 @@ are in `docs/hardware-facts.md`.
   chips over keys 5-8, keys, dialogs, feedback. `crates/gh0st-ui/examples/design.rs`
   renders its pictures.
 - `docs/apps.md`: what the shell gives an app, and the shell link. Everything past
-  home is an app built to it: Settings, the terminal.
+  home is an app built to it, ours and stock alike.
 - `docs/updates.md`: the update engine, the Updates app, notifications and
   our apt repo on GitHub Pages (`os/repo/publish.sh`).
 - `docs/testing.md`: the test layers, the design lint, and what a change
@@ -114,6 +117,10 @@ are in `docs/hardware-facts.md`.
   OpenURI, requests, who may ask.
 - `docs/keyboard.md`: Keyboard, its screens and modes, the keys, Bluetooth,
   the USB gadget and the helper's protocol.
+- `docs/text.md`: Text, opening big files, editing, unsaved edits, keys,
+  saving, colour, budgets and limits.
+- `docs/media.md`: Media, its views and keys, the formats, the helper and
+  its messages, and the limits.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
   sends against the scan, and the present ioctl that paces animations.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
@@ -150,7 +157,8 @@ are in `docs/hardware-facts.md`.
   only: `resvg`. The camera helper is C++
   because libcamera has no C API: it links libcamera and libjpeg-turbo, both
   on the stock image already, and for sound and playback ffmpeg's libraries
-  (the image has them for Files) and libpulse (PipeWire's client library).
+  (the image has ffmpeg for the terminal and Store apps) and libpulse
+  (PipeWire's client library).
   The media helper is C++ for the same libraries, with libheif (HEIC grids
   and rotation, which FFmpeg leaves to the caller), LibRaw (a camera RAW's
   preview), libwebpdemux (animated WebP) and libass (subtitles); all but
@@ -165,9 +173,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release --target aarch64-unknown-linux-musl   # static, rust-lld
 ```
 
-`.github/workflows/ci.yml` runs these and `cargo fmt --check` on every push
-and PR. Core, the shell and the SDK deny `unwrap` outside tests: release
-builds abort on a panic.
+`.github/workflows/ci.yml` runs these and `cargo fmt --check` on a push to
+main or a PR that touches the code, assets, docs or `os/store`. Core, the
+shell and the SDK deny `unwrap` outside tests: release builds abort on a
+panic.
 
 The image (Docker Desktop running; details in `docs/image-build.md`):
 
@@ -195,7 +204,7 @@ GH0ST_HOST=pi@<device> scripts/tear-test.sh 10    # full-screen stripes at the p
 
 `GH0ST_LOG=debug` logs the first frame time and, for each frame, the rows flushed and
 the wake-to-draw, draw and flush times. SDK apps log each wake and what caused it (`signal`,
-`shell`, `keys`, `job`, `watch`, or none for a timer). The shell doesn't pass
+`shell`, `keys`, `portal`, `net`, `job`, `watch`, or none for a timer). The shell doesn't pass
 `GH0ST_LOG` on: set it in a wrapper around the app's binary.
 
 ## Host runs

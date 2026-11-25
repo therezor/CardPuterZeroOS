@@ -18,7 +18,7 @@ os/build.sh smoke           # first boot of the image in QEMU, about 10 min
 ```
 
 A clean build takes about ten minutes. `.github/workflows/os.yml` runs the
-same steps on an arm64 runner; it has not run yet. Work happens on the Docker volume
+same steps on an arm64 runner. Work happens on the Docker volume
 `gh0st-work`, never on the repo: macOS filesystems lose ownership and
 sparse files. Only finished files land in `os/out/`.
 
@@ -69,13 +69,16 @@ both install from it.
    M5 driver repo is fetched
    at its pinned commit. `cargo fetch` runs here, so later steps are offline.
 2. **debs.** The pinned debs become a local repo. Our packages build:
-   - `cargo build` for gh0st, gh0st-settings, gh0st-term, gh0st-update and
-     gh0st-camera.
+   - `cargo build` for gh0st, gh0st-settings, gh0st-term, gh0st-update,
+     gh0st-store, gh0st-camera, gh0st-keyring, gh0st-files, gh0st-text,
+     gh0st-media and gh0st-keyboard.
    - The camera helper (C++), against `libcamera-dev` unpacked into a
      sysroot. That deb's `use` is `camera-build`, so it is fetched but never
      installed. `os/build.sh camd` builds the helper alone into
      `os/out/camd`. The `gh0st-camera` deb replaces M5's Camera
      (`docs/camera.md`).
+   - The media helper (C++), against the container's ffmpeg, libheif,
+     LibRaw, libwebp and libass (`docs/media.md`).
    - The M5 drivers and our panel driver, against the pinned kernel headers.
      M5's `make install` writes to absolute paths, so only `make all` runs
      and an explicit file list goes into the package. Every module's
@@ -107,11 +110,12 @@ the live index has moved on (libcamera-ipa 0.8, kernel 6.18.60), so a build
 from it would not resolve.
 
 **Base apps.** gh0st, Settings, Updates, the Store, the terminal, Files,
-Text, Media and Camera, which are ours, and the stock Recorder at the
-version the dev device runs. M5's AppStore, Camera, Files and Music are not
-in the image: migration `0002-store` removes the AppStore from older
-devices, `0003-camera` swaps M5's Camera for ours, and `0004-files-media`
-swaps M5's Files and Music for Files and Media, keeping ffmpeg.
+Text, Media, Camera, Keyboard and Keyring, which are ours, and the stock
+Recorder at the version the dev device runs. M5's AppStore, Camera, Files
+and Music are not in the image: migration `0002-store` removes the AppStore
+from older devices, `0003-camera` swaps M5's Camera for ours, and
+`0004-files-media` swaps M5's Files and Music for Files and Media, keeping
+ffmpeg.
 
 **Command-line tools.** What a Linux user reaches for in the terminal:
 curl, wget, python3, htop, less, nano, vi (`vim-tiny`), file, lsof, zip,
@@ -125,11 +129,12 @@ them gets them once, from the migration `0001-cli-tools`
 (docs/updates.md). `man-db` stays denied: its daily index job and groff
 cost more than the pages are worth here.
 
-**ffmpeg.** Files runs `ffmpeg` and `ffprobe` for video previews. Debian's
-ffmpeg is a desktop build: its device library pulls OpenGL, so Mesa and
-LLVM, and its filters pull speech synthesis and recognition. That is 148
-packages and 367 MB of the 842 MB installed. It stays, and Camera's helper
-links its libraries for sound and playback.
+**ffmpeg.** `ffmpeg` and `ffprobe` are in the image for the terminal and
+Store apps. Media's helper links ffmpeg's libraries to decode, and Camera's
+for sound and playback. Debian's ffmpeg is a desktop build: its device
+library pulls OpenGL, so Mesa and LLVM, and its filters pull speech
+synthesis and recognition. That is 148 packages and 367 MB of the 928 MB
+installed.
 
 **Packages.**
 
@@ -140,6 +145,8 @@ links its libraries for sound and playback.
 | `gh0st-no-initramfs` | Provides `linux-initramfs-tool`: the kernel has ext4 and the SD driver built in |
 | `gh0st-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
 | `gh0st`, `gh0st-term` | Our binaries, `.desktop` files, polkit files, the `gh0st.service` user unit, `gh0st-setup.service` |
+| `gh0st-camera` | Camera and its libcamera helper, `gh0st-camd`, built against the pinned libcamera |
+| `gh0st-media` | Media and its decoding helper, `gh0st-mediad` |
 | `gh0st-wifi` | The built-in Wi-Fi chip's boot retry (a udev rule binds it again when its firmware load fails), and firmware for USB adapters with monitor mode, from Raspberry Pi's `firmware-atheros`, `firmware-mediatek` and `firmware-realtek` |
 
 **Services.** System: NetworkManager and its on-demand dispatcher,
@@ -151,7 +158,7 @@ PipeWire's sockets. One timer, the daily update check
 masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the checks hold it to.
 
 **Privacy.** The deny lists keep out cloud-init, Raspberry Pi Connect,
-avahi, ModemManager, popularity-contest and systemd-coredump. journald
+`avahi-daemon`, ModemManager, popularity-contest and systemd-coredump. journald
 stores nothing until Settings turns logs on. NetworkManager sends no
 hostname and runs no connectivity check. It gives each Wi-Fi network a
 stable address of its own and scans with a random one. SSH is off and
@@ -174,8 +181,8 @@ kernel pointers are root-only, and core dumps go nowhere. The hostname is
   (`vc4-kms-v3d,cma-64`), not from `gpu_mem`. Page cache borrows idle CMA
   until the camera needs it.
 - Bluetooth stays off through rfkill, not `dtoverlay=disable-bt`. That
-  overlay would move `serial0` off the mini UART (GPIO14/15), which the
-  GPS and LoRa Cap apps use.
+  overlay would move `serial0` off the mini UART (GPIO14/15), which Cap
+  apps and the console use.
 - `cmdline.txt` adds `fbcon=map:off`, so the console stays off the panel,
   `psi=1`, so `gh0st session` can watch memory pressure, and `quiet
   loglevel=3`.
@@ -267,15 +274,14 @@ start is a device test.
 
 | | Stock M5 image | Gh0st OS release |
 |---|---|---|
-| Packages | 1699 | 444 |
-| Installed | 5.1 GB `/usr` | 842 MB |
+| Packages | 1699 | 497 |
+| Installed | 5.1 GB `/usr` | 928 MB |
 | Download | 14.8 GiB image | 224 MB `.img.xz` |
-| Enabled system services | 30+ and 9 timers | 6, one timer (the daily update check) |
+| Enabled system services | 30+ and 9 timers | 7, one timer (the daily update check) |
 
-## Before the first public release
+## Known issues
 
-- A licence and source-offer page: the image redistributes Raspberry Pi
-  debs and M5 app debs.
-- Randomize the disk ID at first boot.
-- Tags publish pre-releases until first-boot setup has passed its device
-  test on a fresh card (`docs/setup.md`, Tests).
+- The image redistributes Raspberry Pi debs and M5 app debs, with no
+  licence and source-offer page for them.
+- Every card shares one disk ID (`docs/alpha.md`, Known issues).
+- Tags publish GitHub pre-releases.

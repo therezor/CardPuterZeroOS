@@ -11,7 +11,7 @@ use this page directly.
   (stock and Store installs) and `/usr/share/gh0st/applications` (ours).
 - It reads these keys: `Name`, `Exec`, `Icon`, `Comment`, `TryExec`,
   `Terminal`, `Sysplause`, `Hidden`, `NoDisplay`, `MimeType`, `Type` (which
-  must be `Application`), and our own `X-Gh0st-Bars` (see Shell link).
+  must be `Application`), and our own `X-Gh0st-Background` (see Pausing).
 - `Hidden=true` drops the entry. `NoDisplay=true` keeps it off home and
   Settings > Apps, but it may still open files.
 - `Exec` follows the stock rule. It contains no `| & ; < > $ \` or backtick,
@@ -99,33 +99,24 @@ An entry without a field code opens no files.
   keys and the screen timeout stop working. The shell takes the keyboard only
   once the app has left the front: paused, dark or locked (see Pausing).
 - While an app is in front, the shell draws over it only for a banner across
-  the top (ESC held, or the battery about to run out), a toast for the
-  brightness, volume, mute and screenshot keys, and the OS bars an app asks
-  for (see Shell link). When one goes, the shell puts back the app's pixels,
-  except any the app drew meanwhile.
+  the top (ESC held, or the battery about to run out) and for toasts. A
+  toast comes for the brightness, volume, mute and screenshot keys, a new
+  notice, or the app's own `toast`. When one goes, the shell puts back the
+  app's pixels, except any the app drew meanwhile.
 - The shell acts on the brightness, volume, mute and screenshot keys meanwhile.
 
 ## Shell link
 
-The shell handles `hello`, `pause`, `paused`, `resume`, `redraw`, `toast`,
-`awake`, `open`, `open-file` and `open-with`. It does not draw the OS bars, and that is not planned:
-`bars`, `title`, `softkeys`, `hints`, `softkey`, `content`, `theme` and
-`X-Gh0st-Bars` are not built. Apps draw their own bars, as the SDK does for
-Rust apps.
-
-An app can ask the shell to draw the OS top bar (title, network, battery and
-clock) and an OS bottom bar (soft keys or key hints). The app then draws only
-the rows between them. The shell watches the status sources for every app, so
-an app needs no timers and reads no status files.
-
-An app that never asks sees no change. Stock apps draw all 170 rows, as they
-always did.
+Each app has a socket to the shell, for the messages below. The shell draws
+no OS bars over an app: every app draws all 170 rows, its own top and
+bottom bars included. The SDK draws them for Rust apps (`sdk.md`). An app
+that never speaks on the link sees no change.
 
 ### Transport
 
 - Every app gets one end of a `socketpair(AF_UNIX, SOCK_SEQPACKET)`.
   `GH0ST_SHELL_FD` holds its fd number. Without that variable there is no
-  shell, and the app draws its own bars.
+  shell.
 - Set `FD_CLOEXEC` on the fd once you have it, so your children don't inherit
   it.
 - The socket has no path and no listener. Only the app holds its end.
@@ -150,21 +141,13 @@ App to shell:
 |---|---|
 | `hello` `2` | The app speaks the link, version 2. Without it the shell treats the app as stock |
 | `paused` | The answer to `pause`: the app draws nothing and reads no keys now |
-| `bars` `top`, `bottom`, `both` or `none` | Which OS bars to draw |
-| `title` text | The top bar's title. The default is the app's `Name` |
-| `softkeys` slot4 ... slot8 | Five soft keys, each `icon:label`. Either part may be empty. An empty slot is `:` |
-| `hints` `key=label` ... | Key hints instead of soft keys, such as `Enter=open` |
-| `softkey` n `on` or `off` | Shows soft key n (4 to 8) lit, for a toggle |
-| `toast` text | A short message over an OS bar for 2 s |
+| `toast` text | A short message above the bottom bar for 1.5 s. Not shown while the device is locked |
 | `awake` `1` or `0` | Keep the screen on while the app is in front, for a player or a clock. `0` lets it go dark again |
 | `open` name | Bring up app `name` (its desktop file stem, or the program its `Exec` runs). Only the app in front may ask. It pauses, and comes back when `name` closes |
-| `sound` name | Play a system sound: `move`, `select`, `back`, `open`, `close`, `lock`, `unlock`, `error`, `notice`, `warn` or `boot`. Only the app in front may ask, and only while the user has sounds on (`gh0st.sounds`): the app checks the setting, so a change in Settings counts at once. The shell plays nothing while dark or muted |
+| `sound` name | Play a system sound: `move`, `select`, `back`, `open`, `close`, `lock`, `unlock`, `error`, `notice`, `warn`, `boot`, `shutter`, `rec-start`, `rec-stop` or `count`. Only the app in front may ask, and only while the user has sounds on (`gh0st.sounds`): the app checks the setting, so a change in Settings counts at once. The shell plays nothing while dark or muted |
 | `open-file` path | Open a file in the app its type opens with, as `open` does. The path is absolute and the file exists. The shell toasts if none does |
 | `open-with` name path | Open a file in app `name`. The path is absolute and the file exists |
 | `leave` | Step back without closing: the app that opened this one comes back, or home, and this one runs on behind if it may (a player whose music plays on) |
-
-`icon` names a symbol built into gh0st, the Lucide set that `gh0st:<name>`
-uses.
 
 Shell to app:
 
@@ -174,32 +157,24 @@ Shell to app:
 | `open` path | Open this file: another app opened it here. The app is in front |
 | `action` tag id | Action `id` of this app's notice `tag` was picked in the notifications |
 | `lowmem` level | Memory is short: 50 low, 100 medium, 255 critical. Drop caches. Sent to every linked app, in front or behind |
-| `content` x y w h | The rect the app may draw in, sent at start and after every `bars` change |
-| `theme` name | The palette changed. Redraw with it |
-| `redraw` | The shell drew over the content. Redraw all of it |
 | `pause` | The app runs behind now. Stop drawing, close the keyboard, answer `paused` |
 | `resume` | The app is in front again. Open the keyboard and draw all of the screen |
 
 ### Rules
 
-- Draw only inside the last `content` rect. After a `bars` change, keep
-  drawing in the old rect until the new `content` arrives.
-- The shell sends without blocking. If the app doesn't read, the shell keeps
-  only the latest `content` and `theme` and sends them later.
-- Send with `MSG_NOSIGNAL`. If the shell goes away, keep running and draw your
-  own bars.
-- The shell shortens long titles and toasts, and drops toasts that come too
-  fast.
-- `X-Gh0st-Bars=top`, `bottom`, `both` or `none` in the `.desktop` file draws
-  the bars from the first frame, before the app has sent anything.
+- The shell sends without blocking. A message to an app whose queue is
+  full is lost.
+- Send with `MSG_NOSIGNAL`. If the shell goes away, keep running.
+- The shell shortens a long toast, and a new one replaces the one showing.
 
 ### Chips
 
 The screen sits right above the number keys 4 to 8, so the bottom bar's
 slots belong to those keys. `design.md` has the rules; in short:
 
-- 4 is Esc and has no chip, as in the template apps. 5, 6 and 7 hold the
-  page's actions. 8 is the app's menu.
+- 4 is Esc, as in the template apps, unless the page puts a chip there
+  (Files' Mark, Camera's Photos). 5, 6 and 7 hold the page's actions. 8 is
+  the app's menu.
 - No chip repeats Enter or Esc.
 - The keys send plain `KEY_4` to `KEY_8`, and the app reads them itself like
   every other key.

@@ -5,7 +5,7 @@ Service (`org.freedesktop.secrets`) on the session bus, so libsecret,
 `secret-tool`, python `keyring`, git's libsecret helper, Chromium and every
 other Linux app that keeps secrets use it unchanged.
 
-`gh0st session` runs beside it with two more session services:
+`gh0st session` runs beside it with four more session services:
 
 - `org.freedesktop.Notifications`: a notification becomes a notice file the
   shell toasts (`docs/apps.md`, Notifications). An app keeps eight at most.
@@ -14,6 +14,8 @@ other Linux app that keeps secrets use it unchanged.
   connection. A program outside apps is named by its pid, and keeps awake
   the app whose process group it is in.
 - The XDG portal (`docs/portal.md`).
+- `org.gh0st.Clipboard`: one clipboard for every app (`docs/apps.md`,
+  Session services).
 
 The shell starts both on socket pairs before any app, and starts one again
 the moment it dies, so no app gets time to take its bus names. A dead shell
@@ -57,7 +59,8 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
   existing vault only. Only a checked password can make a new vault, and
   one the system refuses at the lock screen locks it again.
 - A device lock closes the vault: the data key and every secret go, except
-  NetworkManager's Wi-Fi passwords.
+  NetworkManager's Wi-Fi passwords. None are stored yet: there is no
+  NetworkManager secret agent.
 - Attributes and labels stay in memory after the first unlock. A search
   while locked still finds the right items, reported locked, and the client
   asks to unlock them.
@@ -70,15 +73,15 @@ magic "GH0STKR1" | version 1 | argon2id m t p | salt[16]
 ## Who is asking
 
 - A process in a cgroup `app-<desktop stem>` right under `gh0st.service` is
-  that app. The shell puts apps there once isolation is on
-  (`docs/isolation.md`); until then every caller is its executable's path.
+  that app. The shell puts no app in such a cgroup yet, so every caller is
+  its executable's path.
 - The pid comes from the bus, with a pidfd where dbus-daemon gives one, so a
   reused pid can't pass for another program.
 - An item belongs to the app that stored it. To any other app it looks
   locked, `GetSecret` says `IsLocked`, and `Unlock` asks the user through
   the shell:
-  - Enter allows once, for this connection.
-  - 6 allows always; the vault keeps it.
+  - 5 allows once, for this connection.
+  - 7 allows always; the vault keeps it.
   - Esc says no.
 - A new question takes no answer for its first 600 ms, and Enter answers
   nothing: a key meant for the app can't approve what the app asked for.
@@ -144,10 +147,9 @@ prompt's end comes on the bus fd, which the page watches.
 
 ## Limits
 
-- An app that isn't isolated (`docs/isolation.md`), the terminal and
-  anything run through sudo can do what UID 1000 can: read keys while
-  another app is in front, or call the keyring under a name it chooses.
-  For them, approval is a speed bump, not a wall.
+- Every app, the terminal and anything run through sudo can do what UID
+  1000 can: read keys while another app is in front, or call the keyring
+  under a name it chooses. For them, approval is a speed bump, not a wall.
 - Sessions are `plain`. The bus is local and only UID 1000 can listen on
   it, so the DH session would add nothing; libsecret and python
   `secretstorage` fall back to plain.

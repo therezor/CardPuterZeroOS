@@ -66,7 +66,8 @@ Only systemd runs them, as root.
    `apt-cache show` adds sizes and summaries.
 7. Each package lands in a group: Gh0st OS (origin Gh0st), Security
    (Debian-Security) or System. It also gets a restart: the device for the
-   kernel set, `libc6` and `systemd`, Gh0st for `gh0st` and `gh0st-term`.
+   kernel set, `libc6`, `systemd`, `libsystemd0`, `udev` and `dbus`, Gh0st
+   for `gh0st`. Other packages, `gh0st-term` included, need none.
 8. Writes the state and posts, replaces or removes the notice.
 9. The daily run then refreshes the Store's app list under the same lock,
    and the Store posts its own notice, "3 app updates" (`docs/store.md`).
@@ -182,9 +183,9 @@ watches always have a target.
   size. It says when the device restarts at the end.
 - With the kernel set in the list and the battery at 50% or below, Install is
   not offered. The screen says why and how much charge there is.
-- Restart reboots the device when the kernel set, libc or systemd changed. When
-  only Gh0st changed it restarts Gh0st, which closes open apps and locks the
-  screen; the screen says so first.
+- Restart reboots the device when the kernel set, libc, systemd, udev or
+  D-Bus changed. When only Gh0st changed it restarts Gh0st, which closes
+  open apps and locks the screen; the screen says so first.
 - 7 List shows the packages by group, each with its versions and size. Enter
   opens one.
 - The menu: Install all, Check now, List packages, Clear downloads, then Help.
@@ -213,8 +214,9 @@ without a daemon.
 - `/var/lib/gh0st/notify/` is for system services, `~/.local/state/gh0st/notify/`
   for apps.
 - The file is named `<app>.<tag>`. Posting the same tag replaces the old one.
-- Lines: `app`, `title`, `body`, `tone`, `time`, `open` (the desktop id
-  Enter opens), and `count` (a number for the app's tile).
+- Lines: `title`, `body`, `tone`, `time`, `open` (the desktop id Enter
+  opens), `count` (a number for the app's tile) and a few more. The app is
+  the file name. `apps.md`, Notifications, has every key.
 
 The shell watches both folders with inotify. A new notice:
 
@@ -256,25 +258,27 @@ and the stock app debs.
 - **Limits.** Pages takes 1 GB per site. CI fails the publish past 800 MB.
   Past that, the pool moves to release assets.
 - **Versions move with their sources.** `os/build.sh` stamps each package
-  with the last commit that touched it: gh0st and gh0st-term with the code,
-  gh0st-base with its own folder and `os/repo`, the kernel set with
-  `os/kernel`, its packages and the firmware pins in `lock.json` (the kernel
-  and M5 commit are in its version already). A docs-only push publishes
-  nothing new.
+  with the last commit that touched it. A docs-only push publishes nothing
+  new.
+  - gh0st, gh0st-term, gh0st-camera and gh0st-media: the code, and the
+    libcamera pin that gh0st-camera depends on exactly.
+  - gh0st-base: its own folder and `os/repo`.
+  - The kernel set: `os/kernel`, its packages, the firmware pins in
+    `lock.json` and the M5 commit.
+  - gh0st-wifi: its folder and the firmware packages it takes files from.
 - **CI.** `.github/workflows/apt.yml` builds the debs, restores the pool from
   the Actions cache (falling back to the live site), publishes, builds the
   Store's catalog (`docs/store.md`), and deploys Pages. A tag also attaches
   its debs to the release. Setup of the key and
   Pages: `os/repo/README.md`.
-- **The image.** `gh0st-base` ships `os/repo/gh0st.sources`, the pin
-  and the key once `os/repo/gh0st-archive-keyring.pgp` exists; before
-  that the image has no Gh0st OS source, since a source apt can't check
-  would fail every check.
+- **The image.** `gh0st-base` ships `os/repo/gh0st.sources`, the pin and
+  the key. A build without `os/repo/gh0st-archive-keyring.pgp` leaves the
+  source out, since a source apt can't check would fail every check.
 
 ## Tested
 
-The spike ran in a container made from the release image's
-own root tree (`rootfs.tar`), with a throwaway Ed25519 key:
+In a container made from the release image's own root tree
+(`rootfs.tar`), with a throwaway Ed25519 key:
 
 - The image's apt (sqv) checks the Ed25519 signature.
 - gh0st upgrades itself. `/usr/libexec/gh0st-helper` stays a hard link to the
@@ -290,14 +294,15 @@ own root tree (`rootfs.tar`), with a throwaway Ed25519 key:
 - The Updates app ran beside it under `--sim` and followed the engine
   over inotify, from the check through Download, Install and Cleaning up to
   "17 updates installed". `systemd-analyze verify` passes the units.
-- The release image builds with all of it and passes its checks: 843 of
-  850 MB, the daily check's the only timer.
+- The release image builds with all of it and passes its checks, with
+  the daily check its only timer (`image-build.md`, Checks).
 - The engine itself (`gh0st update check`, then `install`) ran there as
   root: 14 updates found in 4 s, the notice posted, the download and dpkg
   phases reported, the cache cleaned, and "Restart to finish" posted for
   libc6.
 
 The captured output is the engine's parser fixtures, in
-`crates/gh0st/src/update/testdata`. The device test is still to come.
+`crates/gh0st/src/update/testdata`. These checks ran in the container, not
+on a device.
 `apt-get update --error-on=any` makes a failed source fail the run, so an
 offline or unsigned check never passes on old lists.

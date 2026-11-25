@@ -55,7 +55,7 @@ spy", and 6 has a Skip chip. Esc goes back to the notice.
 |---|---|---|
 | 1 | Country | The `iso3166.tab` list; a letter jumps to it, as in Settings. Sets the Wi-Fi country (`regdom`) and narrows the time zones. 7 Skip keeps the world country. |
 | 2 | Time zone | The zones `zone.tab` gives that country, as far as `timedatectl list-timezones` knows them. "Other" opens the region list. 7 Skip keeps the zone. |
-| 3 | Privacy | The private defaults, each switchable: hostname not sent, IPv6 privacy addresses, logs off. Network time and SSH are on System, the daily update check on Updates, Bluetooth on its page: each setting has one home. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
+| 3 | Privacy | The private defaults, five rows: Send device name (off), IPv6 privacy address (on), Keep copied text when locked, Remember recent files, and Keep logs (Off). Network time and SSH are on System, the daily update check on Updates, Bluetooth on its page: each setting has one home. Enter flips a row; Done on 6 goes on. It comes before the network, because the address and hostname choices apply when a network is joined. |
 | 4 | Network | The Wi-Fi list: Enter joins, 5 Scan, 7 Skip. It unblocks the radio first: the image boots with it blocked. A cable needs no step: NetworkManager connects it as soon as it is in, before setup too, and network time then syncs (System turns it off). The address and hostname defaults cover a cable from the start. Wi-Fi goes online only here. |
 | 5 | Date and time | Only when the clock has not synced. The date and the time as two fields, filled in, to correct. Saved to the system clock and the RTC. |
 | 6 | Account | The name and the password, then the password again on its own screen. |
@@ -223,7 +223,7 @@ chips, hint bar, menu, help and dialogs came with the design system.
   label, puts Skip on 7 or Done on 6, and has Power off in its menu. Esc on its own page
   goes back a step. It calls `cx.done()` once a country or time zone is set, or a network
   joined, after the job's success. Tests in `tests/embed.rs`.
-- `pages::privacy`: the three privacy rows, for Settings > Privacy and setup alike. The
+- `pages::privacy`: the five privacy rows, for Settings > Privacy and setup alike. The
   network rows read what NetworkManager runs with from its config files
   (`sysconf::nm_privacy`) and change through the helper verbs.
 - System > Date and time: a dialog, "2026-11-21 14:32", set through `set-time`.
@@ -272,7 +272,7 @@ has the screen; `apps.md`, Pausing, has what happens to the app in front.
   step.
 - The image's checks: the marker, no UID 1000, the unit enabled; the QEMU smoke test sees
   setup start and no `user@1000`.
-- On the device, from a fresh flash: setup after the logo; no traffic before step 6; the
+- On the device, from a fresh flash: setup after the logo; no traffic before step 4, Network; the
   chosen Wi-Fi address policy on join; the shell as the new user with sound; a power cut at
   each step resumes; SSH with the new password once turned on; the lock screen with and
   without **Unlock with password**.

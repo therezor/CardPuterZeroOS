@@ -5,6 +5,9 @@
 A patched ST7789V driver that times every send against the panel's scan, and a present ioctl that
 locks gh0st's animations to the refresh.
 
+The image ships it in `gh0st-panel-modules`. On a stock card, install it by
+hand:
+
 ```sh
 cd os/kernel/panel-mipi-dbi-m && sudo ./install.sh   # on the device, then reboot
 ```

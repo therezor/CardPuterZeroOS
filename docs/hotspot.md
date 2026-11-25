@@ -111,6 +111,6 @@ On the device (checked on the stock card over a cable, unless marked):
 | From upstream, 10.42.0.0/24 can't be reached | not yet |
 | `ss` and `nft` back to baseline after off | not yet |
 | Reboot leaves it off | not yet |
-| Our image: iw, dnsmasq-base and nftables come with the gh0st deb | `os/build.sh check release` passes: 451 packages, 845 of 850 MB, `iw` resolves, no Wi-Fi profile in the image |
+| Our image: iw, dnsmasq-base and nftables come with the gh0st deb | `os/build.sh check release` passes: `iw` resolves, no Wi-Fi profile in the image |
 | The hotspot running on our image | not yet |
 | Idle cost with the hotspot off equals the baseline (`measure.sh`) | not yet |

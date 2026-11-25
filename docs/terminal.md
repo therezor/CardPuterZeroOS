@@ -43,8 +43,7 @@ Typing goes to the program as xterm sends it: Ctrl with letters and symbols
 PgUp, PgDn, Insert, Delete and F1 to F12. Per M5Stack's driver source the
 keyboard's Fn layer gives those: Fn+1..0 are F1 to F10, Fn+O and Fn+P F11
 and F12, Fn+N End, Fn+L and Fn+M PgUp and PgDn, Fn+B Insert, Fn+Backspace
-Delete. Not measured on the device yet; the same source disagrees with
-`hardware-facts.md` on two keys.
+Delete. Not measured on the device yet.
 
 - Fn+K is the switcher, not Home. In scroll mode, `k` sends Home.
 - **Fn+Space enters scroll mode, and leaves it.** Fn is sticky, so that is
@@ -67,10 +66,10 @@ to the program. Rows, most used first:
 | | Grid `‹ Magnify 80x24 ›` | `m` |
 | | Find, Copy lines, Paste | `n` `v` `p` |
 | Tabs | New tab, Tab `‹ 1 of 2 ›`, Close tab | `o` `Tab` `w` |
-| Settings | Top bar, Font `‹ Terminus ›`, More settings | `b`, none, `s` |
-| App | Keys, Close app | `h` |
+| Settings | Top bar, More settings | `b`, `s` |
+| App | Help, Close app | none |
 
-Text size, Grid, Tab, Top bar and Font change in place: Z and C step them,
+Text size, Grid, Tab and Top bar change in place: Z and C step them,
 Enter steps forward, and the menu stays open. The other rows close it and
 act. Close tab and Close app need Enter twice. A row's key picks it while
 the menu is open.

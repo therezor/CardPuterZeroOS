@@ -191,8 +191,8 @@ the front one underlined, as the shell shows open apps.
    neither. While the hotspot runs, its radio tower, ahead of a cable, so
    it is never on unseen.
 4. Bluetooth, while it is on.
-5. A bell and a count while notifications wait. On the shell's screens only,
-   until the OS bars draw over apps too.
+5. A bell and a count while notifications wait. On the shell's screens only:
+   the shell draws no bars over apps.
 6. One word of the app's own, in a tone, after a dot: "REC" while recording.
 
 When the title does not fit, the parent goes first, then Bluetooth, then the
@@ -542,7 +542,7 @@ Two more savers, each its own setting:
 | Template | Here |
 |---|---|
 | Title bar, 30 px, title and status | Top bar, 18 px |
-| Five icon buttons over 4 to 8, ESC = 4 | Chips over 5 to 8; 4 is still Esc |
+| Five icon buttons over 4 to 8, ESC = 4 | Chips over 4 to 8; 4 is Esc where no chip sits on it |
 | Hold 4 or ESC on the first page to exit | Hold Esc 0.7 s |
 | Fn and H, help popup | Fn and H, help |
 | Fn and J, screenshot | the same |

@@ -24,8 +24,8 @@ There are two sides, A and B, each with its own place, folder, selection and
 marks: two places open at once. Tab flips between them, and the top bar
 names the side and its folder: `A · ~/Music`. The clipboard serves both.
 
-Each side's root is **Places**: Home, Card (`/`), Downloads, Trash, every
-saved server, and Add server. Side A opens at Home, side B at Places.
+Each side's root is **Places**: Home, Card (`/`), Downloads, Recent, Trash,
+every saved server, and Add server. Side A opens at Home, side B at Places.
 
 Every folder starts with a ".." row: Enter on it goes up, as Esc does. A
 folder opens with the cursor on its first entry, one Up below "..". A row

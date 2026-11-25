@@ -89,7 +89,7 @@ Measured on a CardputerZero. Stock is the M5Stack image with APPLaunch 0.6.105.
 | 💤 Launcher CPU, one idle minute | ❌ 5,430 ms | ✅ 0 to 10 ms |
 | ⏰ Launcher wakeups, one idle minute | ❌ 35,026 | ✅ 12 to 24 |
 | 🧵 Launcher threads | ❌ 14 | ✅ 1 |
-| 🖥️ Full-screen redraws | ❌ 25 fps, tearing | ✅ 50.8 fps, no tearing |
+| 🖥️ Full-screen redraws | ❌ 40 fps, tearing | ✅ 50.8 fps, no tearing |
 | 💾 RAM used at idle | ❌ 216 MB, plus 93 MB in swap | ✅ About 140 MB, no swap |
 | 🔋 Battery current, screen off | ❌ 305 mA, no saver | ✅ 212 mA with USB power saving |
 | 🔐 SSH | ❌ On by default | ✅ Off until you turn it on |
