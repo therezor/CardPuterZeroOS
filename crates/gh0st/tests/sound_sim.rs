@@ -115,11 +115,14 @@ fn a_paused_app_is_parked_and_unparked() {
         r.log,
         r.stderr
     );
-    let pgid = calls
+    let parked = calls
         .iter()
         .find_map(|l| l.strip_prefix("audio park "))
         .unwrap_or_else(|| panic!("never parked:\n{}\n{}", r.log, r.stderr));
-    let park = format!("audio park {pgid}");
+    // The group, then the app: a sandboxed app's streams carry its name.
+    let (pgid, app) = parked.split_once(' ').unwrap_or((parked, ""));
+    assert!(!app.is_empty(), "{}", r.log);
+    let park = format!("audio park {pgid} {app}");
     let unpark = format!("audio unpark {pgid}");
     assert_eq!(
         calls[1..],

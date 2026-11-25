@@ -226,6 +226,22 @@ impl Watch {
         }
     }
 
+    /// Watches one more folder, on a watch made by `dirs`.
+    #[cfg(target_os = "linux")]
+    pub fn add(&self, dir: &Path) {
+        use std::os::unix::ffi::OsStrExt;
+        let mut c = dir.as_os_str().as_bytes().to_vec();
+        c.push(0);
+        let mask = libc::IN_CREATE
+            | libc::IN_DELETE
+            | libc::IN_CLOSE_WRITE
+            | libc::IN_MOVED_FROM
+            | libc::IN_MOVED_TO;
+        // SAFETY: inotify_add_watch with a NUL-terminated path; adding a
+        // folder already watched changes nothing.
+        unsafe { libc::inotify_add_watch(self.fd, c.as_ptr() as *const libc::c_char, mask) };
+    }
+
     #[cfg(target_os = "linux")]
     fn open(proto: libc::c_int, groups: u32) -> std::io::Result<Watch> {
         // SAFETY: plain socket and bind calls with a zeroed sockaddr_nl.

@@ -30,6 +30,7 @@ use gh0st_core::notify::{self, Dismissed, Notice};
 use gh0st_core::password::{self, Account, Tries};
 use gh0st_core::rfkill;
 use gh0st_core::rt;
+use gh0st_core::sandbox::{self, Cgroups};
 use gh0st_core::script::Script;
 use gh0st_core::sound::Sound;
 use gh0st_core::status::{self, Net, Watch};
@@ -391,6 +392,10 @@ struct Shell {
     services: Services,
     /// Under `--sim`: tests may swap the programs that check passwords.
     sim: bool,
+    /// Where each app's cgroup goes, when the unit delegates one.
+    cgroups: Option<Cgroups>,
+    /// bwrap is there and this is the device: apps run sandboxed.
+    sandboxing: bool,
     /// The binary `gh0st audio` runs from. In a sim, only a test's stub.
     audio_exe: Option<PathBuf>,
     /// System sounds.
@@ -447,6 +452,14 @@ impl Shell {
             libc::SIGUSR1,
         ])
         .map_err(|e| format!("signals: {e}"))?;
+        // Before anything reads them: the keys an app must not set move out
+        // of config.json, and the folders a sandbox locks are made.
+        if let Err(e) = Config::migrate(&config::default_path()) {
+            eprintln!("gh0st shell: settings: {e}");
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            sandbox::prepare(Path::new(&home), &notify::user_dir());
+        }
         let config = Config::load(&config::default_path());
         let t = Theme::new(theme::named(config.palette_name()));
         let (display, input): (Box<dyn Display>, Input) = match &sim {
@@ -577,6 +590,8 @@ impl Shell {
             },
             prompts: Prompts::default(),
             sim: sim.is_some(),
+            cgroups: if on_device { Cgroups::own() } else { None },
+            sandboxing: on_device && Path::new(sandbox::BWRAP).exists(),
             audio_exe: if on_device {
                 Some(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/gh0st")))
             } else {
@@ -1866,6 +1881,9 @@ impl Shell {
             if self.debug {
                 eprintln!("gh0st shell: {} closed at {}", t.name, now - self.t0);
             }
+            if let Some(c) = &self.cgroups {
+                c.remove(t.id.strip_suffix(".desktop").unwrap_or(&t.id));
+            }
             if t.sound_parked {
                 audio(self.audio_exe.as_deref(), "unpark", Some(t.pgid));
             }
@@ -2719,11 +2737,24 @@ impl Shell {
         }
     }
 
+    /// Watches an app's own notice folder too.
+    fn watch_notices(&self, dir: &Path) {
+        #[cfg(target_os = "linux")]
+        for (wake, w) in &self.watches {
+            if *wake == Wake::Notices {
+                w.add(dir);
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = dir;
+    }
+
     /// Reads the notice folders again. With `announce`, a notice not seen
     /// before shows as a toast, unless the screen is dark or locked.
     fn reload_notices(&mut self, announce: bool) {
         let mut all = notify::read_dir(&notify::system_dir(), true);
         all.extend(notify::read_dir(&notify::user_dir(), false));
+        all.extend(notify::read_app_dirs(&notify::user_dir()));
         self.dismissed.keep_only(&all);
         all.retain(|n| !(n.system && self.dismissed.has(n)));
         all.sort_by_key(|n| std::cmp::Reverse(n.time));
@@ -2842,6 +2873,13 @@ impl Shell {
             self.dismissed.add(n);
             if let Err(e) = self.dismissed.save(&notify::dismissed_path()) {
                 eprintln!("gh0st shell: notices: {e}");
+            }
+        } else if let Some(p) = &n.from {
+            match std::fs::remove_file(p) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    eprintln!("gh0st shell: notices: {e}")
+                }
+                _ => {}
             }
         } else if let Err(e) = notify::remove(&notify::user_dir(), &n.app, &n.tag) {
             eprintln!("gh0st shell: notices: {e}");
@@ -3624,6 +3662,31 @@ impl Shell {
     /// until the app is paused or gone.
     fn launch(&mut self, app: &App, files: &[PathBuf]) {
         let argv = child::argv(app, &self.terminal, files);
+        let stem = app.id().to_string();
+        let iso = apps::isolation(&self.config, app, gh0st_core::store::needs_root(&stem));
+        let argv = if self.sandboxing && iso.sandbox {
+            let user = notify::user_dir();
+            let own = sandbox::notice_dir(&user, &stem);
+            let _ = std::fs::create_dir_all(&own);
+            self.watch_notices(&own);
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            let host = sandbox::Host::read(&home, &runtime);
+            sandbox::argv(&host, iso.grants, &stem, &user, &argv)
+        } else {
+            argv
+        };
+        let cgroup = self.cgroups.as_ref().and_then(|c| c.make(&stem));
+        let extra = child::Extra {
+            cgroup: cgroup.as_deref(),
+            // Pulse reports the pid inside a sandbox; `gh0st audio` finds
+            // the app's streams by this instead.
+            env: vec![("PULSE_PROP", format!("gh0st.app={stem}"))],
+        };
         let fb_path = self.display.device();
         let kb_path = self.input.path();
         let dev = Devices {
@@ -3638,7 +3701,13 @@ impl Shell {
             Ok((l, a)) => (Some(l), Some(a)),
             Err(_) => (None, None),
         };
-        let spawned = child::spawn(&argv, &dev, pause, app_end.as_ref().map(|f| f.as_raw_fd()));
+        let spawned = child::spawn_with(
+            &argv,
+            &dev,
+            pause,
+            app_end.as_ref().map(|f| f.as_raw_fd()),
+            &extra,
+        );
         // The app holds its own copy now.
         drop(app_end);
         if let Some(l) = &link {
@@ -3795,7 +3864,8 @@ impl Shell {
         t.state = tasks::State::Paused;
         t.used = now;
         // A stopped app's open stream keeps the codec running.
-        audio(self.audio_exe.as_deref(), "park", Some(t.pgid));
+        let stem = t.id.strip_suffix(".desktop").unwrap_or(&t.id);
+        audio_of(self.audio_exe.as_deref(), "park", Some(t.pgid), Some(stem));
         t.sound_parked = true;
         if self.debug {
             eprintln!("gh0st shell: paused {} at {}", t.name, now - self.t0);
@@ -4281,12 +4351,19 @@ impl Shell {
 
 /// `gh0st audio VERB [PGID]` as a child, since pactl can take a while.
 fn audio(exe: Option<&Path>, verb: &str, pgid: Option<i32>) {
+    audio_of(exe, verb, pgid, None);
+}
+
+/// As `audio`, naming the app too: a sandboxed app's streams carry its
+/// stem, not a pid the shell knows.
+fn audio_of(exe: Option<&Path>, verb: &str, pgid: Option<i32>, app: Option<&str>) {
     let Some(exe) = exe.and_then(Path::to_str) else {
         return;
     };
     let pgid = pgid.map(|p| p.to_string());
     let mut argv = vec![exe, "audio", verb];
     argv.extend(pgid.as_deref());
+    argv.extend(app);
     child::fire(&argv);
 }
 
@@ -4311,7 +4388,15 @@ fn watches(d: &Dirs) -> Vec<(Wake, Watch)> {
     let user = notify::user_dir();
     let _ = std::fs::create_dir_all(&user);
     let system = notify::system_dir();
-    let notices = Watch::dirs(&[system.as_path(), user.as_path()]).map(|w| (Wake::Notices, w));
+    let notices = Watch::dirs(&[system.as_path(), user.as_path()]).map(|w| {
+        // Sandboxed apps' own folders, from earlier runs.
+        for e in std::fs::read_dir(&user).into_iter().flatten().flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                w.add(&e.path());
+            }
+        }
+        (Wake::Notices, w)
+    });
     [apps, power, links, notices]
         .into_iter()
         .filter_map(Result::ok)

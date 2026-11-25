@@ -6,7 +6,7 @@
 //! so `pactl` never blocks its loop.
 //!
 //! ```text
-//! gh0st audio park PGID     after the shell stops the group
+//! gh0st audio park PGID APP after the shell stops the group
 //! gh0st audio unpark PGID   when it resumes, or once the group is gone
 //! gh0st audio clear         at shell start: what a previous shell left
 //! ```
@@ -32,7 +32,11 @@ pub fn main(args: &[String]) -> i32 {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match args.as_slice() {
         ["park", pgid] => pgid.parse().map_or(2, |p| {
-            park(p);
+            park(p, None);
+            0
+        }),
+        ["park", pgid, app] => pgid.parse().map_or(2, |p| {
+            park(p, Some(app));
             0
         }),
         ["unpark", pgid] => pgid.parse().map_or(2, |p| {
@@ -44,7 +48,7 @@ pub fn main(args: &[String]) -> i32 {
             0
         }
         _ => {
-            eprintln!("usage: gh0st audio park|unpark PGID | clear");
+            eprintln!("usage: gh0st audio park PGID [APP] | unpark PGID | clear");
             2
         }
     }
@@ -56,19 +60,22 @@ enum Kind {
     Capture,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Stream {
     kind: Kind,
     index: u32,
     corked: bool,
     pid: Option<i32>,
+    /// `gh0st.app`, which the shell sets through PULSE_PROP. A sandboxed
+    /// app's own pid is one inside its sandbox, so this is what names it.
+    app: Option<String>,
 }
 
 fn sink_name(pgid: i32) -> String {
     format!("{PREFIX}{pgid}")
 }
 
-fn park(pgid: i32) {
+fn park(pgid: i32, app: Option<&str>) {
     let members: Vec<i32> = procfs::processes()
         .filter(|p| p.pgrp == pgid)
         .map(|p| p.pid)
@@ -89,7 +96,11 @@ fn park(pgid: i32) {
     }
     let ours: Vec<Stream> = found
         .into_iter()
-        .filter(|s| !s.corked && s.pid.is_some_and(|p| members.contains(&p)))
+        .filter(|s| {
+            !s.corked
+                && (s.pid.is_some_and(|p| members.contains(&p))
+                    || app.is_some_and(|a| s.app.as_deref() == Some(a)))
+        })
         .collect();
     if ours.is_empty() {
         return;
@@ -172,6 +183,7 @@ fn parse_streams(text: &str, kind: Kind) -> Vec<Stream> {
                     index,
                     corked: false,
                     pid: None,
+                    app: None,
                 });
             }
         } else if let Some(s) = out.last_mut() {
@@ -179,6 +191,8 @@ fn parse_streams(text: &str, kind: Kind) -> Vec<Stream> {
                 s.corked = v.trim() == "yes";
             } else if let Some(v) = line.strip_prefix("application.process.id = ") {
                 s.pid = v.trim_matches('"').parse().ok();
+            } else if let Some(v) = line.strip_prefix("gh0st.app = ") {
+                s.app = Some(v.trim_matches('"').to_string());
             }
         }
     }
@@ -227,8 +241,17 @@ mod tests {
             index,
             corked,
             pid: Some(pid),
+            app: None,
         };
         assert_eq!(s, vec![want(284, false, 19855), want(287, true, 20110)]);
+    }
+
+    #[test]
+    fn a_sandboxed_stream_is_named_by_its_tag() {
+        let text = "Sink Input #2623\n\tCorked: no\n\tProperties:\n\t\tgh0st.app = \"zsynth\"\n\t\tapplication.process.id = \"4\"\n";
+        let s = parse_streams(text, Kind::Playback);
+        assert_eq!(s[0].app.as_deref(), Some("zsynth"));
+        assert_eq!(s[0].pid, Some(4));
     }
 
     // Written by hand in the layout of the device's sink-inputs.

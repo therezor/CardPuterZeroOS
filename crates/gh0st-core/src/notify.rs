@@ -91,6 +91,9 @@ pub struct Notice {
     pub default: String,
     /// Posted through D-Bus: actions go back to the poster on the bus.
     pub via_bus: bool,
+    /// The file it came from, when a sandboxed app posted it in its own
+    /// folder: the name in it is the app's word, not the shell's.
+    pub from: Option<PathBuf>,
 }
 
 impl Notice {
@@ -256,6 +259,31 @@ pub fn read_dir(dir: &Path, system: bool) -> Vec<Notice> {
         .collect();
     out.sort_by(|a, b| b.time.cmp(&a.time).then_with(|| a.id().cmp(&b.id())));
     out.truncate(MAX_NOTICES);
+    out
+}
+
+/// Notices sandboxed apps posted, each in its own folder under `dir`
+/// (`sandbox::notice_dir`). The folder names the app, whatever the file
+/// says, and Enter opens only that app.
+pub fn read_app_dirs(dir: &Path) -> Vec<Notice> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in entries.flatten() {
+        let Ok(stem) = e.file_name().into_string() else {
+            continue;
+        };
+        if stem.starts_with('.') || !e.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        for mut n in read_dir(&e.path(), false) {
+            n.from = Some(e.path().join(n.id()));
+            n.app = stem.clone();
+            n.open.clear();
+            out.push(n);
+        }
+    }
     out
 }
 
