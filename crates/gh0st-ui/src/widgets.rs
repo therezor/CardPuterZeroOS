@@ -838,6 +838,9 @@ pub fn selection(c: &mut Canvas, t: &Theme, r: Rect) {
     let under = Rect::new(r.x, r.y + t.m.lift, r.w, r.h);
     c.round_rect(under, t.m.radius_large, theme::foot(t.c.surface));
     c.pane(r, t.m.radius_large, t.c.surface);
+    // An accent edge: the frosted pane alone is faint over a bright
+    // wallpaper.
+    c.stroke_round_rect(r, t.m.radius_large, t.c.accent);
 }
 
 /// What a grid tile or list row shows for one app.

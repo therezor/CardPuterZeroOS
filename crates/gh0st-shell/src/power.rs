@@ -11,7 +11,8 @@ use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, Chip, Hint, Look, Status};
 
 const TITLE: &str = "Restart or power off?";
-const BODY: &str = "Open apps close first. After a power off, turn the side switch off and on to start.";
+const BODY: &str =
+    "Open apps close first. After a power off, turn the side switch off and on to start.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {

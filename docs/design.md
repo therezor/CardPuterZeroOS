@@ -335,9 +335,10 @@ Depth comes from a ledge, not lines or shadows. A thing that stands up is
 flat colour on a darker foot (`theme::foot`): 2 px under an app badge, a
 selected tile or card, a dialog and a toast (`Metrics::lift`); 1 px under
 a settings row's icon, a selected row, a key pill and a tag
-(`Metrics::chip_lift`). What is selected stands up off the page; nothing
-draws a ring around it. Only the selected tile or card stands: the rest
-sit flat on the page. Corners are
+(`Metrics::chip_lift`). What is selected stands up off the page. A
+selected tile, app row or switcher card also has a 1 px accent edge, so it
+holds its own over a bright wallpaper. Only the selected tile or card
+stands: the rest sit flat on the page. Corners are
 round and smoothed: 4 px on rows and chips, 5 on app badges, 6 on tiles
 and panes, 7 on cards, 2 on key pills. Every effect is a flat fill, a fill
 that steps from one colour to another, or a picture baked once: nothing
