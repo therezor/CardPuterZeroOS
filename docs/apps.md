@@ -105,8 +105,11 @@ An entry without a field code opens no files.
 - While an app is in front, the shell draws over it only for a banner across
   the top (ESC held, or the battery about to run out) and for toasts. A
   toast comes for the brightness, volume, mute and screenshot keys, a new
-  notice, or the app's own `toast`. When one goes, the shell puts back the
-  app's pixels, except any the app drew meanwhile.
+  notice, or the app's own `toast`. The panel driver lays them over what
+  the app draws, so the app's redraws never hide them and its own pixels
+  are never touched. On M5's driver the shell draws them into the app's
+  pixels instead, lays them on again when the app paints over them, and
+  puts the app's pixels back when they go.
 - The shell acts on the brightness, volume, mute and screenshot keys meanwhile.
 
 ## Shell link

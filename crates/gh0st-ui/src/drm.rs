@@ -446,6 +446,31 @@ impl crate::display::Display for Drm {
         }
     }
 
+    fn read_rect(&mut self, c: &mut Canvas, area: Rect) {
+        match &mut self.overlay {
+            Some(fb) => fb.read_rect(c, area),
+            None => {
+                let area = area.intersect(&c.bounds()).intersect(&self.front.bounds());
+                for y in area.y..area.bottom() {
+                    c.copy_span_from(&self.front, y, area.x, area.w);
+                }
+            }
+        }
+    }
+
+    /// Overlays are for apps in front, which draw through fbdev.
+    fn overlay_set(&mut self, slot: u8, area: Rect, px: &[u16], mask: Option<&[u8]>) -> bool {
+        self.overlay
+            .as_mut()
+            .is_some_and(|fb| fb.overlay_set(slot, area, px, mask))
+    }
+
+    fn overlay_clear(&mut self, slot: u8) {
+        if let Some(fb) = &mut self.overlay {
+            fb.overlay_clear(slot);
+        }
+    }
+
     fn device(&self) -> String {
         self.fbdev.clone()
     }

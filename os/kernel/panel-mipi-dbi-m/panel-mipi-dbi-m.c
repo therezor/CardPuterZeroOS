@@ -22,6 +22,11 @@
  * - Fast copy: rows are memcpy'd out of the write-combined GEM buffer, then
  *   swapped and transposed in one pass. Per-pixel loads from WC memory cost
  *   6.7 ms a frame.
+ * - Overlays: GH0ST_FBIO_OVERLAY hands the driver up to two small images
+ *   that it lays over every send, so an fbdev app drawing underneath never
+ *   paints over the shell's banner or toast. They are stored in send order
+ *   and composed after the copy, before the scan wait, so a send's size and
+ *   timing are unchanged. Setting or clearing one sends only its rows.
  * Each is a module parameter, for tuning on the device.
  */
 
@@ -33,9 +38,13 @@
 #include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/overflow.h>
 #include <linux/property.h>
 #include <linux/regulator/consumer.h>
+#include <linux/sched.h>
 #include <linux/spi/spi.h>
+#include <linux/string.h>
+#include <linux/uaccess.h>
 
 #include <drm/clients/drm_client_setup.h>
 #include <drm/drm_atomic_helper.h>
@@ -52,6 +61,7 @@
 #include <drm/drm_mipi_dbi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_modeset_helper.h>
+#include <drm/drm_rect.h>
 
 #include <video/mipi_display.h>
 
@@ -97,6 +107,31 @@ MODULE_PARM_DESC(te_vblank_high, "TE is high during vertical blanking (default t
 /* Returns once the fbdev mapping's writes are on the wire. Stock fbdev: -ENOTTY. */
 #define GH0ST_FBIO_PRESENT	_IO('F', 0xC0)
 
+/*
+ * Sets or clears an overlay slot: slot 0 the shell's banner, 1 its popup.
+ * w or h 0 clears. pixels: w*h RGB565, row-major. mask: w*h bytes, non-zero
+ * where the overlay shows, or 0 for all of it. Stock fbdev: -ENOTTY.
+ */
+struct gh0st_fb_overlay {
+    __u32 slot;
+    __u32 flags;
+    __u16 x, y, w, h;
+    __u64 pixels;
+    __u64 mask;
+};
+#define GH0ST_FBIO_OVERLAY	_IOW('F', 0xC1, struct gh0st_fb_overlay)
+#define GH0ST_OVERLAY_SLOTS	2
+#define GH0ST_OVERLAY_MAX_PX	16384
+
+/* One slot, in tbuf's order: column x of the rect is px[x * h ...]. */
+struct gh0st_overlay {
+    struct drm_rect r;
+    unsigned int h;
+    /* 0xffff where the overlay shows, or NULL for all of it. */
+    u16 *mask;
+    u16 px[];
+};
+
 static uint fbdev_delay = 1;
 module_param(fbdev_delay, uint, 0444);
 MODULE_PARM_DESC(fbdev_delay, "Jiffies fbdev waits after a write before sending, 0 = upstream HZ/20 (default 1)");
@@ -138,6 +173,11 @@ struct panel_mipi_dbi_device {
     /* One row of the framebuffer, for the fast copy. */
     u16 *line;
     struct mutex display_lock;		/* Serialize reset and display transfers */
+    /* Overlays. ov_lock guards the slots; ov_set is read without it first. */
+    struct mutex ov_lock;
+    struct gh0st_overlay *ov[GH0ST_OVERLAY_SLOTS];
+    unsigned int ov_set;
+    pid_t ov_owner;			/* tgid that set them, cleared on its close */
 };
 
 static inline struct panel_mipi_dbi_device *
@@ -630,6 +670,46 @@ static bool panel_mipi_dbi_fast_copy(struct panel_mipi_dbi_device *panel,
 }
 
 /*
+ * Lays the overlays over the transposed rect in tbuf. Only their own
+ * pixels cost anything: a memcpy per column, or a masked merge.
+ */
+static void panel_mipi_dbi_compose(struct panel_mipi_dbi_device *panel,
+                   const struct drm_rect *rect)
+{
+    unsigned int h = rect->y2 - rect->y1;
+    unsigned int i, k, n;
+    int x;
+
+    mutex_lock(&panel->ov_lock);
+    for (i = 0; i < GH0ST_OVERLAY_SLOTS; i++) {
+        struct gh0st_overlay *o = panel->ov[i];
+        struct drm_rect c;
+
+        if (!o)
+            continue;
+        c = o->r;
+        if (!drm_rect_intersect(&c, rect))
+            continue;
+        n = c.y2 - c.y1;
+        for (x = c.x1; x < c.x2; x++) {
+            u16 *d = panel->tbuf + (x - rect->x1) * h + (c.y1 - rect->y1);
+            size_t off = (size_t)(x - o->r.x1) * o->h + (c.y1 - o->r.y1);
+            const u16 *src = o->px + off;
+            const u16 *m;
+
+            if (!o->mask) {
+                memcpy(d, src, n * 2);
+                continue;
+            }
+            m = o->mask + off;
+            for (k = 0; k < n; k++)
+                d[k] = (d[k] & ~m[k]) | src[k];
+        }
+    }
+    mutex_unlock(&panel->ov_lock);
+}
+
+/*
  * Sends one damaged rectangle. Native order transposes it so pixels go out
  * along the panel's scan lines: column y + top_offset of scan line x. With
  * MADCTL 0x80 that lands where MADCTL 0xA0 put landscape pixel (x, y), but
@@ -663,6 +743,8 @@ static void panel_mipi_dbi_fb_dirty(struct iosys_map *src, struct drm_framebuffe
                 for (y = 0; y < h; y++)
                     panel->tbuf[x * h + y] = tx[y * w + x];
         }
+        if (READ_ONCE(panel->ov_set))
+            panel_mipi_dbi_compose(panel, rect);
         out = panel->tbuf;
         xs = rect->y1 + dbidev->top_offset;
         xe = rect->y2 - 1 + dbidev->top_offset;
@@ -792,6 +874,147 @@ DEFINE_DRM_GEM_DMA_FOPS(panel_mipi_dbi_fops);
 static struct fb_ops panel_mipi_dbi_fb_ops;
 static int (*panel_mipi_dbi_helper_ioctl)(struct fb_info *info, unsigned int cmd,
                       unsigned long arg);
+static int (*panel_mipi_dbi_helper_release)(struct fb_info *info, int user);
+
+static struct panel_mipi_dbi_device *panel_mipi_dbi_of_info(struct fb_info *info)
+{
+    struct drm_fb_helper *helper = info->par;
+
+    return to_panel_mipi_dbi_device(drm_to_mipi_dbi_dev(helper->dev));
+}
+
+/* Grows u by r. An empty u takes r. */
+static void panel_mipi_dbi_rect_union(struct drm_rect *u, const struct drm_rect *r)
+{
+    if (!drm_rect_visible(r))
+        return;
+    if (!drm_rect_visible(u)) {
+        *u = *r;
+        return;
+    }
+    u->x1 = min(u->x1, r->x1);
+    u->y1 = min(u->y1, r->y1);
+    u->x2 = max(u->x2, r->x2);
+    u->y2 = max(u->y2, r->y2);
+}
+
+/* Swaps slot i for o under the lock; returns the old one, and grows dmg. */
+static struct gh0st_overlay *panel_mipi_dbi_overlay_swap(struct panel_mipi_dbi_device *panel,
+                             unsigned int i, struct gh0st_overlay *o,
+                             struct drm_rect *dmg)
+{
+    struct gh0st_overlay *old = panel->ov[i];
+
+    panel->ov[i] = o;
+    WRITE_ONCE(panel->ov_set, o ? panel->ov_set | BIT(i) : panel->ov_set & ~BIT(i));
+    if (old)
+        panel_mipi_dbi_rect_union(dmg, &old->r);
+    if (o)
+        panel_mipi_dbi_rect_union(dmg, &o->r);
+    return old;
+}
+
+/* Sends rows the overlays changed. The worker re-reads them from the buffer. */
+static void panel_mipi_dbi_overlay_damage(struct fb_info *info, const struct drm_rect *d)
+{
+    if (drm_rect_visible(d))
+        drm_fb_helper_damage_area(info, d->x1, d->y1, drm_rect_width(d), drm_rect_height(d));
+}
+
+/*
+ * GH0ST_FBIO_OVERLAY. The copy, the transpose and the free happen outside
+ * the lock; the send waits for the damage worker, so the caller never holds
+ * up a frame. It never takes display_lock, which a send holds for 17 ms.
+ */
+static int panel_mipi_dbi_overlay_ioctl(struct fb_info *info, unsigned long arg)
+{
+    struct panel_mipi_dbi_device *panel = panel_mipi_dbi_of_info(info);
+    bool swap = panel->dbidev.dbi.swap_bytes;
+    struct gh0st_fb_overlay req;
+    struct gh0st_overlay *o = NULL, *old;
+    struct drm_rect dmg = {};
+    u16 *px = NULL;
+    u8 *mask = NULL;
+    unsigned int x, y;
+    size_t n;
+    int ret = 0;
+
+    if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+        return -EFAULT;
+    if (req.slot >= GH0ST_OVERLAY_SLOTS || req.flags)
+        return -EINVAL;
+    if (!panel_mipi_dbi_native(panel))
+        return -EOPNOTSUPP;
+    if (req.w && req.h) {
+        if ((u32)req.x + req.w > info->var.xres || (u32)req.y + req.h > info->var.yres)
+            return -EINVAL;
+        n = (size_t)req.w * req.h;
+        if (n > GH0ST_OVERLAY_MAX_PX)
+            return -E2BIG;
+        px = vmemdup_user(u64_to_user_ptr(req.pixels), n * 2);
+        if (IS_ERR(px))
+            return PTR_ERR(px);
+        if (req.mask) {
+            mask = vmemdup_user(u64_to_user_ptr(req.mask), n);
+            if (IS_ERR(mask)) {
+                ret = PTR_ERR(mask);
+                mask = NULL;
+                goto out;
+            }
+        }
+        o = kvmalloc(struct_size(o, px, mask ? 2 * n : n), GFP_KERNEL);
+        if (!o) {
+            ret = -ENOMEM;
+            goto out;
+        }
+        o->r = DRM_RECT_INIT(req.x, req.y, req.w, req.h);
+        o->h = req.h;
+        o->mask = mask ? o->px + n : NULL;
+        for (y = 0; y < req.h; y++) {
+            for (x = 0; x < req.w; x++) {
+                size_t t = (size_t)x * req.h + y;
+                u16 p = px[y * req.w + x];
+
+                if (mask) {
+                    o->mask[t] = mask[y * req.w + x] ? 0xffff : 0;
+                    p &= o->mask[t];
+                }
+                o->px[t] = swap ? swab16(p) : p;
+            }
+        }
+    }
+    mutex_lock(&panel->ov_lock);
+    old = panel_mipi_dbi_overlay_swap(panel, req.slot, o, &dmg);
+    panel->ov_owner = task_tgid_nr(current);
+    mutex_unlock(&panel->ov_lock);
+    kvfree(old);
+    panel_mipi_dbi_overlay_damage(info, &dmg);
+out:
+    kvfree(px);
+    kvfree(mask);
+    return ret;
+}
+
+/* The shell's last close, a crash included, takes its overlays with it. */
+static int panel_mipi_dbi_fb_release(struct fb_info *info, int user)
+{
+    struct panel_mipi_dbi_device *panel = panel_mipi_dbi_of_info(info);
+    struct gh0st_overlay *old[GH0ST_OVERLAY_SLOTS] = {};
+    struct drm_rect dmg = {};
+    unsigned int i;
+
+    if (user) {
+        mutex_lock(&panel->ov_lock);
+        if (panel->ov_set && panel->ov_owner == task_tgid_nr(current))
+            for (i = 0; i < GH0ST_OVERLAY_SLOTS; i++)
+                old[i] = panel_mipi_dbi_overlay_swap(panel, i, NULL, &dmg);
+        mutex_unlock(&panel->ov_lock);
+        for (i = 0; i < GH0ST_OVERLAY_SLOTS; i++)
+            kvfree(old[i]);
+        panel_mipi_dbi_overlay_damage(info, &dmg);
+    }
+    return panel_mipi_dbi_helper_release ? panel_mipi_dbi_helper_release(info, user) : 0;
+}
 
 /*
  * GH0ST_FBIO_PRESENT runs the pending deferred I/O now and waits for the
@@ -808,6 +1031,8 @@ static int panel_mipi_dbi_fb_ioctl(struct fb_info *info, unsigned int cmd, unsig
         flush_work(&helper->damage_work);
         return 0;
     }
+    if (cmd == GH0ST_FBIO_OVERLAY)
+        return panel_mipi_dbi_overlay_ioctl(info, arg);
     return panel_mipi_dbi_helper_ioctl ? panel_mipi_dbi_helper_ioctl(info, cmd, arg) : -ENOTTY;
 }
 
@@ -830,7 +1055,9 @@ static int panel_mipi_dbi_fbdev_probe(struct drm_fb_helper *fb_helper,
     if (info->fbops != &panel_mipi_dbi_fb_ops) {
         panel_mipi_dbi_fb_ops = *info->fbops;
         panel_mipi_dbi_helper_ioctl = info->fbops->fb_ioctl;
+        panel_mipi_dbi_helper_release = info->fbops->fb_release;
         panel_mipi_dbi_fb_ops.fb_ioctl = panel_mipi_dbi_fb_ioctl;
+        panel_mipi_dbi_fb_ops.fb_release = panel_mipi_dbi_fb_release;
         panel_mipi_dbi_fb_ops.owner = THIS_MODULE;
         info->fbops = &panel_mipi_dbi_fb_ops;
     }
@@ -915,6 +1142,7 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
     dbi = &dbidev->dbi;
     drm = &dbidev->drm;
     mutex_init(&panel->display_lock);
+    mutex_init(&panel->ov_lock);
 
     ret = panel_mipi_dbi_get_mode(dbidev, &mode);
     if (ret)
@@ -1025,9 +1253,13 @@ static int panel_mipi_dbi_spi_probe(struct spi_device *spi)
 static void panel_mipi_dbi_spi_remove(struct spi_device *spi)
 {
     struct drm_device *drm = spi_get_drvdata(spi);
+    struct panel_mipi_dbi_device *panel = to_panel_mipi_dbi_device(drm_to_mipi_dbi_dev(drm));
+    unsigned int i;
 
     drm_dev_unplug(drm);
     drm_atomic_helper_shutdown(drm);
+    for (i = 0; i < GH0ST_OVERLAY_SLOTS; i++)
+        kvfree(panel->ov[i]);
 }
 
 static void panel_mipi_dbi_spi_shutdown(struct spi_device *spi)
@@ -1081,3 +1313,4 @@ module_spi_driver(panel_mipi_dbi_spi_driver);
 MODULE_DESCRIPTION("MIPI DBI compatible display panel driver");
 MODULE_AUTHOR("Noralf Trønnes");
 MODULE_LICENSE("GPL");
+MODULE_VERSION("2");

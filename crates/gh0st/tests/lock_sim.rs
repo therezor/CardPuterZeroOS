@@ -228,3 +228,62 @@ fn a_resume_waiting_for_a_key_does_not_pass_the_lock() {
     let resumed = shell.find("resumed Alpha").unwrap_or(0);
     assert!(paused < unlocked && unlocked < resumed, "{shell}");
 }
+
+/// Esc held over an app: the hint goes to the panel driver once and stays
+/// there; the shell neither repaints it nor sends it again.
+#[test]
+fn the_esc_hint_over_an_app_is_held_by_the_driver() {
+    let dir = std::env::temp_dir().join(format!("gh0st-lock-esc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let config = dir.join("home/.config/cardputerzero");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.json"),
+        "{\"gh0st\": {\"lock\": {\"password\": false}}}",
+    )
+    .unwrap();
+    for d in ["frames", "ours", "stock", "icons"] {
+        std::fs::create_dir_all(dir.join(d)).unwrap();
+    }
+    let exe = script(&dir, "a", APP);
+    std::fs::write(
+        dir.join("ours/a.desktop"),
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Alpha\nExec={}\n",
+            exe.display()
+        ),
+    )
+    .unwrap();
+    // Alpha up; Esc held 2.5 s shows the hint at 1.5 s and lets go before
+    // the app is told to close.
+    let keys = "wait 600\nenter\nwait 800\ndown esc\nwait 2500\nup esc\nwait 400\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gh0st"))
+        .args(["shell", "--sim"])
+        .arg(dir.join("frames"))
+        .env("HOME", dir.join("home"))
+        .env("GH0ST_APPS_OURS", dir.join("ours"))
+        .env("GH0ST_APPS_STOCK", dir.join("stock"))
+        .env("GH0ST_ICON_ROOT", dir.join("icons"))
+        .env("GH0ST_LOG", "debug")
+        .env("SIM_DIR", &dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(keys.as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let shell = String::from_utf8_lossy(&out.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        shell.matches("banner held by the driver").count(),
+        1,
+        "{shell}"
+    );
+    assert!(!shell.contains("banner drawn"), "{shell}");
+    assert!(!shell.contains("Alpha closed"), "{shell}");
+}

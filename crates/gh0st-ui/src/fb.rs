@@ -15,6 +15,22 @@ const FBIOGET_FSCREENINFO: libc::c_ulong = 0x4602;
 /// `_IO('F', 0xC0)` in gh0st's panel driver: returns once the written pages
 /// are on the wire. Stock fbdev answers ENOTTY.
 const GH0ST_FBIO_PRESENT: libc::c_ulong = 0x46C0;
+/// `_IOW('F', 0xC1, struct gh0st_fb_overlay)`: sets or clears an overlay the
+/// driver lays over every send. Stock fbdev answers ENOTTY.
+const GH0ST_FBIO_OVERLAY: libc::c_ulong = 0x4020_46C1;
+
+/// `struct gh0st_fb_overlay` in the panel driver. w or h 0 clears the slot.
+#[repr(C)]
+struct OverlayArg {
+    slot: u32,
+    flags: u32,
+    x: u16,
+    y: u16,
+    w: u16,
+    h: u16,
+    pixels: u64,
+    mask: u64,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -93,6 +109,8 @@ pub struct Framebuffer {
     var: VarInfo,
     /// The driver supports `GH0ST_FBIO_PRESENT`.
     can_present: bool,
+    /// The driver takes overlays: None until first asked.
+    can_overlay: Option<bool>,
     pub path: PathBuf,
 }
 
@@ -149,6 +167,7 @@ impl Framebuffer {
             bpp: var.bits_per_pixel,
             var,
             can_present,
+            can_overlay: None,
             path: path.to_path_buf(),
         })
     }
@@ -237,25 +256,95 @@ impl Framebuffer {
 
     /// Reads the panel back into `c`, for a screenshot of a running app.
     pub fn read_into(&mut self, c: &mut Canvas) {
-        let h = self.height.min(c.height());
-        for y in 0..h {
-            let bpp = self.bpp;
-            let var = self.var;
-            let row = self.row_mut(y).to_vec();
-            for x in 0..self.width.min(c.width()) {
-                let px = if bpp == 16 {
-                    u16::from_ne_bytes([row[x as usize * 2], row[x as usize * 2 + 1]])
-                } else {
-                    let i = x as usize * 4;
-                    let v = u32::from_ne_bytes([row[i], row[i + 1], row[i + 2], row[i + 3]]);
-                    let ch = |b: Bitfield| {
-                        ((v >> b.offset) & ((1 << b.length) - 1)) << (8 - b.length.min(8))
-                    };
-                    crate::color::rgb(ch(var.red) as u8, ch(var.green) as u8, ch(var.blue) as u8)
+        self.read_rect(c, c.bounds());
+    }
+
+    /// Reads back only `area`. 16 bpp rows copy straight across.
+    pub fn read_rect(&mut self, c: &mut Canvas, area: Rect) {
+        let area = area.intersect(&Rect::new(
+            0,
+            0,
+            self.width.min(c.width()),
+            self.height.min(c.height()),
+        ));
+        let (x0, x1) = (area.x as usize, area.right() as usize);
+        let (bpp, var) = (self.bpp, self.var);
+        for y in area.y..area.bottom() {
+            let row = self.row_mut(y);
+            let dst = &mut c.row_mut(y)[x0..x1];
+            if bpp == 16 {
+                for (i, d) in dst.iter_mut().enumerate() {
+                    let b = (x0 + i) * 2;
+                    *d = u16::from_ne_bytes([row[b], row[b + 1]]);
+                }
+                continue;
+            }
+            for (i, d) in dst.iter_mut().enumerate() {
+                let b = (x0 + i) * 4;
+                let v = u32::from_ne_bytes([row[b], row[b + 1], row[b + 2], row[b + 3]]);
+                let ch = |f: Bitfield| {
+                    ((v >> f.offset) & ((1 << f.length) - 1)) << (8 - f.length.min(8))
                 };
-                c.fill(Rect::new(x, y, 1, 1), px);
+                *d = crate::color::rgb(ch(var.red) as u8, ch(var.green) as u8, ch(var.blue) as u8);
             }
         }
+    }
+
+    /// Hands the driver an overlay. False once the driver has said it
+    /// can't (M5's driver, or a 32 bpp panel); it is not asked again.
+    pub fn overlay_set(&mut self, slot: u8, area: Rect, px: &[u16], mask: Option<&[u8]>) -> bool {
+        let n = (area.w.max(0) * area.h.max(0)) as usize;
+        if self.bpp != 16 || self.can_overlay == Some(false) || n == 0 || px.len() != n {
+            return false;
+        }
+        if mask.is_some_and(|m| m.len() != n) {
+            return false;
+        }
+        let arg = OverlayArg {
+            slot: slot as u32,
+            flags: 0,
+            x: area.x as u16,
+            y: area.y as u16,
+            w: area.w as u16,
+            h: area.h as u16,
+            pixels: px.as_ptr() as u64,
+            mask: mask.map_or(0, |m| m.as_ptr() as u64),
+        };
+        self.overlay_ioctl(&arg)
+    }
+
+    /// Takes a slot off. Asked once even before a set, so a shell that
+    /// starts after a crash clears what it left.
+    pub fn overlay_clear(&mut self, slot: u8) {
+        if self.bpp != 16 || self.can_overlay == Some(false) {
+            return;
+        }
+        let arg = OverlayArg {
+            slot: slot as u32,
+            flags: 0,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            pixels: 0,
+            mask: 0,
+        };
+        self.overlay_ioctl(&arg);
+    }
+
+    fn overlay_ioctl(&mut self, arg: &OverlayArg) -> bool {
+        // SAFETY: the driver reads the struct and copies w*h pixels and mask
+        // bytes from the pointers in it, which outlive the call.
+        if unsafe { libc::ioctl(self.file.as_raw_fd(), GH0ST_FBIO_OVERLAY as _, arg) } == 0 {
+            self.can_overlay = Some(true);
+            return true;
+        }
+        // Only "no such call" settles it; a refused rect fails this once.
+        let e = io::Error::last_os_error().raw_os_error();
+        if matches!(e, Some(libc::ENOTTY | libc::EOPNOTSUPP)) {
+            self.can_overlay = Some(false);
+        }
+        false
     }
 }
 

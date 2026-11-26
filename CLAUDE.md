@@ -126,7 +126,8 @@ are in `docs/hardware-facts.md`.
 - `docs/media.md`: Media, its views and keys, the formats, the helper and
   its messages, and the limits.
 - `docs/panel-driver.md`: how a frame reaches the panel, how the driver times
-  sends against the scan, and the present ioctl that paces animations.
+  sends against the scan, the present ioctl that paces animations, and the
+  overlays it lays over an app.
 - `packaging/`: the systemd drop-in that swaps the stock launcher binary, and
   our `.desktop` entries. The `gh0st` package installs from here too.
 - `os/`: the image build. `os/build.sh` runs it in a container, `os/lock.json`
@@ -209,6 +210,7 @@ GH0ST_HOST=pi@<device> scripts/deploy.sh            # build, install, restart
 GH0ST_HOST=pi@<device> scripts/deploy.sh rollback   # back to stock
 GH0ST_HOST=pi@<device> scripts/measure.sh gh0st       # PSS, wakeups, CPU idle
 GH0ST_HOST=pi@<device> scripts/tear-test.sh 10    # full-screen stripes at the panel rate
+GH0ST_HOST=pi@<device> scripts/tear-test.sh 10 4 overlay2   # the same under two overlays
 ```
 
 `GH0ST_LOG=debug` logs the first frame time and, for each frame, the rows flushed and
