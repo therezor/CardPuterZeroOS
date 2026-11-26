@@ -11,7 +11,7 @@ use gh0st_ui::theme::Theme;
 use gh0st_ui::widgets::{self, Chip, Hint, Look, Status};
 
 const TITLE: &str = "Restart or power off?";
-const BODY: &str = "Open apps close first.";
+const BODY: &str = "Open apps close first. After a power off, turn the side switch off and on to start.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
@@ -85,7 +85,7 @@ impl Power {
         let area = widgets::body(t);
         let w = t.m.width - 2 * t.m.dialog_margin;
         let inner = w - 2 * t.m.card_inset;
-        let lines = crate::prompt::wrap(t.f.body, BODY, inner, 2);
+        let lines = crate::prompt::wrap(t.f.small, BODY, inner, 3);
         let body_h = lines.len() as i32 * t.m.line_h + t.m.card_gap + t.m.pill_h;
         let h = widgets::card_h(t, body_h);
         let room_h = t.m.height - t.m.hint_h - area.y;
@@ -94,7 +94,7 @@ impl Power {
         let mut y = body.y;
         for line in &lines {
             let lr = Rect::new(body.x, y, body.w, t.m.line_h);
-            widgets::text_in(c, t.f.body, lr, line, t.c.soft());
+            widgets::text_in(c, t.f.small, lr, line, t.c.soft());
             y += t.m.line_h;
         }
         let hints = [Hint {
