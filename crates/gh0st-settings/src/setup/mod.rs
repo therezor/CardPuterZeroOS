@@ -99,33 +99,3 @@ fn light_up() {
         }
     }
 }
-
-/// Setup's menu on the pages it draws itself: Power off. Embedded Settings
-/// adds the same.
-const POWER_OFF: u32 = 900;
-
-fn power_menu(c: &mut Commands) {
-    c.group("Setup");
-    c.add(Command::action(POWER_OFF, "Power off"));
-}
-
-/// Asks before powering off. True if `id` was Power off.
-fn power_command(id: u32, cx: &mut Cx) -> bool {
-    if id != POWER_OFF {
-        return false;
-    }
-    let d = Dialog::confirm("Power off?", "Setup goes on at the next start.").yes("power off");
-    cx.ask(POWER_OFF, d);
-    true
-}
-
-/// True if the dialog was Power off's.
-fn power_answer(id: u32, answer: &Answer, cx: &mut Cx) -> bool {
-    if id != POWER_OFF {
-        return false;
-    }
-    if matches!(answer, Answer::Yes(_)) {
-        cx.spawn(&["pkexec", HELPER, "power", "off"]);
-    }
-    true
-}

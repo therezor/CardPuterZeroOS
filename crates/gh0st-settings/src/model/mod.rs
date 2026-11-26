@@ -144,7 +144,6 @@ pub enum Command {
     ConnForget,
     Password,
     Restart,
-    PowerOff,
     /// Wi-Fi country, by ISO code.
     SetCountry(String),
     /// Setup's Country step left as it is: the world setting.

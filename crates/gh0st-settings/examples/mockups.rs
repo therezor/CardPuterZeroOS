@@ -654,21 +654,6 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                     ),
                 ),
                 ("about", s(PageId::About, 0)),
-                (
-                    "power-off",
-                    scene(
-                        &t,
-                        &st,
-                        PageId::System,
-                        6,
-                        Some(Dialog::Confirm {
-                            title: "Power off?".into(),
-                            line: "Open apps close first.".into(),
-                            yes: "power off",
-                            no: "cancel",
-                        }),
-                    ),
-                ),
             ]);
         }
         scenes
