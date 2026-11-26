@@ -122,12 +122,17 @@ pub struct Picture {
 }
 
 impl Picture {
+    /// The picture fills the card, its corners rounded as the card's, so
+    /// an app's square art reads as a card, as in stock's slider.
     fn row(&self, t: &Theme) -> Option<&(Image, Image)> {
         self.row
             .get_or_init(|| {
-                let big = Image::load_png(&self.path, (t.m.row_card - 8) as u32).ok()?;
-                let side = Image::load_png(&self.path, (t.m.row_card_side - 6) as u32).ok()?;
-                Some((big, side))
+                let card = |size: i32| {
+                    let mut img = Image::load_png(&self.path, size as u32).ok()?;
+                    img.round(t.m.row_card_r * size / t.m.row_card);
+                    Some(img)
+                };
+                Some((card(t.m.row_card)?, card(t.m.row_card_side)?))
             })
             .as_ref()
     }

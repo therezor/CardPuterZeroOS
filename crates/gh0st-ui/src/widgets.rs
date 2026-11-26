@@ -797,7 +797,8 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
     // A row card is a badge too, at its own size.
     let card = r.w >= t.m.row_card_side;
     let (rad, lift) = if card {
-        (t.m.row_card_r, t.m.lift)
+        // Scaled with the card, so a side card rounds like the middle one.
+        (t.m.row_card_r * r.w / t.m.row_card, t.m.lift)
     } else if r.w >= 32 {
         (t.m.badge_r, t.m.lift)
     } else {

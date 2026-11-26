@@ -23,6 +23,32 @@ impl Image {
     pub fn from_png(bytes: &[u8], size: u32) -> Result<Image, String> {
         decode(std::io::Cursor::new(bytes), size)
     }
+
+    /// Fades the corners out to a round of `radius`, edges anti-aliased:
+    /// done once, so a blit draws a rounded picture for free.
+    pub fn round(&mut self, radius: i32) {
+        let r = radius.min(self.w / 2).min(self.h / 2).max(0);
+        let rf = r as f32;
+        for dy in 0..r {
+            for dx in 0..r {
+                // From this pixel's centre to the corner circle's centre.
+                let (fx, fy) = (rf - dx as f32 - 0.5, rf - dy as f32 - 0.5);
+                let cover = (rf + 0.5 - (fx * fx + fy * fy).sqrt()).clamp(0.0, 1.0);
+                if cover >= 1.0 {
+                    continue;
+                }
+                for (x, y) in [
+                    (dx, dy),
+                    (self.w - 1 - dx, dy),
+                    (dx, self.h - 1 - dy),
+                    (self.w - 1 - dx, self.h - 1 - dy),
+                ] {
+                    let i = (y * self.w + x) as usize;
+                    self.alpha[i] = (self.alpha[i] as f32 * cover).round() as u8;
+                }
+            }
+        }
+    }
 }
 
 fn decode<R: std::io::BufRead + std::io::Seek>(r: R, size: u32) -> Result<Image, String> {
@@ -95,5 +121,27 @@ fn scale_rgba(src: &[[u8; 4]], sw: u32, sh: u32, size: u32) -> Image {
         h: dh as i32,
         px,
         alpha,
+    }
+}
+
+#[cfg(test)]
+mod round_tests {
+    use super::*;
+
+    #[test]
+    fn rounding_clears_the_corner_and_keeps_the_middle() {
+        let mut img = Image {
+            w: 20,
+            h: 20,
+            px: vec![0; 400],
+            alpha: vec![255; 400],
+        };
+        img.round(6);
+        assert_eq!(img.alpha[0], 0, "the corner pixel goes");
+        assert_eq!(img.alpha[19], 0);
+        assert_eq!(img.alpha[399], 0);
+        assert_eq!(img.alpha[10 * 20 + 10], 255, "the middle stays");
+        assert_eq!(img.alpha[6], 255, "past the radius on the top edge stays");
+        assert!(img.alpha[20 + 1] < 255, "the curve is soft");
     }
 }
