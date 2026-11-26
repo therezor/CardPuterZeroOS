@@ -174,6 +174,11 @@ impl Canvas {
         &self.px[s..s + self.w as usize]
     }
 
+    pub fn row_mut(&mut self, y: i32) -> &mut [Color] {
+        let s = (y * self.w) as usize;
+        &mut self.px[s..s + self.w as usize]
+    }
+
     /// Copies the first `w` pixels of row `y` from `src`.
     pub fn copy_row_from(&mut self, src: &Canvas, y: i32, w: i32) {
         let n = w.min(self.w).min(src.w) as usize;

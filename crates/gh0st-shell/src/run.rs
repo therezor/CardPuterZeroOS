@@ -8,7 +8,7 @@
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::lock::{self, Lock};
 use crate::notices::{self, Panel};
-use crate::overlay::Overlay;
+use crate::overlay::{self, Overlay};
 use crate::prompt::{self, Ask, Kind, Origin, Prompts};
 use crate::services::{Said, Services, Which};
 use crate::sound::{self as sounds, Player};
@@ -324,6 +324,8 @@ struct Shell {
     esc_down: bool,
     /// Over an app: the ESC hint or the battery countdown.
     banner: Option<Overlay>,
+    /// What the banner says, so a wake that changes nothing sends nothing.
+    banner_text: Option<(String, gh0st_ui::theme::Tone)>,
     /// Over an app: a toast.
     popup: Option<Overlay>,
     /// The volume or brightness level, shown in the top bar's place while
@@ -464,7 +466,7 @@ impl Shell {
         let t = Theme::new(theme::named(config.palette_name()));
         let (display, input): (Box<dyn Display>, Input) = match &sim {
             Some(dir) => {
-                let frames = Frames::new(dir.clone(), t.m.width, t.m.height)
+                let frames = Frames::composited(dir.clone(), t.m.width, t.m.height)
                     .map_err(|e| format!("{}: {e}", dir.display()))?;
                 (Box::new(frames), Input::Script(Script::stdin()))
             }
@@ -498,6 +500,7 @@ impl Shell {
             esc: EscHold::default(),
             esc_down: false,
             banner: None,
+            banner_text: None,
             popup: None,
             level: None,
             spare: None,
@@ -1730,8 +1733,11 @@ impl Shell {
                         .iter()
                         .any(|t| t.state == tasks::State::Background && !t.quiet))
                 .then_some(now + GUARD_MS),
-                (app && (self.banner.is_some() || self.popup.is_some()))
-                    .then_some(now + crate::overlay::REFRESH_MS),
+                (app && [&self.banner, &self.popup]
+                    .into_iter()
+                    .flatten()
+                    .any(Overlay::needs_refresh))
+                .then_some(now + overlay::REFRESH_MS),
                 self.tasks.next_at(now),
             ]);
             let mut fds = vec![rt::pollfd(self.input.fd()), rt::pollfd(self.signals.fd())];
@@ -1919,8 +1925,13 @@ impl Shell {
             if self.pending == Some(Pending::Pause) {
                 self.pending = None;
             }
-            self.banner = None;
-            self.popup = None;
+            // The driver would keep a held overlay over home.
+            for o in [self.banner.take(), self.popup.take()]
+                .into_iter()
+                .flatten()
+            {
+                self.spare = Some(o.hide(self.display.as_mut()));
+            }
             self.screen = Screen::Home;
             self.undim();
             self.take_screen();
@@ -2127,27 +2138,58 @@ impl Shell {
             .unwrap_or_else(|| Canvas::new(self.t.m.width, self.t.m.height))
     }
 
+    /// The banner over an app, changed in place. The same words again send
+    /// nothing: the battery countdown asks on every wake.
     fn show_banner(&mut self, text: &str, tone: gh0st_ui::theme::Tone) {
-        if let Some(b) = self.banner.take() {
-            self.spare = Some(b.hide(self.display.as_mut()));
+        let same = self
+            .banner_text
+            .as_ref()
+            .is_some_and(|(s, k)| s == text && *k == tone);
+        if same && self.banner.is_some() {
+            return;
         }
+        self.banner_text = Some((text.to_string(), tone));
         let t = self.t;
+        let paint = |c: &mut Canvas| widgets::banner(c, &t, text, tone);
+        if let Some(b) = &mut self.banner {
+            b.update(self.display.as_mut(), paint);
+            return;
+        }
         let under = self.canvas_for_overlay();
-        self.banner = Some(Overlay::show(self.display.as_mut(), under, |c| {
-            widgets::banner(c, &t, text, tone)
-        }));
+        let o = Overlay::show(self.display.as_mut(), overlay::BANNER, under, paint);
+        self.log_overlay("banner", &o);
+        self.banner = Some(o);
+    }
+
+    fn log_overlay(&self, what: &str, o: &Overlay) {
+        if self.debug {
+            let how = if o.needs_refresh() {
+                "drawn"
+            } else {
+                "held by the driver"
+            };
+            eprintln!("gh0st shell: {what} {how}");
+        }
+    }
+
+    /// A toast over an app, changed in place if one is up.
+    fn set_popup(&mut self, paint: impl Fn(&mut Canvas) -> Rect) {
+        if let Some(p) = &mut self.popup {
+            p.update(self.display.as_mut(), paint);
+            return;
+        }
+        let under = self.canvas_for_overlay();
+        let o = Overlay::show(self.display.as_mut(), overlay::POPUP, under, paint);
+        self.log_overlay("popup", &o);
+        self.popup = Some(o);
     }
 
     fn show_popup(&mut self, text: &str) {
-        if let Some(p) = self.popup.take() {
-            self.spare = Some(p.hide(self.display.as_mut()));
-        }
         let t = self.t;
-        let under = Canvas::new(t.m.width, t.m.height);
-        self.popup = Some(Overlay::show(self.display.as_mut(), under, |c| {
+        self.set_popup(|c| {
             let bottom = t.m.height - t.m.hint_h;
             widgets::toast(c, &t, bottom, gh0st_ui::theme::Tone::Info, text, None)
-        }));
+        });
     }
 
     /// When the screen goes dark if no key comes first. Never while an
@@ -2835,17 +2877,13 @@ impl Shell {
     fn announce(&mut self, n: &Notice) {
         let row = self.notice_row(n);
         if self.app_front() {
-            if let Some(p) = self.popup.take() {
-                self.spare = Some(p.hide(self.display.as_mut()));
-            }
             let t = self.t;
-            let under = Canvas::new(t.m.width, t.m.height);
             let v = home::visual(&t, &row.icon, &row.name, Size::Tiny);
             let (name, title) = (row.name.clone(), row.notice.title.clone());
-            self.popup = Some(Overlay::show(self.display.as_mut(), under, |c| {
+            self.set_popup(|c| {
                 let bottom = t.m.height - t.m.hint_h;
                 widgets::notice_toast(c, &t, bottom, &v, &name, &title)
-            }));
+            });
         }
         self.level = None;
         self.toast = Some((String::new(), rt::now_ms() + NOTICE_TOAST_MS));
@@ -3108,14 +3146,8 @@ impl Shell {
     /// too, for as long as a toast.
     fn show_level(&mut self, icon: &'static str, label: &'static str, pct: u8) {
         if self.app_front() {
-            if let Some(p) = self.popup.take() {
-                self.spare = Some(p.hide(self.display.as_mut()));
-            }
             let t = self.t;
-            let under = Canvas::new(t.m.width, t.m.height);
-            self.popup = Some(Overlay::show(self.display.as_mut(), under, |c| {
-                widgets::level_bar(c, &t, icon, label, pct)
-            }));
+            self.set_popup(|c| widgets::level_bar(c, &t, icon, label, pct));
         }
         self.level = Some((icon, label, pct));
         self.toast = Some((String::new(), rt::now_ms() + TOAST_MS));
@@ -3169,9 +3201,8 @@ impl Shell {
         }
         let mut shot = Canvas::new(self.t.m.width, self.t.m.height);
         self.display.read_into(&mut shot);
-        if let Some(o) = self.banner.as_ref().or(self.popup.as_ref()) {
-            // An overlay is up: its saved pixels are the app's.
-            shot = o.under().clone();
+        for o in [&self.banner, &self.popup].into_iter().flatten() {
+            o.patch_under(&mut shot);
         }
         shot
     }
@@ -4500,7 +4531,10 @@ fn open_panel() -> Result<Box<dyn Display>, String> {
             }
         }
     }
-    let fb = Framebuffer::open(&fb_path).map_err(|e| format!("{}: {e}", fb_path.display()))?;
+    let mut fb = Framebuffer::open(&fb_path).map_err(|e| format!("{}: {e}", fb_path.display()))?;
+    // A shell that died with an overlay up left it in the driver.
+    fb.overlay_clear(overlay::BANNER);
+    fb.overlay_clear(overlay::POPUP);
     Ok(Box::new(fb))
 }
 

@@ -2,8 +2,8 @@
 
 **Tear-free 50 fps on the CardputerZero's SPI panel, full-screen redraws included.**
 
-A patched ST7789V driver that times every send against the panel's scan, and a present ioctl that
-locks gh0st's animations to the refresh.
+A patched ST7789V driver that times every send against the panel's scan, a present ioctl that
+locks gh0st's animations to the refresh, and overlays that apps can't draw over.
 
 The image ships it in `gh0st-panel-modules`. On a stock card, install it by
 hand:
@@ -55,6 +55,34 @@ and transposed in a single pass. M5's path loaded every pixel from uncached memo
 wire. gh0st calls it after each animation frame and draws the next one at once, so frames lock to
 the refresh. M5's driver answers `ENOTTY`, and gh0st falls back to a 20 ms timer.
 
+### Overlay ioctl
+
+`GH0ST_FBIO_OVERLAY` (`_IOW('F', 0xC1, struct gh0st_fb_overlay)`) hands the driver an image to lay
+over every send. The shell's banner and toasts go there, so an app drawing underneath never covers
+them, and the app's buffer never holds them.
+
+```c
+struct gh0st_fb_overlay {
+    __u32 slot;		/* 0 banner, 1 popup */
+    __u32 flags;		/* 0 */
+    __u16 x, y, w, h;	/* w or h 0 clears the slot */
+    __u64 pixels;		/* w*h RGB565, row by row */
+    __u64 mask;		/* w*h bytes, non-zero where it shows; 0 for all of it */
+};
+```
+
+- Two slots, so a banner at the top and a toast at the bottom never merge into most of the screen.
+  Each holds up to 16384 pixels.
+- The driver keeps each slot swapped and transposed in send order. It lays them on after the copy
+  and before the scan wait, so a send's size and its lead or trail choice don't change. With no
+  overlay up it costs one branch.
+- Setting or clearing a slot sends only its rows. A clear sends the app's own pixels again.
+- The process that set them closing its last fd, a crash included, clears them.
+- Errors: `EINVAL` for a bad slot, flags or rect, `E2BIG` past the cap, `EOPNOTSUPP` without native
+  order. M5's driver answers `ENOTTY`, and gh0st draws them itself.
+- A DRM client in front sends only through its own commits, so an overlay set or cleared over one
+  shows or goes with its next frame. Stock apps draw through fbdev.
+
 ### Shorter fbdev delay
 
 fbdev waits one jiffy (4 ms) after a write before it sends, not 50 ms. Stock apps get the faster
@@ -87,7 +115,11 @@ how many sends led, trailed or slept, and the phase of the last send.
 
 ```sh
 GH0ST_HOST=pi@<device> scripts/tear-test.sh 10   # scrolling stripes; a tear is a vertical seam
+GH0ST_HOST=pi@<device> scripts/tear-test.sh 10 4 overlay2   # with a banner and a toast on top
 ```
+
+It prints the frame rate and how many sends led, trailed or slept, from `te_stats`. On the
+CardputerZero both runs give 48 to 50 fps, with about one send in 50 asleep.
 
 ### Uninstall
 
