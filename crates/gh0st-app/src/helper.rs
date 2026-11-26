@@ -57,7 +57,10 @@
 //! ```
 
 use crate::dialog::{Answer, Dialog};
-use crate::page::{Cx, Job, JobEvent};
+use crate::page::{Cx, Job, JobEvent, Watch};
+use std::io::Read;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::process::{Command, Stdio};
 
 /// pkexec runs the helper by this path (see packaging/polkit).
 pub const PATH: &str = "/usr/libexec/gh0st-helper";
@@ -205,6 +208,205 @@ impl Helper {
                 result: Err("Cancelled".into()),
             }),
         }
+    }
+}
+
+/// A helper verb that stays up, as Files' root worker: the helper reads
+/// one line on its socket, the password or nothing under grace, then
+/// becomes the program the page talks to over the same socket.
+///
+/// [`start`](Held::start) hands back the page's end of the socket; the
+/// page queues what it has to say until the program says it is up, and
+/// calls [`up`](Held::up). Pass it [`Page::exited`](crate::Page::exited),
+/// [`Page::answer`](crate::Page::answer) and [`Page::ready`](crate::Page::ready).
+/// A helper that exits before it is up asked for the password, or failed:
+/// the dialog opens as for [`Helper`], and a password starts it again.
+pub struct Held {
+    ask_id: u32,
+    args: Vec<String>,
+    run: Option<HeldRun>,
+    asking: bool,
+}
+
+struct HeldRun {
+    pid: i32,
+    err: std::fs::File,
+    watch: Watch,
+    out: String,
+    up: bool,
+}
+
+/// What a started or answered [`Held`] became.
+#[derive(Debug)]
+pub enum HeldEvent {
+    /// Running: the page's end of the socket.
+    Started(OwnedFd),
+    /// Over for good: refused, cancelled, failed, or ended after it was up.
+    Ended(Result<(), String>),
+}
+
+impl Held {
+    /// `ask_id`: the password dialog's id, used for nothing else.
+    pub fn new(ask_id: u32, args: &[&str]) -> Held {
+        Held {
+            ask_id,
+            args: args.iter().map(|a| a.to_string()).collect(),
+            run: None,
+            asking: false,
+        }
+    }
+
+    /// Starts the helper with no password: grace, or the dialog, follows.
+    pub fn start(&mut self, cx: &mut Cx) -> HeldEvent {
+        self.spawn(cx, "\n".to_string())
+    }
+
+    pub fn running(&self) -> bool {
+        self.run.is_some() || self.asking
+    }
+
+    fn spawn(&mut self, cx: &mut Cx, mut line: String) -> HeldEvent {
+        let r = self.try_spawn(cx, line.as_bytes());
+        wipe(&mut line);
+        match r {
+            Ok(fd) => HeldEvent::Started(fd),
+            Err(e) => HeldEvent::Ended(Err(format!("Couldn't start the helper: {e}"))),
+        }
+    }
+
+    fn try_spawn(&mut self, cx: &mut Cx, line: &[u8]) -> std::io::Result<OwnedFd> {
+        let mut fds = [0; 2];
+        // SAFETY: socketpair fills a two-int array.
+        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: both fds are fresh and owned from here.
+        let (mine, theirs) =
+            unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        // SAFETY: fcntl on an fd we own; the helper gets its end as stdin.
+        unsafe { libc::fcntl(mine.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) };
+        let mut child = Command::new("pkexec")
+            .arg(PATH)
+            .args(&self.args)
+            .stdin(Stdio::from(theirs))
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let err = child
+            .stderr
+            .take()
+            .map(|e| std::fs::File::from(OwnedFd::from(e)))
+            .ok_or_else(|| std::io::Error::other("no stderr"))?;
+        // SAFETY: fcntl on an fd we own.
+        unsafe {
+            let fl = libc::fcntl(err.as_raw_fd(), libc::F_GETFL);
+            libc::fcntl(err.as_raw_fd(), libc::F_SETFL, fl | libc::O_NONBLOCK);
+        }
+        let pid = child.id() as i32;
+        cx.adopt(pid);
+        let watch = cx.watch(err.as_raw_fd());
+        self.run = Some(HeldRun {
+            pid,
+            err,
+            watch,
+            out: String::new(),
+            up: false,
+        });
+        let mut off = 0;
+        while off < line.len() {
+            // SAFETY: writes from a live buffer to our end of the socket.
+            let n = unsafe {
+                libc::write(
+                    mine.as_raw_fd(),
+                    line[off..].as_ptr().cast(),
+                    line.len() - off,
+                )
+            };
+            if n <= 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            off += n as usize;
+        }
+        Ok(mine)
+    }
+
+    /// The program said it is up: past this, its exit is the end, not a
+    /// question.
+    pub fn up(&mut self) {
+        if let Some(r) = &mut self.run {
+            r.up = true;
+        }
+    }
+
+    /// The helper's stderr is readable. True if `watch` was its.
+    pub fn ready(&mut self, watch: Watch) -> bool {
+        let Some(r) = self.run.as_mut().filter(|r| r.watch == watch) else {
+            return false;
+        };
+        drain(&mut r.err, &mut r.out);
+        true
+    }
+
+    /// A child ended. `Some` when it was the helper and that settles
+    /// something; a password dialog opens instead when one is wanted.
+    pub fn exited(&mut self, cx: &mut Cx, pid: i32, code: Option<i32>) -> Option<HeldEvent> {
+        if self.run.as_ref().is_none_or(|r| r.pid != pid) {
+            return None;
+        }
+        let mut r = self.run.take()?;
+        drain(&mut r.err, &mut r.out);
+        cx.unwatch(r.watch);
+        if r.up {
+            return Some(HeldEvent::Ended(match code {
+                Some(0) => Ok(()),
+                _ => Err(failure(&r.out)),
+            }));
+        }
+        Some(HeldEvent::Ended(Err(match outcome(code, &r.out) {
+            Outcome::Ask(title) => {
+                cx.ask(self.ask_id, Dialog::password(title).yes("ok"));
+                self.asking = true;
+                return None;
+            }
+            Outcome::Locked(secs) => format!("Too many tries. Wait {secs} s"),
+            Outcome::Failed(why) => why,
+            Outcome::Done => "It ended at once".into(),
+        })))
+    }
+
+    /// A dialog's answer: a password starts the helper again with it.
+    pub fn answer(&mut self, cx: &mut Cx, id: u32, answer: Answer) -> Option<HeldEvent> {
+        if id != self.ask_id || !self.asking {
+            return None;
+        }
+        self.asking = false;
+        match answer {
+            Answer::Yes(mut password) if !password.is_empty() => {
+                let line = format!("{password}\n");
+                wipe(&mut password);
+                Some(self.spawn(cx, line))
+            }
+            _ => Some(HeldEvent::Ended(Err("Cancelled".into()))),
+        }
+    }
+
+    /// Lets go: the page closes its end of the socket, and the program
+    /// ends when it reads that.
+    pub fn stop(&mut self, cx: &mut Cx) {
+        if let Some(r) = self.run.take() {
+            cx.unwatch(r.watch);
+        }
+        self.asking = false;
+    }
+}
+
+fn drain(f: &mut std::fs::File, out: &mut String) {
+    let mut buf = [0u8; 1024];
+    while let Ok(n) = f.read(&mut buf) {
+        if n == 0 || out.len() > 16 * 1024 {
+            break;
+        }
+        out.push_str(&String::from_utf8_lossy(&buf[..n]));
     }
 }
 
