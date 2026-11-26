@@ -48,6 +48,10 @@ pub struct Shared {
     pub leds: u8,
     /// The app turned Bluetooth on, so it turns it off on exit.
     pub radio_ours: bool,
+    /// The radio was blocked before the app turned it on, so exit blocks it
+    /// again: systemd-rfkill saves the state, and BlueZ powers an unblocked
+    /// adapter at boot.
+    pub radio_was_blocked: bool,
     pub show_typed: bool,
     /// The job turning the radio on through the helper.
     radio_job: Option<Job>,
@@ -61,12 +65,20 @@ pub struct Shared {
     pub helpers: bool,
     /// What the USB cable plugs into: Alt sends Cmd to a Mac there too.
     pub usb_system: System,
-    /// Unblocks the radio; tests and mockups pass one that can't fail.
-    pub unblock: fn() -> std::io::Result<()>,
+    /// Blocks (true) or unblocks the radio; tests and mockups pass one
+    /// that never touches the host's.
+    pub radio: fn(bool) -> std::io::Result<()>,
+    /// Whether the radio is blocked now.
+    pub radio_blocked: fn() -> bool,
 }
 
-fn unblock_bluetooth() -> std::io::Result<()> {
-    gh0st_core::rfkill::set(gh0st_core::rfkill::Radio::Bluetooth, false)
+fn bluetooth_switch(blocked: bool) -> std::io::Result<()> {
+    gh0st_core::rfkill::set(gh0st_core::rfkill::Radio::Bluetooth, blocked)
+}
+
+fn bluetooth_blocked() -> bool {
+    let root = std::path::Path::new("/sys/class/rfkill");
+    gh0st_core::rfkill::blocked(root, gh0st_core::rfkill::Radio::Bluetooth)
 }
 
 pub fn now_secs() -> u64 {
@@ -96,6 +108,7 @@ impl Shared {
             target: None,
             leds: 0,
             radio_ours: false,
+            radio_was_blocked: false,
             show_typed: true,
             radio_job: None,
             want_radio: false,
@@ -103,7 +116,8 @@ impl Shared {
             classic_off: false,
             helpers: true,
             usb_system: System::Windows,
-            unblock: unblock_bluetooth,
+            radio: bluetooth_switch,
+            radio_blocked: bluetooth_blocked,
         }
     }
 
@@ -274,13 +288,29 @@ impl Shared {
             return;
         }
         self.radio_ours = true;
-        if (self.unblock)().is_ok() {
+        self.radio_was_blocked = (self.radio_blocked)();
+        if (self.radio)(false).is_ok() {
             bt.power(true);
             return;
         }
         let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "on"];
         self.radio_job = Some(cx.spawn(&argv));
         cx.busy(words::RADIO_ON);
+    }
+
+    /// Blocks the radio again on exit. Jobs end with the app, so the helper,
+    /// needed only when the session may not write rfkill, runs to its end
+    /// here.
+    fn block_radio(&mut self) {
+        if (self.radio)(true).is_ok() || !self.helpers {
+            return;
+        }
+        let _ = std::process::Command::new("pkexec")
+            .args([HELPER, "rfkill", "bluetooth", "off"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     fn job(&mut self, job: Job, e: JobEvent, cx: &mut Cx) {
@@ -477,7 +507,8 @@ impl App {
     /// Over the links and folder given: for tests and mockups.
     pub fn with(bt: Box<dyn Bluetooth>, usb: Box<dyn Cable>, dir: PathBuf) -> App {
         let mut s = Shared::new(Some(bt), usb, dir);
-        s.unblock = || Ok(());
+        s.radio = |_| Ok(());
+        s.radio_blocked = || false;
         s.helpers = false;
         App {
             s,
@@ -735,6 +766,9 @@ impl Page for App {
             if self.s.radio_ours {
                 bt.power(false);
             }
+        }
+        if self.s.radio_ours && self.s.radio_was_blocked {
+            self.s.block_radio();
         }
     }
 
