@@ -3624,7 +3624,7 @@ impl Shell {
                 self.dirty = true;
             }
             Some('p') => self.toggle_pin(),
-            Some('l') => self.toggle_layout(),
+            Some('l') => self.step_layout(1),
             // The keys over the chips are theirs; the rest open tiles.
             Some(d @ '1'..='3') if self.home.select_on_screen(d as usize - '1' as usize) => {
                 self.open_selected();
@@ -3645,10 +3645,7 @@ impl Shell {
             .selected()
             .is_some_and(|e| self.pins.contains(&e.id));
         let pin = if pinned { "Unpin" } else { "Pin" };
-        let layout = match self.home.layout() {
-            Layout::Grid => "Grid",
-            Layout::List => "List",
-        };
+        let layout = self.home.layout().label();
         [
             (MenuAct::Pin, format!("{pin} {name}"), String::new(), "p"),
             (MenuAct::Layout, "Layout".into(), layout.into(), "l"),
@@ -3684,7 +3681,11 @@ impl Shell {
                 self.home_menu = Some((sel + 1) % n);
                 None
             }
-            Some(keys::Nav::Left | keys::Nav::Right) if sel == 1 => Some(MenuAct::Layout),
+            Some(keys::Nav::Left) if sel == 1 => {
+                self.step_layout(-1);
+                None
+            }
+            Some(keys::Nav::Right) if sel == 1 => Some(MenuAct::Layout),
             Some(_) => None,
             None if k.state == State::Repeat => None,
             None if k.is(code::ESC) || k.ch == Some('8') => {
@@ -3711,7 +3712,7 @@ impl Shell {
         match act {
             MenuAct::Pin if self.home.selected().is_none() => {}
             MenuAct::Pin => self.toggle_pin(),
-            MenuAct::Layout => self.toggle_layout(),
+            MenuAct::Layout => self.step_layout(1),
             MenuAct::Find => self.home.start_search(),
             MenuAct::Notices => self.open_notices(Screen::Home),
             MenuAct::Lock => self.lock_now(rt::now_ms()),
@@ -3719,8 +3720,9 @@ impl Shell {
         }
     }
 
-    fn toggle_layout(&mut self) {
-        let l = self.home.layout().toggled();
+    /// The next layout (`d` 1) or the one before: Grid, List, Row.
+    fn step_layout(&mut self, d: i32) {
+        let l = self.home.layout().step(d);
         self.save_config(|c| c.set_str(config::key::HOME_LAYOUT, l.config_name()));
         self.home.set_layout(l);
         self.dirty = true;

@@ -195,6 +195,15 @@ pub struct Metrics {
     pub badge: i32,
     /// App badge on a list row.
     pub badge_small: i32,
+    /// Home's row layout, as stock's slider: the selected app's card in the
+    /// middle, its neighbours smaller either side, bottoms in line.
+    pub row_card: i32,
+    pub row_card_side: i32,
+    /// From one card's centre to the next.
+    pub row_pitch: i32,
+    pub row_card_r: i32,
+    /// From a card's bottom to its name.
+    pub row_label_gap: i32,
     /// Home list row: badge, name and a second line.
     pub app_row_h: i32,
     /// Settings row: icon, label and a value.
@@ -1054,6 +1063,11 @@ pub const CARDPUTER: Metrics = Metrics {
     rows: 2,
     badge: 34,
     badge_small: 24,
+    row_card: 76,
+    row_card_side: 60,
+    row_pitch: 100,
+    row_card_r: 16,
+    row_label_gap: 6,
     app_row_h: 40,
     row_h: 26,
     line_h: 18,

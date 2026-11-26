@@ -58,6 +58,8 @@ pub enum Layout {
     #[default]
     Grid,
     List,
+    /// One row, as stock's slider: the selected app large in the middle.
+    Row,
 }
 
 impl Layout {
@@ -72,6 +74,7 @@ impl Layout {
         match s {
             "grid" => Some(Layout::Grid),
             "list" => Some(Layout::List),
+            "row" => Some(Layout::Row),
             _ => None,
         }
     }
@@ -80,6 +83,7 @@ impl Layout {
         match self {
             Layout::Grid => "grid",
             Layout::List => "list",
+            Layout::Row => "row",
         }
     }
 
@@ -87,14 +91,15 @@ impl Layout {
         match self {
             Layout::Grid => "Grid",
             Layout::List => "List",
+            Layout::Row => "Row",
         }
     }
 
-    pub fn toggled(self) -> Layout {
-        match self {
-            Layout::Grid => Layout::List,
-            Layout::List => Layout::Grid,
-        }
+    /// The next layout (`d` 1) or the one before (-1): Grid, List, Row.
+    pub fn step(self, d: i32) -> Layout {
+        const ALL: [Layout; 3] = [Layout::Grid, Layout::List, Layout::Row];
+        let i = ALL.iter().position(|&l| l == self).unwrap_or(0) as i32;
+        ALL[(i + d).rem_euclid(ALL.len() as i32) as usize]
     }
 }
 
@@ -481,6 +486,16 @@ fn sort(apps: &mut [App], pins: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layouts_step_through_all_three_and_round_trip() {
+        assert_eq!(Layout::Grid.step(1), Layout::List);
+        assert_eq!(Layout::Row.step(1), Layout::Grid);
+        assert_eq!(Layout::Grid.step(-1), Layout::Row);
+        for l in [Layout::Grid, Layout::List, Layout::Row] {
+            assert_eq!(Layout::from_config(l.config_name()), Some(l));
+        }
+    }
 
     struct Tree(PathBuf);
 

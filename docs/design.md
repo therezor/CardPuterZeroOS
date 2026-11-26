@@ -449,6 +449,14 @@ Home: 4 Apps, 6 Find, 8 the home menu (pin, layout, notifications, lock,
 power). Enter opens the app. A tile carries a count from its app's notice:
 how many updates, or how many notices.
 
+Three layouts, picked in the menu or Settings: a grid of tiles, a list of
+rows, or one row as stock's slider. The row puts the selected app's card in
+the middle, larger, with a neighbour either side and each name under its
+card. Left and Right slide it one card, Up and Down jump three, and 1, 2, 3
+open the left, middle and right card. It scrolls without end, as stock's
+does: past the last app comes the first. With too few apps to fill both
+sides, an app never shows twice.
+
 Esc held 0.7 s on home, or Power in the menu, asks "Restart or power off?".
 5 Restart and 7 Off are held chips, as All in the switcher: every app
 closes first. A tap of either says to hold it, and Esc cancels. A tap of

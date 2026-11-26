@@ -28,7 +28,7 @@ are in `docs/hardware-facts.md`.
 
 - `crates/gh0st-ui`: RGB565 canvas, fonts and icons baked by `build.rs`, widgets,
   theme.
-- `crates/gh0st-shell`: the home screen (grid or list, nav and search modes),
+- `crates/gh0st-shell`: the home screen (grid, list or row, nav and search modes),
   the switcher and the dock. `examples/mockups.rs` renders its screens to PNG.
 - `crates/gh0st-core`: syscalls, event loop, input, config, apps, children,
   and the sandbox each app runs in (`src/sandbox.rs`, `docs/isolation.md`).

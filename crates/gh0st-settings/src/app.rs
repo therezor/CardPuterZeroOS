@@ -582,7 +582,7 @@ impl Settings {
                 self.state.muted = muted;
             }
             Setting::Layout => {
-                let l = self.state.layout.toggled();
+                let l = self.state.layout.step(if d < 0 { -1 } else { 1 });
                 cx.settings().set_str(key::HOME_LAYOUT, l.config_name());
             }
             Setting::Palette => {

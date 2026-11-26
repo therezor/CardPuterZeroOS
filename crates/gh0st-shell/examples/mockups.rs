@@ -464,6 +464,7 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
         let mut scenes: Vec<(&str, Canvas)> = vec![
             ("home-grid", home(&t, stock, Layout::Grid, None)),
             ("home-list", home(&t, stock, Layout::List, None)),
+            ("home-row", home(&t, stock, Layout::Row, None)),
             ("switcher", switcher_scene(&t, stock, 2, 1)),
             ("lock", lock(&t, None, true, None)),
             (
@@ -545,6 +546,7 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                     "home-list-search",
                     home(&t, stock, Layout::List, Some("re")),
                 ),
+                ("home-row-search", home(&t, stock, Layout::Row, Some("re"))),
                 ("switcher-home", switcher_scene(&t, stock, 2, 0)),
                 ("switcher-many", switcher_scene(&t, stock, 5, 4)),
                 ("terminal", terminal(&t)),

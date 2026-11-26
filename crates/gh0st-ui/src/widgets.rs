@@ -794,14 +794,20 @@ fn raised(c: &mut Canvas, r: Rect, radius: i32, fill: Color, lift: i32) {
 }
 
 pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
-    let (rad, lift) = if r.w >= 32 {
+    // A row card is a badge too, at its own size.
+    let card = r.w >= t.m.row_card_side;
+    let (rad, lift) = if card {
+        (t.m.row_card_r, t.m.lift)
+    } else if r.w >= 32 {
         (t.m.badge_r, t.m.lift)
     } else {
         (t.m.radius, t.m.chip_lift)
     };
     let symbol = |c: &mut Canvas, name: &str, fill: Color, ink: Color| {
         raised(c, r, rad, fill, lift);
-        let size = if r.w >= 32 {
+        let size = if card {
+            IconSize::Large
+        } else if r.w >= 32 {
             IconSize::Medium
         } else {
             IconSize::Bar
@@ -820,6 +826,7 @@ pub fn badge(c: &mut Canvas, t: &Theme, r: Rect, v: &Visual, selected: bool) {
         Visual::Letter { ch, tint } => {
             raised(c, r, rad, *tint, lift);
             let f = if r.w >= 32 { t.f.title } else { t.f.body_bold };
+            let f = if card { t.f.big } else { f };
             let mut buf = [0u8; 4];
             let up = ch.to_uppercase().next().unwrap_or(*ch);
             text_centre(c, f, r, up.encode_utf8(&mut buf), theme::on_tint(*tint));
