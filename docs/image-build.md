@@ -239,6 +239,8 @@ drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
   package metadata says what they run.
 - Stock app and AppStore libraries resolve (`ldd`).
 - Driver vermagic matches the kernel; depmod finds no unknown symbols.
+- Each USB Wi-Fi driver in `os/packages/gh0st-wifi/drivers` finds every
+  firmware name it asks for (`modinfo -F firmware`).
 - Package count and installed size stay within `budget.conf`.
 
 ## Smoke test

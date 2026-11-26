@@ -159,6 +159,26 @@ else
     ok "depmod finds no unknown symbols"
 fi
 
+# USB Wi-Fi firmware: every name gh0st-wifi's drivers ask for is there.
+# ath9k_htc asks for 1.4.0 and loads htc_9271.fw (1.3) when that's absent.
+# mt76x0u names the PCIe chip's file too, and rtw88_8822c a wake-on-LAN one.
+optional=" ath9k_htc/htc_9271-1.4.0.fw ath9k_htc/htc_7010-1.4.0.fw mediatek/mt7610e.bin rtw88/rtw8822c_wow_fw.bin "
+fwdir=$tree/usr/lib/firmware
+gone=
+for m in $(words "$OS/packages/gh0st-wifi/drivers"); do
+    ko=$(find "$tree/usr/lib/modules/$kver" -name "$m.ko*" | head -1)
+    [ -n "$ko" ] || { gone="$gone $m(no module)"; continue; }
+    for n in $(modinfo -F firmware "$ko"); do
+        [[ $optional == *" $n "* ]] && continue
+        found=
+        for f in "$fwdir/updates/$n" "$fwdir/$n"; do
+            for x in "" .xz .zst; do [ -e "$f$x" ] && found=1; done
+        done
+        [ -n "$found" ] || gone="$gone $m:$n"
+    done
+done
+if [ -z "$gone" ]; then ok "USB Wi-Fi drivers find their firmware"; else bad "missing Wi-Fi firmware:$gone"; fi
+
 # Budget.
 if [ -f "$V/budget.conf" ]; then
     # shellcheck source=/dev/null
