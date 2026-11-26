@@ -141,6 +141,17 @@ enum Pending {
     Lock,
 }
 
+/// The lock screen sliding up off the top at the unlock, over what it
+/// unlocks to.
+struct LockSlide {
+    anim: crate::motion::Anim<()>,
+    /// The lock screen's last frame.
+    lock: Canvas,
+    /// The app the unlock brings back: its last frame is under the slide,
+    /// and it resumes once the slide is over.
+    app: Option<String>,
+}
+
 /// Whose words the banner over an app shows, so each takes down only its
 /// own. The battery's countdown wins over the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -344,6 +355,7 @@ struct Shell {
     banner_owner: Option<BannerOwner>,
     /// Tab held over an app, toward the lock.
     tab_hold: TabHold,
+    lock_slide: Option<LockSlide>,
     /// Over an app: a toast.
     popup: Option<Overlay>,
     /// The volume or brightness level, shown in the top bar's place while
@@ -525,6 +537,7 @@ impl Shell {
             banner_text: None,
             banner_owner: None,
             tab_hold: TabHold::default(),
+            lock_slide: None,
             popup: None,
             level: None,
             spare: None,
@@ -1154,7 +1167,8 @@ impl Shell {
             self.pending = None;
             return;
         }
-        if !self.held.is_empty() {
+        // The app comes back once the lock screen has slid off it.
+        if !self.held.is_empty() || self.lock_slide.is_some() {
             return;
         }
         match self.pending.take() {
@@ -1766,8 +1780,10 @@ impl Shell {
         let mut keys_buf = Vec::new();
         loop {
             let app = self.app_front();
-            // Not while an app is about to come back: it would flash.
-            let resuming = matches!(self.pending, Some(Pending::Resume(_)));
+            // Not while an app is about to come back: it would flash. The
+            // unlock's slide draws the app's own last frame, so it may.
+            let resuming =
+                matches!(self.pending, Some(Pending::Resume(_))) && self.lock_slide.is_none();
             if !app && self.dirty && self.screen != Screen::Off && !resuming {
                 self.draw();
             }
@@ -2065,6 +2081,9 @@ impl Shell {
     }
 
     fn next_frame(&self, now: u64) -> Option<u64> {
+        if let Some(s) = &self.lock_slide {
+            return Some(s.anim.next_frame(now));
+        }
         match self.screen {
             Screen::Home => self.home.next_frame(now),
             Screen::Switcher => self.switcher.next_frame(now),
@@ -2462,6 +2481,7 @@ impl Shell {
         self.lock.rest();
         self.home_menu = None;
         self.power = None;
+        self.lock_slide = None;
         self.esc_hold.cancel();
         self.switcher.cancel_hold();
         self.tab_down = None;
@@ -2612,6 +2632,7 @@ impl Shell {
         self.probe_retried = false;
         self.home_menu = None;
         self.power = None;
+        self.lock_slide = None;
         self.esc_hold.cancel();
         self.switcher.cancel_hold();
         self.tab_down = None;
@@ -2643,16 +2664,50 @@ impl Shell {
             eprintln!("gh0st shell: unlocked");
         }
         self.maybe_ask_open();
+        let mut slide = self.config.animations().then(|| LockSlide {
+            anim: crate::motion::Anim {
+                start: rt::now_ms(),
+                ms: crate::motion::UNLOCK_MS,
+                motion: (),
+            },
+            lock: self.canvas.clone(),
+            app: None,
+        });
         match std::mem::replace(&mut self.unlock_to, Back::Home) {
             // The lock screen stays until the app is back, so home never
             // flashes in between.
             Back::App(id) if self.tasks.get(&id).is_some_and(|t| t.resumable()) => {
+                if let Some(s) = &mut slide {
+                    s.app = Some(id.clone());
+                }
                 self.pending = Some(Pending::Resume(id));
             }
             _ => {
                 self.screen = Screen::Home;
                 self.sync_grab();
             }
+        }
+        self.lock_slide = slide;
+    }
+
+    /// Mid-slide: what the unlock goes to, with the lock screen's last
+    /// frame moved up over it. Under an app that is the app's last frame,
+    /// which `resume` puts back once the slide is over, so nothing jumps.
+    fn draw_lock_slide(&mut self, now: u64) {
+        let Some(s) = &self.lock_slide else {
+            return;
+        };
+        let app = s.app.as_ref().and_then(|id| self.tasks.get(id));
+        if let Some(px) = app.and_then(|t| t.pixels.as_ref()) {
+            for y in 0..self.canvas.height().min(px.height()) {
+                self.canvas.copy_row_from(px, y, px.width());
+            }
+        }
+        let h = self.canvas.height().min(s.lock.height());
+        let gone = (h as f32 * s.anim.progress(now)).round() as i32;
+        for y in 0..h - gone {
+            let w = self.canvas.width().min(s.lock.width()) as usize;
+            self.canvas.row_mut(y)[..w].copy_from_slice(&s.lock.row(y + gone)[..w]);
         }
     }
 
@@ -3431,6 +3486,17 @@ impl Shell {
                 self.swallow_release = None;
             }
             return;
+        }
+        // A key ends the slide at once. Under an app the app is not back
+        // yet, so the key goes nowhere.
+        if k.state == State::Press {
+            if let Some(s) = self.lock_slide.take() {
+                self.dirty = true;
+                if s.app.is_some() {
+                    self.swallow_release = Some(k.code);
+                    return;
+                }
+            }
         }
         // A held key is input too: dark waits until it comes up.
         if k.state != State::Repeat {
@@ -4525,6 +4591,7 @@ impl Shell {
         }
         drop(dock);
         drop(cards);
+        self.draw_lock_slide(now);
         if matches!(
             self.screen,
             Screen::Home | Screen::Switcher | Screen::Notices | Screen::Locked | Screen::Prompt
@@ -4572,6 +4639,12 @@ impl Shell {
         self.dirty = false;
         self.home.settle(now);
         self.switcher.settle(now);
+        if self.lock_slide.as_ref().is_some_and(|s| s.anim.done(now)) {
+            self.lock_slide = None;
+            // The app waited for the slide: it comes back now, not at the
+            // next key.
+            self.run_pending(now);
+        }
         // While something moves, wait for this frame to reach the panel and
         // draw the next one right away: frames then lock to its refresh.
         self.paced = rows > 0 && self.next_frame(now).is_some() && self.display.present();

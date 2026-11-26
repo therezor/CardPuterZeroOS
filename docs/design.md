@@ -501,6 +501,10 @@ wait sits on a pane under the date, with a bell.
   wrong tries the field waits: "Try again in 5 s", counting down. The wait
   doubles with each wrong try after that, up to 5 minutes. Esc, or 10 s without a key, wipes
   it and goes back to rest.
+- **Unlocked.** The lock screen slides up off the top in 240 ms and shows
+  what it locked: home, the switcher, or the app, from its last frame. The
+  app goes on once the slide is over. A key ends the slide at once. With
+  Settings > Appearance > Animations off, the screen just changes.
 
 It asks for the password when Settings > System > Unlock with password is on
 and the account has one.

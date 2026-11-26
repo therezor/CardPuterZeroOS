@@ -6,6 +6,9 @@ use gh0st_ui::geom::Rect;
 /// Frame spacing while something moves. The SPI panel shows fewer, but a
 /// frame that is not ready in time is simply skipped by the kernel.
 pub const FRAME_MS: u64 = 20;
+/// The lock screen sliding up off the top at the unlock: about 12 frames
+/// at the panel's 50 Hz.
+pub const UNLOCK_MS: u64 = 240;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Anim<M> {

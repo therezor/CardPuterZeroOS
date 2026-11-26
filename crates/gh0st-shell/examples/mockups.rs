@@ -291,6 +291,18 @@ fn lock(t: &Theme, field: Option<usize>, ready: bool, note: Option<(Tone, &str)>
     c
 }
 
+/// The unlock a third of the way through: the lock screen sliding up off
+/// home.
+fn unlocking(t: &Theme, stock: Option<&Path>) -> Canvas {
+    let mut c = home(t, stock, Layout::Grid, None);
+    let l = lock(t, None, true, None);
+    let gone = t.m.height / 3;
+    for y in 0..t.m.height - gone {
+        c.row_mut(y).copy_from_slice(l.row(y + gone));
+    }
+    c
+}
+
 /// A keyring question, as the shell asks it.
 fn ask(t: &Theme, origin: Origin, kind: Kind, typed: usize, checking: bool, wrong: bool) -> Canvas {
     let (icon, title) = prompt::bar(&origin);
@@ -467,6 +479,7 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
             ("home-row", home(&t, stock, Layout::Row, None)),
             ("switcher", switcher_scene(&t, stock, 2, 1)),
             ("lock", lock(&t, None, true, None)),
+            ("lock-unlocking", unlocking(&t, stock)),
             (
                 "prompt-approve",
                 ask(&t, Origin::Daemon(1), approve(), 0, false, false),

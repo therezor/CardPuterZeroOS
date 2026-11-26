@@ -291,15 +291,15 @@ fn the_esc_hint_over_an_app_is_held_by_the_driver() {
 /// The shell with Alpha, a linked app, and no lock password; keys from
 /// `keys`. Returns what the shell logged.
 fn with_app(name: &str, keys: &str) -> String {
+    with_app_config(name, keys, "{\"gh0st\": {\"lock\": {\"password\": false}}}")
+}
+
+fn with_app_config(name: &str, keys: &str, json: &str) -> String {
     let dir = std::env::temp_dir().join(format!("gh0st-lock-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let config = dir.join("home/.config/cardputerzero");
     std::fs::create_dir_all(&config).unwrap();
-    std::fs::write(
-        config.join("config.json"),
-        "{\"gh0st\": {\"lock\": {\"password\": false}}}",
-    )
-    .unwrap();
+    std::fs::write(config.join("config.json"), json).unwrap();
     for d in ["frames", "ours", "stock", "icons"] {
         std::fs::create_dir_all(dir.join(d)).unwrap();
     }
@@ -370,4 +370,29 @@ fn a_tab_let_go_over_an_app_leaves_no_lock_behind() {
     let shell = with_app("tab-stale", keys);
     assert!(shell.contains("paused Alpha"), "{shell}");
     assert!(!shell.contains("gh0st shell: locked"), "{shell}");
+}
+
+/// Frames the shell flushed between two lines of its log.
+fn frames_between(shell: &str, from: &str, to: &str) -> usize {
+    let a = shell.find(from).expect(shell);
+    let b = shell[a..].find(to).expect(shell) + a;
+    shell[a..b].matches("gh0st shell: flushed").count()
+}
+
+/// The unlock slides the lock screen up over the app's last frame, and the
+/// app comes back once it is off; with animations off it comes back at once.
+#[test]
+fn the_unlock_slides_off_the_app_before_it_resumes() {
+    let keys = "wait 600\nenter\nwait 800\ndown tab\nwait 3200\nup tab\nwait 600\n\
+                tab\nenter\nwait 800\n";
+    let shell = with_app("slide", keys);
+    let slid = frames_between(&shell, "gh0st shell: unlocked", "resumed Alpha");
+    assert!(slid >= 3, "{slid} frames: {shell}");
+    let still = with_app_config(
+        "no-slide",
+        keys,
+        "{\"gh0st\": {\"lock\": {\"password\": false}, \"animations\": false}}",
+    );
+    let at_once = frames_between(&still, "gh0st shell: unlocked", "resumed Alpha");
+    assert!(at_once <= 1, "{at_once} frames: {still}");
 }
