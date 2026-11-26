@@ -166,7 +166,9 @@ masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the ch
 stores nothing until Settings turns logs on. NetworkManager sends no
 hostname and runs no connectivity check. It gives each Wi-Fi network a
 stable address of its own and scans with a random one. SSH is off and
-every radio starts blocked (`rfkill default_state=0`). The kernel log and
+every radio starts blocked (`rfkill default_state=0`). The image deny list
+also keeps out `udisks2`; apt's deny pins don't, so a Store app that writes
+disks can bring it. The kernel log and
 kernel pointers are root-only, and core dumps go nowhere. The hostname is
 `zero` until setup names the device.
 
