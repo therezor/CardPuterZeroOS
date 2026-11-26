@@ -35,6 +35,12 @@ impl Palette {
         mix(self.muted, self.fg, 150)
     }
 
+    /// The outline of a selected tile, row or card: a quiet gray that
+    /// still shows over a bright wallpaper.
+    pub fn edge(&self) -> Color {
+        mix(self.surface, self.fg, 90)
+    }
+
     /// Things that can't be used now: about 3:1 on `bg`.
     pub fn disabled(&self) -> Color {
         mix(self.bg, self.muted, 180)
