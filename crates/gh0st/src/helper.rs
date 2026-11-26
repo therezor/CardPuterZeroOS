@@ -38,11 +38,20 @@
 //!     gh0st-helper store-upgrade [--mirror auto|github|china]          password
 //!     gh0st-helper user-create NAME              setup only, the new password
 //!     gh0st-helper setup-finish                  setup only
+//!     gh0st-helper files-worker                  password, never in setup
 //!
 //! `usb-hid hold` builds the Keyboard app's USB gadget, prints `node NAME
 //! PATH` for each function and `state WORD` as the host takes it, and
 //! takes it down when stdin closes. The app keeps the pipe, so however it
 //! ends, the host sees the keyboard unplugged and lets go of every key.
+//!
+//! `files-worker` is Files' root mode, and the one verb that is not a
+//! fixed job: it hands the caller a root Files worker, as much power as
+//! sudo behind the same password. Its stdin must be a socket. It reads one
+//! line, the password or empty under grace, then execs `gh0st-files
+//! --worker` with the socket on fd 3 and an environment built from nothing.
+//! The worker serves local files only and acts as the user in the user's
+//! own folders (docs/files.md).
 //!
 //! A password verb reads the user's password as one line on stdin (see
 //! `auth`). `hotspot password` reads the hotspot's new password the same way. A setup verb runs only for root while setup's marker exists
@@ -116,6 +125,8 @@ pub enum Verb {
     UsbPower(bool),
     /// The Keyboard app's USB gadget, held while stdin is open.
     UsbHid,
+    /// Files' root worker: exec'd, with the caller's socket on fd 3.
+    FilesWorker,
     /// Classic Bluetooth (BR/EDR) on or off; LE stays on.
     BtClassic(bool),
     WifiPowersave(bool),
@@ -170,7 +181,8 @@ impl Verb {
             | Verb::UpdateChannel(_)
             | Verb::StoreInstall(..)
             | Verb::StoreRemove(_)
-            | Verb::StoreUpgrade(_) => true,
+            | Verb::StoreUpgrade(_)
+            | Verb::FilesWorker => true,
             // The hotspot carries the trust NetworkManager's polkit grant
             // already gives the device user.
             Verb::Rfkill(..)
@@ -234,6 +246,7 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["rfkill", "wlan", s] => Verb::Rfkill(Radio::Wlan, on(s)?),
         ["usb-power", s] => Verb::UsbPower(on(s)?),
         ["usb-hid", "hold"] => Verb::UsbHid,
+        ["files-worker"] => Verb::FilesWorker,
         ["bt-classic", s] => Verb::BtClassic(on(s)?),
         ["wifi-powersave", s] => Verb::WifiPowersave(on(s)?),
         ["hotspot", "name", n] if hotspot::valid_name(n) => Verb::HotspotName(n.to_string()),
@@ -725,6 +738,108 @@ fn set_time(_: i64) -> Result<(), String> {
 
 /// True for root while setup's marker exists. The helper checks this itself:
 /// pkexec would let the device user run it too.
+/// Files' root worker. Refused in setup, for root itself and without a
+/// socket on stdin; then one line is always read, so the worker never sees
+/// the password or a stray line. On success it never returns: the helper
+/// becomes the worker, keeping its pid, so the page that started pkexec
+/// stays its parent.
+fn files_worker() -> i32 {
+    if in_setup() {
+        eprintln!("gh0st-helper: not during setup");
+        return 13;
+    }
+    let caller = match std::env::var("PKEXEC_UID")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
+        Some(u) if u != 0 => u,
+        _ => {
+            eprintln!("gh0st-helper: files-worker is for the device user, through pkexec");
+            return 1;
+        }
+    };
+    if !stdin_is_socket() {
+        eprintln!("gh0st-helper: files-worker wants a socket on stdin");
+        return 2;
+    }
+    let line = auth::read_line(0);
+    match auth::check_given(Some(line)) {
+        Auth::Ok => {}
+        Auth::Required => {
+            eprintln!("gh0st-helper: password required");
+            return 10;
+        }
+        Auth::Wrong => {
+            eprintln!("gh0st-helper: wrong password");
+            return 11;
+        }
+        Auth::Locked(secs) => {
+            eprintln!("gh0st-helper: locked {secs}");
+            return 12;
+        }
+        Auth::Failed(e) => {
+            eprintln!("gh0st-helper: {e}");
+            return 1;
+        }
+    }
+    let err = exec_files_worker(caller);
+    eprintln!("gh0st-helper: files-worker: {err}");
+    1
+}
+
+fn stdin_is_socket() -> bool {
+    // SAFETY: fstat into a zeroed stat struct on fd 0.
+    unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        libc::fstat(0, &mut st) == 0 && (st.st_mode & libc::S_IFMT) == libc::S_IFSOCK
+    }
+}
+
+/// Puts the socket on fd 3, nothing on 0 and 1, and execs the worker with
+/// a fixed environment. Its data folder is root's own: the worker empties
+/// `stage` there at start, which in the user's folder would be a race.
+fn exec_files_worker(caller: u32) -> String {
+    use std::os::unix::process::CommandExt;
+    let Some((uid, gid, _)) = auth::user_name(caller).and_then(|n| passwd(&n)) else {
+        return format!("no user {caller}");
+    };
+    let data = "/run/gh0st-helper/files";
+    if let Err(e) = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(data)
+    {
+        return format!("{data}: {e}");
+    }
+    // SAFETY: plain syscalls on fds this process owns; /dev/null is opened
+    // read-write and closed after it is copied.
+    unsafe {
+        libc::umask(0o022);
+        if libc::chdir(c"/".as_ptr()) != 0 || libc::dup2(0, 3) != 3 {
+            return std::io::Error::last_os_error().to_string();
+        }
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+        if null < 0 {
+            return std::io::Error::last_os_error().to_string();
+        }
+        libc::dup2(null, 0);
+        libc::dup2(null, 1);
+        if null > 3 {
+            libc::close(null);
+        }
+    }
+    let err = std::process::Command::new("/usr/bin/gh0st-files")
+        .arg("--worker")
+        .env_clear()
+        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+        .env("HOME", "/root")
+        .env("GH0ST_FILES_FD", "3")
+        .env("GH0ST_FILES_DATA", data)
+        .env("GH0ST_FILES_ROOT", format!("{uid}:{gid}"))
+        .exec();
+    err.to_string()
+}
+
 fn in_setup() -> bool {
     // SAFETY: plain syscalls with no arguments.
     let (uid, euid) = unsafe { (libc::getuid(), libc::geteuid()) };
@@ -963,6 +1078,8 @@ fn act(v: Verb) -> Result<(), String> {
         Verb::Rfkill(radio, on) => rfkill::set(radio, !on).map_err(|e| format!("/dev/rfkill: {e}")),
         Verb::UsbPower(on) => usb_power(on),
         Verb::UsbHid => usb_hid_hold(),
+        // main runs it before auth, as it reads its own line.
+        Verb::FilesWorker => Err("files-worker runs from main".into()),
         Verb::BtClassic(on) => bt_classic(on),
         Verb::WifiPowersave(on) => {
             write_nm(
@@ -1142,10 +1259,13 @@ pub fn main(args: &[String]) -> i32 {
              update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
              store-refresh | store-install [--mirror auto|github|china] PKG... | \
              store-remove PKG | store-upgrade [--mirror auto|github|china] | \
-             user-create NAME | setup-finish"
+             user-create NAME | setup-finish | files-worker"
         );
         return 2;
     };
+    if v == Verb::FilesWorker {
+        return files_worker();
+    }
     if v.setup_only() && !in_setup() {
         eprintln!("gh0st-helper: only during setup");
         return 13;
@@ -1251,6 +1371,15 @@ mod tests {
         }
         assert!(Verb::StoreInstall(Mirror::Auto, vec![]).gated());
         assert!(!Verb::StoreRefresh.gated());
+    }
+
+    #[test]
+    fn the_files_worker_takes_no_arguments_and_needs_the_password() {
+        assert_eq!(parse(&args("files-worker")), Some(Verb::FilesWorker));
+        assert_eq!(parse(&args("files-worker /bin/sh")), None);
+        assert_eq!(parse(&args("files-worker --root")), None);
+        assert!(Verb::FilesWorker.gated());
+        assert!(!Verb::FilesWorker.setup_only());
     }
 
     #[test]

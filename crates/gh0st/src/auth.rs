@@ -95,13 +95,21 @@ fn stat_starttime(stat: &str) -> Option<u64> {
 /// One line from stdin, without its newline. Stops at a newline so a
 /// terminal works too.
 pub(crate) fn read_password() -> Vec<u8> {
+    read_line(0)
+}
+
+/// One line from `fd`, a byte at a time with no buffer, so nothing after
+/// the newline is taken: `files-worker` hands the rest of its stdin to the
+/// worker. A line longer than a password ends the read.
+pub(crate) fn read_line(fd: i32) -> Vec<u8> {
     let mut out = Vec::with_capacity(64);
     let mut byte = [0u8; 1];
-    let mut stdin = std::io::stdin().lock();
     while out.len() < MAX_PASSWORD {
-        match stdin.read(&mut byte) {
-            Ok(1) if byte[0] == b'\n' => break,
-            Ok(1) => out.push(byte[0]),
+        // SAFETY: reads one byte into a one-byte buffer.
+        let n = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), 1) };
+        match n {
+            1 if byte[0] == b'\n' => break,
+            1 => out.push(byte[0]),
             _ => break,
         }
     }
@@ -139,6 +147,13 @@ fn save(f: &mut File, st: &State) -> std::io::Result<()> {
 
 /// Decides whether the caller may run a gated verb.
 pub fn check() -> Auth {
+    check_given(None)
+}
+
+/// As `check`, with the password line already read (`files-worker` always
+/// reads one, so nothing it didn't want reaches the worker). Under grace it
+/// is wiped unused.
+pub fn check_given(given: Option<Vec<u8>>) -> Auth {
     // SAFETY: plain syscalls with no arguments.
     let (uid, euid, ppid) = unsafe { (libc::getuid(), libc::geteuid(), libc::getppid()) };
     if euid != 0 {
@@ -156,13 +171,14 @@ pub fn check() -> Auth {
     let Some(user) = user_name(caller) else {
         return Auth::Failed(format!("no user {caller}"));
     };
-    match check_as(caller, &user, ppid) {
+    match check_as(caller, &user, ppid, given) {
         Ok(a) => a,
         Err(e) => Auth::Failed(format!("{DIR}: {e}")),
     }
 }
 
-fn check_as(uid: u32, user: &str, ppid: i32) -> std::io::Result<Auth> {
+fn check_as(uid: u32, user: &str, ppid: i32, given: Option<Vec<u8>>) -> std::io::Result<Auth> {
+    let mut given = given;
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -192,9 +208,12 @@ fn check_as(uid: u32, user: &str, ppid: i32) -> std::io::Result<Auth> {
         .grace
         .is_some_and(|g| ppid > 1 && grace_valid(&g, uid, ppid, start, now))
     {
+        if let Some(g) = &mut given {
+            wipe(g);
+        }
         return Ok(Auth::Ok);
     }
-    let mut password = read_password();
+    let mut password = given.unwrap_or_else(read_password);
     if password.is_empty() {
         return Ok(Auth::Required);
     }
@@ -228,6 +247,49 @@ fn check_as(uid: u32, user: &str, ppid: i32) -> std::io::Result<Auth> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_line_read_leaves_what_follows_it() {
+        let mut fds = [0; 2];
+        // SAFETY: a socket pair into a two-int array.
+        assert_eq!(
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },
+            0
+        );
+        let msg = b"hunter22\r\nready\n";
+        // SAFETY: writes the bytes of a live buffer to our own socket.
+        unsafe { libc::write(fds[1], msg.as_ptr().cast(), msg.len()) };
+        assert_eq!(read_line(fds[0]), b"hunter22");
+        let mut rest = [0u8; 16];
+        // SAFETY: reads into a live buffer from our own socket.
+        let n = unsafe { libc::read(fds[0], rest.as_mut_ptr().cast(), rest.len()) };
+        assert_eq!(
+            &rest[..n as usize],
+            b"ready\n",
+            "nothing after the line was taken"
+        );
+        // SAFETY: closes the fds this test opened.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
+
+    #[test]
+    fn a_line_past_a_password_stops_the_read() {
+        let mut fds = [0; 2];
+        // SAFETY: a socket pair into a two-int array.
+        unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+        let long = vec![b'a'; MAX_PASSWORD + 10];
+        // SAFETY: writes a live buffer to our own socket.
+        unsafe { libc::write(fds[1], long.as_ptr().cast(), long.len()) };
+        assert_eq!(read_line(fds[0]).len(), MAX_PASSWORD);
+        // SAFETY: closes the fds this test opened.
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
 
     #[test]
     fn grace_holds_for_one_process_for_five_minutes() {
