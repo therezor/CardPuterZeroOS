@@ -41,6 +41,10 @@ allowed=$(jq -r '.rpt[].name' "$LOCK" | sort)
 extra=$(comm -23 <(echo "$rpt") <(echo "$allowed"))
 if [ -z "$extra" ]; then ok "rpt packages all pinned in lock.json"; else bad "unpinned rpt packages: $extra"; fi
 
+# What lock.json publishes only for Store apps stays out of the image.
+inside=$(comm -12 <(cut -f1 "$R/packages.tsv" | sort) <(jq -r '.rpt[] | select(.use == "repo") | .name' "$LOCK" | sort))
+if [ -z "$inside" ]; then ok "no Store-only package in the image"; else bad "Store-only packages installed: $inside"; fi
+
 # What apt marks manual is roots.list plus Debian's required base, which
 # mmdebstrap marks manual.
 want=$(words "$M/roots.list" "$V/roots.list" | sort)

@@ -27,7 +27,7 @@ subst() {
         args+=(-e "s|@$v@|${!v:-}|g")
     done
     for p in $(grep -o '@V:[^@]*@' "$1" | sort -u | sed 's/^@V://; s/@$//'); do
-        v=$(jq -r --arg p "$p" '[.rpt[], .apps[], .repack[] | select(.name == $p) | .version][0] // empty' "${LOCK:?}")
+        v=$(jq -r --arg p "$p" '[.rpt[], .apps[] | select(.name == $p) | .version][0] // empty' "${LOCK:?}")
         [ -n "$v" ] || { echo "error: $p is not in lock.json" >&2; exit 1; }
         args+=(-e "s|@V:$p@|$v|g")
     done
