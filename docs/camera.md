@@ -400,6 +400,19 @@ Builds:
   GH0ST_CAMD_TEST=$PWD/target/camd/gh0st-camd-stub cargo test -p gh0st-camera
   ```
 
+## Store camera apps
+
+Store apps that use the camera run on Raspberry Pi's own tools:
+`rpicam-apps` (`rpicam-still`, `rpicam-vid`) or `python3-picamera2`. Our
+repo publishes the builds made for the pinned libcamera
+(`image-build.md`), so they install from the Store like anything else.
+
+- One process holds the camera at a time. Camera pauses when it leaves
+  the front, and a Store app gets the sensor then.
+- They share the 64 MB CMA pool with the ISP and the encoder. Their
+  default sizes are what the device was tried at.
+- The camera grant covers them as it does any app (`isolation.md`).
+
 ## Missing
 
 - **Unmeasured.** The capture's latency against the picture, and whether

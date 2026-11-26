@@ -39,6 +39,9 @@ pub fn dpkg_status() -> PathBuf {
 /// Our apt source, from gh0st-base. The store site sits beside the repo.
 pub const SOURCES: &str = "/etc/apt/sources.list.d/gh0st.sources";
 
+/// The apt pins that keep Debian's package of a pinned app's name out.
+pub const PINS: &str = "/etc/apt/preferences.d/gh0st-store.pref";
+
 /// The store site: `$GH0ST_STORE_URL`, or the apt source's URI with
 /// `/store` in place of `/apt`. None without a Gh0st OS source.
 pub fn site() -> Option<String> {
@@ -57,6 +60,11 @@ fn site_of(sources: &str) -> Option<String> {
     let base = base.strip_suffix("/apt")?;
     base.starts_with("https://")
         .then(|| format!("{base}/store"))
+}
+
+/// [`PINS`], or `$GH0ST_STORE_PINS`.
+pub fn pins_path() -> PathBuf {
+    dir("GH0ST_STORE_PINS", PINS)
 }
 
 /// The key the catalog must be signed with, or `$GH0ST_STORE_KEYRING`.
@@ -116,8 +124,11 @@ impl Flags {
     /// It asks for root as it runs (sudo, pkexec, a setuid file), which a
     /// sandbox can't give: it runs outside one.
     pub const ROOT: Flags = Flags(1 << 9);
+    /// An input method: its bridge reads the keys of apps the user lets
+    /// it type into (`sandbox::bridges`).
+    pub const KEYS: Flags = Flags(1 << 10);
 
-    const NAMES: [(Flags, &'static str); 10] = [
+    const NAMES: [(Flags, &'static str); 11] = [
         (Flags::SCRIPTS, "scripts"),
         (Flags::PATHS, "paths"),
         (Flags::SERVICE, "service"),
@@ -128,6 +139,7 @@ impl Flags {
         (Flags::DISPLAY, "display"),
         (Flags::IMU, "imu"),
         (Flags::ROOT, "root"),
+        (Flags::KEYS, "keys"),
     ];
 
     pub fn has(self, f: Flags) -> bool {
@@ -140,6 +152,7 @@ impl Flags {
             || self.has(Flags::PATHS)
             || self.has(Flags::SERVICE)
             || self.has(Flags::ROOT)
+            || self.has(Flags::KEYS)
     }
 
     /// `scripts,network`. Unknown words are skipped, so an older device
@@ -190,6 +203,10 @@ pub struct App {
     pub share: String,
     /// The stem of the `.desktop` file it installs, to open it.
     pub desktop: String,
+    /// Debian has a package of the same name. While the app is installed,
+    /// the engine pins Debian's out, so an upgrade never swaps one for the
+    /// other. An `app-pin` line: an engine without pins skips it.
+    pub pin: bool,
 }
 
 /// A file that comes with the catalog, pinned by it.
@@ -238,6 +255,11 @@ impl Catalog {
                 "about" => c.about = pinned(rest).ok_or_else(|| bad(n, "about"))?,
                 "icons" => c.icons = pinned(rest).ok_or_else(|| bad(n, "icons"))?,
                 "app" => c.apps.push(app(rest).ok_or_else(|| bad(n, "app"))?),
+                "app-pin" => c.apps.push(
+                    app(rest)
+                        .map(|a| App { pin: true, ..a })
+                        .ok_or_else(|| bad(n, "app-pin"))?,
+                ),
                 _ => {}
             }
         }
@@ -316,7 +338,7 @@ impl Catalog {
                 &a.desktop,
             ];
             let f: Vec<String> = f.iter().map(|x| clean(x)).collect();
-            s.push_str("app\t");
+            s.push_str(if a.pin { "app-pin\t" } else { "app\t" });
             s.push_str(&f.join("\t"));
             s.push('\n');
         }
@@ -356,7 +378,24 @@ fn app(rest: &str) -> Option<App> {
         cn_url: s(11),
         share: s(12),
         desktop: f.get(13).map_or(String::new(), |d| d.to_string()),
+        pin: false,
     })
+}
+
+/// The pin file for these packages: Debian's package of each name never
+/// installs. Empty for none.
+pub fn pins_text(packages: &[&str]) -> String {
+    let mut out = String::new();
+    for p in packages.iter().filter(|p| is_package(p)) {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "Explanation: {p} is a Store app; Debian's {p} is another program.\n\
+             Package: {p}\nPin: release o=Debian\nPin-Priority: -1\n"
+        ));
+    }
+    out
 }
 
 /// One field of a tab-separated line: no tab, no newline.
@@ -916,6 +955,7 @@ mod tests {
                     cn_url: "https://oss.example/acidzero_0.2.0_arm64.deb".into(),
                     share: "ACID".into(),
                     desktop: "acidzero".into(),
+                    pin: false,
                 },
                 App {
                     package: "zsnake".into(),
@@ -942,6 +982,30 @@ mod tests {
         assert_eq!(back.date, c.date);
         assert_eq!(back.icons, c.icons);
         assert_eq!(back.categories(), ["Creative & Office", "Games"]);
+    }
+
+    #[test]
+    fn a_pinned_app_reads_back_and_an_old_engine_skips_it() {
+        let mut c = sample();
+        c.apps[1].pin = true;
+        let t = c.text();
+        assert!(t.contains("\napp-pin\tzsnake\t"));
+        assert!(Catalog::parse(&t).unwrap().apps[1].pin);
+        // What an engine without pins does with the line: skips it.
+        let old: Vec<&str> = t.lines().filter(|l| !l.starts_with("app-pin\t")).collect();
+        assert_eq!(Catalog::parse(&old.join("\n")).unwrap().apps.len(), 1);
+    }
+
+    #[test]
+    fn pins_keep_debians_package_of_the_name_out() {
+        assert_eq!(pins_text(&[]), "");
+        let t = pins_text(&["loki", "Bad Name"]);
+        assert!(t.contains("Package: loki\nPin: release o=Debian\nPin-Priority: -1\n"));
+        assert!(!t.contains("Bad"));
+        assert_eq!(
+            pins_text(&["a1", "b2"]).matches("Pin-Priority: -1").count(),
+            2
+        );
     }
 
     #[test]

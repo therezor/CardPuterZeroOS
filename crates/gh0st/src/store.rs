@@ -426,6 +426,9 @@ fn install_one(
     if !url.starts_with("https://") {
         return Err((Outcome::Failed, "not an https URL".into()));
     }
+    if a.pin {
+        pin_for(a)?;
+    }
     let deb = download(rep, a, url)?;
     let r = install_deb(rep, a, &deb, lists_fresh);
     let _ = std::fs::remove_file(&deb);
@@ -529,6 +532,11 @@ fn install_deb(
     if let Some(other) = removes(&sim).into_iter().next() {
         return Err((Outcome::Failed, format!("It would remove {other}")));
     }
+    // An app that needs a newer Gh0st OS waits for Updates, which installs
+    // the system as a whole.
+    if upgrades_ours(&sim) {
+        return Err((Outcome::Failed, "Update Gh0st OS first".into()));
+    }
     let deps = space_for(&sim, a)?;
     if update::dpkg_interrupted() {
         let _ = update::configure_pending(rep);
@@ -627,6 +635,19 @@ fn removes(sim: &str) -> Vec<String> {
         .filter_map(|r| r.split_whitespace().next())
         .map(String::from)
         .collect()
+}
+
+/// The simulation upgrades one of our packages: an `Inst` of a `gh0st`
+/// package that is installed, which apt shows with its version in brackets.
+fn upgrades_ours(sim: &str) -> bool {
+    sim.lines()
+        .filter_map(|l| l.strip_prefix("Inst "))
+        .any(|r| {
+            let mut w = r.split_whitespace();
+            let name = w.next().unwrap_or("");
+            (name == "gh0st" || name.starts_with("gh0st-"))
+                && w.next().is_some_and(|v| v.starts_with('['))
+        })
 }
 
 /// Room for the app and what apt brings with it: the download, then each
@@ -738,7 +759,54 @@ fn remove(pkg: &str) -> Result<(), Failure> {
     if code != Some(0) {
         return Err(apt_failure(&out));
     }
-    Ok(())
+    write_pins(&c, None)
+}
+
+// ------------------------------------------------------------ pins
+
+/// Before a pinned app installs: Debian's package of its name pinned out,
+/// so neither this apt run nor a later upgrade picks Debian's. Refused
+/// when Debian's is what is installed: the user put it there.
+fn pin_for(a: &App) -> Result<(), Failure> {
+    let c = Catalog::load().ok_or((Outcome::Failed, "No app list".into()))?;
+    if let Some(v) = store::installed_apps(&c).get(&a.package)
+        && gh0st_core::debver::newer(v, &a.version)
+    {
+        return Err((
+            Outcome::Failed,
+            format!("Debian's {} {v} is installed. Remove it first", a.package),
+        ));
+    }
+    write_pins(&c, Some(&a.package))
+}
+
+/// The pin file for the pinned apps installed, and `adding`. A name the
+/// file pins already stays while it is installed, though the catalog may
+/// have dropped it. None left: no file.
+fn write_pins(c: &Catalog, adding: Option<&str>) -> Result<(), Failure> {
+    let path = store::pins_path();
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let old: Vec<&str> = old
+        .lines()
+        .filter_map(|l| l.strip_prefix("Package: "))
+        .collect();
+    let status = std::fs::read_to_string(store::dpkg_status()).unwrap_or_default();
+    let installed = store::installed(&status, |p| {
+        old.contains(&p) || c.find(p).is_some_and(|a| a.pin)
+    });
+    let mut pkgs: Vec<&str> = installed.keys().map(String::as_str).collect();
+    pkgs.extend(adding);
+    pkgs.sort_unstable();
+    pkgs.dedup();
+    let r = if pkgs.is_empty() {
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    } else {
+        gh0st_core::update::write_atomic(&path, &store::pins_text(&pkgs))
+    };
+    r.map_err(|e| (Outcome::Failed, format!("{}: {e}", path.display())))
 }
 
 #[cfg(test)]
@@ -749,6 +817,20 @@ mod tests {
     fn a_simulation_names_what_it_would_remove() {
         let sim = "Inst foo (1 Debian:13/stable [arm64])\nRemv bar [2]\nConf foo (1)\n";
         assert_eq!(removes(sim), ["bar"]);
+    }
+
+    #[test]
+    fn an_app_that_would_upgrade_ours_is_left_for_updates() {
+        let sim = "Inst gh0st [0.4.0] (0.4.1 Gh0st:stable [arm64])\nInst lan-proxy (0.1.3 local-deb [arm64])\n";
+        assert!(upgrades_ours(sim));
+        assert!(
+            !upgrades_ours("Inst gh0st-wifi (1 Gh0st:stable [all])\n"),
+            "a new one"
+        );
+        assert!(!upgrades_ours(
+            "Inst libgh0stly [1] (2 Debian:13 [arm64])\n"
+        ));
+        assert!(!upgrades_ours("Inst lan-proxy (0.1.3 local-deb [arm64])\n"));
     }
 
     #[test]

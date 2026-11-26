@@ -100,6 +100,8 @@ pub fn spawn_with<S: AsRef<OsStr>>(
         // The stock camera grabs the keyboard unless told not to, and a grab
         // cuts the shell off from Fn+K, ESC held and the volume keys.
         .env("CAMERA_APP_KEYBOARD_GRAB", "false");
+    // A preload reaches an app only through its grant, in `extra`.
+    cmd.env_remove("LD_PRELOAD");
     if Path::new(APP_CWD).is_dir() {
         cmd.current_dir(APP_CWD);
     }

@@ -1,0 +1,15 @@
+# The USB Wi-Fi drivers gh0st-wifi ships firmware for. The image check
+# asks each for its firmware names (modinfo) and finds every one.
+ath9k_htc
+mt7601u
+mt76x0u
+mt76x2u
+mt7921u
+rt2800usb
+rtw88_8723d
+rtw88_8812a
+rtw88_8814a
+rtw88_8821a
+rtw88_8821c
+rtw88_8822b
+rtw88_8822c

@@ -41,6 +41,15 @@ allowed=$(jq -r '.rpt[].name' "$LOCK" | sort)
 extra=$(comm -23 <(echo "$rpt") <(echo "$allowed"))
 if [ -z "$extra" ]; then ok "rpt packages all pinned in lock.json"; else bad "unpinned rpt packages: $extra"; fi
 
+# libcamera moves as one: its libraries, the IPA, the headers and the
+# Python binding the Store's camera apps load.
+cams=$(jq -r '.rpt[] | select(.name | test("libcamera")) | .version' "$LOCK" | sort -u)
+if [ "$(echo "$cams" | wc -l)" -eq 1 ]; then ok "libcamera pins agree ($cams)"; else bad "libcamera pins differ: $(echo $cams)"; fi
+
+# What lock.json publishes only for Store apps stays out of the image.
+inside=$(comm -12 <(cut -f1 "$R/packages.tsv" | sort) <(jq -r '.rpt[] | select(.use == "repo") | .name' "$LOCK" | sort))
+if [ -z "$inside" ]; then ok "no Store-only package in the image"; else bad "Store-only packages installed: $inside"; fi
+
 # What apt marks manual is roots.list plus Debian's required base, which
 # mmdebstrap marks manual.
 want=$(words "$M/roots.list" "$V/roots.list" | sort)
@@ -158,6 +167,26 @@ if depmod -n -e -b "$tree" -F "$tree/boot/System.map-$kver" "$kver" 2>&1 >/dev/n
 else
     ok "depmod finds no unknown symbols"
 fi
+
+# USB Wi-Fi firmware: every name gh0st-wifi's drivers ask for is there.
+# ath9k_htc asks for 1.4.0 and loads htc_9271.fw (1.3) when that's absent.
+# mt76x0u names the PCIe chip's file too, and rtw88_8822c a wake-on-LAN one.
+optional=" ath9k_htc/htc_9271-1.4.0.fw ath9k_htc/htc_7010-1.4.0.fw mediatek/mt7610e.bin rtw88/rtw8822c_wow_fw.bin "
+fwdir=$tree/usr/lib/firmware
+gone=
+for m in $(words "$OS/packages/gh0st-wifi/drivers"); do
+    ko=$(find "$tree/usr/lib/modules/$kver" -name "$m.ko*" | head -1)
+    [ -n "$ko" ] || { gone="$gone $m(no module)"; continue; }
+    for n in $(modinfo -F firmware "$ko"); do
+        [[ $optional == *" $n "* ]] && continue
+        found=
+        for f in "$fwdir/updates/$n" "$fwdir/$n"; do
+            for x in "" .xz .zst; do [ -e "$f$x" ] && found=1; done
+        done
+        [ -n "$found" ] || gone="$gone $m:$n"
+    done
+done
+if [ -z "$gone" ]; then ok "USB Wi-Fi drivers find their firmware"; else bad "missing Wi-Fi firmware:$gone"; fi
 
 # Budget.
 if [ -f "$V/budget.conf" ]; then

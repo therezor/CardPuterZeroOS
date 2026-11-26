@@ -32,8 +32,11 @@ echo "sqv $*" >> "$FAKE/log"
 exit 0
 "#;
 
+/// Logs. A real remove empties the status file, as if dpkg removed the
+/// one app it lists.
 const APT_GET: &str = r#"#!/bin/sh
 echo "apt-get $*" >> "$FAKE/log"
+case "$1 $2" in "remove -y") : > "$GH0ST_DPKG_STATUS" ;; esac
 exit 0
 "#;
 
@@ -126,6 +129,7 @@ impl Sim {
             .env("GH0ST_POWER_SUPPLY", self.dir.join("power"))
             .env("GH0ST_NOTIFY_SYSTEM", self.dir.join("notify"))
             .env("GH0ST_DPKG_STATUS", self.dir.join("status"))
+            .env("GH0ST_STORE_PINS", self.dir.join("pins"))
             .output()
             .unwrap();
         assert!(
@@ -284,6 +288,40 @@ fn a_deb_that_doesnt_match_never_reaches_apt() {
     assert!(!sim.log().contains("apt-get"), "{}", sim.log());
     let left: Vec<_> = std::fs::read_dir(sim.dir.join("cache")).unwrap().collect();
     assert!(left.is_empty(), "a bad deb is deleted");
+}
+
+#[test]
+fn a_pinned_app_keeps_debians_package_of_its_name_out_while_installed() {
+    let sim = Sim::new("pin");
+    let text = sim.publish(now() - 60, "acidzero\tA synth.\n");
+    let text = text.replace("\napp\t", "\napp-pin\t");
+    std::fs::write(sim.dir.join("site/catalog"), text).unwrap();
+    sim.job("refresh\nmirror auto\n");
+    let pins = || std::fs::read_to_string(sim.dir.join("pins")).ok();
+    let status = |v: &str| {
+        let s = format!("Package: acidzero\nStatus: install ok installed\nVersion: {v}\n");
+        std::fs::write(sim.dir.join("status"), s).unwrap();
+    };
+
+    // Debian's acidzero, newer than the app: the user put it there.
+    status("9.9-1");
+    let st = sim.job("install acidzero\nmirror github\n");
+    assert!(st.detail.contains("Debian's acidzero"), "{}", st.detail);
+    assert_eq!(pins(), None);
+
+    // The pin lands before the download, which fails here: no deb.
+    std::fs::write(sim.dir.join("status"), "").unwrap();
+    sim.job("install acidzero\nmirror github\n");
+    let p = pins().expect("a pin file");
+    assert!(
+        p.contains("Package: acidzero\nPin: release o=Debian\nPin-Priority: -1"),
+        "{p}"
+    );
+
+    // Installed, then removed: the pin goes with it.
+    status("0.2.0");
+    sim.job("remove acidzero\nmirror auto\n");
+    assert_eq!(pins(), None, "{}", sim.log());
 }
 
 #[test]

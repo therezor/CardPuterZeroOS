@@ -5,6 +5,10 @@ Everything past the home screen is an app, Settings and the terminal included.
 Rust apps get all of it through the SDK (`sdk.md`). Apps in other languages
 use this page directly.
 
+The `gh0st` package provides `applaunch`, the stock launcher's package
+name, so a Store app that depends on it installs. Nothing of the stock
+launcher ships.
+
 ## Finding apps
 
 - The shell reads `.desktop` files in `/usr/share/APPLaunch/applications`

@@ -105,7 +105,11 @@ wpa_supplicant, BlueZ, PipeWire and ffmpeg. Raspberry Pi builds come only
 where `lock.json` pins them: the kernel, `raspi-firmware`, the Wi-Fi and
 Bluetooth firmware, libcamera and its IPA, libpisp, TensorFlow Lite (the
 IPA needs it) and `vcgencmd`. The device itself has no Raspberry Pi apt
-source. Old libcamera and kernel builds are fetched from the pool by URL:
+source. What Store apps need from Raspberry Pi has `use: repo` in
+`lock.json`: our repo publishes it and the image leaves it out. That is the
+full `firmware-atheros`, `firmware-mediatek` and `firmware-realtek`, and
+the camera set for apps on `rpicam-apps` or `python3-picamera2`, built for
+the pinned libcamera. Old libcamera and kernel builds are fetched from the pool by URL:
 the live index has moved on (libcamera-ipa 0.8, kernel 6.18.60), so a build
 from it would not resolve.
 
@@ -162,7 +166,9 @@ masked, `/tmp` is a tmpfs. `units-*.expected` in each variant is the list the ch
 stores nothing until Settings turns logs on. NetworkManager sends no
 hostname and runs no connectivity check. It gives each Wi-Fi network a
 stable address of its own and scans with a random one. SSH is off and
-every radio starts blocked (`rfkill default_state=0`). The kernel log and
+every radio starts blocked (`rfkill default_state=0`). The image deny list
+also keeps out `udisks2`; apt's deny pins don't, so a Store app that writes
+disks can bring it. The kernel log and
 kernel pointers are root-only, and core dumps go nowhere. The hostname is
 `zero` until setup names the device.
 
@@ -238,7 +244,11 @@ drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 - Every command in `exec.list` resolves. Our binaries are static, so no
   package metadata says what they run.
 - Stock app and AppStore libraries resolve (`ldd`).
+- No `use: repo` package is installed.
+- Every libcamera entry in `lock.json` has one version.
 - Driver vermagic matches the kernel; depmod finds no unknown symbols.
+- Each USB Wi-Fi driver in `os/packages/gh0st-wifi/drivers` finds every
+  firmware name it asks for (`modinfo -F firmware`).
 - Package count and installed size stay within `budget.conf`.
 
 ## Smoke test
@@ -269,6 +279,16 @@ start is a device test.
 - **Update a stock app:** change its URL, version and SHA-256 in
   `lock.json`. libcamera and `gh0st-camera` move as a pair: the camera
   helper links the pinned libcamera.
+- **Move libcamera:** every `libcamera*` and `python3-libcamera` entry
+  takes one version, and the Store's camera set (`rpicam-apps`,
+  `python3-picamera2` and theirs, `use: repo`) moves to Raspberry Pi's
+  builds of the same release. The check fails on a split, and the Store
+  mirror's install check fails on a mismatch.
+- **Fix a pinned deb's control:** a `control` object on its lock entry
+  sets those fields as the vendor repo is made, with a new `Version`. The
+  files stay as they are. `rpicam-apps-encoder` uses it: Raspberry Pi's
+  build names ffmpeg with their epoch, `8:`, and Debian's ffmpeg 7.1.5,
+  `7:`, exports every symbol it uses.
 
 ## Numbers
 

@@ -8,6 +8,9 @@ Depends: gh0st-panel-modules, xdg-user-dirs, network-manager, wireplumber, pulse
  bluez, rfkill, pkexec, polkitd, libpam-modules-bin, raspi-utils-core, passwd, apt,
  iw, dnsmasq-base, nftables, curl, sqv, libarchive-tools, openssh-client, bubblewrap,
  gh0st-base (>= @BASE_VERSION@)
+Provides: applaunch (= 0.6.111)
+Conflicts: applaunch
+Replaces: applaunch
 Description: the Gh0st OS shell and Settings
  The home screen, switcher and OS bars (gh0st shell), Files (gh0st-files),
  Text (gh0st-text), gh0st open and xdg-open, Settings
@@ -23,3 +26,6 @@ Description: the Gh0st OS shell and Settings
  Files opens archives with bsdtar (libarchive-tools) and reaches servers
  with ssh (openssh-client). Apps run sandboxed in bwrap (bubblewrap), under
  gh0st-base's bus policy and audio rules.
+ .
+ The shell is the launcher stock apps name as applaunch: it keeps the
+ stock launcher's app contract, so it provides that name in its place.

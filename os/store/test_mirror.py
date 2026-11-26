@@ -111,6 +111,44 @@ class Depends(unittest.TestCase):
         idx = "Package: a\nProvides: b (= 1), c:any\n\nPackage: d\n"
         self.assertEqual(mirror.index_names(idx), {"a", "b", "c", "d"})
 
+    def test_apts_reason_is_the_unmet_line(self):
+        out = ("Reading package lists...\nSome packages could not be installed.\n"
+               "The following packages have unmet dependencies:\n"
+               " demo : Depends: python3-libcamera (>= 0.7) but 0.4-1 is to be installed\n"
+               "E: Unable to correct problems, you have held broken packages.\n")
+        self.assertEqual(mirror.apt_reason(out),
+                         "Depends: python3-libcamera (>= 0.7) but 0.4-1 is to be installed")
+        self.assertEqual(mirror.apt_reason("E: Unsupported file ./x.deb given on commandline\n"),
+                         "Unsupported file ./x.deb given on commandline")
+
+    def test_a_pinned_name_like_debians_is_an_app_pin_line(self):
+        apps, checked, names, cn = fixture()
+        names = names | {"acidzero"}
+        dropped = {}
+        lines, _ = mirror.listing(apps, checked, names, {"gh0st"}, cn, dropped)
+        self.assertEqual(dropped["acidzero"], "named like a Debian or Gh0st OS package")
+        old = mirror.PINNED
+        mirror.PINNED = {"acidzero"}
+        try:
+            dropped = {}
+            lines, _ = mirror.listing(apps, checked, names, {"gh0st"}, cn, dropped)
+            self.assertNotIn("acidzero", dropped)
+            self.assertTrue(any(l.startswith("app-pin\tacidzero\t") for l in lines))
+            dropped = {}
+            mirror.listing(apps, checked, names, {"gh0st", "acidzero"}, cn, dropped)
+            self.assertIn("acidzero", dropped, "ours is never pinned out")
+        finally:
+            mirror.PINNED = old
+
+    def test_an_app_apt_cant_install_is_left_out_with_apts_reason(self):
+        apps, checked, names, cn = fixture()
+        sha = "a" * 64
+        why = "apt can't install it: Depends: udisks2 but it is not installable"
+        dropped = {}
+        lines, _ = mirror.listing(apps, checked, names, {"gh0st"}, cn, dropped, {sha: why})
+        self.assertEqual(dropped["acidzero"], why)
+        self.assertFalse(any("\tacidzero\t" in l for l in lines))
+
 
 class Icons(unittest.TestCase):
     def test_a_pack_reads_back(self):
@@ -212,6 +250,11 @@ class Debs(unittest.TestCase):
                 b.write("#!/bin/sh\nexec sudo /opt/demo/run\n")
             os.chmod(os.path.join(root, "usr/bin/demo"), 0o755)
             self.assertEqual(build()["root"], "1", "a script that calls sudo")
+            self.assertEqual(f["keys"], "0")
+            with open(os.path.join(root, "usr/bin/demo"), "w") as b:
+                b.write("#!/bin/sh\nd=$HOME/.config/systemd/user/APPLaunch.service.d\n"
+                        "echo Environment=LD_PRELOAD=/usr/lib/demo/bridge.so > $d/90-demo.conf\n")
+            self.assertEqual(build()["keys"], "1", "an input method's setup")
 
 
 if __name__ == "__main__":

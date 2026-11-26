@@ -67,6 +67,7 @@ page says it:
 | `paths` | a file where root reads, loads or runs it: `/etc` past the app's own config (`/etc/<pkg>/`, `/etc/<pkg>.conf`, `/etc/default/<pkg>`, unless the name is a system one such as `sudoers.d`), udev rules, sysctl, modprobe, binfmt, polkit, PAM, NSS, D-Bus system services, kernel modules, firmware, apt methods, `/usr/local`, `sbin`, Python `.pth` files, NetworkManager, `/boot`, tmpfiles that reach past the app's own folders, or a setuid file | System files |
 | `service` | M5's `background_service`, or a systemd unit in the deb | Service |
 | `root` | a setuid file, or `sudo`, `pkexec` or `doas` as a command in a program or script: the app asks for root as it runs, so it runs outside its sandbox (`isolation.md`) | Runs as root, outside its sandbox |
+| `keys` | code that writes `LD_PRELOAD` into a drop-in for `APPLaunch.service`: an input method, whose bridge reads the keys of apps the user allows (`isolation.md`) | Reads the keys of apps you allow |
 | `network`, `camera`, `microphone`, `hardware`, `display`, `imu` | M5's permissions | Uses network, camera |
 
 dpkg never lets a package overwrite another's files, so a file elsewhere
@@ -97,9 +98,15 @@ registry as untrusted:
   carry over in `checked.tsv`, by SHA-256. Package, version and
   architecture come from the deb's control file.
 - **Left out**, with the reason in `dropped.tsv`: a package named like one
-  of Debian's or ours, one whose `Provides`, `Replaces`, `Conflicts` or
-  `Breaks` names one, and one with a `Depends` group nothing in trixie or
-  our repo offers. Version constraints are not checked.
+  of Debian's (unless `PINNED`) or ours, one whose `Provides`, `Replaces`, `Conflicts` or
+  `Breaks` names one, one with a `Depends` group nothing in trixie or
+  our repo offers, and one apt wouldn't install.
+- **Install check.** apt runs in a private root set up as a stable device
+  sees it: `debian.sources`, our stable suite, our pins and deny pins, and
+  the release image's packages installed (`packages.lock`). Each app's
+  control fields go into an empty deb, and `apt-get -s install` must
+  succeed. Versions and every dependency's dependencies count. The reason
+  apt gives goes to `dropped.tsv`.
 - **Text.** Control characters go, fields are capped, markdown becomes
   plain paragraphs. A field in Chinese or Japanese is taken from M5's `en`
   locale when there is one.
@@ -148,7 +155,13 @@ expires 1766462000
 about <sha256> <bytes>
 icons <sha256> <bytes>
 app	<package>	<version>	<size>	<sha256>	<category>	<flags>	<title>	<summary>	<author>	<licence>	<url>	<cn-url>	<share>	<desktop>
+app-pin	<the same fields>
 ```
+
+`app-pin` is an app named like a Debian package, listed by name in the
+mirror's `PINNED`. Each is a different program from Debian's. An engine
+that doesn't know the line kind skips it, so it never offers one it can't
+pin.
 
 `app` fields are tab-separated. `flags` is a comma list from the table
 above, or `-`. `desktop` is the stem of the `.desktop` file the deb
@@ -192,8 +205,17 @@ The engine reads `job` once and deletes it. The password has the helper's
   `/var/cache/gh0st/store/<sha256>.part` (root only, resumed after a
   failure), must match the catalog's SHA-256 and, by `dpkg-deb -f`, its
   package and version. Then `apt-get -s install --no-remove ./<sha256>.deb`
-  checks dependencies and space, and the real run follows. Old lists are
+  checks dependencies and space, and the real run follows. An app whose
+  install would upgrade a Gh0st OS package waits: "Update Gh0st OS
+  first", since Updates installs the system as a whole. Old lists are
   fetched again when a dependency is missing. The deb is deleted after.
+- **Pins.** Before a pinned app downloads, the engine writes
+  `/etc/apt/preferences.d/gh0st-store.pref`: Debian's package of each
+  pinned app installed, and this one, at priority -1. The daily upgrade
+  then never swaps the app for Debian's package. Debian's package
+  already installed under that name is refused. The file is rewritten
+  after a remove and goes when no pinned app is left. A name it pins
+  stays while installed, though the catalog may drop it.
 - **Remove.** Only an app the catalog lists, and only when apt's simulation
   removes nothing else.
 - `state` gains `ended`, so two runs that end alike still differ.

@@ -22,6 +22,7 @@ pub fn flags(f: Flags) -> (Vec<&'static str>, Vec<&'static str>) {
         (Flags::PATHS, "System files"),
         (Flags::SERVICE, "Service"),
         (Flags::ROOT, "Runs as root, outside its sandbox"),
+        (Flags::KEYS, "Reads the keys of apps you allow"),
     ]
     .into_iter()
     .filter(|(b, _)| f.has(*b))
@@ -50,6 +51,7 @@ pub fn pills(f: Flags) -> Vec<(&'static str, Tone)> {
         (Flags::PATHS, "System files", Tone::Warning),
         (Flags::SERVICE, "Service", Tone::Warning),
         (Flags::ROOT, "Root", Tone::Warning),
+        (Flags::KEYS, "Keys", Tone::Warning),
         (Flags::NETWORK, "Network", Tone::Info),
         (Flags::CAMERA, "Camera", Tone::Info),
         (Flags::MICROPHONE, "Mic", Tone::Info),
