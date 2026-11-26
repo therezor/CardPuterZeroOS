@@ -1346,17 +1346,17 @@ impl Files {
     /// Watches the worker's fd, a new one after a restart, none once gone.
     fn rewatch(&mut self, cx: &mut Cx) {
         let fd = self.engine.fd();
-        if self.engine_watch.map(|w| w.1) == fd {
-            return;
+        if self.engine_watch.map(|w| w.1) != fd {
+            if let Some((w, _)) = self.engine_watch.take() {
+                cx.unwatch(w);
+                // A new worker knows no server yet.
+                self.told.clear();
+            }
+            if let Some(fd) = fd {
+                self.engine_watch = Some((cx.watch(fd), fd));
+            }
         }
-        if let Some((w, _)) = self.engine_watch.take() {
-            cx.unwatch(w);
-            // A new worker knows no server yet.
-            self.told.clear();
-        }
-        if let Some(fd) = fd {
-            self.engine_watch = Some((cx.watch(fd), fd));
-        }
+        // The root worker's link, new after each password.
         let fd = self.root.as_ref().and_then(|r| r.fd());
         if self.root_watch.map(|w| w.1) != fd {
             if let Some((w, _)) = self.root_watch.take() {
