@@ -875,7 +875,7 @@ fn low_battery(t: &Theme) -> Canvas {
     widgets::banner(
         &mut c,
         t,
-        "Battery 3%: powering off in 30 s",
+        "Battery 3%: shutting down in 30 s",
         Tone::Critical,
     );
     c

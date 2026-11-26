@@ -613,8 +613,7 @@ impl Worker {
                     Some(r) => r.read(path, crate::model::VIEW_MAX)?,
                     None => return Err("Only root mode reads for the page".into()),
                 };
-                let text = String::from_utf8(bytes)
-                    .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect());
+                let text = crate::model::view_text(bytes);
                 Ok(Some(Event::Text { id, text }))
             }
             Request::Server(_) | Request::Cancel { .. } | Request::Reply { .. } => Ok(None),

@@ -429,9 +429,18 @@ fn install_one(
     if a.pin {
         pin_for(a)?;
     }
-    let deb = download(rep, a, url)?;
-    let r = install_deb(rep, a, &deb, lists_fresh);
-    let _ = std::fs::remove_file(&deb);
+    let r = download(rep, a, url).and_then(|deb| {
+        let r = install_deb(rep, a, &deb, lists_fresh);
+        let _ = std::fs::remove_file(&deb);
+        r
+    });
+    // A failed install must not leave Debian's package of that name pinned out.
+    if r.is_err()
+        && a.pin
+        && let Some(c) = Catalog::load()
+    {
+        let _ = write_pins(&c, None);
+    }
     r
 }
 
@@ -759,7 +768,11 @@ fn remove(pkg: &str) -> Result<(), Failure> {
     if code != Some(0) {
         return Err(apt_failure(&out));
     }
-    write_pins(&c, None)
+    // The app is gone either way: a stale pin only holds Debian's back.
+    if let Err((_, e)) = write_pins(&c, None) {
+        eprintln!("gh0st store: {e}");
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------ pins

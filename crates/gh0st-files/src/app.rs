@@ -1106,8 +1106,7 @@ impl Files {
             cx.toast_tone(Tone::Critical, &io_words(&err));
             return;
         }
-        let text = String::from_utf8(buf)
-            .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect());
+        let text = crate::model::view_text(buf);
         self.show_text(&e.name, text, e.size);
     }
 

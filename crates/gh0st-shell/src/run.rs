@@ -433,6 +433,9 @@ struct Shell {
     /// The system is going down: restarting (true) or powering off. The
     /// last frame says so, and the panel keeps it until the power goes.
     bye: Option<bool>,
+    /// The shell started a power off (a flat battery), which halts with
+    /// the power on: the bye screen asks for the side switch.
+    ask_switch: bool,
     /// The real device, not `--sim`: apps run sandboxed.
     on_device: bool,
     /// The binary `gh0st audio` runs from. In a sim, only a test's stub.
@@ -637,6 +640,7 @@ impl Shell {
             sim: sim.is_some(),
             cgroups: if on_device { Cgroups::own() } else { None },
             bye: None,
+            ask_switch: false,
             on_device,
             audio_exe: if on_device {
                 Some(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/gh0st")))
@@ -838,6 +842,8 @@ impl Shell {
     /// inhibitors, which the battery's power off needs.
     fn power_now(&mut self, restart: bool) {
         let verb = if restart { "reboot" } else { "off" };
+        // Only the battery powers off from here.
+        self.ask_switch = !restart;
         if self.debug || self.sim {
             eprintln!("gh0st shell: power {verb}");
         }
@@ -2235,7 +2241,7 @@ impl Shell {
             self.low
                 .update(self.battery_dir.as_deref().and_then(battery::sample), now);
             let text = format!(
-                "Battery low: powering off in {} s",
+                "Battery low: shutting down in {} s",
                 self.low.seconds_left(now)
             );
             let critical = gh0st_ui::theme::Tone::Critical;
@@ -2455,6 +2461,8 @@ impl Shell {
     /// shell, so it never gets here.
     fn lock_over_app(&mut self, now: u64) {
         if !self.input.grab(true) {
+            self.hide_banner(BannerOwner::Tab);
+            self.toast("Can't lock now");
             return;
         }
         match self.park_front(now) {
@@ -2469,6 +2477,7 @@ impl Shell {
             }
             Err(name) => {
                 self.input.grab(false);
+                self.hide_banner(BannerOwner::Tab);
                 if let Some(name) = name {
                     self.toast(format!("{name} can't be paused"));
                 }
@@ -2490,7 +2499,7 @@ impl Shell {
         self.display.resume();
         self.display.overlay_clear(0);
         self.display.overlay_clear(1);
-        power::bye(&mut self.canvas, &t, restart);
+        power::bye(&mut self.canvas, &t, restart, self.ask_switch);
         self.display.flush_all(&self.canvas);
         if let Some(bl) = &self.backlight {
             if bl.get().is_none_or(|r| r <= 1) || self.dimmed.is_some() {
@@ -4741,7 +4750,7 @@ impl Shell {
             Warning::Countdown => (
                 "Battery critically low",
                 format!("{}%", self.battery.map(|b| b.percent).unwrap_or(0)),
-                format!("Powering off in {} s", self.low.seconds_left(now)),
+                format!("Shutting down in {} s", self.low.seconds_left(now)),
                 t.c.critical,
             ),
         };

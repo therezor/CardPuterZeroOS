@@ -9,6 +9,21 @@ pub const MAX_ENTRIES: usize = 20_000;
 /// The viewer shows this much of a file.
 pub const VIEW_MAX: u64 = 256 * 1024;
 
+/// The viewer's text from a file's first bytes. A character the cut at
+/// `VIEW_MAX` split is dropped; a file that isn't UTF-8 reads as Latin-1.
+pub fn view_text(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) if e.utf8_error().error_len().is_none() => {
+            let ok = e.utf8_error().valid_up_to();
+            let mut b = e.into_bytes();
+            b.truncate(ok);
+            String::from_utf8(b).unwrap_or_default()
+        }
+        Err(e) => e.into_bytes().iter().map(|&b| b as char).collect(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Dir,
@@ -514,6 +529,14 @@ pub fn name_ok(name: &str) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cut_character_drops_and_latin1_stays() {
+        let mut cut = "ok я".as_bytes().to_vec();
+        cut.pop();
+        assert_eq!(view_text(cut), "ok ");
+        assert_eq!(view_text(vec![b'a', 0xe9, b'b']), "aéb");
+    }
 
     #[test]
     fn types_come_from_names() {

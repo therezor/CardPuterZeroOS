@@ -554,7 +554,7 @@ Debug::NoLocking "true";
 
     def image_status(self):
         """A dpkg status with the release image's packages, from the indexes
-        apt just fetched. Ours are "(ours)" in the lock: any version will do."""
+        apt fetched. Ours are "(ours)" in the lock: any version will do."""
         known = {}
         lists = os.path.join(self.root, "var/lib/apt/lists")
         for name in sorted(os.listdir(lists)):

@@ -18,8 +18,9 @@ const TITLE: &str = "Restart?";
 const BODY: &str = "Open apps close first. To power off, turn the side switch off.";
 
 /// The screen while the system goes down: the mark, the name, and
-/// restarting or shutting down.
-pub fn bye(c: &mut Canvas, t: &Theme, restart: bool) {
+/// restarting or shutting down. Only the side switch cuts the power, so a
+/// shutdown the shell started (a flat battery) asks for it.
+pub fn bye(c: &mut Canvas, t: &Theme, restart: bool, ask_switch: bool) {
     let screen = c.bounds();
     c.clear(screen, t.c.bg);
     let m = widgets::Message {
@@ -28,6 +29,8 @@ pub fn bye(c: &mut Canvas, t: &Theme, restart: bool) {
         text: "Gh0st OS",
         note: if restart {
             "Restarting\u{2026}"
+        } else if ask_switch {
+            "Shutting down.\nThen turn the side switch off."
         } else {
             "Shutting down\u{2026}"
         },

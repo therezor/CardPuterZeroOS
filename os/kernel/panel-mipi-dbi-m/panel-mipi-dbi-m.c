@@ -1254,12 +1254,19 @@ static void panel_mipi_dbi_spi_remove(struct spi_device *spi)
 {
     struct drm_device *drm = spi_get_drvdata(spi);
     struct panel_mipi_dbi_device *panel = to_panel_mipi_dbi_device(drm_to_mipi_dbi_dev(drm));
+    struct gh0st_overlay *old[GH0ST_OVERLAY_SLOTS];
+    struct drm_rect dmg = {};
     unsigned int i;
 
     drm_dev_unplug(drm);
     drm_atomic_helper_shutdown(drm);
+    /* An fb fd still open closes later: leave it empty slots, not freed ones. */
+    mutex_lock(&panel->ov_lock);
     for (i = 0; i < GH0ST_OVERLAY_SLOTS; i++)
-        kvfree(panel->ov[i]);
+        old[i] = panel_mipi_dbi_overlay_swap(panel, i, NULL, &dmg);
+    mutex_unlock(&panel->ov_lock);
+    for (i = 0; i < GH0ST_OVERLAY_SLOTS; i++)
+        kvfree(old[i]);
 }
 
 static void panel_mipi_dbi_spi_shutdown(struct spi_device *spi)

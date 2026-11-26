@@ -289,14 +289,13 @@ impl Fs for RootLocal {
             self.ident.who_in(Path::new(from)),
             self.ident.who_in(Path::new(to)),
         );
-        // Both folders root's, or the user acts, with only the user's say.
-        let who = if a == Who::Root && b == Who::Root {
-            Who::Root
-        } else {
-            Who::User
-        };
+        // Two owners: neither may do both halves, so the walk copies (each
+        // side as its owner) and then removes the source as its owner.
+        if a != b {
+            return Err("That's on another drive".into());
+        }
         let local = &mut self.local;
-        self.ident.run(who, || local.rename(p, from, to))
+        self.ident.run(a, || local.rename(p, from, to))
     }
 
     // No one-step tree removal: the walk removes each entry as whoever its
@@ -416,6 +415,14 @@ mod tests {
             root.read(&secret, 10).is_err(),
             "in an open folder root acts as the user"
         );
+        // Root's folder to the user's: neither may do both halves, so the
+        // move copies and deletes instead.
+        let mine = top.join("mine");
+        std::fs::write(&mine, "x").unwrap();
+        let to = top.join("theirs/moved");
+        let r = root.rename(&mut p, &mine.to_string_lossy(), &to.to_string_lossy());
+        assert_eq!(r.unwrap_err(), "That's on another drive");
+        assert!(mine.exists() && !to.exists());
         // SAFETY: geteuid has no arguments.
         assert_eq!(unsafe { libc::geteuid() }, 0, "root again after");
         std::fs::remove_dir_all(&top).unwrap();

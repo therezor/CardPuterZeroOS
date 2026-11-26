@@ -382,9 +382,9 @@ fn home_menu(t: &Theme, stock: Option<&Path>) -> Canvas {
 }
 
 /// The last frame while the system goes down.
-fn bye(t: &Theme, restart: bool) -> Canvas {
+fn bye(t: &Theme, restart: bool, ask_switch: bool) -> Canvas {
     let mut c = Canvas::new(t.m.width, t.m.height);
-    gh0st_shell::power::bye(&mut c, t, restart);
+    gh0st_shell::power::bye(&mut c, t, restart, ask_switch);
     c
 }
 
@@ -429,7 +429,7 @@ fn low_battery(t: &Theme, stock: Option<&Path>) -> Canvas {
     let x = inner.x + 50;
     t.f.big.draw(&mut c, x, inner.y + 24, "3%", t.c.critical);
     t.f.body
-        .draw(&mut c, x, inner.y + 43, "Powering off in 12 s", t.c.fg);
+        .draw(&mut c, x, inner.y + 43, "Shutting down in 12 s", t.c.fg);
     t.f.small.draw(
         &mut c,
         inner.x,
@@ -603,8 +603,9 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                 ("home-menu-lock", home_menu(&t, stock)),
                 ("home-power", power(&t, false)),
                 ("home-power-hold", power(&t, true)),
-                ("bye-off", bye(&t, false)),
-                ("bye-restart", bye(&t, true)),
+                ("bye-off", bye(&t, false, false)),
+                ("bye-battery", bye(&t, false, true)),
+                ("bye-restart", bye(&t, true, false)),
                 (
                     "prompt-wrong",
                     ask(

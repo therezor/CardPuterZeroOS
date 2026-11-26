@@ -323,7 +323,14 @@ impl Held {
                 )
             };
             if n <= 0 {
-                return Err(std::io::Error::last_os_error());
+                let e = std::io::Error::last_os_error();
+                if e.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                // Our end closes as we return, so the program reads a cut
+                // line and ends; its exit is reaped as an adopted child.
+                self.stop(cx);
+                return Err(e);
             }
             off += n as usize;
         }

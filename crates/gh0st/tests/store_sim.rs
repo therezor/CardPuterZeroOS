@@ -309,17 +309,17 @@ fn a_pinned_app_keeps_debians_package_of_its_name_out_while_installed() {
     assert!(st.detail.contains("Debian's acidzero"), "{}", st.detail);
     assert_eq!(pins(), None);
 
-    // The pin lands before the download, which fails here: no deb.
+    // The pin lands before the download, which fails here (no deb), and
+    // goes again with the failure.
     std::fs::write(sim.dir.join("status"), "").unwrap();
     sim.job("install acidzero\nmirror github\n");
-    let p = pins().expect("a pin file");
-    assert!(
-        p.contains("Package: acidzero\nPin: release o=Debian\nPin-Priority: -1"),
-        "{p}"
-    );
+    assert_eq!(pins(), None, "{}", sim.log());
 
-    // Installed, then removed: the pin goes with it.
+    // Installed and pinned, as a good install leaves it.
     status("0.2.0");
+    let pin = gh0st_core::store::pins_text(&["acidzero"]);
+    std::fs::write(sim.dir.join("pins"), pin).unwrap();
+    // Removed: the pin goes with it.
     sim.job("remove acidzero\nmirror auto\n");
     assert_eq!(pins(), None, "{}", sim.log());
 }

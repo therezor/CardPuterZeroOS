@@ -426,7 +426,7 @@ menu, then the page.
   it. A Wi-Fi join keeps "Joining…" in its row instead: it can take 45 s.
 - **Banner.** The shell's urgent word, in a tone's colour. It takes the top
   bar's place while it shows, so the page does not move: "Battery 3%:
-  powering off in 30 s".
+  shutting down in 30 s".
 - **Level.** The volume and brightness keys show the level in the top bar's
   place for 1.5 s.
 - **Sound.** Short notes of one key (A major), soft and below a third of
@@ -462,7 +462,8 @@ is a held chip, as All in the switcher: every app closes first. A tap says
 to hold it, and Esc cancels. A tap of Esc on home says "Hold Esc for power".
 There is no Off: the side switch powers off, through a full shutdown. While
 the system goes down, restarting or shutting down, the screen shows the mark,
-"Gh0st OS" and which it is.
+"Gh0st OS" and which it is. A flat battery shuts down with the power still
+on, so that screen also asks for the switch.
 
 ![The switcher](design/37-switcher.png)
 
@@ -506,7 +507,7 @@ wait sits on a pane under the date, with a bell.
 - **Unlocked.** The lock screen slides up off the top in 240 ms and shows
   what it locked: home, the switcher, or the app, from its last frame. The
   app goes on once the slide is over. A key ends the slide at once. With
-  Settings > Appearance > Animations off, the screen just changes.
+  Settings > Appearance > Animations off, the screen changes at once.
 
 It asks for the password when Settings > System > Unlock with password is on
 and the account has one.

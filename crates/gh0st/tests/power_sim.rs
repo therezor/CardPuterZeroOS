@@ -119,7 +119,7 @@ fn a_restart_says_so_and_takes_no_more_keys() {
     assert!(!out.contains("toast Hold Esc for power"), "{out}");
     let t = gh0st_ui::theme::Theme::new(gh0st_ui::theme::named(None));
     let mut c = gh0st_ui::Canvas::new(t.m.width, t.m.height);
-    gh0st_shell::power::bye(&mut c, &t, true);
+    gh0st_shell::power::bye(&mut c, &t, true, false);
     let want = std::env::temp_dir().join(format!("gh0st-power-bye-{}.png", std::process::id()));
     gh0st_ui::snapshot::write_png(&c, &want, 2).unwrap();
     let want_png = std::fs::read(&want).unwrap();

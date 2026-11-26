@@ -496,7 +496,7 @@ impl Home {
     }
 
     /// The row moves `d` cards, wrapping past either end once there are
-    /// enough apps to fill it. One place slides; a jump just lands.
+    /// enough apps to fill it. One place slides; a jump lands at once.
     fn move_row(&mut self, d: i32, now: u64) {
         let n = self.shown.len() as i32;
         let s = self.selected as i32 + d;

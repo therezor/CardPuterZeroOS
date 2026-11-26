@@ -736,8 +736,6 @@ fn set_time(_: i64) -> Result<(), String> {
     Err("setting the clock needs Linux".into())
 }
 
-/// True for root while setup's marker exists. The helper checks this itself:
-/// pkexec would let the device user run it too.
 /// Files' root worker. Refused in setup, for root itself and without a
 /// socket on stdin; then one line is always read, so the worker never sees
 /// the password or a stray line. On success it never returns: the helper
@@ -840,6 +838,8 @@ fn exec_files_worker(caller: u32) -> String {
     err.to_string()
 }
 
+/// True for root while setup's marker exists. The helper checks this itself:
+/// pkexec would let the device user run it too.
 fn in_setup() -> bool {
     // SAFETY: plain syscalls with no arguments.
     let (uid, euid) = unsafe { (libc::getuid(), libc::geteuid()) };
