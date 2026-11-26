@@ -856,3 +856,44 @@ fn archive_names_are_names_not_options_or_patterns() {
     assert!(!out.join("photo1.jpg").exists(), "only the one named");
     assert_eq!(read(&out.join("-P")), "dash");
 }
+
+/// Only as root, as on the board: `sudo` the test binary, with
+/// GH0ST_FILES_EXE naming the worker. Nobody (65534) stands in for the
+/// user. A move from root's folder into the user's copies the file as the
+/// user, then removes the source as root.
+#[test]
+fn as_root_a_move_from_roots_folder_to_the_users_lands_theirs() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    // SAFETY: geteuid has no arguments.
+    if unsafe { libc::geteuid() } != 0 {
+        return;
+    }
+    // /run is root's and closed to others, unlike /tmp.
+    let top = Tmp(PathBuf::from(format!(
+        "/run/gh0st-files-w-root-{}",
+        std::process::id()
+    )));
+    let _ = std::fs::remove_dir_all(&top.0);
+    let theirs = top.0.join("theirs");
+    std::fs::create_dir_all(&theirs).unwrap();
+    std::fs::set_permissions(&top.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::chown(&theirs, Some(65534), Some(65534)).unwrap();
+    let src = top.0.join("root.conf");
+    write(&src, "conf");
+    let mut w = W::new(&top, &[("GH0ST_FILES_ROOT", "65534:65534")]);
+    let id = w.id();
+    w.ok(Request::Copy {
+        id,
+        items: vec![local(&src)],
+        to: local(&theirs),
+        remove: true,
+    });
+    assert!(!src.exists(), "the source is gone");
+    let moved = theirs.join("root.conf");
+    assert_eq!(read(&moved), "conf");
+    assert_eq!(
+        std::fs::metadata(&moved).unwrap().uid(),
+        65534,
+        "made as the user"
+    );
+}

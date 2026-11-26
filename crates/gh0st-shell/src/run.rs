@@ -825,6 +825,7 @@ impl Shell {
             JobKind::PromptCheck => self.prompt_checked(&j),
             JobKind::Power(restart) if !j.ok() => {
                 self.bye = None;
+                self.ask_switch = false;
                 self.full_flush = true;
                 self.toast(if restart {
                     "Can't restart"
@@ -842,19 +843,20 @@ impl Shell {
     /// inhibitors, which the battery's power off needs.
     fn power_now(&mut self, restart: bool) {
         let verb = if restart { "reboot" } else { "off" };
-        // Only the battery powers off from here.
-        self.ask_switch = !restart;
         if self.debug || self.sim {
             eprintln!("gh0st shell: power {verb}");
         }
         if self.sim {
             self.bye = Some(restart);
+            // Only the battery powers off from here.
+            self.ask_switch = !restart;
             self.dirty = true;
             return;
         }
         let argv = ["pkexec", "/usr/libexec/gh0st-helper", "power", verb];
         if self.start_job(JobKind::Power(restart), &argv) {
             self.bye = Some(restart);
+            self.ask_switch = !restart;
             self.dirty = true;
         } else {
             self.toast(if restart {
