@@ -275,7 +275,7 @@ says once how to reach Esc and help.
 | Fn and H | help: every key on this page |
 | Fn and K | switch apps |
 | Tab, held 3 s | lock; over an app, when Tab comes up |
-| Esc, held 0.7 s on home | restart or power off |
+| Esc, held 0.7 s on home | restart |
 | Tab, then Enter, on the lock screen | unlock, or the password |
 | Fn and J | screenshot |
 | Fn and Esc | the Esc key itself, for vim and the like |
@@ -457,10 +457,12 @@ open the left, middle and right card. It scrolls without end, as stock's
 does: past the last app comes the first. With too few apps to fill both
 sides, an app never shows twice.
 
-Esc held 0.7 s on home, or Power in the menu, asks "Restart or power off?".
-5 Restart and 7 Off are held chips, as All in the switcher: every app
-closes first. A tap of either says to hold it, and Esc cancels. A tap of
-Esc on home says "Hold Esc for power".
+Esc held 0.7 s on home, or Power in the menu, asks "Restart?". 6 Restart
+is a held chip, as All in the switcher: every app closes first. A tap says
+to hold it, and Esc cancels. A tap of Esc on home says "Hold Esc for power".
+There is no Off: the side switch powers off, through a full shutdown. While
+the system goes down, restarting or shutting down, the screen shows the mark,
+"Gh0st OS" and which it is.
 
 ![The switcher](design/37-switcher.png)
 

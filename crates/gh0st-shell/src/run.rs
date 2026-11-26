@@ -430,6 +430,9 @@ struct Shell {
     sim: bool,
     /// Where each app's cgroup goes, when the unit delegates one.
     cgroups: Option<Cgroups>,
+    /// The system is going down: restarting (true) or powering off. The
+    /// last frame says so, and the panel keeps it until the power goes.
+    bye: Option<bool>,
     /// The real device, not `--sim`: apps run sandboxed.
     on_device: bool,
     /// The binary `gh0st audio` runs from. In a sim, only a test's stub.
@@ -633,6 +636,7 @@ impl Shell {
             prompts: Prompts::default(),
             sim: sim.is_some(),
             cgroups: if on_device { Cgroups::own() } else { None },
+            bye: None,
             on_device,
             audio_exe: if on_device {
                 Some(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("/usr/bin/gh0st")))
@@ -816,6 +820,8 @@ impl Shell {
             }
             JobKind::PromptCheck => self.prompt_checked(&j),
             JobKind::Power(restart) if !j.ok() => {
+                self.bye = None;
+                self.full_flush = true;
                 self.toast(if restart {
                     "Can't restart"
                 } else {
@@ -836,10 +842,15 @@ impl Shell {
             eprintln!("gh0st shell: power {verb}");
         }
         if self.sim {
+            self.bye = Some(restart);
+            self.dirty = true;
             return;
         }
         let argv = ["pkexec", "/usr/libexec/gh0st-helper", "power", verb];
-        if !self.start_job(JobKind::Power(restart), &argv) {
+        if self.start_job(JobKind::Power(restart), &argv) {
+            self.bye = Some(restart);
+            self.dirty = true;
+        } else {
             self.toast(if restart {
                 "Can't restart"
             } else {
@@ -868,11 +879,11 @@ impl Shell {
         };
         match act {
             power::Action::Redraw => self.dirty = true,
-            power::Action::Run(restart) => {
+            power::Action::Run => {
                 self.dirty = true;
                 if key.is_some_and(|k| self.held.contains(&k)) {
                     self.power = None;
-                    self.power_now(restart);
+                    self.power_now(true);
                 }
             }
             _ => {}
@@ -1891,6 +1902,13 @@ impl Shell {
                         _ => {
                             self.tasks.close_all(now);
                             self.services.stop();
+                            if self.bye.is_none() && !self.sim && system_stopping() {
+                                self.bye = Some(false);
+                            }
+                            if let Some(restart) = self.bye {
+                                eprintln!("gh0st shell: the system is going down");
+                                self.draw_bye(restart);
+                            }
                             return 0;
                         }
                     }
@@ -2464,6 +2482,22 @@ impl Shell {
         }
         self.last_input = now;
         self.undim();
+    }
+
+    /// The bye screen, lit and over any app or overlay.
+    fn draw_bye(&mut self, restart: bool) {
+        let t = self.t;
+        self.display.resume();
+        self.display.overlay_clear(0);
+        self.display.overlay_clear(1);
+        power::bye(&mut self.canvas, &t, restart);
+        self.display.flush_all(&self.canvas);
+        if let Some(bl) = &self.backlight {
+            if bl.get().is_none_or(|r| r <= 1) || self.dimmed.is_some() {
+                let raw = self.saved_raw.or(self.dimmed).unwrap_or(bl.max);
+                let _ = bl.set(raw);
+            }
+        }
     }
 
     fn go_dark(&mut self) {
@@ -3479,6 +3513,9 @@ impl Shell {
     }
 
     fn on_key(&mut self, k: Key, now: u64) {
+        if self.bye.is_some() {
+            return;
+        }
         // The key that woke the screen or closed a banner does nothing
         // more: not its repeats, not its release.
         if k.state != State::Press && self.swallow_release == Some(k.code) {
@@ -3704,7 +3741,7 @@ impl Shell {
             return;
         };
         match p.key(k, now) {
-            power::Action::None | power::Action::Run(_) => {}
+            power::Action::None | power::Action::Run => {}
             power::Action::Redraw => self.dirty = true,
             power::Action::Hint(h) => self.toast(h),
             power::Action::Close => {
@@ -4493,6 +4530,11 @@ impl Shell {
     }
 
     fn draw(&mut self) {
+        if let Some(restart) = self.bye {
+            self.draw_bye(restart);
+            self.dirty = false;
+            return;
+        }
         // A menu or a question belongs to the screen it was opened on.
         if self.screen != Screen::Home {
             self.home_menu = None;
@@ -4889,6 +4931,31 @@ fn terminal_of(c: &Config) -> String {
     c.get_str(config::key::TERMINAL)
         .unwrap_or(child::DEFAULT_TERMINAL)
         .to_string()
+}
+
+/// The system manager says "stopping" from the moment a shutdown or
+/// restart starts; the user manager stopping the shell may not. Asked over
+/// D-Bus from here: a child such as systemctl started now can die in the
+/// SIGTERM systemd sends the whole unit.
+fn system_stopping() -> bool {
+    use gh0st_dbus::{Conn, Message, Value};
+    let Ok(mut c) = Conn::system() else {
+        return false;
+    };
+    let m = Message::call(
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.DBus.Properties",
+        "Get",
+    )
+    .arg(Value::str("org.freedesktop.systemd1.Manager"))
+    .arg(Value::str("SystemState"));
+    c.call(m, 1000).is_ok_and(|r| {
+        r.body
+            .first()
+            .and_then(|v| v.inner().as_str())
+            .is_some_and(|s| s == "stopping")
+    })
 }
 
 /// Marks Wi-Fi as turned off by the dark, so a restarted shell turns it on.

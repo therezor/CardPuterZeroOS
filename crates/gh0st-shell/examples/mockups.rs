@@ -381,21 +381,28 @@ fn home_menu(t: &Theme, stock: Option<&Path>) -> Canvas {
     c
 }
 
-/// The power dialog over home, or Power off held 60% of the way.
+/// The last frame while the system goes down.
+fn bye(t: &Theme, restart: bool) -> Canvas {
+    let mut c = Canvas::new(t.m.width, t.m.height);
+    gh0st_shell::power::bye(&mut c, t, restart);
+    c
+}
+
+/// The power dialog over home, or Restart held 60% of the way.
 fn power(t: &Theme, held: bool) -> Canvas {
     let mut p = Power::default();
     if held {
-        let seven = gh0st_core::keys::Key {
-            code: 8,
+        let six = gh0st_core::keys::Key {
+            code: 7,
             state: gh0st_core::keys::State::Press,
-            ch: Some('7'),
-            text: Some('7'),
+            ch: Some('6'),
+            text: Some('6'),
             shift: false,
             ctrl: false,
             alt: false,
             fn_: false,
         };
-        p.key(&seven, 0);
+        p.key(&six, 0);
         p.tick(420);
     }
     let mut s = status(&[], None, "Power");
@@ -596,6 +603,8 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                 ("home-menu-lock", home_menu(&t, stock)),
                 ("home-power", power(&t, false)),
                 ("home-power-hold", power(&t, true)),
+                ("bye-off", bye(&t, false)),
+                ("bye-restart", bye(&t, true)),
                 (
                     "prompt-wrong",
                     ask(
