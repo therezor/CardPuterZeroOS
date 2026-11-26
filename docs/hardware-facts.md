@@ -14,7 +14,7 @@ From M5's documentation and device tree (Sources, below), not measured.
 | Panel | ST7789V3 320x170 RGB565 on SPI0 CS0, DC on GPIO25, TE on GPIO5, backlight PWM on M5IOE1 |
 | Keyboard | TCA8418 at 0x34 on I2C1, IRQ on GPIO27 |
 | Audio | ES8389 codec at 0x10 (I2S), AW8737A amplifier (enable GPIO24), headphone detect GPIO17 |
-| Power | BQ27220 fuel gauge at 0x55, power-fail on GPIO6, no suspend to RAM |
+| Power | BQ27220 fuel gauge at 0x55, side switch on GPIO6, cut by an M5IOE1 timer, no suspend to RAM |
 | IO expander | M5IOE1 at 0x4F: panel reset, backlight, keyboard and hub reset, Grove and HAT 5 V, mic mode |
 | Other on I2C1 | BMI270 at 0x68, BMM150 (some units), RX8130CE RTC at 0x32 |
 | Radios | CYW43439 Wi-Fi, 2.4 GHz only (SDIO, `brcmfmac`), Bluetooth over UART |
@@ -127,6 +127,25 @@ From M5's documentation and device tree (Sources, below), not measured.
 - `wpctl`, `pw-play`, `aplay`, `bluetoothctl`, `nmcli`, `timedatectl`,
   `gpioset` are installed. `fb_load.service` has exited by the time the
   launcher runs. LightDM and labwc run too (HDMI desktop).
+
+## The power switch
+
+- Sliding the side switch off pulls GPIO6 low. The switch does not cut
+  power itself: the M5IOE1 does, once the time since the flip passes its
+  OFF_TIME register (0xB2, milliseconds, 16-bit little-endian, 2000 at
+  every power on). Linux cannot hold power past it.
+- The chip compares with the register as it is now. A write does not
+  restart the count: 3000 written every second cut at 3.3 s. 65535 written
+  at the flip held power, and 1000 written 9 s later cut it within 50 ms.
+- M5's `powerfail_suo` ran SysRq U (read-only, no sync) 500 ms after the
+  flip and turned the backlight off; the timer cut at about 2.4 s. Its last
+  step, M5IOE1 pin 11 ("disabled"), does not cut power.
+- `gh0st-power` (`os/kernel/gh0st-power`) replaces it. At the flip it writes
+  65535 and starts a poweroff; at the end of that poweroff it writes 1000.
+  A full shutdown with Wi-Fi and the shell running took 3.3 s from the flip
+  to the journal's end.
+- A poweroff with the switch on halts with the power on, as before. The
+  power off moved to the switch alone.
 
 ## Keyring and isolation (kernel `6.18.60+rpt-rpi-v8`)
 

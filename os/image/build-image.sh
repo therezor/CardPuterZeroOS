@@ -275,6 +275,9 @@ case ${1:-} in
     camd) build_camd && mkdir -p /out/camd && cp "$WORK/camd/gh0st-camd" /out/camd/ ;;
     # And the media helper, for scripts/deploy.sh media.
     mediad) build_mediad && mkdir -p /out/mediad && cp "$WORK/mediad/gh0st-mediad" /out/mediad/ ;;
+    # The drivers alone, staged into os/out/modules, to try on a device.
+    modules) install_kernel_headers && rm -rf /out/modules &&
+        "$OS/packages/gh0st-panel-modules/stage.sh" /out/modules ;;
     image) step_image "${2:-}" ;;
     check) "$OS/image/checks/run.sh" "${2:?variant}" ;;
     smoke) "$OS/image/checks/smoke.sh" ;;
@@ -292,5 +295,5 @@ case ${1:-} in
             --keyring "${STORE_KEYRING:-$OS/repo/gh0st-archive-keyring.pgp}" \
             ${STORE_ONLY:+--only "$STORE_ONLY"} ;;
     shell) exec bash ;;
-    *) die "usage: build-image.sh fetch|debs|camd|mediad|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|store|shell" ;;
+    *) die "usage: build-image.sh fetch|debs|camd|mediad|modules|image VARIANT|check VARIANT|smoke|relock VARIANT|publish SUITE|resign|store|shell" ;;
 esac

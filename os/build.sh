@@ -3,6 +3,7 @@
 #   os/build.sh fetch             download and verify the pinned inputs
 #   os/build.sh debs              build our packages
 #   os/build.sh camd              the camera helper alone, into os/out/camd
+#   os/build.sh modules           the drivers alone, into os/out/modules
 #   os/build.sh image release     build the disk image into os/out/
 #   os/build.sh check release     tier 1 checks
 #   os/build.sh smoke             first boot of the image in QEMU
