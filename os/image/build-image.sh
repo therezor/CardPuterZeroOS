@@ -100,7 +100,29 @@ step_vendor() {
     lock_debs | while IFS=$'\t' read -r _kind use _name url _sha; do
         case $use in image | repo) cp "$(deb_path "$url")" "$WORK/repo-vendor/" ;; esac
     done
+    jq -r '.rpt[] | select(.control) | .url' "$LOCK" | while read -r url; do
+        refit "$WORK/repo-vendor/$(basename "$url")" "$url"
+    done
     index_repo "$WORK/repo-vendor" gh0st-vendor
+}
+
+# A pinned deb with its control fields set as lock.json's "control" says,
+# such as a Depends naming the epoch only Raspberry Pi's own ffmpeg build
+# has. Its files stay as they are. The new Version names it apart.
+refit() {
+    local deb=$1 url=$2 x k v
+    x=$(mktemp -d)
+    dpkg-deb -R "$deb" "$x"
+    while IFS=$'\t' read -r k v; do
+        awk -v k="$k" -v v="$v" '
+            index($0, k ": ") == 1 { print k ": " v; skip = 1; next }
+            skip && /^[ \t]/ { next }
+            { skip = 0; print }' "$x/DEBIAN/control" > "$x/control" &&
+            mv "$x/control" "$x/DEBIAN/control"
+    done < <(jq -r --arg u "$url" '.rpt[] | select(.url == $u) | .control | to_entries[] | [.key, .value] | @tsv' "$LOCK")
+    rm "$deb"
+    dpkg-deb -b "$x" "$(dirname "$deb")/" > /dev/null
+    rm -rf "$x"
 }
 
 # The pinned headers go into this throwaway container, for the module builds.

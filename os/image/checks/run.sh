@@ -41,6 +41,11 @@ allowed=$(jq -r '.rpt[].name' "$LOCK" | sort)
 extra=$(comm -23 <(echo "$rpt") <(echo "$allowed"))
 if [ -z "$extra" ]; then ok "rpt packages all pinned in lock.json"; else bad "unpinned rpt packages: $extra"; fi
 
+# libcamera moves as one: its libraries, the IPA, the headers and the
+# Python binding the Store's camera apps load.
+cams=$(jq -r '.rpt[] | select(.name | test("libcamera")) | .version' "$LOCK" | sort -u)
+if [ "$(echo "$cams" | wc -l)" -eq 1 ]; then ok "libcamera pins agree ($cams)"; else bad "libcamera pins differ: $(echo $cams)"; fi
+
 # What lock.json publishes only for Store apps stays out of the image.
 inside=$(comm -12 <(cut -f1 "$R/packages.tsv" | sort) <(jq -r '.rpt[] | select(.use == "repo") | .name' "$LOCK" | sort))
 if [ -z "$inside" ]; then ok "no Store-only package in the image"; else bad "Store-only packages installed: $inside"; fi

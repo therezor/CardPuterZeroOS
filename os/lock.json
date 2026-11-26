@@ -149,6 +149,108 @@
       "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-realtek_20260519-1~bpo13+1+rpt2_all.deb",
       "sha256": "9e343907d5f4659aa173f7f06ed0c98365dd5bf6cd90b507809a9637a0b167e2",
       "use": "repo"
+    },
+    {
+      "name": "rpicam-apps",
+      "version": "1.13.0-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/rpicam-apps/rpicam-apps_1.13.0-1_all.deb",
+      "sha256": "718b081ca26dab2b690dc1065b78faea2a7ee9025a30fbe07e40440bd7213684",
+      "use": "repo"
+    },
+    {
+      "name": "rpicam-apps-core",
+      "version": "1.13.0-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/rpicam-apps/rpicam-apps-core_1.13.0-1_arm64.deb",
+      "sha256": "4a7f55330564b02aabd409725174b4c64354ff6f3cf396e823af92a342b8e1ea",
+      "use": "repo"
+    },
+    {
+      "name": "rpicam-apps-encoder",
+      "version": "1.13.0-1+gh0st1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/rpicam-apps/rpicam-apps-encoder_1.13.0-1_arm64.deb",
+      "sha256": "d93da92e5e87054d1f47dce03508dcd840c1c29867f37f70f6f85de3f79677ff",
+      "use": "repo",
+      "control": {
+        "Version": "1.13.0-1+gh0st1",
+        "Depends": "libavcodec61 (>= 7:7.1.5), libavdevice61 (>= 7:7.1.5), libavformat61 (>= 7:7.1.5), libavutil59 (>= 7:7.1.5), libc6 (>= 2.34), libcamera0.7 (>= 0.7.2+rpt20260807), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1), libswresample5 (>= 7:7.1.5)"
+      }
+    },
+    {
+      "name": "rpicam-apps-preview",
+      "version": "1.13.0-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/rpicam-apps/rpicam-apps-preview_1.13.0-1_arm64.deb",
+      "sha256": "943dd940879338100091f3020561b84bfacad3cd6e51b99a1c47516c0fba6092",
+      "use": "repo"
+    },
+    {
+      "name": "rpicam-apps-opencv-postprocess",
+      "version": "1.13.0-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/rpicam-apps/rpicam-apps-opencv-postprocess_1.13.0-1_arm64.deb",
+      "sha256": "e479b0e3b387fcc35efd3442e3cf039e04b05c0bd69d6c8ed00cca5ea6ec2db3",
+      "use": "repo"
+    },
+    {
+      "name": "librpicam-app1",
+      "version": "1.13.0-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/r/rpicam-apps/librpicam-app1_1.13.0-1_arm64.deb",
+      "sha256": "b9a986ad459aa70f88699da5df4776fa8c33070eb59a4320c29d30d0a9b8067b",
+      "use": "repo"
+    },
+    {
+      "name": "python3-libcamera",
+      "version": "0.7.2+rpt20260817-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/python3-libcamera_0.7.2+rpt20260817-1_arm64.deb",
+      "sha256": "ab1f0b080cd18ab0c13dfda86b23517031d53436169452a5ba325d23e1e3ef7f",
+      "use": "repo"
+    },
+    {
+      "name": "python3-picamera2",
+      "version": "0.3.37-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/p/picamera2/python3-picamera2_0.3.37-1_all.deb",
+      "sha256": "ce409345b92f3aeac7c72d8a67ee39935ab07617afd63089e7c10a7383100953",
+      "use": "repo"
+    },
+    {
+      "name": "python3-openexr",
+      "version": "1.3.10-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/p/pip-openexr/python3-openexr_1.3.10-1_arm64.deb",
+      "sha256": "095f6221ce17e92a41351c434d5adb658dde0308b6e87548268330e6245567cd",
+      "use": "repo"
+    },
+    {
+      "name": "python3-pidng",
+      "version": "4.0.9+git20260513.b096d0b-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/p/pidng/python3-pidng_4.0.9+git20260513.b096d0b-1_arm64.deb",
+      "sha256": "a81497ccebfea96b2481a074449bc4eb00061553b0eab209d6ed032af6670096",
+      "use": "repo"
+    },
+    {
+      "name": "python3-simplejpeg",
+      "version": "1.8.1-1+trixie",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/s/simplejpeg/python3-simplejpeg_1.8.1-1+trixie_arm64.deb",
+      "sha256": "e4ef07da11ebec2180b4217a8b623e04bb7d9ec814e7b6e706e9ef5d61628e81",
+      "use": "repo"
+    },
+    {
+      "name": "python3-kms++",
+      "version": "0~git20250807.1813ada-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/k/kms++/python3-kms++_0~git20250807.1813ada-1_arm64.deb",
+      "sha256": "3bc405e438924c3490c2ccd72bdc40b85bb771a872d3c9d34a64c3a3e8e18fdb",
+      "use": "repo"
+    },
+    {
+      "name": "libkms++0",
+      "version": "0~git20250807.1813ada-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/k/kms++/libkms++0_0~git20250807.1813ada-1_arm64.deb",
+      "sha256": "1a22a36750d8133c1f30868c18c22ab3d5ac526f4183bfb050a34ee1c46da8db",
+      "use": "repo"
+    },
+    {
+      "name": "python3-videodev2",
+      "version": "0.0.4-1",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/v/videodev2/python3-videodev2_0.0.4-1_all.deb",
+      "sha256": "d44ccfd3447c481319ee6e148971079aa900d506d1dc0b7ec566cfffdb97da9b",
+      "use": "repo"
     }
   ],
   "apps": [
