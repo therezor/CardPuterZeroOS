@@ -236,8 +236,9 @@ switcher.
 `https://therezor.github.io/CardPuterZeroOS/apt`, suites `stable` and
 `edge`, component `main`.
 
-It holds our packages, the Raspberry Pi debs `lock.json` pins for the image,
-and the stock app debs.
+It holds our packages, the Raspberry Pi debs `lock.json` pins, and the
+stock app debs. A pinned deb with `use: repo` is published but not in the
+image: Store apps depend on it.
 
 - **One pool.** A file in the pool is never replaced. Versions come from the
   commit's time and hash, and the kernel set keeps its version when its

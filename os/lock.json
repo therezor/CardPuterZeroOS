@@ -128,6 +128,27 @@
       "url": "https://archive.raspberrypi.com/debian/pool/main/libc/libcamera/libcamera-ipa_0.7.2+rpt20260817-1_arm64.deb",
       "sha256": "0de238bc7f0a23bf4ab90604d232c88e92c0b5fa724272d555fdc570ca4d30f4",
       "use": "image"
+    },
+    {
+      "name": "firmware-atheros",
+      "version": "1:20260519-1~bpo13+1+rpt2",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-atheros_20260519-1~bpo13+1+rpt2_all.deb",
+      "sha256": "95c481cc970d64b1c18d6bf72b0594979018da18e3fe22cfdaf265aa3a03c3ac",
+      "use": "repo"
+    },
+    {
+      "name": "firmware-mediatek",
+      "version": "1:20260519-1~bpo13+1+rpt2",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-mediatek_20260519-1~bpo13+1+rpt2_all.deb",
+      "sha256": "833c82305a198138eca6b8fc4804c884e76027509b66922b307ec274b8eaa34e",
+      "use": "repo"
+    },
+    {
+      "name": "firmware-realtek",
+      "version": "1:20260519-1~bpo13+1+rpt2",
+      "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-realtek_20260519-1~bpo13+1+rpt2_all.deb",
+      "sha256": "9e343907d5f4659aa173f7f06ed0c98365dd5bf6cd90b507809a9637a0b167e2",
+      "use": "repo"
     }
   ],
   "apps": [
@@ -136,26 +157,6 @@
       "version": "0.1.8",
       "url": "https://github.com/CardputerZero/Recorder/releases/download/v0.1.8/m5cardputerzero-recorder_0.1.8_m5stack1_arm64.deb",
       "sha256": "1143236750c38be7851a846886fea16ad35fb6cf543f1072cbce9e2d3d0e2fba"
-    }
-  ],
-  "repack": [
-    {
-      "name": "firmware-atheros",
-      "version": "1:20260519-1~bpo13+1+rpt2",
-      "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-atheros_20260519-1~bpo13+1+rpt2_all.deb",
-      "sha256": "95c481cc970d64b1c18d6bf72b0594979018da18e3fe22cfdaf265aa3a03c3ac"
-    },
-    {
-      "name": "firmware-mediatek",
-      "version": "1:20260519-1~bpo13+1+rpt2",
-      "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-mediatek_20260519-1~bpo13+1+rpt2_all.deb",
-      "sha256": "833c82305a198138eca6b8fc4804c884e76027509b66922b307ec274b8eaa34e"
-    },
-    {
-      "name": "firmware-realtek",
-      "version": "1:20260519-1~bpo13+1+rpt2",
-      "url": "https://archive.raspberrypi.com/debian/pool/main/f/firmware-nonfree/firmware-realtek_20260519-1~bpo13+1+rpt2_all.deb",
-      "sha256": "9e343907d5f4659aa173f7f06ed0c98365dd5bf6cd90b507809a9637a0b167e2"
     }
   ],
   "git": [

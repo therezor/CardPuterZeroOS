@@ -43,11 +43,12 @@ export KVER KVERSION M5COMMIT PANEL_VERSION GH0ST_VERSION BASE_VERSION WIFI_VERS
 log() { printf '\033[1m== %s\033[0m\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-# Every pinned deb: kind (rpt, app, repack), use, name, url, sha256.
+# Every pinned deb: kind (rpt, app), use, name, url, sha256. Use is image
+# (installed), repo (published for Store apps, not installed), build or
+# camera-build.
 lock_debs() {
     jq -r '(.rpt[] | ["rpt", .use, .name, .url, .sha256]),
-           (.apps[] | ["app", "image", .name, .url, .sha256]),
-           (.repack[] | ["repack", "build", .name, .url, .sha256]) | @tsv' "$LOCK"
+           (.apps[] | ["app", "image", .name, .url, .sha256]) | @tsv' "$LOCK"
 }
 
 deb_path() { echo "$CACHE/debs/$(basename "$1")"; }
@@ -97,7 +98,7 @@ step_vendor() {
     rm -rf "$WORK/repo-vendor"
     mkdir -p "$WORK/repo-vendor"
     lock_debs | while IFS=$'\t' read -r _kind use _name url _sha; do
-        if [ "$use" = image ]; then cp "$(deb_path "$url")" "$WORK/repo-vendor/"; fi
+        case $use in image | repo) cp "$(deb_path "$url")" "$WORK/repo-vendor/" ;; esac
     done
     index_repo "$WORK/repo-vendor" gh0st-vendor
 }

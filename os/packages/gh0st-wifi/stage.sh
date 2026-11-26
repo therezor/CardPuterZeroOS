@@ -13,7 +13,7 @@ trap 'rm -rf "$src"' EXIT
 take() {
     local pkg=$1 url f
     shift
-    url=$(jq -r --arg p "$pkg" '.repack[] | select(.name == $p) | .url' "$LOCK")
+    url=$(jq -r --arg p "$pkg" '.rpt[] | select(.name == $p) | .url' "$LOCK")
     rm -rf "$src/x"
     dpkg-deb -x "$CACHE/debs/$(basename "$url")" "$src/x"
     for f in "$@"; do

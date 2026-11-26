@@ -105,7 +105,9 @@ wpa_supplicant, BlueZ, PipeWire and ffmpeg. Raspberry Pi builds come only
 where `lock.json` pins them: the kernel, `raspi-firmware`, the Wi-Fi and
 Bluetooth firmware, libcamera and its IPA, libpisp, TensorFlow Lite (the
 IPA needs it) and `vcgencmd`. The device itself has no Raspberry Pi apt
-source. Old libcamera and kernel builds are fetched from the pool by URL:
+source. What Store apps need from Raspberry Pi has `use: repo` in
+`lock.json`: our repo publishes it and the image leaves it out. Today that
+is the full `firmware-atheros`, `firmware-mediatek` and `firmware-realtek`. Old libcamera and kernel builds are fetched from the pool by URL:
 the live index has moved on (libcamera-ipa 0.8, kernel 6.18.60), so a build
 from it would not resolve.
 
@@ -238,6 +240,7 @@ drop-in: Debian's `sshd-keygen.service` only runs on systemd's first boot.
 - Every command in `exec.list` resolves. Our binaries are static, so no
   package metadata says what they run.
 - Stock app and AppStore libraries resolve (`ldd`).
+- No `use: repo` package is installed.
 - Driver vermagic matches the kernel; depmod finds no unknown symbols.
 - Package count and installed size stay within `budget.conf`.
 
