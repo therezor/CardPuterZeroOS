@@ -399,10 +399,7 @@ impl Backends {
     /// the worker is, otherwise.
     pub fn act<T>(&self, path: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
         match &self.root {
-            Some(r) => {
-                let dir = path.parent().unwrap_or(Path::new("/"));
-                r.ident.run(root::whose(dir, r.ident.uid), f)
-            }
+            Some(r) => r.ident.run(root::whose(path, r.ident.uid), f),
             None => f(),
         }
     }

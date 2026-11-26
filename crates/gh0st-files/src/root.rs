@@ -205,6 +205,9 @@ impl Engine for Root {
     }
 
     fn fd(&self) -> Option<RawFd> {
-        self.conn.as_ref().map(Conn::fd)
+        match &self.test {
+            Some(t) => t.fd(),
+            None => self.conn.as_ref().map(Conn::fd),
+        }
     }
 }

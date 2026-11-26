@@ -1119,7 +1119,13 @@ fn act(v: Verb) -> Result<(), String> {
             r
         }
         Verb::HotspotSecurity(s) => hotspot_edit(|p| p.security = s),
-        Verb::Power(reboot) => run(&["systemctl", if reboot { "reboot" } else { "poweroff" }]),
+        // -i: the user held a chip for it, or the battery is out; an
+        // inhibitor must not stop either.
+        Verb::Power(reboot) => run(&[
+            "systemctl",
+            if reboot { "reboot" } else { "poweroff" },
+            "-i",
+        ]),
         Verb::UpdateCheck => run(&[
             "systemctl",
             "start",

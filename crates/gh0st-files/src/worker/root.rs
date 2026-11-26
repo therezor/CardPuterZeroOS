@@ -29,8 +29,10 @@ pub enum Who {
     User,
 }
 
-/// Whose `path` is, for a user `uid`. The folders from `/` down are read
-/// with lstat; the last name is the path itself, which may not exist yet.
+/// Whose `path` is, for a user `uid`: decided by every folder it is in,
+/// from `/` down to its own folder, read with lstat. The path itself may not
+/// exist yet, and its own owner doesn't count: changing a name is its
+/// folder's say.
 pub fn whose(path: &Path, uid: u32) -> Who {
     whose_in(path, uid, 0)
 }
@@ -138,13 +140,14 @@ impl Ident {
         r
     }
 
-    fn who(&self, path: &Path) -> Who {
+    /// For a name: the folders it is in decide.
+    fn who_in(&self, path: &Path) -> Who {
         whose(path, self.uid)
     }
 
-    /// For a name in folder `path`: the folder decides.
-    fn who_in(&self, path: &Path) -> Who {
-        self.who(path.parent().unwrap_or(Path::new("/")))
+    /// For what is inside a folder: the folder itself counts too.
+    fn who_inside(&self, dir: &Path) -> Who {
+        whose(&dir.join(".gh0st"), self.uid)
     }
 }
 
@@ -250,7 +253,7 @@ impl RootLocal {
 
 impl Fs for RootLocal {
     fn list(&mut self, p: &mut Pump, path: &str) -> Res<Vec<Entry>> {
-        let who = self.ident.who(Path::new(path));
+        let who = self.ident.who_inside(Path::new(path));
         let local = &mut self.local;
         self.ident.run(who, || local.list(p, path))
     }
@@ -322,6 +325,26 @@ mod tests {
         }
         assert_eq!(whose(Path::new("/usr/bin/env"), me), Who::Root);
         assert_eq!(whose(Path::new("/usr/no-such-thing"), me), Who::Root);
+        // A name right in my home, under root's /home or /Users: my folder
+        // decides, one level down from root's.
+        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+            let theirs = home.parent().is_some_and(|p| theirs_cant_change(p, me));
+            let mine = std::fs::metadata(&home).is_ok_and(|m| m.uid() == me);
+            if theirs && mine {
+                assert_eq!(whose(&home.join("new"), me), Who::User, "right in my home");
+                let ident = Ident {
+                    uid: me,
+                    gid: 0,
+                    groups: Vec::new(),
+                };
+                assert_eq!(
+                    ident.who_in(&home.join("new")),
+                    Who::User,
+                    "a new name in my home"
+                );
+                assert_eq!(ident.who_inside(&home), Who::User, "listing my home");
+            }
+        }
         let tmp = std::env::temp_dir().join(format!("gh0st-whose-{}", std::process::id()));
         std::fs::create_dir_all(tmp.join("mine")).unwrap();
         assert_eq!(
@@ -361,7 +384,9 @@ mod tests {
             gid: 65534,
             groups: vec![65534],
         };
-        let top = std::env::temp_dir().join(format!("gh0st-root-{}", std::process::id()));
+        // /run is root's and closed to others, as /home is: the user's own
+        // folder right inside it must count as the user's.
+        let top = PathBuf::from(format!("/run/gh0st-root-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&top);
         std::fs::create_dir_all(top.join("theirs")).unwrap();
         std::fs::create_dir_all(top.join("open")).unwrap();
@@ -370,9 +395,9 @@ mod tests {
         let theirs = CString::new(top.join("theirs").to_string_lossy().as_bytes()).unwrap();
         // SAFETY: chown on a path this test made.
         unsafe { libc::chown(theirs.as_ptr(), 65534, 65534) };
-        // /tmp itself is open to all, so all under it is the user's; the
-        // test then asks of its own root folder from /.
         assert_eq!(whose(&top.join("theirs/f"), 65534), Who::User);
+        assert_eq!(whose(&top.join("f"), 65534), Who::Root, "root's own folder");
+        assert_eq!(whose(&top.join("open/f"), 65534), Who::User, "open to all");
         let mut root = RootLocal::new(ident);
         let mut p = Pump::new(crate::proto::Conn::new(crate::proto::pair().unwrap().0));
         let made = top.join("theirs/new");

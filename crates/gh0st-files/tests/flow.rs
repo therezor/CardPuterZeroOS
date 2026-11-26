@@ -712,3 +712,91 @@ fn root_mode_lists_as_root_and_ends_behind() {
         "behind, root mode ends"
     );
 }
+
+/// A root worker whose copy stays under way until the test pokes its pipe.
+struct HeldCopy {
+    inner: Fake,
+    copy: Option<gh0st_files::engine::Id>,
+    pipe: [RawFd; 2],
+}
+
+impl gh0st_files::engine::Engine for HeldCopy {
+    fn send(&mut self, req: Request) {
+        if let Request::Copy { id, .. } = &req {
+            self.copy = Some(*id);
+        }
+        self.inner.send(req);
+    }
+    fn events(&mut self) -> Vec<gh0st_files::engine::Event> {
+        let mut v = self.inner.events();
+        let mut b = [0u8; 8];
+        // SAFETY: a non-blocking read into a live buffer from our pipe.
+        let poked = unsafe { libc::read(self.pipe[0], b.as_mut_ptr().cast(), b.len()) } > 0;
+        if poked {
+            if let Some(id) = self.copy.take() {
+                v.push(gh0st_files::engine::Event::Done { id });
+            }
+        }
+        v
+    }
+    fn fd(&self) -> Option<RawFd> {
+        Some(self.pipe[0])
+    }
+}
+
+/// Files goes behind with a copy as root under way: root mode stays until
+/// the copy ends, then ends by itself.
+#[test]
+fn root_mode_outlives_going_behind_only_until_its_copy_ends() {
+    let h = Home::new("root-copy");
+    let home = h.home().to_string_lossy().into_owned();
+    let mut pipe = [0; 2];
+    // SAFETY: a pipe into a two-int array, its read end made non-blocking.
+    unsafe {
+        libc::pipe(pipe.as_mut_ptr());
+        let fl = libc::fcntl(pipe[0], libc::F_GETFL);
+        libc::fcntl(pipe[0], libc::F_SETFL, fl | libc::O_NONBLOCK);
+    }
+    let mut inner = Fake::new().folder(
+        "",
+        &home,
+        vec![Entry::file("a.conf", 5), Entry::dir("Music")],
+    );
+    inner.copy.progress = Some((1, 10, "a.conf".into()));
+    let cell = RefCell::new(Some(HeldCopy {
+        inner,
+        copy: None,
+        pipe,
+    }));
+    let page = Files::with(Options {
+        home: h.home(),
+        data: Some(h.dir.join("data")),
+        engine: Box::new(fake()),
+        keyring: Keyring::over(None),
+        pick: None,
+    })
+    .root_with(move || {
+        let e: Box<dyn gh0st_files::engine::Engine> = match cell.borrow_mut().take() {
+            Some(e) => Box::new(e),
+            None => Box::new(Fake::new()),
+        };
+        gh0st_files::root::Root::open(e)
+    });
+    let mut d = Driver::new(page);
+    d.frame();
+    keys(&mut d, "ctrl+enter");
+    // a.conf sorts after Music: copy it, then paste into Music.
+    keys(&mut d, "x\nctrl+c\nf\nenter\n6");
+    d.pause();
+    assert_eq!(
+        d.status()
+            .as_deref()
+            .map(|s| s.contains("Root") || s.ends_with('%')),
+        Some(true)
+    );
+    // The copy ends: root mode goes with it.
+    // SAFETY: writes one byte to our own pipe.
+    unsafe { libc::write(pipe[1], b"x".as_ptr().cast(), 1) };
+    d.pump(200);
+    assert_ne!(d.status().as_deref(), Some("Root"), "{:?}", d.status());
+}

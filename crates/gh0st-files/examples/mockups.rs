@@ -356,6 +356,8 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
         picking("41-pick-replace", "enter\nx\nenter", text_spec(Mode::Save)),
         picking("42-pick-type", "enter\n6", text_spec(Mode::Open)),
         picking("43-pick-places", "esc", text_spec(Mode::Open)),
+        // Root mode: the top bar says so, in critical.
+        scene("44-root", "ctrl+enter"),
     ];
     apps(&base.join("apps"));
     for s in scenes {
@@ -368,12 +370,21 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             std::fs::create_dir_all(data.join("ssh")).unwrap();
             std::fs::write(data.join("ssh/id_ed25519.pub"), pubkey).unwrap();
         }
+        // As root, the worker lists what is on disk here too.
+        let listed = gh0st_files::model::list_local(&h, usize::MAX)
+            .map(|(v, _)| v)
+            .unwrap_or_default();
+        let at = h.to_string_lossy().into_owned();
         let page = Files::with(Options {
             home: h,
             data: Some(data),
             engine: Box::new(fake(s.copy)),
             keyring: Keyring::over(None),
             pick: s.pick,
+        })
+        .root_with(move || {
+            let f = gh0st_files::fake::Fake::new().folder("", &at, listed.clone());
+            gh0st_files::root::Root::open(Box::new(f))
         });
         let mut d = Driver::new(page);
         d.frame();

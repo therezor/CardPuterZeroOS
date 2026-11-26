@@ -408,6 +408,9 @@ pub struct Files {
     root_watch: Option<(Watch, std::os::fd::RawFd)>,
     /// Requests sent to the root worker: their answers and stops go there.
     root_ids: HashSet<Id>,
+    /// Files went behind with a copy as root under way: root mode ends
+    /// when it does.
+    root_leave: bool,
     /// How root mode starts: the helper, or a test's engine.
     root_start: Box<dyn Fn() -> Root>,
 }
@@ -459,6 +462,7 @@ impl Files {
             root: None,
             root_watch: None,
             root_ids: HashSet::new(),
+            root_leave: false,
             root_start: Box::new(|| Root::helper(ASK_ROOT)),
         };
         let spec = f.pick.as_ref().map(|p| p.spec.clone());
@@ -970,7 +974,9 @@ impl Files {
             Loc::Local(p) if e.sort() != Type::Archive => Some(p.clone()),
             _ => None,
         };
-        if let Some(path) = local {
+        // As root a file shows in the viewer: an app it would open in runs as
+        // the user.
+        if let Some(path) = local.filter(|_| self.root.is_none()) {
             if e.kind == Kind::File && !cx.handlers(&path).is_empty() {
                 cx.open_file(&path);
                 return;
@@ -1329,6 +1335,7 @@ impl Files {
             cx.unwatch(w);
         }
         self.root_ids.clear();
+        self.root_leave = false;
         self.reload(&[], cx);
         self.retitle();
     }
@@ -1383,6 +1390,10 @@ impl Files {
         }
         self.rewatch(cx);
         self.next_ask(cx);
+        if self.root_leave && self.transfers.is_empty() {
+            self.root_leave = false;
+            self.leave_root(cx);
+        }
         self.retitle();
     }
 
@@ -2726,8 +2737,15 @@ impl Page for Files {
     fn front(&mut self, front: bool, cx: &mut Cx) {
         // Root mode ends when Files goes behind, is paused or the screen
         // locks, unless a copy as root is still running.
-        if !front && self.root.is_some() && self.transfers.is_empty() {
-            self.leave_root(cx);
+        if !front && self.root.is_some() {
+            if self.transfers.is_empty() {
+                self.leave_root(cx);
+            } else {
+                self.root_leave = true;
+            }
+        }
+        if front {
+            self.root_leave = false;
         }
         if front && self.pick.is_none() && matches!(self.view, View::Browse) {
             self.reload(&[], cx);

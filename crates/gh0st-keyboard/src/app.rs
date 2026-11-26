@@ -287,8 +287,11 @@ impl Shared {
         if bt.powered() || self.radio_job.is_some() {
             return;
         }
+        // The state before the app touched it, not after a first try.
+        if !self.radio_ours {
+            self.radio_was_blocked = (self.radio_blocked)();
+        }
         self.radio_ours = true;
-        self.radio_was_blocked = (self.radio_blocked)();
         if (self.radio)(false).is_ok() {
             bt.power(true);
             return;
