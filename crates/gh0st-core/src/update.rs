@@ -18,6 +18,19 @@ pub fn state_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(STATE_DIR))
 }
 
+/// The edge suite's source. The channel is edge while it exists.
+pub const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st-edge.sources";
+
+/// The channel as set now, from the edge source, or `$GH0ST_UPDATE_EDGE`
+/// in tests and the sim. The last check's channel may be stale: a change
+/// starts a check, which can wait on apt or fail.
+pub fn channel_now() -> String {
+    let path = std::env::var_os("GH0ST_UPDATE_EDGE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(EDGE_SOURCES));
+    if path.exists() { "edge" } else { "stable" }.into()
+}
+
 /// The run folder, or `$GH0ST_UPDATE_RUN`.
 pub fn run_dir() -> PathBuf {
     std::env::var_os("GH0ST_UPDATE_RUN")
@@ -224,8 +237,11 @@ impl State {
         state_dir().join("state")
     }
 
+    /// The last check's state, with the channel as set now.
     pub fn load() -> State {
-        State::read(&State::path())
+        let mut s = State::read(&State::path());
+        s.channel = channel_now();
+        s
     }
 
     pub fn read(path: &Path) -> State {

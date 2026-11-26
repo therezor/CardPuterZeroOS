@@ -26,7 +26,6 @@ const APP: &str = "update";
 /// The notice's poster and tag.
 const POSTER: &str = "gh0st-update";
 const TAG: &str = "updates";
-const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st-edge.sources";
 /// Lists older than this are fetched again before an install: Debian
 /// removes superseded debs.
 const LISTS_FRESH_SECS: u64 = 3600;
@@ -147,14 +146,6 @@ pub(crate) fn now() -> u64 {
     notify::now_secs()
 }
 
-fn channel() -> String {
-    if Path::new(EDGE_SOURCES).exists() {
-        "edge".into()
-    } else {
-        "stable".into()
-    }
-}
-
 fn save(st: &State) {
     let dir = update::state_dir();
     let _ = std::fs::create_dir_all(&dir);
@@ -231,7 +222,6 @@ fn check(auto: bool) -> i32 {
         }
     };
     let mut st = State::load();
-    st.channel = channel();
     clear_done_restart(&mut st);
     let mut rep = Reporter::new(false);
     if let Err((outcome, why)) = ready_to_check(auto) {
@@ -436,7 +426,6 @@ fn install() -> i32 {
         }
     };
     let mut st = State::load();
-    st.channel = channel();
     let mut rep = Reporter::new(true);
     let result = install_steps(&mut st, &mut rep);
     match result {

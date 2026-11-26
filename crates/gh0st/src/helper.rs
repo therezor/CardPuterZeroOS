@@ -91,7 +91,7 @@ const USER_UID: u32 = 1000;
 /// Our repo's stable source, from gh0st-base. Edge is the same with
 /// another suite, in its own file, so the URL lives in one place.
 const STABLE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st.sources";
-const EDGE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st-edge.sources";
+use gh0st_core::update::EDGE_SOURCES;
 /// The device user's groups. One the system lacks is left out, so
 /// `useradd` doesn't fail on it.
 const USER_GROUPS: [&str; 11] = [

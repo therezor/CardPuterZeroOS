@@ -258,9 +258,14 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             f
         });
         // SAFETY: one thread; the page reads these as it starts.
+        let edge = dir.join("edge.sources");
+        if s.state.channel == "edge" {
+            std::fs::write(&edge, "").unwrap();
+        }
         unsafe {
             std::env::set_var("GH0ST_UPDATE_STATE", &state_dir);
             std::env::set_var("GH0ST_UPDATE_RUN", &run_dir);
+            std::env::set_var("GH0ST_UPDATE_EDGE", &edge);
         }
         let mut d = Driver::new(Updates::new());
         // A list learns its rows when drawn, so a key after a push waits
