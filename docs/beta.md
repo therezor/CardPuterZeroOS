@@ -88,6 +88,10 @@ The device checks once a day and asks before it installs. Updates opens from
 the notification or from home. An update keeps your files and settings; only a
 new flash erases the card.
 
+To try what comes next before a release, pick Settings > System > Updates >
+Channel > Edge. Or flash the **Gh0st OS test build** from the releases page.
+Both follow the `dev` branch, and both can break.
+
 ## Report a bug
 
 Open an issue on GitHub and include:

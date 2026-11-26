@@ -1232,7 +1232,7 @@ fn set_channel(edge: bool) -> Result<(), String> {
 /// The stable stanza with its suite swapped.
 fn edge_sources(stable: &str) -> Option<String> {
     let mut found = false;
-    let mut out = String::from("# Settings > System > Updates > Channel: every build of main.\n");
+    let mut out = String::from("# Settings > System > Updates > Channel: every test build.\n");
     for line in stable.lines() {
         if line.trim_start().starts_with('#') {
             continue;

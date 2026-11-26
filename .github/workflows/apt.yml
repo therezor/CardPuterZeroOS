@@ -1,14 +1,15 @@
 # Publishes our apt repo to GitHub Pages (docs/updates.md, Our apt repo),
 # and the Store's catalog beside it (docs/store.md): Pages deploys one
-# artifact, so every run carries both. A push to main publishes edge, a v*
-# tag publishes stable, and a daily run signs both suites again, so
-# Valid-Until never lapses, and picks up M5's new apps. One pool for both suites:
-# a file in it is never replaced, so a tag republishes what edge built.
+# artifact, so every run carries both. A push to dev publishes edge, the
+# test builds. A v* tag publishes stable. A daily run signs both suites
+# again, so Valid-Until never lapses, and picks up M5's new apps. One pool
+# for both suites: a file in it is never replaced, so a tag republishes what
+# edge built.
 name: apt
 
 on:
   push:
-    branches: [main]
+    branches: [dev]
     tags: ['v*']
     paths: [crates/**, assets/**, packaging/**, os/**, Cargo.toml, Cargo.lock, .github/workflows/apt.yml]
   schedule:

@@ -686,7 +686,7 @@ fn s_edge(t: &Theme) -> Canvas {
         t,
         "Switch to Edge?",
         t.c.warning,
-        "Edge gets every build of main. Things may break.",
+        "Edge gets every test build. Things may break.",
         &[("Enter", "switch"), ("Esc", "cancel")],
     );
     widgets::action_bar(&mut c, t, &[NONE; 5]);

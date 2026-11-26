@@ -1,11 +1,12 @@
 # Builds the Gh0st OS release image on an arm64 runner and runs the tier 1
 # checks. Same script as on the Mac (os/build.sh). A v* tag also attaches
-# the image to its release; apt.yml publishes the tag's packages.
+# the image to its release; apt.yml publishes the tag's packages. A push to
+# dev replaces the test build: one prerelease that never becomes Latest.
 name: os
 
 on:
   push:
-    branches: [main, image]
+    branches: [main, dev, image]
     tags: ['v*']
     paths: [os/**, crates/**, packaging/**, Cargo.lock, .github/workflows/os.yml]
   pull_request:
@@ -15,6 +16,11 @@ on:
 permissions:
   # A tag's run attaches the image to the release.
   contents: write
+
+# Two dev pushes would race to replace the test build. A tag never cancels.
+concurrency:
+  group: os-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/dev' }}
 
 jobs:
   image:
@@ -55,3 +61,16 @@ jobs:
               --notes "Flash the .img.xz (scripts/flash.sh, or bmaptool with the .bmap). Updates come from the stable apt suite: docs/updates.md." ||
             true
           gh release upload "$tag" os/out/*.img.xz os/out/*.bmap os/out/*.sha256 --clobber
+      # Not v*: apt.yml would promote it to stable.
+      - name: Test build
+        if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=test-build
+          gh release delete "$tag" --yes --cleanup-tag || true
+          gh release create "$tag" --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Gh0st OS test build" \
+            --notes "A build of dev, ${GITHUB_SHA::7}, for testers. Not a release: it can break.
+          Flash the .img.xz (scripts/flash.sh, or bmaptool with the .bmap). On a device, Settings > System > Updates > Channel > Edge gets the same builds as updates." \
+            os/out/*.img.xz os/out/*.bmap os/out/*.sha256

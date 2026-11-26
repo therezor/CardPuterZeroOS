@@ -651,7 +651,7 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                         2,
                         Some(Dialog::Confirm {
                             title: "Switch to Edge?".into(),
-                            line: "Edge gets every build of main. Things may break.".into(),
+                            line: "Edge gets every test build. Things may break.".into(),
                             yes: "switch",
                             no: "cancel",
                         }),

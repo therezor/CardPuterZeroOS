@@ -15,7 +15,8 @@ cargo run -p gh0st-ui --example updates   # writes mockups/updates
 
 - Check daily by default. Install only after the user confirms. There is no
   mode that installs on its own.
-- Two channels: stable, from version tags, and edge, from every push to main.
+- Two channels: stable, from version tags, and edge, from every push to dev,
+  the test builds.
 - The kernel set updates like any other package, but only with the battery
   above 50%.
 - Install and the update settings ask for the password, once per 5 minutes.
@@ -198,7 +199,7 @@ System > Updates:
 
 - The status row: "12 updates ready", or "Up to date". Enter opens the app.
 - Check daily: on or off.
-- Channel: Stable or Edge. Edge asks first: every build of main, and things
+- Channel: Stable or Edge. Edge asks first: every test build, and things
   may break. Going back to Stable keeps the edge build until Stable passes
   it. Nothing downgrades.
 - Last check: the time, or what went wrong.
@@ -272,6 +273,8 @@ image: Store apps depend on it.
   Store's catalog (`docs/store.md`), and deploys Pages. A tag also attaches
   its debs to the release. Setup of the key and
   Pages: `os/repo/README.md`.
+- **The test build.** A push to dev also replaces one GitHub prerelease,
+  `test-build`, with a flashable image of that commit (`.github/workflows/os.yml`).
 - **The image.** `gh0st-base` ships `os/repo/gh0st.sources`, the pin and
   the key. A build without `os/repo/gh0st-archive-keyring.pgp` leaves the
   source out, since a source apt can't check would fail every check.

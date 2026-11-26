@@ -21,7 +21,8 @@ gpg --export --export-options export-minimal "$fpr" > os/repo/gh0st-archive-keyr
 gpg --armor --export-secret-subkeys "$fpr" | gh secret set APT_SIGNING_KEY
 ```
 
-Then, in the repo's settings, Pages > Source: GitHub Actions.
+Then, in the repo's settings, Pages > Source: GitHub Actions. The
+`github-pages` environment deploys from `dev` (edge) and `v*` tags (stable).
 
 Commit `os/repo/gh0st-archive-keyring.pgp`. Images built before it
 exists have no Gh0st OS source (`os/packages/gh0st-base/stage.sh`).
