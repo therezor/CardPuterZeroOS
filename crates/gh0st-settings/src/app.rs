@@ -1023,15 +1023,6 @@ impl Settings {
                 },
                 Ask::Confirm(c),
             ),
-            Command::PowerOff => self.ask(
-                Dialog::Confirm {
-                    title: "Power off?".into(),
-                    line: "Open apps close first.".into(),
-                    yes: "power off",
-                    no: "cancel",
-                },
-                Ask::Confirm(c),
-            ),
             Command::Join(ssid) => self.join(ssid, cx),
             // The shell brings Updates up over Settings, and Settings back
             // when it closes.
@@ -1265,8 +1256,10 @@ impl Settings {
 
     fn answered(&mut self, mut text: String, ask: Ask, cx: &mut Cx) {
         match ask {
-            Ask::Confirm(Command::Restart) => self.power(true, cx),
-            Ask::Confirm(Command::PowerOff) => self.power(false, cx),
+            Ask::Confirm(Command::Restart) => {
+                self.helper(cx, &["power", "reboot"], "Restarting\u{2026}");
+                cx.toast("Restarting\u{2026}");
+            }
             Ask::Confirm(_) => {}
             Ask::EdgeChannel => self.helper(cx, &["update-channel", "edge"], "Edge: every build"),
             Ask::WifiPassword(ssid) => {
@@ -1519,18 +1512,6 @@ impl Settings {
                 self.reject(cx, "Not an IPv4 address", ask, &v);
             }
         }
-    }
-
-    /// Restarts or powers off. systemd stops the session first, so every app
-    /// gets SIGTERM and closes.
-    fn power(&mut self, restart: bool, cx: &mut Cx) {
-        let (arg, msg) = if restart {
-            ("reboot", "Restarting\u{2026}")
-        } else {
-            ("off", "Powering off\u{2026}")
-        };
-        self.helper(cx, &["power", arg], msg);
-        cx.toast(msg);
     }
 
     /// Keys only some pages take. True if the key was used.
@@ -2344,21 +2325,11 @@ impl Page for Settings {
         if self.embed.is_none() && self.top().0 != PageId::NetInfo {
             c.add(gh0st_app::Command::action(NET_INFO, "Network details").opens());
         }
-        // Setup's menu: no shell runs yet to power off from.
-        if self.embed.is_some() {
-            c.group("Setup");
-            c.add(gh0st_app::Command::action(POWER_OFF, "Power off"));
-        }
     }
 
     fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
         if id == NET_INFO {
             self.open(PageId::NetInfo, cx);
-            self.flush(cx);
-            return;
-        }
-        if id == POWER_OFF {
-            self.run_command(Command::PowerOff, cx);
             self.flush(cx);
             return;
         }
@@ -2604,9 +2575,6 @@ const ASK: u32 = 1;
 
 /// Command ids for a page's own keys, by their place in its list.
 const PAGE_KEYS: u32 = 100;
-
-/// Setup's Power off, in its menu.
-const POWER_OFF: u32 = 90;
 
 /// Network details, in the menu of every page.
 const NET_INFO: u32 = 91;

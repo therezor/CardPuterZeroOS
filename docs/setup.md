@@ -39,7 +39,8 @@ real thing from the first key:
   nothing.
 - A step's own actions are chips over 5 to 7, spread by the design rule: Skip, Scan. Where
   Enter already works the rows (a switch, a choice), a main chip, Done, on 6 goes on.
-- 8 opens setup's menu: Power off and Help, and during the training Skip training first.
+- 8 opens setup's menu: Help, and during the training Skip training first. The side
+  switch powers off; setup goes on at the next start.
   There is no Close app. Skip on a lesson goes to the next one.
 - While a field takes text the bar turns into key hints: "Esc back  Tab next field
   Enter next".
@@ -220,7 +221,7 @@ chips, hint bar, menu, help and dialogs came with the design system.
 
 - `Settings::embedded(Embed { page, label, skip, done })`: one page as a setup step. It
   asks only what that page shows (no volume: no PipeWire as root), carries the step's
-  label, puts Skip on 7 or Done on 6, and has Power off in its menu. Esc on its own page
+  label, puts Skip on 7 or Done on 6. Esc on its own page
   goes back a step. It calls `cx.done()` once a country or time zone is set, or a network
   joined, after the job's success. Tests in `tests/embed.rs`.
 - `pages::privacy`: the five privacy rows, for Settings > Privacy and setup alike. The

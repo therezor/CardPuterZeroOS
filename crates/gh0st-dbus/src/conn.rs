@@ -116,8 +116,12 @@ impl Conn {
         let mut client = auth::Client::new(true);
         let mut b = [0u8; 1];
         loop {
-            if s.read(&mut b)? == 0 {
-                return Err(Error::Closed);
+            match s.read(&mut b) {
+                Ok(0) => return Err(Error::Closed),
+                Ok(_) => {}
+                // A signal to a caller with handlers, a child's SIGCHLD.
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
             }
             if client.feed(b[0])? {
                 break;
@@ -658,6 +662,44 @@ mod tests {
         assert_eq!(r.body[0], Value::U32(42));
         assert!(a.recv().unwrap().unwrap().is("a.b", "Noise"));
         server.join().unwrap();
+    }
+
+    /// A signal while the handshake waits (the shell's children exiting
+    /// at shutdown) must not end the connection.
+    #[test]
+    fn a_signal_during_the_handshake_is_not_an_error() {
+        extern "C" fn nothing(_: libc::c_int) {}
+        // SAFETY: a handler that does nothing, without SA_RESTART, so a
+        // blocked read returns EINTR.
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = nothing as *const () as usize;
+            libc::sigaction(libc::SIGUSR2, &sa, std::ptr::null_mut());
+        }
+        let path = std::env::temp_dir().join(format!("gh0st-dbus-eintr-{}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        // SAFETY: pthread_self cannot fail.
+        let me = unsafe { libc::pthread_self() } as usize;
+        let server = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            // The client is blocked reading the SASL answer: interrupt it.
+            std::thread::sleep(Duration::from_millis(100));
+            // SAFETY: the test thread is alive until it joins this one.
+            unsafe { libc::pthread_kill(me as libc::pthread_t, libc::SIGUSR2) };
+            std::thread::sleep(Duration::from_millis(50));
+            let mut srv = Conn::server(OwnedFd::from(s), "guid").unwrap();
+            let hello = pump(&mut srv);
+            srv.send(Message::reply(&hello).arg(Value::str(":1.1")))
+                .unwrap();
+            while srv.wants_write() {
+                srv.flush().unwrap();
+            }
+        });
+        let c = Conn::open(&Addr::Path(path.clone()));
+        server.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(c.unwrap().name.as_deref(), Some(":1.1"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Date and time, only while network time hasn't set the clock.
 
-use super::{HELPER, failure, power_answer, power_command, power_menu};
+use super::{HELPER, failure};
 use crate::model::pages;
 use gh0st_app::prelude::*;
 use gh0st_core::rt;
@@ -104,18 +104,6 @@ impl Page for DateTime {
                 self.form.error(1, &why);
             }
         }
-    }
-
-    fn commands(&self, c: &mut Commands) {
-        power_menu(c);
-    }
-
-    fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
-        power_command(id, cx);
-    }
-
-    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
-        power_answer(id, &answer, cx);
     }
 
     fn draw(&self, ui: &mut Ui) {

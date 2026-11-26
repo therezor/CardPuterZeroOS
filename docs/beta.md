@@ -68,7 +68,7 @@ Setup, once:
 | Fn+K | Switch between open apps |
 | Hold Esc | Close the app in front |
 | Hold Tab | Lock, over an app too |
-| Hold Esc on home | Restart or power off |
+| Hold Esc on home | Restart |
 | Tab, then Enter | Unlock |
 
 ## Private by default

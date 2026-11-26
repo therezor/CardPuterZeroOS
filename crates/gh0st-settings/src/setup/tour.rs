@@ -3,7 +3,7 @@
 //! lesson. Each passes on the keys it asks for. The last screen hands out
 //! the reward, the Phantom palette.
 
-use super::{Shared, power_answer, power_command, power_menu};
+use super::Shared;
 use gh0st_app::gfx::font::Font;
 use gh0st_app::gfx::widgets::{self, Hint, Message, Row, Trailing};
 use gh0st_app::gfx::{Canvas, Rect, Theme};
@@ -69,18 +69,6 @@ impl Page for Notice {
         false
     }
 
-    fn commands(&self, c: &mut Commands) {
-        power_menu(c);
-    }
-
-    fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
-        power_command(id, cx);
-    }
-
-    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
-        power_answer(id, &answer, cx);
-    }
-
     fn draw(&self, ui: &mut Ui) {
         message(
             ui,
@@ -129,18 +117,6 @@ impl Page for Welcome {
     /// Back to the notice, if there is one.
     fn back(&mut self, _: &mut Cx) -> bool {
         PRERELEASE
-    }
-
-    fn commands(&self, c: &mut Commands) {
-        power_menu(c);
-    }
-
-    fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
-        power_command(id, cx);
-    }
-
-    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
-        power_answer(id, &answer, cx);
     }
 
     fn draw(&self, ui: &mut Ui) {
@@ -354,7 +330,6 @@ impl Page for Lesson {
         if self.n < 8 {
             c.add(Command::action(SKIP_TOUR, "Skip training"));
         }
-        power_menu(c);
     }
 
     fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
@@ -365,14 +340,8 @@ impl Page for Lesson {
                 self.a.borrow_mut().tour = false;
                 cx.done();
             }
-            _ => {
-                power_command(id, cx);
-            }
+            _ => {}
         }
-    }
-
-    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
-        power_answer(id, &answer, cx);
     }
 
     fn draw(&self, ui: &mut Ui) {

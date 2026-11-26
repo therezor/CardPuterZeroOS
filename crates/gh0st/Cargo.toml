@@ -13,3 +13,6 @@ gh0st-keyringd.workspace = true
 gh0st-session.workspace = true
 gh0st-shell.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+gh0st-ui.workspace = true

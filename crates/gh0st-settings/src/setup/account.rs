@@ -1,7 +1,7 @@
 //! The account: a name and a password, then the password again. Nothing is
 //! made here; Done makes the user with what this step kept.
 
-use super::{Shared, power_answer, power_command, power_menu};
+use super::Shared;
 use gh0st_app::prelude::*;
 use gh0st_core::sysconf;
 
@@ -141,18 +141,6 @@ impl Page for Account {
     /// From the second screen, back to the first.
     fn back(&mut self, _: &mut Cx) -> bool {
         self.again.take().is_none()
-    }
-
-    fn commands(&self, c: &mut Commands) {
-        power_menu(c);
-    }
-
-    fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
-        power_command(id, cx);
-    }
-
-    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
-        power_answer(id, &answer, cx);
     }
 
     fn draw(&self, ui: &mut Ui) {

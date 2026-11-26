@@ -1473,16 +1473,9 @@ fn system(s: &State) -> Vec<Item> {
             }),
             Act::Open(PageId::Advanced),
         ),
+        // No Power off: the side switch shuts down in full, and a power off
+        // from here would only halt with the power still on.
         Item::new("power", "Restart", Value::None, Act::Run(Command::Restart)),
-        Item {
-            danger: true,
-            ..Item::new(
-                "power",
-                "Power off",
-                Value::None,
-                Act::Run(Command::PowerOff),
-            )
-        },
     ]
 }
 

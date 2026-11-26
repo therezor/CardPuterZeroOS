@@ -252,6 +252,7 @@ dependencies = [
  "gh0st-keyringd",
  "gh0st-session",
  "gh0st-shell",
+ "gh0st-ui",
  "libc",
 ]
 
@@ -362,6 +363,7 @@ name = "gh0st-shell"
 version = "0.4.0"
 dependencies = [
  "gh0st-core",
+ "gh0st-dbus",
  "gh0st-ui",
  "libc",
 ]

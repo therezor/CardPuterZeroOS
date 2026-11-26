@@ -1,7 +1,7 @@
 //! Done: what was set, then the hand-over. Enter makes the user, then
 //! `setup-finish` hands the device to them and starts the shell.
 
-use super::{HELPER, Shared, failure, power_answer, power_command, power_menu};
+use super::{HELPER, Shared, failure};
 use gh0st_app::gfx::icon::{self, IconSize};
 use gh0st_app::gfx::widgets::{self, Hint, Message};
 use gh0st_app::gfx::{Rect, Theme};
@@ -184,20 +184,10 @@ impl Page for Finish {
         }
     }
 
-    fn commands(&self, c: &mut Commands) {
-        power_menu(c);
-    }
-
     fn command(&mut self, id: u32, _: gh0st_app::Step, cx: &mut Cx) {
         if id == RESTART {
             cx.spawn(&["pkexec", HELPER, "power", "reboot"]);
-            return;
         }
-        power_command(id, cx);
-    }
-
-    fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
-        power_answer(id, &answer, cx);
     }
 
     fn draw(&self, ui: &mut Ui) {
