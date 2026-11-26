@@ -197,6 +197,7 @@ fn catalog() -> Catalog {
             cn_url: String::new(),
             share: String::new(),
             desktop: p.into(),
+            pin: false,
         })
         .collect();
     Catalog {

@@ -35,6 +35,7 @@ fn app(package: &str, title: &str, flags: &str) -> App {
         cn_url: String::new(),
         share: String::new(),
         desktop: package.into(),
+        pin: false,
     }
 }
 

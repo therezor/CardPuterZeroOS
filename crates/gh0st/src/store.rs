@@ -426,6 +426,9 @@ fn install_one(
     if !url.starts_with("https://") {
         return Err((Outcome::Failed, "not an https URL".into()));
     }
+    if a.pin {
+        pin_for(a)?;
+    }
     let deb = download(rep, a, url)?;
     let r = install_deb(rep, a, &deb, lists_fresh);
     let _ = std::fs::remove_file(&deb);
@@ -738,7 +741,54 @@ fn remove(pkg: &str) -> Result<(), Failure> {
     if code != Some(0) {
         return Err(apt_failure(&out));
     }
-    Ok(())
+    write_pins(&c, None)
+}
+
+// ------------------------------------------------------------ pins
+
+/// Before a pinned app installs: Debian's package of its name pinned out,
+/// so neither this apt run nor a later upgrade picks Debian's. Refused
+/// when Debian's is what is installed: the user put it there.
+fn pin_for(a: &App) -> Result<(), Failure> {
+    let c = Catalog::load().ok_or((Outcome::Failed, "No app list".into()))?;
+    if let Some(v) = store::installed_apps(&c).get(&a.package)
+        && gh0st_core::debver::newer(v, &a.version)
+    {
+        return Err((
+            Outcome::Failed,
+            format!("Debian's {} {v} is installed. Remove it first", a.package),
+        ));
+    }
+    write_pins(&c, Some(&a.package))
+}
+
+/// The pin file for the pinned apps installed, and `adding`. A name the
+/// file pins already stays while it is installed, though the catalog may
+/// have dropped it. None left: no file.
+fn write_pins(c: &Catalog, adding: Option<&str>) -> Result<(), Failure> {
+    let path = store::pins_path();
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let old: Vec<&str> = old
+        .lines()
+        .filter_map(|l| l.strip_prefix("Package: "))
+        .collect();
+    let status = std::fs::read_to_string(store::dpkg_status()).unwrap_or_default();
+    let installed = store::installed(&status, |p| {
+        old.contains(&p) || c.find(p).is_some_and(|a| a.pin)
+    });
+    let mut pkgs: Vec<&str> = installed.keys().map(String::as_str).collect();
+    pkgs.extend(adding);
+    pkgs.sort_unstable();
+    pkgs.dedup();
+    let r = if pkgs.is_empty() {
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    } else {
+        gh0st_core::update::write_atomic(&path, &store::pins_text(&pkgs))
+    };
+    r.map_err(|e| (Outcome::Failed, format!("{}: {e}", path.display())))
 }
 
 #[cfg(test)]

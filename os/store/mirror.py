@@ -59,6 +59,11 @@ DEVICE_PREFS = (
 IMAGE_LOCK = os.path.join(OS_DIR, "image/variants/release/packages.lock")
 
 MAGIC = "gh0st-store 1"
+# Apps named like a Debian package that are listed anyway, as app-pin
+# lines: while one is installed the engine pins Debian's package of that
+# name out. Each is a different program from Debian's. An engine without
+# pins skips the line kind, so it never offers them.
+PINNED = {"loki"}
 DAY = 86400
 VALID_DAYS = 30
 # A catalog with this much life left is served again as it is, so an
@@ -790,7 +795,7 @@ def listing(apps, checked, names, ours, cn, dropped, installs=None):
         row = checked[d["sha256"]]
         clash = [n for f in ("provides", "replaces", "conflicts", "breaks")
                  for n in names_of(row[f]) if n in names or n in ours]
-        if pkg in names or pkg in ours:
+        if pkg in ours or (pkg in names and pkg not in PINNED):
             dropped[pkg] = "named like a Debian or Gh0st OS package"
             continue
         if clash:
@@ -810,6 +815,8 @@ def listing(apps, checked, names, ours, cn, dropped, installs=None):
         if not line:
             dropped[pkg] = why
             continue
+        if pkg in names:
+            line = "app-pin" + line[len("app"):]
         lines.append(line)
         kept.append(a)
     return lines, kept

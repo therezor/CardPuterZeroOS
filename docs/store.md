@@ -97,7 +97,7 @@ registry as untrusted:
   carry over in `checked.tsv`, by SHA-256. Package, version and
   architecture come from the deb's control file.
 - **Left out**, with the reason in `dropped.tsv`: a package named like one
-  of Debian's or ours, one whose `Provides`, `Replaces`, `Conflicts` or
+  of Debian's (unless `PINNED`) or ours, one whose `Provides`, `Replaces`, `Conflicts` or
   `Breaks` names one, one with a `Depends` group nothing in trixie or
   our repo offers, and one apt wouldn't install.
 - **Install check.** apt runs in a private root set up as a stable device
@@ -154,7 +154,13 @@ expires 1766462000
 about <sha256> <bytes>
 icons <sha256> <bytes>
 app	<package>	<version>	<size>	<sha256>	<category>	<flags>	<title>	<summary>	<author>	<licence>	<url>	<cn-url>	<share>	<desktop>
+app-pin	<the same fields>
 ```
+
+`app-pin` is an app named like a Debian package, listed by name in the
+mirror's `PINNED`. Each is a different program from Debian's. An engine
+that doesn't know the line kind skips it, so it never offers one it can't
+pin.
 
 `app` fields are tab-separated. `flags` is a comma list from the table
 above, or `-`. `desktop` is the stem of the `.desktop` file the deb
@@ -200,6 +206,13 @@ The engine reads `job` once and deletes it. The password has the helper's
   package and version. Then `apt-get -s install --no-remove ./<sha256>.deb`
   checks dependencies and space, and the real run follows. Old lists are
   fetched again when a dependency is missing. The deb is deleted after.
+- **Pins.** Before a pinned app downloads, the engine writes
+  `/etc/apt/preferences.d/gh0st-store.pref`: Debian's package of each
+  pinned app installed, and this one, at priority -1. The daily upgrade
+  then never swaps the app for Debian's package. Debian's package
+  already installed under that name is refused. The file is rewritten
+  after a remove and goes when no pinned app is left. A name it pins
+  stays while installed, though the catalog may drop it.
 - **Remove.** Only an app the catalog lists, and only when apt's simulation
   removes nothing else.
 - `state` gains `ended`, so two runs that end alike still differ.

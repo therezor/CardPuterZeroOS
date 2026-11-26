@@ -121,6 +121,25 @@ class Depends(unittest.TestCase):
         self.assertEqual(mirror.apt_reason("E: Unsupported file ./x.deb given on commandline\n"),
                          "Unsupported file ./x.deb given on commandline")
 
+    def test_a_pinned_name_like_debians_is_an_app_pin_line(self):
+        apps, checked, names, cn = fixture()
+        names = names | {"acidzero"}
+        dropped = {}
+        lines, _ = mirror.listing(apps, checked, names, {"gh0st"}, cn, dropped)
+        self.assertEqual(dropped["acidzero"], "named like a Debian or Gh0st OS package")
+        old = mirror.PINNED
+        mirror.PINNED = {"acidzero"}
+        try:
+            dropped = {}
+            lines, _ = mirror.listing(apps, checked, names, {"gh0st"}, cn, dropped)
+            self.assertNotIn("acidzero", dropped)
+            self.assertTrue(any(l.startswith("app-pin\tacidzero\t") for l in lines))
+            dropped = {}
+            mirror.listing(apps, checked, names, {"gh0st", "acidzero"}, cn, dropped)
+            self.assertIn("acidzero", dropped, "ours is never pinned out")
+        finally:
+            mirror.PINNED = old
+
     def test_an_app_apt_cant_install_is_left_out_with_apts_reason(self):
         apps, checked, names, cn = fixture()
         sha = "a" * 64
