@@ -111,6 +111,25 @@ class Depends(unittest.TestCase):
         idx = "Package: a\nProvides: b (= 1), c:any\n\nPackage: d\n"
         self.assertEqual(mirror.index_names(idx), {"a", "b", "c", "d"})
 
+    def test_apts_reason_is_the_unmet_line(self):
+        out = ("Reading package lists...\nSome packages could not be installed.\n"
+               "The following packages have unmet dependencies:\n"
+               " demo : Depends: python3-libcamera (>= 0.7) but 0.4-1 is to be installed\n"
+               "E: Unable to correct problems, you have held broken packages.\n")
+        self.assertEqual(mirror.apt_reason(out),
+                         "Depends: python3-libcamera (>= 0.7) but 0.4-1 is to be installed")
+        self.assertEqual(mirror.apt_reason("E: Unsupported file ./x.deb given on commandline\n"),
+                         "Unsupported file ./x.deb given on commandline")
+
+    def test_an_app_apt_cant_install_is_left_out_with_apts_reason(self):
+        apps, checked, names, cn = fixture()
+        sha = "a" * 64
+        why = "apt can't install it: Depends: udisks2 but it is not installable"
+        dropped = {}
+        lines, _ = mirror.listing(apps, checked, names, {"gh0st"}, cn, dropped, {sha: why})
+        self.assertEqual(dropped["acidzero"], why)
+        self.assertFalse(any("\tacidzero\t" in l for l in lines))
+
 
 class Icons(unittest.TestCase):
     def test_a_pack_reads_back(self):

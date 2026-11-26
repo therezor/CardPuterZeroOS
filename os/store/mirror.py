@@ -49,6 +49,15 @@ DEB_HOSTS = ("https://github.com/CardputerZero/packages/releases/download/",)
 CN_HOSTS = ("https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/packages/",)
 ART_HOSTS = ("https://raw.githubusercontent.com/CardputerZero/",)
 
+# What a device's apt sees, for the install check.
+OS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEVICE_SOURCES = os.path.join(OS_DIR, "packages/gh0st-base/root/etc/apt/sources.list.d/debian.sources")
+DEVICE_PREFS = (
+    os.path.join(OS_DIR, "packages/gh0st-base/root/etc/apt/preferences.d/gh0st-deny.pref"),
+    os.path.join(OS_DIR, "repo/gh0st.pref"),
+)
+IMAGE_LOCK = os.path.join(OS_DIR, "image/variants/release/packages.lock")
+
 MAGIC = "gh0st-store 1"
 DAY = 86400
 VALID_DAYS = 30
@@ -486,6 +495,131 @@ def resolvable(depends, names):
     return None
 
 
+# ---------------------------------------------------------------- install check
+
+
+class Device:
+    """apt as a device on the stable suite sees it, in a private root:
+    Debian main, our repo, our pins, and the image's packages installed.
+    `check` simulates installing an app from its control fields alone, so
+    versions and every dependency's dependencies count."""
+
+    STATUS_SKIP = ("Filename", "Size", "MD5sum", "SHA1", "SHA256", "SHA512", "Description-md5")
+
+    def __init__(self, root, apt_dir, suite="stable"):
+        self.root = root
+        self.conf = os.path.join(root, "apt.conf")
+        for d in ("etc/apt/sources.list.d", "etc/apt/preferences.d", "etc/apt/apt.conf.d",
+                  "var/lib/apt/lists/partial", "var/cache/apt/archives/partial",
+                  "var/lib/dpkg", "checks"):
+            os.makedirs(os.path.join(root, d), exist_ok=True)
+        shutil.copy(DEVICE_SOURCES, os.path.join(root, "etc/apt/sources.list.d/debian.sources"))
+        with open(os.path.join(root, "etc/apt/sources.list.d/gh0st.list"), "w") as f:
+            f.write(f"deb [trusted=yes] file:{os.path.abspath(apt_dir)} {suite} main\n")
+        for p in DEVICE_PREFS:
+            shutil.copy(p, os.path.join(root, "etc/apt/preferences.d", os.path.basename(p)))
+        with open(self.conf, "w") as f:
+            f.write(f'''Dir "{root}/";
+Dir::State::status "{root}/var/lib/dpkg/status";
+APT::Architecture "arm64";
+APT::Architectures {{ "arm64"; }};
+Acquire::Languages "none";
+Acquire::Retries "3";
+APT::Sandbox::User "root";
+Debug::NoLocking "true";
+''')
+        self.status = os.path.join(root, "var/lib/dpkg/status")
+        open(self.status, "w").close()
+        self.apt("apt-get", "-q", "update")
+        with open(self.status, "w", encoding="utf-8") as f:
+            f.write(self.image_status())
+        self.apt("apt-cache", "gencaches")
+
+    def apt(self, *argv):
+        env = dict(os.environ, APT_CONFIG=self.conf, LC_ALL="C.UTF-8")
+        return subprocess.run(argv, env=env, capture_output=True, text=True, check=True)
+
+    def image_status(self):
+        """A dpkg status with the release image's packages, from the indexes
+        apt just fetched. Ours are "(ours)" in the lock: any version will do."""
+        known = {}
+        lists = os.path.join(self.root, "var/lib/apt/lists")
+        for name in sorted(os.listdir(lists)):
+            if not name.endswith("_Packages"):
+                continue
+            with open(os.path.join(lists, name), encoding="utf-8", errors="replace") as f:
+                for stanza in f.read().split("\n\n"):
+                    m = re.search(r"^Package: (\S+)$", stanza, re.M)
+                    v = re.search(r"^Version: (\S+)$", stanza, re.M)
+                    if m and v:
+                        known[(m.group(1), v.group(1))] = stanza
+                        known.setdefault((m.group(1), "(ours)"), stanza)
+        out = []
+        with open(IMAGE_LOCK, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("#") or "\t" not in line:
+                    continue
+                pkg, ver = line.rstrip("\n").split("\t")[:2]
+                stanza = known.get((pkg, ver))
+                if stanza is None:
+                    if ver == "(ours)":
+                        continue
+                    stanza = f"Package: {pkg}\nVersion: {ver}\nArchitecture: arm64"
+                body, skip = [], False
+                for l in stanza.splitlines():
+                    if l[:1] in (" ", "\t"):
+                        if not skip:
+                            body.append(l)
+                        continue
+                    skip = l.split(":")[0] in self.STATUS_SKIP
+                    if not skip:
+                        body.append(l)
+                lines = [body[0], "Status: install ok installed"] + body[1:]
+                if not any(l.startswith("Maintainer:") for l in lines):
+                    lines.append("Maintainer: image")
+                if not any(l.startswith("Description:") for l in lines):
+                    lines.append("Description: image")
+                out.append("\n".join(lines))
+        return "\n\n".join(out) + "\n"
+
+    def check(self, row):
+        """None when apt would install the app, or why it wouldn't."""
+        d = tempfile.mkdtemp(dir=os.path.join(self.root, "checks"))
+        try:
+            os.makedirs(os.path.join(d, "pkg/DEBIAN"))
+            fields = [("Package", row["package"]), ("Version", row["version"]),
+                      ("Architecture", row["arch"]), ("Maintainer", "check <check@invalid>"),
+                      ("Depends", row["depends"]), ("Provides", row["provides"]),
+                      ("Conflicts", row["conflicts"]), ("Breaks", row["breaks"]),
+                      ("Replaces", row["replaces"]), ("Description", "install check")]
+            with open(os.path.join(d, "pkg/DEBIAN/control"), "w", encoding="utf-8") as f:
+                f.writelines(f"{k}: {v}\n" for k, v in fields if v)
+            deb = os.path.join(d, "app.deb")
+            subprocess.run(["dpkg-deb", "--root-owner-group", "-Zgzip", "-b", os.path.join(d, "pkg"), deb],
+                           check=True, capture_output=True)
+            env = dict(os.environ, APT_CONFIG=self.conf, LC_ALL="C.UTF-8")
+            r = subprocess.run(["apt-get", "-s", "-q", "install", "--no-remove", deb],
+                               env=env, capture_output=True, text=True)
+            return None if r.returncode == 0 else "apt can't install it: " + apt_reason(r.stdout + r.stderr)
+        except subprocess.CalledProcessError as e:
+            return f"apt can't install it: {e}"
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def apt_reason(out):
+    """The line of apt's output that says why, as short as it goes."""
+    lines = [l.strip() for l in out.splitlines()]
+    for l in lines:
+        m = re.match(r"\S+ : (?:Depends|PreDepends|Pre-Depends|Conflicts|Breaks): (.*)", l)
+        if m:
+            return clean(l.split(" : ", 1)[1], 200)
+    for l in lines:
+        if l.startswith("E: "):
+            return clean(l[3:], 200)
+    return "unknown"
+
+
 # ---------------------------------------------------------------- art
 
 
@@ -641,9 +775,10 @@ def usable(app):
     return None
 
 
-def listing(apps, checked, names, ours, cn, dropped):
+def listing(apps, checked, names, ours, cn, dropped, installs=None):
     """The catalog's app lines and the apps they came from. Adds to
-    dropped what it leaves out, and why."""
+    dropped what it leaves out, and why. installs maps a deb's SHA-256 to
+    why apt can't install it, or None when it can."""
     lines, kept = [], []
     offered = names | ours
     for a in apps:
@@ -664,6 +799,10 @@ def listing(apps, checked, names, ours, cn, dropped):
         missing = resolvable(row["depends"], offered)
         if missing:
             dropped[pkg] = f"needs {missing}"
+            continue
+        why = (installs or {}).get(row["sha256"])
+        if why:
+            dropped[pkg] = why
             continue
         line, why = app_line(a, row, cn.get(pkg))
         if line and row["version"] != a.get("version"):
@@ -750,7 +889,16 @@ def build(out, prev, apt, keyring, only, registry, cn_registry, work):
             else:
                 warn(err)
 
-    lines, kept = listing(apps, checked, names, ours, cn, dropped)
+    installs = {}
+    if apt:
+        device = Device(os.path.join(work, "device"), apt)
+        shas = {(a.get("download") or {}).get("sha256") for a in apps}
+        rows = {sha: checked[sha] for sha in shas if sha in checked}
+        with concurrent.futures.ThreadPoolExecutor(4) as pool:
+            for sha, why in zip(rows, pool.map(device.check, rows.values())):
+                installs[sha] = why
+        log(f"{sum(1 for w in installs.values() if w)} of {len(installs)} debs apt can't install")
+    lines, kept = listing(apps, checked, names, ours, cn, dropped, installs)
     log(f"{len(lines)} listed, {len(dropped)} left out")
 
     prev_cat = fetch_prev(prev, "catalog")

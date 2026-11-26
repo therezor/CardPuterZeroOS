@@ -98,8 +98,14 @@ registry as untrusted:
   architecture come from the deb's control file.
 - **Left out**, with the reason in `dropped.tsv`: a package named like one
   of Debian's or ours, one whose `Provides`, `Replaces`, `Conflicts` or
-  `Breaks` names one, and one with a `Depends` group nothing in trixie or
-  our repo offers. Version constraints are not checked.
+  `Breaks` names one, one with a `Depends` group nothing in trixie or
+  our repo offers, and one apt wouldn't install.
+- **Install check.** apt runs in a private root set up as a stable device
+  sees it: `debian.sources`, our stable suite, our pins and deny pins, and
+  the release image's packages installed (`packages.lock`). Each app's
+  control fields go into an empty deb, and `apt-get -s install` must
+  succeed. Versions and every dependency's dependencies count. The reason
+  apt gives goes to `dropped.tsv`.
 - **Text.** Control characters go, fields are capped, markdown becomes
   plain paragraphs. A field in Chinese or Japanese is taken from M5's `en`
   locale when there is one.
