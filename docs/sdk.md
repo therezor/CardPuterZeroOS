@@ -1184,7 +1184,11 @@ root:
 
 Wi-Fi, Bluetooth, time and the other root jobs go through the root helper,
 `gh0st-helper`. Its sensitive verbs ask for the user's password on stdin, so an
-app can't flip them unseen.
+app can't flip them unseen. `helper::Helper` runs a verb that ends;
+`helper::Held` runs one that stays up, Files' root worker: it starts pkexec
+with one end of a socket as stdin, sends the password line, and hands the
+page the other end. The helper's exit before the program greets the page
+asks for the password, as for `Helper`.
 
 ## Steps
 

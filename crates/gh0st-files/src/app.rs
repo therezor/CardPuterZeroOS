@@ -6,6 +6,7 @@ use crate::engine::{Ask, Engine, Event, Id, Request};
 use crate::model::{self, Entry, Kind, Loc, Sort, Type, VIEW_MAX};
 use crate::open_cache;
 use crate::pick::{Mode, Spec};
+use crate::root::Root;
 use crate::servers::{self, Proto, Server};
 use crate::words;
 use gh0st_app::Handler;
@@ -40,6 +41,7 @@ const CMD_PASTE: u32 = 22;
 const CMD_CLEAR: u32 = 23;
 const CMD_OPEN_WITH: u32 = 24;
 const CMD_TYPE: u32 = 25;
+const CMD_ROOT: u32 = 26;
 
 // Dialogs.
 const ASK_DELETE: u32 = 3;
@@ -56,6 +58,7 @@ const ASK_NAME: u32 = 14;
 const ASK_COMPRESS: u32 = 15;
 const ASK_SAVE: u32 = 16;
 const ASK_REPLACE: u32 = 17;
+const ASK_ROOT: u32 = 18;
 
 const KEY_SORT: &str = "files.sort";
 const KEY_HIDDEN: &str = "files.hidden";
@@ -294,6 +297,8 @@ enum Pending {
     /// A copy of a file on a server or in an archive, to open once it is
     /// here, and the source's time.
     Fetch(PathBuf, i64),
+    /// A file the root worker reads for the viewer: its name and size.
+    Read(String, u64),
 }
 
 struct ServerForm {
@@ -398,11 +403,24 @@ pub struct Files {
     pick: Option<Picker>,
     /// The file a save would replace, once asked.
     replacing: Option<PathBuf>,
+    /// Root mode: the second worker, as root, for every local file.
+    root: Option<Root>,
+    root_watch: Option<(Watch, std::os::fd::RawFd)>,
+    /// Requests sent to the root worker: their answers and stops go there.
+    root_ids: HashSet<Id>,
+    /// How root mode starts: the helper, or a test's engine.
+    root_start: Box<dyn Fn() -> Root>,
 }
 
 impl Files {
     pub fn new() -> Files {
         Files::with(Options::system())
+    }
+
+    /// Root mode over another engine, for tests and mockups.
+    pub fn root_with(mut self, start: impl Fn() -> Root + 'static) -> Files {
+        self.root_start = Box::new(start);
+        self
     }
 
     pub fn with(o: Options) -> Files {
@@ -438,6 +456,10 @@ impl Files {
             target: None,
             pick: o.pick,
             replacing: None,
+            root: None,
+            root_watch: None,
+            root_ids: HashSet::new(),
+            root_start: Box::new(|| Root::helper(ASK_ROOT)),
         };
         let spec = f.pick.as_ref().map(|p| p.spec.clone());
         for side in &mut f.sides {
@@ -730,6 +752,8 @@ impl Files {
         // The end of a path says more than its start.
         // A plain-text server says so first: it matters more than progress.
         (self.status, self.status_tone) = match (self.transfers.first(), &self.clip) {
+            // What runs as root says so first, over everything else.
+            _ if self.root.is_some() => ("Root".into(), Tone::Critical),
             _ if self.plain_here() => ("Not private".into(), Tone::Warning),
             (Some(t), _) if t.total > 0 => (format!("{}%", t.done * 100 / t.total), Tone::Info),
             (Some(_), _) => ("\u{2026}".into(), Tone::Info),
@@ -1050,6 +1074,20 @@ impl Files {
             cx.toast("Copy it to the card to read it");
             return;
         };
+        // As root the worker reads it: the page may not.
+        if self.root.is_some() {
+            let id = self.id();
+            self.pending
+                .insert(id, Pending::Read(e.name.clone(), e.size));
+            self.send(
+                Request::Read {
+                    id,
+                    file: loc.clone(),
+                },
+                cx,
+            );
+            return;
+        }
         // A pipe or a device named .txt would block the page.
         if !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
             cx.toast("Only a plain file opens here");
@@ -1062,13 +1100,17 @@ impl Files {
             cx.toast_tone(Tone::Critical, &io_words(&err));
             return;
         }
-        let mut text = String::from_utf8(buf)
+        let text = String::from_utf8(buf)
             .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect());
-        if e.size > VIEW_MAX {
+        self.show_text(&e.name, text, e.size);
+    }
+
+    fn show_text(&mut self, name: &str, mut text: String, size: u64) {
+        if size > VIEW_MAX {
             text.push_str("\n\n(The rest is not shown.)");
         }
         self.view = View::Viewer {
-            name: e.name.clone(),
+            name: name.to_string(),
             text: text.replace('\t', "    "),
             scroll: Scroll::new(),
         };
@@ -1113,6 +1155,21 @@ impl Files {
                 let s = &mut self.sides[i];
                 s.entries.clear();
                 s.state = State::Ready;
+            }
+            // As root, the worker lists what the page may not read.
+            Loc::Local(_) if self.root.is_some() => {
+                let id = self.id();
+                self.sides[i].state = State::Loading(id);
+                self.sides[i].entries.clear();
+                self.sides[i].all.clear();
+                self.pending.insert(id, Pending::List(i));
+                self.send(
+                    Request::List {
+                        id,
+                        at: loc.clone(),
+                    },
+                    cx,
+                );
             }
             Loc::Local(p) => {
                 let r = model::list_local(p, model::MAX_ENTRIES);
@@ -1209,9 +1266,81 @@ impl Files {
     // ---- the worker ----
 
     fn send(&mut self, req: Request, cx: &mut Cx) {
-        self.engine.send(req);
+        if self.for_root(&req) {
+            if let Some(id) = req.id() {
+                self.root_ids.insert(id);
+            }
+            if let Some(r) = self.root.as_mut() {
+                r.send(req);
+            }
+        } else {
+            self.engine.send(req);
+        }
         self.rewatch(cx);
         self.drain(cx);
+    }
+
+    /// In root mode, what touches the card alone goes to the root worker;
+    /// servers and archives stay the user's.
+    fn for_root(&self, req: &Request) -> bool {
+        if self.root.is_none() {
+            return false;
+        }
+        let local = |l: &Loc| matches!(l, Loc::Local(_));
+        match req {
+            Request::List { at, .. } => local(at),
+            Request::Copy { items, to, .. } => local(to) && items.iter().all(local),
+            Request::Delete { items, .. } => items.iter().all(local),
+            Request::Rename { item, .. } => local(item),
+            Request::Mkdir { at, .. } => local(at),
+            Request::Read { .. } => true,
+            Request::Cancel { id } | Request::Reply { id, .. } => self.root_ids.contains(id),
+            _ => false,
+        }
+    }
+
+    /// Starts root mode: the helper asks for the password, and the sides
+    /// list again through the root worker once it is up.
+    fn enter_root(&mut self, cx: &mut Cx) {
+        if self.root.is_some() || self.pick.is_some() {
+            return;
+        }
+        let mut r = (self.root_start)();
+        if let Err(why) = r.start(cx) {
+            cx.toast_tone(Tone::Critical, &why);
+            return;
+        }
+        self.root = Some(r);
+        self.reload(&[], cx);
+        self.retitle();
+    }
+
+    /// Ends root mode: what the root worker had open fails, and the sides
+    /// list again as the user.
+    fn leave_root(&mut self, cx: &mut Cx) {
+        let Some(mut r) = self.root.take() else {
+            return;
+        };
+        r.stop(cx);
+        for e in r.events() {
+            self.event(e, cx);
+        }
+        if let Some((w, _)) = self.root_watch.take() {
+            cx.unwatch(w);
+        }
+        self.root_ids.clear();
+        self.reload(&[], cx);
+        self.retitle();
+    }
+
+    /// Root mode ended by itself: refused, given up, or the worker went.
+    fn root_ended(&mut self, end: Result<(), String>, cx: &mut Cx) {
+        self.leave_root(cx);
+        match end {
+            Err(why) if why != "Cancelled" => cx.toast_tone(Tone::Critical, &why),
+            _ => {}
+        }
+        cx.redraw();
     }
 
     /// Watches the worker's fd, a new one after a restart, none once gone.
@@ -1228,11 +1357,23 @@ impl Files {
         if let Some(fd) = fd {
             self.engine_watch = Some((cx.watch(fd), fd));
         }
+        let fd = self.root.as_ref().and_then(|r| r.fd());
+        if self.root_watch.map(|w| w.1) != fd {
+            if let Some((w, _)) = self.root_watch.take() {
+                cx.unwatch(w);
+            }
+            if let Some(fd) = fd {
+                self.root_watch = Some((cx.watch(fd), fd));
+            }
+        }
     }
 
     fn drain(&mut self, cx: &mut Cx) {
         loop {
-            let events = self.engine.events();
+            let mut events = self.engine.events();
+            if let Some(r) = self.root.as_mut() {
+                events.extend(r.events());
+            }
             if events.is_empty() {
                 break;
             }
@@ -1294,6 +1435,15 @@ impl Files {
                 }
             }
             (_, Event::Ask { ask, .. }) => self.ask(id, ask, cx),
+            (Pending::Read(name, size), Event::Text { text, .. }) => {
+                self.pending.remove(&id);
+                self.show_text(&name, text, size);
+                cx.redraw();
+            }
+            (Pending::Read(..), Event::Error { text, .. }) => {
+                self.pending.remove(&id);
+                cx.toast_tone(Tone::Critical, &text);
+            }
             (Pending::List(i), Event::Resolved { path, .. }) => {
                 // "~" was the server's home: the side and its base go there.
                 if self.sides[i].state == State::Loading(id) {
@@ -1770,7 +1920,9 @@ impl Files {
             return;
         }
         let what = words::what(&names);
-        let for_good = self.side().loc.is_remote() || self.in_trash();
+        // As root nothing goes to the Trash: a root file there would be the
+        // user's to read.
+        let for_good = self.side().loc.is_remote() || self.in_trash() || self.root.is_some();
         // The question in the title, the names in the line: a long name
         // can't push the question out.
         let d = if for_good {
@@ -2555,6 +2707,14 @@ impl Page for Files {
     }
 
     fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
+        if id == ASK_ROOT {
+            let end = self.root.as_mut().and_then(|r| r.answer(cx, id, answer));
+            if let Some(end) = end {
+                self.root_ended(end, cx);
+            }
+            self.rewatch(cx);
+            return;
+        }
         self.answer_one(id, answer, cx);
         // A worker question held while this dialog was open.
         self.next_ask(cx);
@@ -2564,15 +2724,34 @@ impl Page for Files {
     /// Back in front: another app may have changed the folder (Text saved
     /// a file opened from here). Local folders read again; servers wait.
     fn front(&mut self, front: bool, cx: &mut Cx) {
+        // Root mode ends when Files goes behind, is paused or the screen
+        // locks, unless a copy as root is still running.
+        if !front && self.root.is_some() && self.transfers.is_empty() {
+            self.leave_root(cx);
+        }
         if front && self.pick.is_none() && matches!(self.view, View::Browse) {
             self.reload(&[], cx);
             cx.redraw();
         }
     }
 
+    fn exited(&mut self, pid: i32, code: Option<i32>, cx: &mut Cx) {
+        let end = self.root.as_mut().and_then(|r| r.exited(cx, pid, code));
+        if let Some(end) = end {
+            self.root_ended(end, cx);
+        }
+    }
+
+    fn stop(&mut self, cx: &mut Cx) {
+        self.leave_root(cx);
+    }
+
     fn ready(&mut self, watch: Watch, cx: &mut Cx) {
-        if self.engine_watch.is_some_and(|w| w.0 == watch) {
+        if self.engine_watch.is_some_and(|w| w.0 == watch)
+            || self.root_watch.is_some_and(|w| w.0 == watch)
+        {
             self.drain(cx);
+        } else if self.root.as_mut().is_some_and(|r| r.ready(watch)) {
         } else if Some(watch) == self.kr_watch {
             let Some(prompt) = self.asking.as_ref().and_then(|a| a.prompt.clone()) else {
                 self.kr.changed();
@@ -2599,10 +2778,19 @@ impl Page for Files {
             self.pick_commands(spec, browse, c);
             return;
         }
+        // The app it would open in runs as the user, not as root.
         let file_row = folder
+            && self.root.is_none()
             && matches!(s.loc, Loc::Local(_))
             && s.current().is_some_and(|e| e.kind == Kind::File);
         c.group("Files");
+        let rooted = self.root.is_some();
+        let can_root = matches!(s.loc, Loc::Local(_) | Loc::Places);
+        c.add(
+            Command::action(CMD_ROOT, if rooted { "Leave root" } else { "Open as root" })
+                .keys("Ctrl+enter")
+                .enabled(browse && (rooted || can_root)),
+        );
         c.add(
             Command::action(CMD_OPEN_WITH, "Open with")
                 .keys("o")
@@ -2720,6 +2908,8 @@ impl Page for Files {
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
         self.armed = false;
         match id {
+            CMD_ROOT if self.root.is_some() => self.leave_root(cx),
+            CMD_ROOT => self.enter_root(cx),
             CMD_OPEN_WITH => self.open_with(cx),
             CMD_TYPE => self.show_filters(),
             CMD_MARK => self.mark(),
@@ -3001,7 +3191,7 @@ impl Files {
                     return;
                 };
                 let items: Vec<Loc> = names.iter().map(|n| loc.join(n)).collect();
-                let trash = !(loc.is_remote() || self.in_trash());
+                let trash = !(loc.is_remote() || self.in_trash() || self.root.is_some());
                 self.side_mut().marks.clear();
                 let done = if trash {
                     "Moved to the Trash"

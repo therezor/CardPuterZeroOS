@@ -16,7 +16,9 @@ polkit.addRule(function(action, subject) {
         // gh0st-helper: fixed verbs only. Logs, SSH, GPU memory, Wi-Fi
         // country, CPU mode, hostname, swap, the clock and the network
         // privacy settings also check the user's password. Making the user
-        // and finishing setup run only for root during setup.
+        // and finishing setup run only for root during setup. files-worker,
+        // Files' root mode, is no fixed job: the helper checks the password
+        // before it becomes a root worker for local files.
         "org.gh0st.helper"
     ];
     if (allowed.indexOf(action.id) >= 0) {

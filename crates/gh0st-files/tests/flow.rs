@@ -660,3 +660,55 @@ fn a_folder_opened_from_another_app_leaves_a_clash_waiting() {
     assert_eq!(replies(&log), [Some("both".to_string())]);
     assert!(!d.awake(), "the copy ended");
 }
+
+/// Root mode: Ctrl+Enter starts it, the root worker lists the card, the
+/// top bar says Root, a delete is for good, and it ends when Files goes
+/// behind.
+#[test]
+fn root_mode_lists_as_root_and_ends_behind() {
+    let h = Home::new("root");
+    let home = h.home().to_string_lossy().into_owned();
+    let root_fake = Fake::new().folder(
+        "",
+        &home,
+        vec![Entry::file("secret.conf", 5), Entry::dir("Music")],
+    );
+    let root_log = root_fake.log.clone();
+    let cell = RefCell::new(Some(root_fake));
+    let page = Files::with(Options {
+        home: h.home(),
+        data: Some(h.dir.join("data")),
+        engine: Box::new(fake()),
+        keyring: Keyring::over(None),
+        pick: None,
+    })
+    .root_with(move || {
+        let f = cell.borrow_mut().take().unwrap_or_default();
+        gh0st_files::root::Root::open(Box::new(f))
+    });
+    let mut d = Driver::new(page);
+    d.frame();
+    // Side A starts in Home.
+    assert!(
+        root_log.borrow().is_empty(),
+        "as the user, the page lists itself"
+    );
+    keys(&mut d, "ctrl+enter");
+    assert_eq!(d.status().as_deref(), Some("Root"));
+    let listed = root_log
+        .borrow()
+        .iter()
+        .any(|r| matches!(r, Request::List { at: Loc::Local(p), .. } if p == &h.home()));
+    assert!(listed, "the root worker lists: {:?}", root_log.borrow());
+    // secret.conf sorts after Music; Del asks to delete it for good.
+    keys(&mut d, "x\ndelete");
+    let (title, _) = d.dialog().expect("a delete question");
+    assert_eq!(title, "Delete for good?");
+    keys(&mut d, "esc");
+    d.pause();
+    assert_ne!(
+        d.status().as_deref(),
+        Some("Root"),
+        "behind, root mode ends"
+    );
+}

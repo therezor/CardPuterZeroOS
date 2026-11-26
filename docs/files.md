@@ -88,6 +88,36 @@ Sort and hidden files are kept in `files.sort` and `files.hidden`.
 - **Plain FTP and WebDAV over http** send the password and the files where
   anyone on the network can read them. Places tags them in `warning`, and
   the top bar says "Not private" while a side is on one.
+- **Open as root** (the menu, or Ctrl+Enter) asks for the user's password,
+  then lists and changes files on the card as root. The top bar says
+  "Root" in `critical` until Leave root, until Files goes behind or the
+  screen locks (after a copy under way ends), or until it closes. Deletes
+  are for good, behind the held red chip, and Open with is off: the app
+  it would open runs as the user.
+
+## Root mode
+
+The page starts a second worker through `gh0st-helper files-worker`, the
+helper verb that hands over a root worker after the password (5 minutes of
+grace, as for every verb that asks). The worker greets the page before it
+takes a request, which is how the page knows the password was right. Every
+local listing, copy, move, delete, rename, new folder and the viewer go to
+it; servers and archives stay with the user's worker.
+
+- It does files on the card only. It refuses servers, archives, the SSH key
+  and the Trash, so ssh, curl, bsdtar and ssh-keygen never run as root.
+- In the user's own folders it acts as the user. Each call looks at the
+  path's folders from `/` down: a folder the user owns, or one its group or
+  anyone may write to, makes all below it the user's, and there the worker
+  takes the user's ids for that call. Files it makes there are the user's.
+  A folder only root can change can't be swapped mid-walk, so there it acts
+  as root.
+- Links are made again, never followed: a copy's source opens with
+  `O_NOFOLLOW`, and a link in a folder is made anew as whoever its folder
+  belongs to.
+- It is as strong as sudo, behind the same password. Any program of the
+  user's that runs outside a sandbox could drive Files while root mode is
+  on.
 
 ## Servers
 
@@ -263,6 +293,11 @@ never the newest, and not when it starts as a chooser.
 ## Limits
 
 - No SMB: curl can't list an SMB folder.
+- Root mode can't reach servers or archives, and a running delete of a big
+  folder finishes even if the page goes: the shell can't signal a root
+  worker, which ends when it reads its link closing.
+- In a folder another system user owns, root mode acts as the user and may
+  be refused, as that folder is not root's alone.
 - A change to a file opened from a server or an archive stays on the
   card: save it as a new file and copy it back.
 - An archive with a password doesn't open.

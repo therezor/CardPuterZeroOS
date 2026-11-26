@@ -48,9 +48,13 @@ impl Fake {
     }
 
     fn answer_list(&mut self, id: Id, at: &Loc) {
-        let Loc::Remote { server, path } = at else {
-            return;
+        // A local folder lists under server "": the root worker's fixtures.
+        let (server, path) = match at {
+            Loc::Remote { server, path } => (server.clone(), path.clone()),
+            Loc::Local(p) => (String::new(), p.to_string_lossy().into_owned()),
+            _ => return,
         };
+        let (server, path) = (&server, &path);
         if let Some(why) = self.fail.get(server) {
             self.out.push(Event::Error {
                 id,

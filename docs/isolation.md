@@ -39,6 +39,8 @@ from the app's next start, and every app has all three until then.
   pkexec or doas as a command in its code (`store.md`). The Store asks
   before it installs one.
 - An app the user turned Isolation off for.
+- Files' root worker, while root mode is on: `gh0st-helper files-worker`
+  starts it as root after the user's password (`files.md`, Root mode).
 
 The two automatic ones come from the app itself, so a hostile app can opt
 out. Settings > Apps shows why an app runs outside ("Built in" or "Runs as
@@ -128,6 +130,9 @@ needs the `gh0st-base` of its own build.
   answer it as they answer any program of the device user.
 - The kernel has no Landlock and no Yama, so nothing narrows an app outside
   a sandbox.
+- While Files is in root mode, any program of the device user outside a
+  sandbox could drive it: root mode is as strong as sudo, behind the same
+  password, and ends when Files goes behind.
 - Config files of programs installed later, a `.zshrc` say, are locked only
   once they exist.
 - An app that needs a microphone to start may wait forever with the

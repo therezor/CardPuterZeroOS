@@ -12,6 +12,7 @@ pub mod model;
 pub mod open_cache;
 pub mod pick;
 pub mod proto;
+pub mod root;
 pub mod servers;
 pub mod words;
 pub mod worker;
