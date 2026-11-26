@@ -541,7 +541,9 @@ Debug::NoLocking "true";
 ''')
         self.status = os.path.join(root, "var/lib/dpkg/status")
         open(self.status, "w").close()
-        self.apt("apt-get", "-q", "update")
+        # A source that fails would otherwise leave apt quiet and its apps
+        # dropped; failing here carries the live site over instead.
+        self.apt("apt-get", "-q", "-o", "APT::Update::Error-Mode=any", "update")
         with open(self.status, "w", encoding="utf-8") as f:
             f.write(self.image_status())
         self.apt("apt-cache", "gencaches")

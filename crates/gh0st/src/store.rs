@@ -532,6 +532,11 @@ fn install_deb(
     if let Some(other) = removes(&sim).into_iter().next() {
         return Err((Outcome::Failed, format!("It would remove {other}")));
     }
+    // An app that needs a newer Gh0st OS waits for Updates, which installs
+    // the system as a whole.
+    if upgrades_ours(&sim) {
+        return Err((Outcome::Failed, "Update Gh0st OS first".into()));
+    }
     let deps = space_for(&sim, a)?;
     if update::dpkg_interrupted() {
         let _ = update::configure_pending(rep);
@@ -630,6 +635,19 @@ fn removes(sim: &str) -> Vec<String> {
         .filter_map(|r| r.split_whitespace().next())
         .map(String::from)
         .collect()
+}
+
+/// The simulation upgrades one of our packages: an `Inst` of a `gh0st`
+/// package that is installed, which apt shows with its version in brackets.
+fn upgrades_ours(sim: &str) -> bool {
+    sim.lines()
+        .filter_map(|l| l.strip_prefix("Inst "))
+        .any(|r| {
+            let mut w = r.split_whitespace();
+            let name = w.next().unwrap_or("");
+            (name == "gh0st" || name.starts_with("gh0st-"))
+                && w.next().is_some_and(|v| v.starts_with('['))
+        })
 }
 
 /// Room for the app and what apt brings with it: the download, then each
@@ -799,6 +817,20 @@ mod tests {
     fn a_simulation_names_what_it_would_remove() {
         let sim = "Inst foo (1 Debian:13/stable [arm64])\nRemv bar [2]\nConf foo (1)\n";
         assert_eq!(removes(sim), ["bar"]);
+    }
+
+    #[test]
+    fn an_app_that_would_upgrade_ours_is_left_for_updates() {
+        let sim = "Inst gh0st [0.4.0] (0.4.1 Gh0st:stable [arm64])\nInst lan-proxy (0.1.3 local-deb [arm64])\n";
+        assert!(upgrades_ours(sim));
+        assert!(
+            !upgrades_ours("Inst gh0st-wifi (1 Gh0st:stable [all])\n"),
+            "a new one"
+        );
+        assert!(!upgrades_ours(
+            "Inst libgh0stly [1] (2 Debian:13 [arm64])\n"
+        ));
+        assert!(!upgrades_ours("Inst lan-proxy (0.1.3 local-deb [arm64])\n"));
     }
 
     #[test]

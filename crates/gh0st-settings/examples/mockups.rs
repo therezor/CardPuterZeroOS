@@ -96,7 +96,8 @@ fn sample_state() -> State {
             },
         },
         exempt: None,
-        input_methods: false,
+        // An input method is installed: Music shows its switch.
+        input_methods: file == "music.desktop",
     };
     State {
         brightness: Some(80),
@@ -434,6 +435,8 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                     ),
                 ),
                 ("app", s(PageId::App("music.desktop".into()), 2)),
+                // The last row: Input methods, once one is installed.
+                ("app-input", s(PageId::App("music.desktop".into()), 8)),
                 ("wifi", s(PageId::Wifi, 2)),
                 (
                     "wifi-password",

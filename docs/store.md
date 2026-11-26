@@ -205,7 +205,9 @@ The engine reads `job` once and deletes it. The password has the helper's
   `/var/cache/gh0st/store/<sha256>.part` (root only, resumed after a
   failure), must match the catalog's SHA-256 and, by `dpkg-deb -f`, its
   package and version. Then `apt-get -s install --no-remove ./<sha256>.deb`
-  checks dependencies and space, and the real run follows. Old lists are
+  checks dependencies and space, and the real run follows. An app whose
+  install would upgrade a Gh0st OS package waits: "Update Gh0st OS
+  first", since Updates installs the system as a whole. Old lists are
   fetched again when a dependency is missing. The deb is deleted after.
 - **Pins.** Before a pinned app downloads, the engine writes
   `/etc/apt/preferences.d/gh0st-store.pref`: Debian's package of each

@@ -85,7 +85,7 @@ const APPS: &[CatalogRow] = &[
         "1.1.1",
         17_348,
         "InstantComet",
-        "scripts,service,paths",
+        "scripts,service,paths,keys",
         "Longer battery life: USB autosuspend, screen-off idle, low-battery shutdown",
     ),
     (
