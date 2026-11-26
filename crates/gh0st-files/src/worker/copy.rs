@@ -232,7 +232,8 @@ fn move_by_rename(
                         "Replacing \u{201c}{name}\u{201d} would delete what moves"
                     ));
                 }
-                if let (Loc::Local(a), Loc::Local(t)) = (item, &target) {
+                // As root, the walk below decides whose each step is.
+                if let (Loc::Local(a), Loc::Local(t), None) = (item, &target, &b.root) {
                     if there.kind != Kind::Dir {
                         // One step: the old file goes as the new one lands.
                         run.prog.file(p, name);
@@ -386,9 +387,15 @@ fn link(
     let Loc::Local(t) = &target else {
         return Ok(false);
     };
-    std::os::unix::fs::symlink(&points, t).map_err(|e| local::words(&e))?;
+    // As root, each as whoever its folder belongs to: a link is made, never
+    // followed.
+    b.act(t, || {
+        std::os::unix::fs::symlink(&points, t).map_err(|e| local::words(&e))
+    })?;
     if run.remove {
-        std::fs::remove_file(from).map_err(|e| local::words(&e))?;
+        b.act(from, || {
+            std::fs::remove_file(from).map_err(|e| local::words(&e))
+        })?;
     }
     Ok(true)
 }

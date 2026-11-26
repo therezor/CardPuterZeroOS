@@ -253,6 +253,7 @@ pub fn request(r: &Request) -> Vec<String> {
         Request::MakeKey { id, passphrase } => {
             vec![s("makekey"), id.to_string(), passphrase.clone()]
         }
+        Request::Read { id, file } => vec![s("read"), id.to_string(), loc(file)],
     };
     f.shrink_to_fit();
     f
@@ -326,6 +327,10 @@ pub fn parse_request(f: &[String]) -> Option<Request> {
             id: id()?,
             passphrase: f.get(2)?.clone(),
         },
+        "read" => Request::Read {
+            id: id()?,
+            file: parse_loc(f.get(2)?)?,
+        },
         _ => return None,
     })
 }
@@ -387,6 +392,8 @@ pub fn event(e: &Event) -> Vec<Vec<String>> {
         }
         Event::Done { id } => vec![vec![s("done"), id.to_string()]],
         Event::Error { id, text } => vec![vec![s("error"), id.to_string(), text.clone()]],
+        Event::Text { id, text } => vec![vec![s("text"), id.to_string(), text.clone()]],
+        Event::Ready => vec![vec![s("ready"), s("0")]],
     }
 }
 
@@ -435,6 +442,11 @@ pub fn parse_event(f: &[String]) -> Option<Event> {
             id,
             text: get(2).unwrap_or_default(),
         },
+        "text" => Event::Text {
+            id,
+            text: get(2).unwrap_or_default(),
+        },
+        "ready" => Event::Ready,
         _ => return None,
     })
 }
@@ -442,6 +454,25 @@ pub fn parse_event(f: &[String]) -> Option<Event> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_modes_messages_round_trip() {
+        let r = Request::Read {
+            id: 7,
+            file: Loc::Local("/etc/os release".into()),
+        };
+        assert_eq!(parse_request(&request(&r)), Some(r));
+        for e in [
+            Event::Text {
+                id: 7,
+                text: "line\n\ttab \u{e9}".into(),
+            },
+            Event::Ready,
+        ] {
+            let lines = event(&e);
+            assert_eq!(parse_event(&lines[0]), Some(e));
+        }
+    }
 
     #[test]
     fn requests_round_trip_with_odd_names() {

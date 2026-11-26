@@ -74,6 +74,12 @@ pub enum Request {
         id: Id,
         passphrase: String,
     },
+    /// The start of a local file, for the viewer: the root worker reads
+    /// what the page can't. [`Event::Text`] answers.
+    Read {
+        id: Id,
+        file: Loc,
+    },
 }
 
 impl Request {
@@ -89,7 +95,8 @@ impl Request {
             | Request::Mkdir { id, .. }
             | Request::Extract { id, .. }
             | Request::Compress { id, .. }
-            | Request::MakeKey { id, .. } => Some(*id),
+            | Request::MakeKey { id, .. }
+            | Request::Read { id, .. } => Some(*id),
         }
     }
 }
@@ -145,6 +152,14 @@ pub enum Event {
         id: Id,
         text: String,
     },
+    /// What [`Request::Read`] read, ending it.
+    Text {
+        id: Id,
+        text: String,
+    },
+    /// The worker's first line: it is up, and a root worker's password was
+    /// right.
+    Ready,
 }
 
 impl Event {
@@ -156,7 +171,9 @@ impl Event {
             | Event::Progress { id, .. }
             | Event::Ask { id, .. }
             | Event::Done { id }
-            | Event::Error { id, .. } => *id,
+            | Event::Error { id, .. }
+            | Event::Text { id, .. } => *id,
+            Event::Ready => 0,
         }
     }
 }

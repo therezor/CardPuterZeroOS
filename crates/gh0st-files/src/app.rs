@@ -3,7 +3,7 @@
 //! transfers).
 
 use crate::engine::{Ask, Engine, Event, Id, Request};
-use crate::model::{self, Entry, Kind, Loc, Sort, Type};
+use crate::model::{self, Entry, Kind, Loc, Sort, Type, VIEW_MAX};
 use crate::open_cache;
 use crate::pick::{Mode, Spec};
 use crate::servers::{self, Proto, Server};
@@ -13,8 +13,6 @@ use gh0st_app::prelude::*;
 use gh0st_app::secret::{Keyring, Lookup};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-
-const VIEW_MAX: u64 = 256 * 1024;
 
 // Commands.
 const CMD_MARK: u32 = 1;

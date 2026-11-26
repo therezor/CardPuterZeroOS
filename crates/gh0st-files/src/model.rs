@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 /// A folder's listing stops here, with a row that says so: a bigger folder
 /// costs more memory than a phone-sized screen can show.
 pub const MAX_ENTRIES: usize = 20_000;
+/// The viewer shows this much of a file.
+pub const VIEW_MAX: u64 = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {

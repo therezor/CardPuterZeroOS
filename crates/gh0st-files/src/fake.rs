@@ -157,6 +157,10 @@ impl Engine for Fake {
             | Request::Extract { id, .. }
             | Request::Compress { id, .. }
             | Request::MakeKey { id, .. } => self.out.push(Event::Done { id }),
+            Request::Read { id, file } => self.out.push(Event::Text {
+                id,
+                text: format!("text of {}", crate::worker::loc_path(&file)),
+            }),
             Request::Server(_) | Request::Cancel { .. } => {}
         }
     }

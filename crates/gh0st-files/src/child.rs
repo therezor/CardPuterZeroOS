@@ -120,7 +120,11 @@ impl Engine for Child {
                 let Some(e) = proto::parse_event(&f) else {
                     continue;
                 };
-                if let Event::Done { id } | Event::Error { id, .. } | Event::Listed { id } = e {
+                if let Event::Done { id }
+                | Event::Error { id, .. }
+                | Event::Listed { id }
+                | Event::Text { id, .. } = e
+                {
                     self.open.remove(&id);
                 }
                 // A listing's lines join into one event.

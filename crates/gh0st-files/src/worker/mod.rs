@@ -8,6 +8,7 @@ mod copy;
 mod curl;
 mod local;
 pub mod parse;
+pub mod root;
 mod sftp;
 
 use crate::child::FD_ENV;
@@ -375,6 +376,8 @@ pub struct Backends {
     sftp: HashMap<String, sftp::Sftp>,
     curl: HashMap<String, curl::Curl>,
     local: local::Local,
+    /// Root mode: the card as root, the user's folders as the user.
+    pub root: Option<root::RootLocal>,
     pub home: PathBuf,
     pub data: PathBuf,
 }
@@ -386,8 +389,21 @@ impl Backends {
             sftp: HashMap::new(),
             curl: HashMap::new(),
             local: local::Local,
+            root: None,
             home,
             data,
+        }
+    }
+
+    /// Runs `f` as whoever `path`'s folder belongs to, in root mode; as
+    /// the worker is, otherwise.
+    pub fn act<T>(&self, path: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
+        match &self.root {
+            Some(r) => {
+                let dir = path.parent().unwrap_or(Path::new("/"));
+                r.ident.run(root::whose(dir, r.ident.uid), f)
+            }
+            None => f(),
         }
     }
 
@@ -408,7 +424,13 @@ impl Backends {
     /// The place `l` is on, and its path there.
     pub fn fs(&mut self, p: &mut Pump, l: &Loc) -> Res<(&mut dyn Fs, String)> {
         match l {
-            Loc::Local(path) => Ok((&mut self.local, path.to_string_lossy().into_owned())),
+            Loc::Local(path) => {
+                let path = path.to_string_lossy().into_owned();
+                match &mut self.root {
+                    Some(r) => Ok((r, path)),
+                    None => Ok((&mut self.local, path)),
+                }
+            }
             Loc::Remote { server, path } => {
                 let s = self.server(server)?;
                 let fs: &mut dyn Fs = match s.proto {
@@ -501,6 +523,9 @@ impl Worker {
 
     fn handle(&mut self, id: Id, r: Request) -> Res<Option<Event>> {
         let (p, b) = (&mut self.p, &mut self.b);
+        if b.root.is_some() {
+            root_allows(&r)?;
+        }
         match r {
             Request::List { at, .. } => {
                 let at = match &at {
@@ -583,8 +608,47 @@ impl Worker {
             Request::MakeKey { passphrase, .. } => {
                 local::make_key(p, &b.data.join("ssh"), &passphrase).map(|_| None)
             }
+            Request::Read { file, .. } => {
+                let Loc::Local(path) = &file else {
+                    return Err("Copy it to the card to read it".into());
+                };
+                let bytes = match &b.root {
+                    Some(r) => r.read(path, crate::model::VIEW_MAX)?,
+                    None => return Err("Only root mode reads for the page".into()),
+                };
+                let text = String::from_utf8(bytes)
+                    .unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect());
+                Ok(Some(Event::Text { id, text }))
+            }
             Request::Server(_) | Request::Cancel { .. } | Request::Reply { .. } => Ok(None),
         }
+    }
+}
+
+/// What a root worker does: files on the card, and nothing that runs
+/// another program (ssh, curl, bsdtar) or reaches a server as root. Its
+/// deletes are for good: a root file in the user's Trash would be the
+/// user's to read.
+fn root_allows(r: &Request) -> Res<()> {
+    let local = |l: &Loc| matches!(l, Loc::Local(_));
+    let ok = match r {
+        Request::List { at, .. } => local(at),
+        Request::Copy { items, to, .. } => local(to) && items.iter().all(local),
+        Request::Delete { items, trash, .. } => !trash && items.iter().all(local),
+        Request::Rename { item, .. } => local(item),
+        Request::Mkdir { at, .. } => local(at),
+        Request::Read { file, .. } => local(file),
+        Request::Cancel { .. } | Request::Reply { .. } => true,
+        Request::Server(_)
+        | Request::Contents { .. }
+        | Request::Extract { .. }
+        | Request::Compress { .. }
+        | Request::MakeKey { .. } => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err("Not as root: copy it to the card first".into())
     }
 }
 
@@ -630,13 +694,30 @@ pub fn main() -> i32 {
     let data = std::env::var_os("GH0ST_FILES_DATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".local/share/gh0st-files"));
+    // Root mode only when gh0st-helper started it, as root.
+    let root = match std::env::var(root::ENV) {
+        Ok(v) => {
+            // SAFETY: geteuid has no arguments.
+            let ident = root::Ident::parse(&v).filter(|_| unsafe { libc::geteuid() } == 0);
+            let Some(ident) = ident else {
+                eprintln!("gh0st-files --worker: {} wants root and a user", root::ENV);
+                return 2;
+            };
+            Some(root::RootLocal::new(ident))
+        }
+        Err(_) => None,
+    };
     // What a killed worker left half done.
     let _ = std::fs::remove_dir_all(data.join("stage"));
     let mut w = Worker {
         p: Pump::new(link),
         b: Backends::new(home, data.clone()),
     };
+    w.b.root = root;
     w.p.key = Some(data.join("ssh/id_ed25519"));
+    // The page queues its requests until this: for a root worker it says
+    // the password was right.
+    w.p.send(&Event::Ready);
     loop {
         while let Some(r) = w.p.queue.pop_front() {
             w.run(r);
