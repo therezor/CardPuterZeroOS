@@ -274,7 +274,7 @@ says once how to reach Esc and help.
 | Fn and L, M | page up, page down |
 | Fn and H | help: every key on this page |
 | Fn and K | switch apps |
-| Tab, held 3 s on home or in the switcher | lock |
+| Tab, held 3 s | lock; over an app, when Tab comes up |
 | Esc, held 0.7 s on home | restart or power off |
 | Tab, then Enter, on the lock screen | unlock, or the password |
 | Fn and J | screenshot |

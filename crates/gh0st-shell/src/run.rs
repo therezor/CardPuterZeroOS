@@ -5,7 +5,7 @@
 //! screen on, the clock ticks each minute and the battery is read every 2 s.
 //! Dark, neither runs.
 
-use crate::hold::HeldKey;
+use crate::hold::{HeldKey, LOCK_HOLD_MS, TabHold};
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::lock::{self, Lock};
 use crate::notices::{self, Panel};
@@ -63,7 +63,6 @@ const LOCK_DARK_MS: u64 = 10_000;
 const TOAST_MS: u64 = 1500;
 /// A notice stays a little longer: it has two parts to read.
 const NOTICE_TOAST_MS: u64 = 3000;
-const LOCK_HOLD_MS: u64 = 3000;
 const RESCAN_DEBOUNCE_MS: u64 = 300;
 /// The switcher's figures: the first CPU reading after this, then one every
 /// `STATS_MS`. Read only while the switcher shows. 250 ms is 100 ticks over
@@ -137,6 +136,18 @@ enum Pending {
     /// The app in front steps back: the app that opened it comes back, or
     /// home, and it runs on behind if it may.
     Leave,
+    /// Tab was held over the app: park it and lock, once Tab is up so the
+    /// app sees the whole press.
+    Lock,
+}
+
+/// Whose words the banner over an app shows, so each takes down only its
+/// own. The battery's countdown wins over the others.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BannerOwner {
+    Esc,
+    Tab,
+    Battery,
 }
 
 /// A portal request the shell acts on, once every key is up.
@@ -330,6 +341,9 @@ struct Shell {
     banner: Option<Overlay>,
     /// What the banner says, so a wake that changes nothing sends nothing.
     banner_text: Option<(String, gh0st_ui::theme::Tone)>,
+    banner_owner: Option<BannerOwner>,
+    /// Tab held over an app, toward the lock.
+    tab_hold: TabHold,
     /// Over an app: a toast.
     popup: Option<Overlay>,
     /// The volume or brightness level, shown in the top bar's place while
@@ -509,6 +523,8 @@ impl Shell {
             esc_down: false,
             banner: None,
             banner_text: None,
+            banner_owner: None,
+            tab_hold: TabHold::default(),
             popup: None,
             level: None,
             spare: None,
@@ -1146,6 +1162,7 @@ impl Shell {
             Some(Pending::Resume(id)) => self.resume(&id, now),
             Some(Pending::Open(id, files)) => self.open_over_front(&id, &files, now),
             Some(Pending::Leave) => self.leave_front(now),
+            Some(Pending::Lock) => self.lock_over_app(now),
             None => {}
         }
     }
@@ -1804,6 +1821,7 @@ impl Shell {
                     })
                     .flatten(),
                 app.then(|| self.esc.next_at()).flatten(),
+                app.then(|| self.tab_hold.next_at()).flatten(),
                 (shell
                     && self
                         .tasks
@@ -1907,6 +1925,10 @@ impl Shell {
                 if c == code::ESC && v != 2 {
                     self.esc_down = v == 1;
                 }
+                // Over an app the shell only listens: Tab reaches the app too.
+                if self.app_front() && self.tab_hold.key(c, v, now, self.held.len() == 1) {
+                    self.hide_banner(BannerOwner::Tab);
+                }
                 if let Some(k) = self.kb.event(c, v, now) {
                     self.on_key(k, now);
                 }
@@ -1999,9 +2021,10 @@ impl Shell {
         self.return_to
             .retain(|(_, opener)| !gone.iter().any(|t| t.id == *opener));
         if gone.iter().any(|t| t.state == tasks::State::Front) {
-            if self.pending == Some(Pending::Pause) {
+            if matches!(self.pending, Some(Pending::Pause | Pending::Lock)) {
                 self.pending = None;
             }
+            self.tab_hold.reset();
             // The driver would keep a held overlay over home.
             for o in [self.banner.take(), self.popup.take()]
                 .into_iter()
@@ -2144,14 +2167,25 @@ impl Shell {
         {
             o.refresh(self.display.as_mut());
         }
+        let tab = self.tab_hold.update(now);
+        let battery = self.banner_owner == Some(BannerOwner::Battery) && self.banner.is_some();
+        let info = gh0st_ui::theme::Tone::Info;
+        if tab.hint && !battery {
+            self.show_banner(BannerOwner::Tab, "Hold Tab to lock", info);
+        }
+        if tab.lock {
+            if !battery {
+                self.show_banner(BannerOwner::Tab, "Let go of Tab to lock", info);
+            }
+            self.pending = Some(Pending::Lock);
+        }
         let d = self.esc.update(now, self.esc_down);
         if d.hide_hint {
-            if let Some(b) = self.banner.take() {
-                self.spare = Some(b.hide(self.display.as_mut()));
-            }
+            self.hide_banner(BannerOwner::Esc);
         }
-        if d.show_hint {
-            self.show_banner("Hold Esc to close the app", gh0st_ui::theme::Tone::Warning);
+        if d.show_hint && !battery {
+            let warn = gh0st_ui::theme::Tone::Warning;
+            self.show_banner(BannerOwner::Esc, "Hold Esc to close the app", warn);
         }
         let pgid = self.tasks.front().map_or(0, |t| t.pgid);
         if d.terminate {
@@ -2167,7 +2201,8 @@ impl Shell {
                 "Battery low: powering off in {} s",
                 self.low.seconds_left(now)
             );
-            self.show_banner(&text, gh0st_ui::theme::Tone::Critical);
+            let critical = gh0st_ui::theme::Tone::Critical;
+            self.show_banner(BannerOwner::Battery, &text, critical);
             if self.low.take_shutdown(now) {
                 self.power_now(false);
             }
@@ -2220,11 +2255,12 @@ impl Shell {
 
     /// The banner over an app, changed in place. The same words again send
     /// nothing: the battery countdown asks on every wake.
-    fn show_banner(&mut self, text: &str, tone: gh0st_ui::theme::Tone) {
+    fn show_banner(&mut self, owner: BannerOwner, text: &str, tone: gh0st_ui::theme::Tone) {
         let same = self
             .banner_text
             .as_ref()
             .is_some_and(|(s, k)| s == text && *k == tone);
+        self.banner_owner = Some(owner);
         if same && self.banner.is_some() {
             return;
         }
@@ -2239,6 +2275,17 @@ impl Shell {
         let o = Overlay::show(self.display.as_mut(), overlay::BANNER, under, paint);
         self.log_overlay("banner", &o);
         self.banner = Some(o);
+    }
+
+    /// Takes the banner down if `owner` put it up.
+    fn hide_banner(&mut self, owner: BannerOwner) {
+        if self.banner_owner != Some(owner) {
+            return;
+        }
+        self.banner_owner = None;
+        if let Some(b) = self.banner.take() {
+            self.spare = Some(b.hide(self.display.as_mut()));
+        }
     }
 
     fn log_overlay(&self, what: &str, o: &Overlay) {
@@ -2361,6 +2408,33 @@ impl Shell {
             Err(_) => {
                 self.input.grab(false);
                 self.keep_front_on(now);
+            }
+        }
+    }
+
+    /// Tab held over an app: the app is parked and the lock screen asks
+    /// for the password, as a lock from home does. The unlock brings the
+    /// app back. An app that grabbed the keyboard never lets Tab reach the
+    /// shell, so it never gets here.
+    fn lock_over_app(&mut self, now: u64) {
+        if !self.input.grab(true) {
+            return;
+        }
+        match self.park_front(now) {
+            Ok(id) => {
+                // Locked first, so take_screen keeps the keyboard.
+                self.screen = Screen::Locked;
+                self.take_screen();
+                self.unlock_to = Back::App(id);
+                self.lock_secure = true;
+                self.sound(Sound::Lock);
+                self.enter_locked(now);
+            }
+            Err(name) => {
+                self.input.grab(false);
+                if let Some(name) = name {
+                    self.toast(format!("{name} can't be paused"));
+                }
             }
         }
     }
@@ -2520,6 +2594,9 @@ impl Shell {
     }
 
     fn enter_locked(&mut self, now: u64) {
+        if self.debug {
+            eprintln!("gh0st shell: locked");
+        }
         // Nothing queued before the lock may run past it.
         self.pending = None;
         self.services.tell(&ToDaemon::Lock);
@@ -3830,6 +3907,7 @@ impl Shell {
     fn launch(&mut self, app: &App, files: &[PathBuf]) {
         self.power = None;
         self.esc_hold.cancel();
+        self.tab_down = None;
         let argv = child::argv(app, &self.terminal, files);
         let stem = app.id().to_string();
         // Read now, not from the copy the shell keeps: a grant changed by
@@ -4068,6 +4146,7 @@ impl Shell {
         if !matches!(t.state, tasks::State::Paused | tasks::State::Background) {
             return;
         }
+        self.tab_hold.reset();
         if let Some(px) = t.pixels.take() {
             self.display.flush_all(&px);
             self.spare = Some(px);
@@ -4107,6 +4186,10 @@ impl Shell {
         self.esc_armed = false;
         self.home_armed = false;
         self.esc = EscHold::default();
+        // A Tab let go over an app never reached home's hold: left set, it
+        // would lock as soon as the shell is in front.
+        self.tab_down = None;
+        self.tab_hold.reset();
         // An app that grabbed the keyboard hid the releases from us; a key
         // left in `held` would keep the screen on and stall every Pending.
         if let Some(down) = self.input.pressed() {

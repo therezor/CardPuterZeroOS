@@ -67,7 +67,7 @@ Setup, once:
 | Fn+H | Help: every key on this screen |
 | Fn+K | Switch between open apps |
 | Hold Esc | Close the app in front |
-| Hold Tab | Lock |
+| Hold Tab | Lock, over an app too |
 | Hold Esc on home | Restart or power off |
 | Tab, then Enter | Unlock |
 

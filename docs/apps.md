@@ -245,9 +245,15 @@ for it, as Fn+K parks it, and gets `pause` and `resume` on its link.
 
 - Fn+K (`KEY_HOME`) pauses the app in front and opens the switcher. On the
   home screen a tap of Tab opens it too, and closes it. Tab held 3 s on home
-  or in the switcher locks; over an app, Tab is the app's. The app
+  or in the switcher locks. The app
   sees Fn and Home pressed and released; the shell waits until every key is
   up, then sends SIGSTOP to the group.
+- Over an app Tab still reaches the app, and the shell listens too. Held
+  alone, a banner says "Hold Tab to lock" at 1.5 s; at 3 s it says to let
+  go, and the lock comes when Tab is up, so the app sees the whole press.
+  Another key while Tab is down means the app is in use: no lock. An app
+  that grabs the keyboard hides Tab from the shell, so it can't be locked
+  this way.
 - The shell keeps the app's last frame. Before it sends SIGCONT, it puts that
   frame back on the panel, so an app that redraws only what changed still
   looks right.

@@ -86,9 +86,129 @@ impl HeldKey {
     }
 }
 
+/// Tab held this long locks: on home and in the switcher at once, over an
+/// app when Tab comes up.
+pub const LOCK_HOLD_MS: u64 = 3000;
+/// Over an app, when the banner says to keep holding.
+pub const LOCK_HINT_MS: u64 = 1500;
+
+/// Tab held over an app, timed from the raw keys: the app gets Tab too. Any
+/// other key down spoils it until Tab comes up again.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TabHold {
+    since: Option<u64>,
+    hinted: bool,
+    done: bool,
+}
+
+/// What a tick of the Tab hold asks for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TabStep {
+    /// Show "Hold Tab to lock".
+    pub hint: bool,
+    /// Held long enough: lock once every key is up.
+    pub lock: bool,
+}
+
+impl TabHold {
+    /// A raw key event: `value` 1 down, 0 up, 2 a repeat. `alone`: no
+    /// other key is down. True if a hint showing should go.
+    pub fn key(&mut self, code: u16, value: i32, now: u64, alone: bool) -> bool {
+        use gh0st_core::keys::code::TAB;
+        match (code == TAB, value) {
+            (_, 2) => false,
+            (true, 1) if alone => {
+                *self = TabHold {
+                    since: Some(now),
+                    ..TabHold::default()
+                };
+                false
+            }
+            (true, 0) | (_, 1) => {
+                // Once the lock is due it stays due: its banner says to let go.
+                let hide = self.hinted && !self.done;
+                *self = TabHold::default();
+                hide
+            }
+            _ => false,
+        }
+    }
+
+    pub fn update(&mut self, now: u64) -> TabStep {
+        let Some(t) = self.since else {
+            return TabStep::default();
+        };
+        if !self.done && now >= t + LOCK_HOLD_MS {
+            self.done = true;
+            return TabStep {
+                lock: true,
+                ..TabStep::default()
+            };
+        }
+        if !self.hinted && now >= t + LOCK_HINT_MS {
+            self.hinted = true;
+            return TabStep {
+                hint: true,
+                ..TabStep::default()
+            };
+        }
+        TabStep::default()
+    }
+
+    /// The next hint or lock, only while Tab is down.
+    pub fn next_at(&self) -> Option<u64> {
+        let t = self.since?;
+        match (self.hinted, self.done) {
+            (_, true) => None,
+            (true, false) => Some(t + LOCK_HOLD_MS),
+            (false, false) => Some(t + LOCK_HINT_MS),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        *self = TabHold::default();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gh0st_core::keys::code::TAB;
+
+    #[test]
+    fn tab_held_hints_then_locks_once() {
+        let mut h = TabHold::default();
+        assert_eq!(h.next_at(), None);
+        h.key(TAB, 1, 1000, true);
+        assert_eq!(h.next_at(), Some(1000 + LOCK_HINT_MS));
+        assert_eq!(h.update(2000), TabStep::default());
+        assert!(h.update(1000 + LOCK_HINT_MS).hint);
+        assert_eq!(h.next_at(), Some(1000 + LOCK_HOLD_MS));
+        assert!(h.update(1000 + LOCK_HOLD_MS).lock);
+        assert_eq!(h.update(9000), TabStep::default(), "once");
+        assert_eq!(h.next_at(), None);
+        assert!(
+            !h.key(TAB, 0, 9000, true),
+            "the let-go banner stays for the lock"
+        );
+    }
+
+    #[test]
+    fn another_key_spoils_the_hold_until_tab_comes_up() {
+        let mut h = TabHold::default();
+        h.key(TAB, 1, 0, true);
+        h.update(LOCK_HINT_MS);
+        assert!(h.key(16, 1, 1600, false), "the hint goes");
+        assert_eq!(h.update(LOCK_HOLD_MS), TabStep::default());
+        assert_eq!(h.next_at(), None);
+        let mut chord = TabHold::default();
+        chord.key(TAB, 1, 0, false);
+        assert_eq!(
+            chord.next_at(),
+            None,
+            "Tab with another key down never starts"
+        );
+    }
 
     const FOUR: u16 = 5;
 

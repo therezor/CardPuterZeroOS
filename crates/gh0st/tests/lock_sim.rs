@@ -287,3 +287,87 @@ fn the_esc_hint_over_an_app_is_held_by_the_driver() {
     assert!(!shell.contains("banner drawn"), "{shell}");
     assert!(!shell.contains("Alpha closed"), "{shell}");
 }
+
+/// The shell with Alpha, a linked app, and no lock password; keys from
+/// `keys`. Returns what the shell logged.
+fn with_app(name: &str, keys: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("gh0st-lock-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let config = dir.join("home/.config/cardputerzero");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("config.json"),
+        "{\"gh0st\": {\"lock\": {\"password\": false}}}",
+    )
+    .unwrap();
+    for d in ["frames", "ours", "stock", "icons"] {
+        std::fs::create_dir_all(dir.join(d)).unwrap();
+    }
+    let exe = script(&dir, "a", APP);
+    std::fs::write(
+        dir.join("ours/a.desktop"),
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Alpha\nExec={}\n",
+            exe.display()
+        ),
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gh0st"))
+        .args(["shell", "--sim"])
+        .arg(dir.join("frames"))
+        .env("HOME", dir.join("home"))
+        .env("GH0ST_APPS_OURS", dir.join("ours"))
+        .env("GH0ST_APPS_STOCK", dir.join("stock"))
+        .env("GH0ST_ICON_ROOT", dir.join("icons"))
+        .env("GH0ST_LOG", "debug")
+        .env("SIM_DIR", &dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(keys.as_bytes()).unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// Tab held 3 s over an app locks once Tab is up; the unlock brings the
+/// app back.
+#[test]
+fn tab_held_over_an_app_locks_and_the_unlock_brings_it_back() {
+    let keys = "wait 600\nenter\nwait 800\ndown tab\nwait 3200\nup tab\nwait 600\n\
+                tab\nenter\nwait 800\n";
+    let shell = with_app("tab-app", keys);
+    let hint = shell.find("banner held by the driver").expect(&shell);
+    let paused = shell.find("paused Alpha").expect(&shell);
+    let locked = shell.find("gh0st shell: locked").expect(&shell);
+    let unlocked = shell.find("gh0st shell: unlocked").expect(&shell);
+    let resumed = shell.find("resumed Alpha").expect(&shell);
+    assert!(hint < paused && paused < locked, "{shell}");
+    assert!(locked < unlocked && unlocked < resumed, "{shell}");
+}
+
+/// Another key while Tab is held: the app is typing, not locking.
+#[test]
+fn tab_with_another_key_over_an_app_never_locks() {
+    let keys = "wait 600\nenter\nwait 800\ndown tab\nwait 1000\ndown q\nwait 2500\n\
+                up q\nup tab\nwait 600\n";
+    let shell = with_app("tab-spoiled", keys);
+    assert!(!shell.contains("gh0st shell: locked"), "{shell}");
+    assert!(!shell.contains("paused Alpha"), "{shell}");
+}
+
+/// Tab down on home, Enter opens an app, Tab comes up over it: home's hold
+/// never saw the release, and must not lock once home is back.
+#[test]
+fn a_tab_let_go_over_an_app_leaves_no_lock_behind() {
+    let keys = "wait 600\ndown tab\nenter\nwait 500\nup tab\nwait 3200\nhome\nwait 800\n";
+    let shell = with_app("tab-stale", keys);
+    assert!(shell.contains("paused Alpha"), "{shell}");
+    assert!(!shell.contains("gh0st shell: locked"), "{shell}");
+}
