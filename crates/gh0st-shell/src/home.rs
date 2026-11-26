@@ -40,9 +40,8 @@ pub fn draw_menu(c: &mut Canvas, t: &Theme, rows: &[MenuRow], sel: usize) {
         .map(|r| widgets::pills_w(t, r.keys))
         .max()
         .unwrap_or(0);
-    let mut y = body.y + 2;
-    widgets::section(c, t, Rect::new(x, y, w, t.m.menu_head_h), "Home");
-    y += t.m.menu_head_h;
+    // Six rows fill the body exactly; the chip on 8 says whose menu it is.
+    let mut y = body.y;
     for (i, r) in rows.iter().enumerate() {
         let row = widgets::Row {
             icon: None,

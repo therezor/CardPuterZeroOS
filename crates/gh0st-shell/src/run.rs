@@ -5,10 +5,12 @@
 //! screen on, the clock ticks each minute and the battery is read every 2 s.
 //! Dark, neither runs.
 
+use crate::hold::HeldKey;
 use crate::home::{self, Entry, Home, Icon, Layout, Mode, Picture, Size};
 use crate::lock::{self, Lock};
 use crate::notices::{self, Panel};
 use crate::overlay::{self, Overlay};
+use crate::power::{self, Power};
 use crate::prompt::{self, Ask, Kind, Origin, Prompts};
 use crate::services::{Said, Services, Which};
 use crate::sound::{self as sounds, Player};
@@ -174,6 +176,8 @@ enum JobKind {
     Chkpwd,
     /// `unix_chkpwd` on a keyring prompt's password.
     PromptCheck,
+    /// The helper restarting (true) or powering off.
+    Power(bool),
 }
 
 /// Where keys come from: the keyboard, or a script in `--sim`.
@@ -378,6 +382,10 @@ struct Shell {
     portal: std::collections::VecDeque<PortalAsk>,
     home_armed: bool,
     swallow_release: Option<u16>,
+    /// Esc held on home: the fill toward the power dialog.
+    esc_hold: HeldKey,
+    /// The power dialog over home.
+    power: Option<Power>,
     rescan_at: Option<u64>,
     sampler: Sampler,
     /// Next read of the switcher's figures.
@@ -577,6 +585,8 @@ impl Shell {
             portal: Default::default(),
             home_armed: false,
             swallow_release: None,
+            esc_hold: HeldKey::default(),
+            power: None,
             rescan_at: None,
             sampler: Sampler::default(),
             stats_at: None,
@@ -776,6 +786,67 @@ impl Shell {
                 self.dirty = true;
             }
             JobKind::PromptCheck => self.prompt_checked(&j),
+            JobKind::Power(restart) if !j.ok() => {
+                self.toast(if restart {
+                    "Can't restart"
+                } else {
+                    "Can't power off"
+                });
+            }
+            JobKind::Power(_) => {}
+        }
+    }
+
+    /// Restarts or powers off through the helper. logind asks first when
+    /// the caller is not in an active seat's session, and the shell, a user
+    /// service, is not. Run without a terminal, systemctl doesn't stop for
+    /// inhibitors, which the battery's power off needs.
+    fn power_now(&mut self, restart: bool) {
+        let verb = if restart { "reboot" } else { "off" };
+        if self.debug || self.sim {
+            eprintln!("gh0st shell: power {verb}");
+        }
+        if self.sim {
+            return;
+        }
+        let argv = ["pkexec", "/usr/libexec/gh0st-helper", "power", verb];
+        if !self.start_job(JobKind::Power(restart), &argv) {
+            self.toast(if restart {
+                "Can't restart"
+            } else {
+                "Can't power off"
+            });
+        }
+    }
+
+    /// Esc held on home fills toward the power dialog; in the dialog, a
+    /// held chip fills toward its action. Each runs only if its key is
+    /// still down at the end.
+    fn power_tick(&mut self, now: u64) {
+        match self.esc_hold.tick(now) {
+            HoldTick::Idle => {}
+            HoldTick::Fill => self.dirty = true,
+            HoldTick::Done(key) => {
+                self.dirty = true;
+                if self.held.contains(&key) {
+                    self.power = Some(Power::default());
+                    self.swallow_release = Some(key);
+                }
+            }
+        }
+        let Some((act, key)) = self.power.as_mut().map(|p| p.tick(now)) else {
+            return;
+        };
+        match act {
+            power::Action::Redraw => self.dirty = true,
+            power::Action::Run(restart) => {
+                self.dirty = true;
+                if key.is_some_and(|k| self.held.contains(&k)) {
+                    self.power = None;
+                    self.power_now(restart);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1710,6 +1781,12 @@ impl Shell {
                 (shell && self.screen == Screen::Notices)
                     .then(|| self.panel.hold_at())
                     .flatten(),
+                (shell && self.screen == Screen::Home)
+                    .then(|| self.esc_hold.at())
+                    .flatten(),
+                (shell && self.screen == Screen::Home)
+                    .then(|| self.power.as_ref().and_then(Power::hold_at))
+                    .flatten(),
                 self.dark_at(),
                 self.dim_at(),
                 (shell && self.screen == Screen::Locked)
@@ -2019,6 +2096,9 @@ impl Shell {
         if self.screen == Screen::Notices {
             self.clear_all_tick();
         }
+        if self.screen == Screen::Home {
+            self.power_tick(now);
+        }
         // Any wake while something moves draws the next frame.
         if self.next_frame(now).is_some() {
             self.dirty = true;
@@ -2051,7 +2131,7 @@ impl Shell {
             }
             self.dirty = true;
             if self.low.take_shutdown(now) {
-                child::fire(&["systemctl", "poweroff", "-i"]);
+                self.power_now(false);
             }
         }
     }
@@ -2089,7 +2169,7 @@ impl Shell {
             );
             self.show_banner(&text, gh0st_ui::theme::Tone::Critical);
             if self.low.take_shutdown(now) {
-                child::fire(&["systemctl", "poweroff", "-i"]);
+                self.power_now(false);
             }
         }
     }
@@ -2307,6 +2387,8 @@ impl Shell {
         self.full_flush = true;
         self.lock.rest();
         self.home_menu = None;
+        self.power = None;
+        self.esc_hold.cancel();
         self.switcher.cancel_hold();
         self.tab_down = None;
         self.pending = None;
@@ -2452,6 +2534,8 @@ impl Shell {
         self.lock.rest();
         self.probe_retried = false;
         self.home_menu = None;
+        self.power = None;
+        self.esc_hold.cancel();
         self.switcher.cancel_hold();
         self.tab_down = None;
         self.last_input = now;
@@ -3323,6 +3407,14 @@ impl Shell {
             }
             return;
         }
+        if k.state == State::Press && !k.is(code::ESC) && self.esc_hold.holding() {
+            self.esc_hold.cancel();
+            self.dirty = true;
+        }
+        if self.screen == Screen::Home && self.power.is_some() {
+            self.power_key(&k, now);
+            return;
+        }
         if k.is(code::TAB) && self.home_menu.is_none() {
             match k.state {
                 State::Press => self.tab_down = Some(now),
@@ -3464,7 +3556,37 @@ impl Shell {
         self.muted = Some(muted);
     }
 
+    fn power_key(&mut self, k: &Key, now: u64) {
+        let Some(p) = &mut self.power else {
+            return;
+        };
+        match p.key(k, now) {
+            power::Action::None | power::Action::Run(_) => {}
+            power::Action::Redraw => self.dirty = true,
+            power::Action::Hint(h) => self.toast(h),
+            power::Action::Close => {
+                self.power = None;
+                self.dirty = true;
+            }
+        }
+    }
+
     fn nav_key(&mut self, k: Key) {
+        // Held, Esc opens the power dialog. Esc out of search never starts
+        // it: that press was search's.
+        if k.is(code::ESC) {
+            match k.state {
+                State::Press => {
+                    self.esc_hold.start(k.code, rt::now_ms());
+                    self.dirty = true;
+                }
+                State::Release if self.esc_hold.let_go(k.code) => {
+                    self.toast("Hold Esc for power");
+                }
+                _ => {}
+            }
+            return;
+        }
         if k.is(code::ENTER) {
             match k.state {
                 State::Press => self.enter_armed = true,
@@ -3541,6 +3663,7 @@ impl Shell {
                 "",
             ),
             (MenuAct::Lock, "Lock".into(), String::new(), "Tab"),
+            (MenuAct::Power, "Power".into(), String::new(), "Esc"),
         ]
     }
 
@@ -3592,6 +3715,7 @@ impl Shell {
             MenuAct::Find => self.home.start_search(),
             MenuAct::Notices => self.open_notices(Screen::Home),
             MenuAct::Lock => self.lock_now(rt::now_ms()),
+            MenuAct::Power => self.power = Some(Power::default()),
         }
     }
 
@@ -3702,6 +3826,8 @@ impl Shell {
     /// Starts `app` in front. The shell lets go of the panel and keyboard
     /// until the app is paused or gone.
     fn launch(&mut self, app: &App, files: &[PathBuf]) {
+        self.power = None;
+        self.esc_hold.cancel();
         let argv = child::argv(app, &self.terminal, files);
         let stem = app.id().to_string();
         // Read now, not from the copy the shell keeps: a grant changed by
@@ -4219,6 +4345,8 @@ impl Shell {
         // A menu or a question belongs to the screen it was opened on.
         if self.screen != Screen::Home {
             self.home_menu = None;
+            self.power = None;
+            self.esc_hold.cancel();
         }
         if self.screen != Screen::Switcher {
             self.switcher.cancel_hold();
@@ -4291,9 +4419,21 @@ impl Shell {
                 self.panel
                     .draw(&mut self.canvas, &t, &status, notify::now_secs());
             }
+            Screen::Home if self.power.is_some() => {
+                let status = Status {
+                    dock: &[],
+                    front: None,
+                    icon: "power",
+                    title: "Power",
+                    ..status
+                };
+                if let Some(p) = &self.power {
+                    p.draw(&mut self.canvas, &t, &status);
+                }
+            }
             _ => self.home.draw(&mut self.canvas, &t, &status, now),
         }
-        if self.screen == Screen::Home {
+        if self.screen == Screen::Home && self.power.is_none() {
             if let Some(sel) = self.home_menu {
                 self.draw_menu(sel);
             }
@@ -4305,7 +4445,18 @@ impl Shell {
             Screen::Home | Screen::Switcher | Screen::Notices | Screen::Locked | Screen::Prompt
         ) {
             self.draw_low_battery();
-            if let Some((icon, label, pct)) = self.level {
+            if let Some(pc) = self.esc_hold.fill() {
+                let bottom = t.m.height - t.m.hint_h;
+                let info = gh0st_ui::theme::Tone::Info;
+                widgets::toast(
+                    &mut self.canvas,
+                    &t,
+                    bottom,
+                    info,
+                    "Hold for power",
+                    Some(pc),
+                );
+            } else if let Some((icon, label, pct)) = self.level {
                 widgets::level_bar(&mut self.canvas, &t, icon, label, pct);
             } else if let (Some(row), Some(_)) = (&self.toast_notice, &self.toast) {
                 let bottom = t.m.height - t.m.hint_h;
@@ -4782,6 +4933,7 @@ enum MenuAct {
     /// Switch apps left the menu for this: it has 4 and Fn+K.
     Notices,
     Lock,
+    Power,
 }
 
-const MENU_ROWS: usize = 5;
+const MENU_ROWS: usize = 6;

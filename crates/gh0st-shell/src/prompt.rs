@@ -344,7 +344,7 @@ impl View<'_> {
 }
 
 /// Splits `s` into lines of at most `w` pixels in `f`, at most `max`.
-fn wrap(f: gh0st_ui::font::Font, s: &str, w: i32, max: usize) -> Vec<String> {
+pub(crate) fn wrap(f: gh0st_ui::font::Font, s: &str, w: i32, max: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
     for word in s.split_whitespace() {

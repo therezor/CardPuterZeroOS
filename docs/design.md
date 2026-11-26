@@ -210,7 +210,7 @@ screen's bottom edge, right above its key, and pressing that key runs it.
 
 | Key | Holds |
 |---|---|
-| 4 | nothing. It is Esc, for template apps. Home has no Esc and puts Apps here; the switcher puts All here, held; the camera puts Photos here, as a phone camera keeps its gallery bottom left; Files puts Mark here, with Copy, Paste and Cut beside it. Esc itself still goes back. |
+| 4 | nothing. It is Esc, for template apps. Home keeps Esc for the power dialog, held, and puts Apps here; the switcher puts All here, held; the camera puts Photos here, as a phone camera keeps its gallery bottom left; Files puts Mark here, with Copy, Paste and Cut beside it. Esc itself still goes back. |
 | 5, 6, 7 | the page's own actions |
 | 8 | the menu, an icon-only ≡ chip. The switcher has no menu and puts Close here. |
 
@@ -275,6 +275,7 @@ says once how to reach Esc and help.
 | Fn and H | help: every key on this page |
 | Fn and K | switch apps |
 | Tab, held 3 s on home or in the switcher | lock |
+| Esc, held 0.7 s on home | restart or power off |
 | Tab, then Enter, on the lock screen | unlock, or the password |
 | Fn and J | screenshot |
 | Fn and Esc | the Esc key itself, for vim and the like |
@@ -443,9 +444,14 @@ menu, then the page.
 
 ![Home](design/36-home.png)
 
-Home: 4 Apps, 6 Find, 8 the home menu (pin, layout, notifications). Enter
-opens the app. A tile carries a count from its app's notice: how many
-updates, or how many notices.
+Home: 4 Apps, 6 Find, 8 the home menu (pin, layout, notifications, lock,
+power). Enter opens the app. A tile carries a count from its app's notice:
+how many updates, or how many notices.
+
+Esc held 0.7 s on home, or Power in the menu, asks "Restart or power off?".
+5 Restart and 7 Off are held chips, as All in the switcher: every app
+closes first. A tap of either says to hold it, and Esc cancels. A tap of
+Esc on home says "Hold Esc for power".
 
 ![The switcher](design/37-switcher.png)
 

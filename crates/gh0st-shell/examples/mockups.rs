@@ -10,6 +10,7 @@
 
 use gh0st_core::usage::{AppUsage, SystemUsage};
 use gh0st_shell::home::{self, Entry, Home, Icon, Layout, Size};
+use gh0st_shell::power::Power;
 use gh0st_shell::prompt::{self, Ask, Kind, Origin};
 use gh0st_shell::switcher::{self, Card, Switcher};
 use gh0st_ui::Canvas;
@@ -362,8 +363,33 @@ fn home_menu(t: &Theme, stock: Option<&Path>) -> Canvas {
         row("Find", None, None, "s"),
         row("Notifications", None, Some("2"), ""),
         row("Lock", None, None, "Tab"),
+        row("Power", None, None, "Esc"),
     ];
     home::draw_menu(&mut c, t, &rows, 4);
+    c
+}
+
+/// The power dialog over home, or Power off held 60% of the way.
+fn power(t: &Theme, held: bool) -> Canvas {
+    let mut p = Power::default();
+    if held {
+        let seven = gh0st_core::keys::Key {
+            code: 8,
+            state: gh0st_core::keys::State::Press,
+            ch: Some('7'),
+            text: Some('7'),
+            shift: false,
+            ctrl: false,
+            alt: false,
+            fn_: false,
+        };
+        p.key(&seven, 0);
+        p.tick(420);
+    }
+    let mut s = status(&[], None, "Power");
+    s.icon = "power";
+    let mut c = new_canvas(t);
+    p.draw(&mut c, t, &s);
     c
 }
 
@@ -553,6 +579,8 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                     lock(&t, None, true, Some((Tone::Info, "2 notifications"))),
                 ),
                 ("home-menu-lock", home_menu(&t, stock)),
+                ("home-power", power(&t, false)),
+                ("home-power-hold", power(&t, true)),
                 (
                     "prompt-wrong",
                     ask(
