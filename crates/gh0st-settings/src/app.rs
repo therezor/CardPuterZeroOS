@@ -394,6 +394,10 @@ impl Settings {
                     .is_some_and(|e| e.flags.has(gh0st_core::store::Flags::ROOT))
             })
         };
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        let bridges = !gh0st_core::sandbox::bridges(&home).is_empty();
         let mut rows: Vec<AppRow> =
             apps::scan_all(&Dirs::from_env(), &config, &pins, desktop::is_executable)
                 .into_iter()
@@ -401,6 +405,7 @@ impl Settings {
                 .map(|a| AppRow {
                     isolation: apps::isolation(&config, &a, root(&a)),
                     exempt: apps::exempt(&a, root(&a)),
+                    input_methods: bridges && !a.ours && apps::exempt(&a, root(&a)).is_none(),
                     icon: config
                         .get_str(&apps::app_key(&a.file, "icon"))
                         .unwrap_or("")
@@ -666,6 +671,15 @@ impl Settings {
                 };
                 cx.settings().set_bool(&apps::app_key(file, leaf), !now);
                 cx.toast("Counts from the next time it opens");
+            }
+            Setting::AppInput(file) => {
+                let on = !self.app(file).is_some_and(|a| a.isolation.grants.input);
+                cx.settings().set_bool(&apps::app_key(file, "input"), on);
+                cx.toast(if on {
+                    "From its next open, input methods read its keys"
+                } else {
+                    "Counts from the next time it opens"
+                });
             }
             Setting::AppPinned(file) => {
                 let name = self.app(file).map(|a| a.name.clone()).unwrap_or_default();

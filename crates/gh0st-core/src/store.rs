@@ -124,8 +124,11 @@ impl Flags {
     /// It asks for root as it runs (sudo, pkexec, a setuid file), which a
     /// sandbox can't give: it runs outside one.
     pub const ROOT: Flags = Flags(1 << 9);
+    /// An input method: its bridge reads the keys of apps the user lets
+    /// it type into (`sandbox::bridges`).
+    pub const KEYS: Flags = Flags(1 << 10);
 
-    const NAMES: [(Flags, &'static str); 10] = [
+    const NAMES: [(Flags, &'static str); 11] = [
         (Flags::SCRIPTS, "scripts"),
         (Flags::PATHS, "paths"),
         (Flags::SERVICE, "service"),
@@ -136,6 +139,7 @@ impl Flags {
         (Flags::DISPLAY, "display"),
         (Flags::IMU, "imu"),
         (Flags::ROOT, "root"),
+        (Flags::KEYS, "keys"),
     ];
 
     pub fn has(self, f: Flags) -> bool {
@@ -148,6 +152,7 @@ impl Flags {
             || self.has(Flags::PATHS)
             || self.has(Flags::SERVICE)
             || self.has(Flags::ROOT)
+            || self.has(Flags::KEYS)
     }
 
     /// `scripts,network`. Unknown words are skipped, so an older device

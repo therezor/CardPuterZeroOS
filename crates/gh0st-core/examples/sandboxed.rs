@@ -22,6 +22,7 @@ fn main() {
         network: key("network").unwrap_or(true),
         camera: key("camera").unwrap_or(true),
         mic: key("mic").unwrap_or(true),
+        input: key("input").unwrap_or(false),
     };
     let user = notify::user_dir();
     let _ = std::fs::create_dir_all(sandbox::notice_dir(&user, stem));

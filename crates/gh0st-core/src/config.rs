@@ -54,7 +54,7 @@ pub fn secure_path(shared: &Path) -> PathBuf {
 }
 
 /// What an app may use, per app: `gh0st.app.<id>.<leaf>`.
-pub const GRANTS: [&str; 4] = ["isolate", "network", "camera", "mic"];
+pub const GRANTS: [&str; 5] = ["isolate", "network", "camera", "mic", "input"];
 
 /// A key that changes what runs, what locks, or what an app may reach.
 pub fn is_secure(k: &str) -> bool {
@@ -802,6 +802,7 @@ mod tests {
         assert!(is_secure(key::LOCK_PASSWORD));
         assert!(is_secure("gh0st.app.zsynth_desktop.network"));
         assert!(is_secure("gh0st.app.zsynth_desktop.isolate"));
+        assert!(is_secure("gh0st.app.zsynth_desktop.input"));
         assert!(!is_secure("gh0st.app.zsynth_desktop.background"));
         assert!(!is_secure(key::PALETTE));
         assert!(!is_secure("brightness"));

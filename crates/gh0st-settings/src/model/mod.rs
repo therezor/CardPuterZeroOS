@@ -83,6 +83,8 @@ pub enum Setting {
     AppNetwork(String),
     AppCamera(String),
     AppMic(String),
+    /// Input methods' bridges load into it.
+    AppInput(String),
     WifiRadio,
     Bluetooth,
     NetworkTime,

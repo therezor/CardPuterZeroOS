@@ -297,6 +297,9 @@ pub fn isolation(c: &crate::config::Config, app: &App, root: bool) -> Isolation 
             network: get("network"),
             camera: get("camera"),
             mic: get("mic"),
+            // Off until asked: a bridge reads every key the app gets. Ours
+            // are static, so a preload does nothing in them.
+            input: !app.ours && c.get_bool(&app_key(&app.file, "input")).unwrap_or(false),
         },
     }
 }
@@ -559,6 +562,7 @@ mod tests {
         let i = isolation(&c, &app, false);
         assert!(i.sandbox);
         assert_eq!(i.grants, crate::sandbox::Grants::default());
+        assert!(!i.grants.input, "no app gets input methods unasked");
         assert!(
             !isolation(&c, &app, true).sandbox,
             "the Store marks it root"

@@ -96,6 +96,7 @@ fn sample_state() -> State {
             },
         },
         exempt: None,
+        input_methods: false,
     };
     State {
         brightness: Some(80),

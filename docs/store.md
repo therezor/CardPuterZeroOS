@@ -67,6 +67,7 @@ page says it:
 | `paths` | a file where root reads, loads or runs it: `/etc` past the app's own config (`/etc/<pkg>/`, `/etc/<pkg>.conf`, `/etc/default/<pkg>`, unless the name is a system one such as `sudoers.d`), udev rules, sysctl, modprobe, binfmt, polkit, PAM, NSS, D-Bus system services, kernel modules, firmware, apt methods, `/usr/local`, `sbin`, Python `.pth` files, NetworkManager, `/boot`, tmpfiles that reach past the app's own folders, or a setuid file | System files |
 | `service` | M5's `background_service`, or a systemd unit in the deb | Service |
 | `root` | a setuid file, or `sudo`, `pkexec` or `doas` as a command in a program or script: the app asks for root as it runs, so it runs outside its sandbox (`isolation.md`) | Runs as root, outside its sandbox |
+| `keys` | code that writes `LD_PRELOAD` into a drop-in for `APPLaunch.service`: an input method, whose bridge reads the keys of apps the user allows (`isolation.md`) | Reads the keys of apps you allow |
 | `network`, `camera`, `microphone`, `hardware`, `display`, `imu` | M5's permissions | Uses network, camera |
 
 dpkg never lets a package overwrite another's files, so a file elsewhere

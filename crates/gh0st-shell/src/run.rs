@@ -4009,11 +4009,23 @@ impl Shell {
             argv
         };
         let cgroup = self.cgroups.as_ref().and_then(|c| c.make(&stem));
+        // Pulse reports the pid inside a sandbox; `gh0st audio` finds the
+        // app's streams by this instead.
+        let mut env = vec![("PULSE_PROP", format!("gh0st.app={stem}"))];
+        // Outside a sandbox an input method's bridge comes as inside one:
+        // only to an app granted it.
+        if !sandboxed && iso.grants.input {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            let b = sandbox::bridges(&home);
+            if !b.is_empty() {
+                env.push(("LD_PRELOAD", sandbox::preload(&b)));
+            }
+        }
         let extra = child::Extra {
             cgroup: cgroup.as_deref(),
-            // Pulse reports the pid inside a sandbox; `gh0st audio` finds
-            // the app's streams by this instead.
-            env: vec![("PULSE_PROP", format!("gh0st.app={stem}"))],
+            env,
         };
         let fb_path = self.display.device();
         let kb_path = self.input.path();

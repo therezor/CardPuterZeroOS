@@ -250,6 +250,11 @@ class Debs(unittest.TestCase):
                 b.write("#!/bin/sh\nexec sudo /opt/demo/run\n")
             os.chmod(os.path.join(root, "usr/bin/demo"), 0o755)
             self.assertEqual(build()["root"], "1", "a script that calls sudo")
+            self.assertEqual(f["keys"], "0")
+            with open(os.path.join(root, "usr/bin/demo"), "w") as b:
+                b.write("#!/bin/sh\nd=$HOME/.config/systemd/user/APPLaunch.service.d\n"
+                        "echo Environment=LD_PRELOAD=/usr/lib/demo/bridge.so > $d/90-demo.conf\n")
+            self.assertEqual(build()["keys"], "1", "an input method's setup")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,28 @@ from the app's next start, and every app has all three until then.
 | Microphone | ALSA's capture nodes are gone; pulse comes through `pulse/native-nomic`, whose clients see no source and can't record what the device plays; no PipeWire socket |
 | Isolation | none of the above: the app runs as any program of UID 1000 does |
 
+## Input methods
+
+A Store input method, such as voice typing or pinyin, types into other
+apps through a bridge: a library loaded into them with `LD_PRELOAD`. It
+names the library in a drop-in for the stock launcher's unit,
+`~/.config/systemd/user/APPLaunch.service.d/*.conf`, as on stock. The shell
+reads those drop-ins at each launch (`sandbox::bridges`).
+
+- A bridge reads every key the app gets, so it loads only into an app the
+  user switches **Input methods** on for, in Settings > Apps > the app.
+  The switch shows once an input method is installed, for apps that
+  aren't ours and aren't exempt. It is off for every app until then.
+- Only a library in a folder of its own under `/usr/lib`, both owned by
+  root and writable by no one else, counts.
+- With the switch on, the sandbox gets `LD_PRELOAD` and the bridge's
+  folder in the runtime dir, named as its folder in `/usr/lib`:
+  `/usr/lib/voice-input/` talks through `$XDG_RUNTIME_DIR/voice-input`.
+  Outside a sandbox the app gets the same `LD_PRELOAD`.
+- Without it, `LD_PRELOAD` is unset for the app, in a sandbox or not.
+- User units are read-only in a sandbox, so an input method's own setup
+  can't write its drop-in from there. The Store marks such apps `keys`.
+
 ## Who runs outside a sandbox
 
 - Ours that need the whole home or pkexec: Settings, Terminal, Files, Text,
@@ -137,6 +159,9 @@ needs the `gh0st-base` of its own build.
   once they exist.
 - An app that needs a microphone to start may wait forever with the
   microphone off. Recorder does.
+- A bridge's folder is bound as it is at the app's start. If its service
+  makes the folder again while the app runs, the app sees the old one
+  until it starts again.
 - An app that asks for root at run time without saying so in its `Exec` or
   its code fails in a sandbox. If it quits within 5 s, the shell points at
   Settings > Apps.

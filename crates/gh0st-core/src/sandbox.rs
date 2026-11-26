@@ -12,6 +12,8 @@
 //! - The runtime folder holds only the bus, PipeWire and pulse sockets.
 //! - Network, camera and mic go when the user turns them off. Without the
 //!   mic an app hears neither it nor what the device plays.
+//! - An input method's bridge (`bridges`) loads only into an app the user
+//!   lets it type into.
 //!
 //! No `--die-with-parent`: the shell's SIGTERM would kill bwrap at once
 //! and bwrap the app, before the app's own handler could save.
@@ -22,12 +24,16 @@ use std::path::{Path, PathBuf};
 
 pub const BWRAP: &str = "/usr/bin/bwrap";
 
-/// What a sandboxed app may reach beyond its files. All by default.
+/// What a sandboxed app may reach beyond its files. All but `input` by
+/// default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Grants {
     pub network: bool,
     pub camera: bool,
     pub mic: bool,
+    /// Input methods' bridges load into it: they read its keys and type
+    /// into it. Off until the user turns it on.
+    pub input: bool,
 }
 
 impl Default for Grants {
@@ -36,8 +42,110 @@ impl Default for Grants {
             network: true,
             camera: true,
             mic: true,
+            input: false,
         }
     }
+}
+
+/// Where the stock launcher's unit takes drop-ins, under home. A Store
+/// input method puts its `LD_PRELOAD` there for the launcher to pass on.
+pub const LAUNCHER_DROPINS: &str = ".config/systemd/user/APPLaunch.service.d";
+
+/// An input method's bridge: a library loaded into apps, so a Store app
+/// (voice typing, pinyin) reads their keys and types into them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Bridge {
+    pub lib: PathBuf,
+    /// Its folder in the runtime dir, named as the folder its library is
+    /// in: `/usr/lib/voice-input/x.so` talks through `$XDG_RUNTIME_DIR/voice-input`.
+    pub dir: String,
+}
+
+/// The bridges the launcher drop-ins under `home` name. Only a library in
+/// a folder of its own under `/usr/lib`, both owned by root and writable
+/// by no one else, counts: an app can't name its own file.
+pub fn bridges(home: &Path) -> Vec<Bridge> {
+    bridges_in(
+        &home.join(LAUNCHER_DROPINS),
+        Path::new("/usr/lib"),
+        root_owned,
+    )
+}
+
+/// `LD_PRELOAD`'s value for these bridges.
+pub fn preload(bridges: &[Bridge]) -> String {
+    let libs: Vec<String> = bridges
+        .iter()
+        .map(|b| b.lib.to_string_lossy().into_owned())
+        .collect();
+    libs.join(":")
+}
+
+fn root_owned(p: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::symlink_metadata(p)
+        .is_ok_and(|m| (m.is_file() || m.is_dir()) && m.uid() == 0 && m.mode() & 0o022 == 0)
+}
+
+fn bridges_in(dropins: &Path, lib_root: &Path, trusted: impl Fn(&Path) -> bool) -> Vec<Bridge> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dropins)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "conf"))
+        .collect();
+    files.sort();
+    let mut out: Vec<Bridge> = Vec::new();
+    for f in files {
+        let Ok(text) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        for lib in preload_paths(&text) {
+            let lib = PathBuf::from(lib);
+            let Ok(rest) = lib.strip_prefix(lib_root) else {
+                continue;
+            };
+            let parts: Vec<&str> = rest.iter().filter_map(|c| c.to_str()).collect();
+            let [dir, file] = parts[..] else {
+                continue;
+            };
+            let named = !dir.is_empty()
+                && dir.as_bytes()[0].is_ascii_alphanumeric()
+                && dir
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"+-.".contains(&b))
+                && file.ends_with(".so");
+            if named
+                && trusted(&lib_root.join(dir))
+                && trusted(&lib)
+                && !out.iter().any(|b| b.lib == lib)
+            {
+                out.push(Bridge {
+                    dir: dir.to_string(),
+                    lib,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The paths a unit file's `Environment=` lines put in `LD_PRELOAD`.
+fn preload_paths(unit: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in unit.lines() {
+        let Some(rest) = line.trim().strip_prefix("Environment=") else {
+            continue;
+        };
+        let rest = rest.replace('"', " ");
+        for tok in rest.split_whitespace() {
+            if let Some(v) = tok.strip_prefix("LD_PRELOAD=") {
+                out.extend(v.split(':').filter(|p| !p.is_empty()).map(String::from));
+            }
+        }
+    }
+    out
 }
 
 /// Home entries an app never sees.
@@ -140,6 +248,8 @@ pub struct Host {
     pub sockets: Vec<String>,
     /// The keyring's vault folder exists, so it can be hidden.
     pub vaults: bool,
+    /// Input methods' bridges, for an app granted `input`.
+    pub bridges: Vec<Bridge>,
 }
 
 /// Runtime sockets an app may get.
@@ -188,6 +298,7 @@ impl Host {
             sound_nodes: sound_nodes(Path::new("/dev/snd")),
             sockets,
             vaults: Path::new(VAULTS).is_dir(),
+            bridges: bridges(home),
         }
     }
 }
@@ -335,6 +446,14 @@ pub fn argv(
             a.pair("--dev-bind", "/dev/null", n);
         }
     }
+    if grants.input && !host.bridges.is_empty() {
+        a.raw("--setenv");
+        a.raw("LD_PRELOAD");
+        a.raw(preload(&host.bridges));
+    } else {
+        a.raw("--unsetenv");
+        a.raw("LD_PRELOAD");
+    }
     if !grants.mic && !host.capture_nodes.is_empty() {
         // Gone, not stood in for: ALSA then sees a card with no capture,
         // as on a device without a mic.
@@ -368,6 +487,12 @@ fn runtime(a: &mut Args, host: &Host, grants: Grants) {
     if has(pulse) {
         a.one("--dir", r.join("pulse"));
         a.pair("--bind", r.join(pulse), r.join("pulse/native"));
+    }
+    // The bridge in the app talks to its input method here.
+    if grants.input {
+        for b in &host.bridges {
+            a.pair("--bind-try", r.join(&b.dir), r.join(&b.dir));
+        }
     }
 }
 
@@ -495,7 +620,98 @@ mod tests {
                 .map(String::from)
                 .to_vec(),
             vaults: true,
+            bridges: vec![Bridge {
+                lib: "/usr/lib/voice-input/shared_bridge.so".into(),
+                dir: "voice-input".into(),
+            }],
         }
+    }
+
+    #[test]
+    fn a_bridge_loads_only_into_an_app_granted_input() {
+        let notify = Path::new("/home/u/.local/share/gh0st/notices");
+        let inner = [OsString::from("/usr/bin/app")];
+        let off = argv(&host(), Grants::default(), "zsynth", notify, &inner).unwrap();
+        let off: Vec<String> = off
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert!(has(&off, &["--unsetenv", "LD_PRELOAD"]));
+        assert!(!off.iter().any(|s| s.contains("voice-input")));
+        let g = Grants {
+            input: true,
+            ..Grants::default()
+        };
+        let on = argv(&host(), g, "zsynth", notify, &inner).unwrap();
+        let on: Vec<String> = on
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert!(has(
+            &on,
+            &[
+                "--setenv",
+                "LD_PRELOAD",
+                "/usr/lib/voice-input/shared_bridge.so"
+            ]
+        ));
+        let r = "/run/user/1000/voice-input";
+        assert!(has(&on, &["--bind-try", r, r]));
+        // Granted, with no bridge installed: nothing to load.
+        let mut bare = host();
+        bare.bridges.clear();
+        let none = argv(&bare, g, "zsynth", notify, &inner).unwrap();
+        let none: Vec<String> = none
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert!(has(&none, &["--unsetenv", "LD_PRELOAD"]));
+    }
+
+    #[test]
+    fn bridges_come_from_the_launcher_drop_ins_and_must_be_trusted() {
+        let d = std::env::temp_dir().join(format!("gh0st-bridges-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let dropins = d.join("dropins");
+        std::fs::create_dir_all(&dropins).unwrap();
+        let lib = d.join("lib");
+        for (n, body) in [
+            (
+                "90-voice.conf",
+                "[Service]\nEnvironment=LD_PRELOAD=LIB/voice-input/shared_bridge.so\n",
+            ),
+            (
+                "99-pinyin.conf",
+                "[Service]\nEnvironment=\"LD_PRELOAD=LIB/cardputer-pinyin/bridge.so\" A=1\n",
+            ),
+            // Not under the library root, not a .so, too deep, not a .conf.
+            (
+                "50-other.conf",
+                "[Service]\nEnvironment=LD_PRELOAD=/home/u/evil.so:LIB/x/y.txt:LIB/a/b/c.so\n",
+            ),
+            ("readme", "Environment=LD_PRELOAD=LIB/z/z.so\n"),
+        ] {
+            let body = body.replace("LIB", &lib.to_string_lossy());
+            std::fs::write(dropins.join(n), body).unwrap();
+        }
+        let all = |_: &Path| true;
+        let b = bridges_in(&dropins, &lib, all);
+        let dirs: Vec<&str> = b.iter().map(|b| b.dir.as_str()).collect();
+        assert_eq!(dirs, ["voice-input", "cardputer-pinyin"]);
+        assert_eq!(
+            preload(&b),
+            format!(
+                "{0}/voice-input/shared_bridge.so:{0}/cardputer-pinyin/bridge.so",
+                lib.display()
+            )
+        );
+        // A library someone other than root could write is skipped.
+        let only_pinyin = |p: &Path| !p.to_string_lossy().contains("voice-input");
+        let b = bridges_in(&dropins, &lib, only_pinyin);
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].dir, "cardputer-pinyin");
+        assert!(bridges_in(&d.join("none"), &lib, all).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn run_as(stem: &str, g: Grants) -> Vec<String> {

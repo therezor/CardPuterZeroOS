@@ -138,6 +138,9 @@ pub struct AppRow {
     pub isolation: gh0st_core::apps::Isolation,
     /// Why it runs outside its sandbox whatever the user picks.
     pub exempt: Option<gh0st_core::apps::Exempt>,
+    /// An input method is installed and this app can take its bridge: not
+    /// ours, not exempt.
+    pub input_methods: bool,
 }
 
 /// An app's sandbox rows: the switch, and what it may reach inside.
@@ -185,6 +188,15 @@ fn isolation_rows(a: &AppRow) -> Vec<Item> {
                 Act::Set(Setting::AppMic(f())),
             ),
         ]);
+    }
+    // In a sandbox or not: the bridge loads either way.
+    if a.input_methods {
+        rows.push(Item::new(
+            "keyboard",
+            "Input methods",
+            Value::Toggle(iso.grants.input),
+            Act::Set(Setting::AppInput(f())),
+        ));
     }
     rows
 }
@@ -2301,6 +2313,13 @@ mod tests {
         assert!(all.ends_with(&["Isolation", "Network", "Camera", "Microphone"].map(String::from)));
         s.apps[0].isolation.sandbox = false;
         assert!(labels(&s).ends_with(&["Isolation".to_string()]));
+        // With an input method installed, its row shows in a sandbox or not.
+        s.apps[0].input_methods = true;
+        assert!(labels(&s).ends_with(&["Isolation", "Input methods"].map(String::from)));
+        s.apps[0].isolation.sandbox = true;
+        assert!(labels(&s).ends_with(&["Microphone", "Input methods"].map(String::from)));
+        s.apps[0].input_methods = false;
+        s.apps[0].isolation.sandbox = false;
         s.apps[0].exempt = Some(Exempt::Root);
         let p = build(&id, &s);
         let last = p.item(p.len() - 1).unwrap();

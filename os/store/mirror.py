@@ -141,15 +141,18 @@ SYSTEM_ETC = {
 }
 TMPFILES = ("usr/lib/tmpfiles.d/", "etc/tmpfiles.d/")
 # The last column dates the facts: rows from an older rule are checked again.
-FACTS = "5"
+FACTS = "6"
 CHECKED_COLS = [
     "sha256", "package", "version", "arch", "depends", "provides",
     "replaces", "conflicts", "breaks", "scripts", "paths", "service", "desktop",
-    "root", "facts",
+    "root", "keys", "facts",
 ]
 # Asking for root as it runs, which a sandbox can't give (docs/isolation.md):
 # sudo, pkexec or doas as a command in a script or a program's strings.
 ROOT_CMD = re.compile(rb"(?:^|[\0\s'\"`;&|(/=])(?:sudo|pkexec|doas)(?=[\0\s'\"`;&|)]|$)", re.M)
+# An input method: code that puts a library in the stock launcher's
+# LD_PRELOAD, which the shell passes on to apps granted it.
+PRELOAD = (b"LD_PRELOAD", b"APPLaunch.service.d")
 # Code is read up to this much; past it a file is data.
 SCAN_CAP = 8 << 20
 NOT_CODE = ("usr/share/doc/", "usr/share/man/", "usr/share/locale/", "usr/share/info/")
@@ -412,7 +415,7 @@ def facts(deb, sha256):
     ctrl = {os.path.basename(n) for n, _, _, _ in members(deb, "ctrl")}
     data = members(deb, "fsys", scan_size)
     pkg = f.get("Package", "")
-    paths = service = root = False
+    paths = service = root = keys = False
     desktop = ""
     for name, is_dir, mode, body in data:
         n = rel(name)
@@ -429,6 +432,8 @@ def facts(deb, sha256):
             service = True
         if asks_root(n, mode, body):
             root = True
+        if body is not None and is_code(n, mode) and all(w in body for w in PRELOAD):
+            keys = True
         m = re.fullmatch(r"usr/share/APPLaunch/applications/([^/]+)\.desktop", n)
         if m and not desktop:
             desktop = m.group(1)
@@ -448,6 +453,7 @@ def facts(deb, sha256):
         "service": "1" if service else "0",
         "desktop": desktop,
         "root": "1" if root else "0",
+        "keys": "1" if keys else "0",
         "facts": FACTS,
     }
 
@@ -731,6 +737,8 @@ def app_line(app, facts_row, cn):
         flags.append("service")
     if facts_row.get("root") == "1":
         flags.append("root")
+    if facts_row.get("keys") == "1":
+        flags.append("keys")
     for key, word in [("network", "network"), ("camera", "camera"),
                       ("microphone", "microphone"), ("additional_hardware", "hardware"),
                       ("external_display", "display"), ("imu", "imu")]:
