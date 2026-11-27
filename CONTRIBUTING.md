@@ -8,6 +8,21 @@ Branch off `dev` and open your PR against `dev`, not `main`. New work gets
 tested on real devices from `dev` (the Edge channel and the test build
 follow it). `main` only moves when a release ships.
 
+## Speed and memory come first
+
+The device has 512 MB, an SPI panel and a battery. Every change is judged
+by what it costs there.
+
+- **Low memory.** Measure what your change adds (`scripts/measure.sh`
+  shows PSS). Megabytes need a reason. Kilobytes are welcome.
+- **Fast.** No work on the hot path that could happen once at startup or
+  at build time. Redraw only what changed.
+- **Quiet at idle.** No timers, no polling, no threads at rest. Use
+  inotify, netlink, uevents or signalfd. Add a thread that wakes every
+  100 ms and the battery will find you.
+
+A feature that makes the device slower is a bug with a nice name.
+
 ## Before you open one
 
 ```sh
@@ -24,9 +39,8 @@ Then say how you tested. "Ran it on a CardputerZero" is great. "Only in
 ## What gets merged
 
 - **One thing per PR.** Two fixes, two PRs.
-- **Small and idle.** 512 MB, an SPI panel and a battery. No timers while
-  idle, no polling, no threads at rest. Add a thread that wakes every
-  100 ms and the battery will find you.
+- **Numbers for anything that touches speed or memory.** Before and after,
+  from a device if you have one.
 - **A reason for every new dependency.** `CLAUDE.md` lists the ones we
   have and why.
 - **Pictures for UI changes.** A mockup PNG or a photo of the screen.
