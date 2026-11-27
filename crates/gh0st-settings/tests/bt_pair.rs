@@ -33,6 +33,7 @@ fn scan_pair_and_forget() {
     d.keys("x\nx\nenter").pump(300);
     let calls = bluez.calls();
     let order = [
+        format!("Set {ADAPTER} PairableTimeout=180"),
         format!("Set {ADAPTER} Pairable=true"),
         format!("Pair {jbl_path}"),
         format!("Set {ADAPTER} Pairable=false"),

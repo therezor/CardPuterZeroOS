@@ -25,6 +25,8 @@ const OBJECT_MANAGER: &str = "org.freedesktop.DBus.ObjectManager";
 const REJECTED: &str = "org.bluez.Error.Rejected";
 /// Our agent's object.
 const AGENT: &str = "/org/gh0st/settings/agent";
+/// How long the adapter stays pairable at most.
+const PAIRABLE_SECS: u32 = 180;
 
 /// A device BlueZ knows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -619,9 +621,16 @@ impl Bluez {
     }
 
     fn pairable(&mut self, on: bool) {
-        if let Some(a) = self.adapter.clone() {
-            self.set(&a, ADAPTER, "Pairable", Value::Bool(on), Call::Quiet);
+        let Some(a) = self.adapter.clone() else {
+            return;
+        };
+        // BlueZ ends it by itself if Settings never does (closed halfway).
+        // As long as Keyboard's pairing window, which shares the adapter.
+        if on {
+            let secs = Value::U32(PAIRABLE_SECS);
+            self.set(&a, ADAPTER, "PairableTimeout", secs, Call::Quiet);
         }
+        self.set(&a, ADAPTER, "Pairable", Value::Bool(on), Call::Quiet);
     }
 
     /// Trusted: BlueZ lets it back in without asking the agent.

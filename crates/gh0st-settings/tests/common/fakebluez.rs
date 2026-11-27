@@ -177,10 +177,16 @@ fn handle(conn: &mut Conn, st: &mut State, log: &Mutex<Vec<String>>, m: Message)
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let v = m.body.get(2).map(Value::inner).and_then(Value::as_bool);
+            let raw = m.body.get(2).map(Value::inner);
+            let v = raw.and_then(Value::as_bool);
+            let shown = match (v, raw.and_then(Value::as_u32)) {
+                (Some(b), _) => b.to_string(),
+                (None, Some(n)) => n.to_string(),
+                _ => "?".into(),
+            };
             log.lock()
                 .unwrap()
-                .push(format!("Set {path} {prop}={}", v.unwrap_or(false)));
+                .push(format!("Set {path} {prop}={shown}"));
             if path == ADAPTER && prop == "Powered" {
                 st.powered = v.unwrap_or(false);
                 let _ = conn.send(reply);
