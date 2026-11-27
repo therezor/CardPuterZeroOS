@@ -185,7 +185,7 @@ fn main_loop(
         fds.extend(
             watches
                 .iter()
-                .map(|&(_, fd, out)| rt::pollfd_rw(fd, true, out)),
+                .map(|&(_, fd, read, out)| rt::pollfd_rw(fd, read, out)),
         );
         let script_at = match &input {
             Input::Script(s) => s.next_at(),
@@ -310,7 +310,7 @@ fn main_loop(
                 rt_.read_job(id, now);
             }
         }
-        for (i, &(id, _, _)) in watches.iter().enumerate() {
+        for (i, &(id, _, _, _)) in watches.iter().enumerate() {
             let f = &fds[watch_at + i];
             if rt::writable(f) {
                 rt_.writable(id);

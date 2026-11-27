@@ -82,6 +82,13 @@ pub trait Page {
         true
     }
 
+    /// On the first page, an Esc let go before the hold ends opens the app
+    /// menu. The hold still closes the app, with the same toast. For a page
+    /// with no other way to the menu, as the terminal while typing.
+    fn esc_menu(&self) -> bool {
+        false
+    }
+
     /// True while the page takes text. Letters and digits then type instead
     /// of moving the selection or running chips, and the action bar shows
     /// the page's [`hints`](Bars::hints).
@@ -295,6 +302,7 @@ pub(crate) enum Request {
         fd: RawFd,
     },
     Unwatch(u64),
+    HoldReads(u64, bool),
     Write {
         id: u64,
         bytes: Vec<u8>,
@@ -395,6 +403,9 @@ pub(crate) struct Shared {
     pub app_id: String,
     /// The shell has paused the app: something else is in front.
     pub paused: bool,
+    /// The page gave the screen away for now: no frames until it takes it
+    /// back. See [`Cx::hold_screen`].
+    pub held: bool,
     /// The page that just closed called [`Cx::done`]: its parent hears it
     /// in [`Page::resume`], as [`Steps`](crate::Steps) does.
     pub done: bool,
@@ -422,6 +433,7 @@ impl Shared {
             next_id: 1,
             app_id: app_id(),
             paused: false,
+            held: false,
             done: false,
             closable: true,
             asking: false,
@@ -588,6 +600,13 @@ impl Cx<'_> {
 
     pub fn unwatch(&mut self, watch: Watch) {
         self.s.requests.push(Request::Unwatch(watch.0));
+    }
+
+    /// True stops [`Page::ready`] for `watch` until false: what comes waits
+    /// in the fd, and its writer blocks once that is full. Queued writes
+    /// still go out.
+    pub fn hold_reads(&mut self, watch: Watch, hold: bool) {
+        self.s.requests.push(Request::HoldReads(watch.0, hold));
     }
 
     /// Writes to a watched fd without blocking. What doesn't fit now waits
@@ -839,6 +858,18 @@ impl Cx<'_> {
     /// Opens Help: every key of this page, as Fn+H does.
     pub fn show_keys(&mut self) {
         self.s.requests.push(Request::ShowKeys);
+    }
+
+    /// True stops frames: something else draws on the panel, or a program
+    /// is mid-repaint. False takes the screen back and draws it whole, as
+    /// the flush rewrites every row that differs from the panel.
+    pub fn hold_screen(&mut self, hold: bool) {
+        if self.s.held != hold {
+            self.s.held = hold;
+            if !hold {
+                self.s.requests.push(Request::Redraw);
+            }
+        }
     }
 
     /// The shared device settings.

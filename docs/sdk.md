@@ -158,6 +158,12 @@ After every event the SDK calls `draw` and compares the frame with the last
 one. Only rows that changed go over SPI. A page never asks for a redraw and
 never keeps a timer to animate an idle screen.
 
+`cx.hold_screen(true)` stops frames until `cx.hold_screen(false)`, and with
+them the clock's and battery's wakes. It is for a page whose screen another
+program paints, or whose text is mid-change. Taken back, the screen is drawn
+whole: the flush compares with the panel itself, so it rewrites whatever the
+other program left.
+
 On the first page, Esc closes the app only when held for 0.7 s: a tap shows
 "Hold to exit", and the toast fills as the key is held. If the app hangs, the
 shell takes over: held for 3 seconds, Esc sends SIGTERM. The SDK then
@@ -209,6 +215,9 @@ things from that list, so they never disagree:
   on screen, Esc and Enter, every command with keys under the mode it works
   in, then the keys that work everywhere.
   The menu's Help row opens it too, and so does `cx.show_keys()`.
+  A page whose `esc_menu` returns true opens the menu when Esc on its
+  first page is let go before the hold ends; the hold still exits. The
+  terminal does this while typing.
 - **The keys.** A command's keys run it while its mode is on. They also pick
   its row while the menu is open.
 - **Chips.** `.chip(5, "search", "Find")` puts a chip over key 5 that runs
@@ -841,6 +850,9 @@ or a socket, it joins its own fd to the loop:
 - `cx.write(watch, bytes)` writes without blocking. What doesn't fit waits in
   order and goes out when the fd has room.
 - `cx.unwatch(watch)` takes the fd out. The page still owns it and closes it.
+- `cx.hold_reads(watch, true)` stops `ready` for it until false. What comes
+  waits in the fd, and its writer blocks once that is full. Writes still go
+  out. The terminal holds a tab's output this way while its text is selected.
 - `cx.adopt(pid)` takes a child the page started itself. Its exit comes to
   `Page::exited`. The SDK reaps every child, so never call `waitpid`.
 

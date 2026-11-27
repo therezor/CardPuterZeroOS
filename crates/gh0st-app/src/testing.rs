@@ -35,6 +35,9 @@ pub struct Driver {
     now: u64,
     /// The shell's end of the app's link, once [`listen`](Driver::listen)ed.
     shell: Option<gh0st_core::link::Link>,
+    /// Frames the loop drew in [`wait`](Driver::wait) and
+    /// [`idle_wakes`](Driver::idle_wakes).
+    drawn: u64,
 }
 
 impl Driver {
@@ -77,6 +80,7 @@ impl Driver {
             rt,
             now: 0,
             shell: None,
+            drawn: 0,
         }
     }
 
@@ -101,6 +105,7 @@ impl Driver {
             if self.rt.frame_due(self.now) {
                 self.rt.render();
                 self.rt.last_frame = self.now;
+                self.drawn += 1;
             }
         }
         self.now = end;
@@ -119,6 +124,7 @@ impl Driver {
             if self.rt.frame_due(self.now) {
                 self.rt.render();
                 self.rt.last_frame = self.now;
+                self.drawn += 1;
             }
             wakes += 1;
             if wakes > 10_000 {
@@ -138,11 +144,11 @@ impl Driver {
             let watches = self.rt.watch_fds();
             let mut fds: Vec<_> = watches
                 .iter()
-                .map(|&(_, fd, out)| gh0st_core::rt::pollfd_rw(fd, true, out))
+                .map(|&(_, fd, read, out)| gh0st_core::rt::pollfd_rw(fd, read, out))
                 .collect();
             let _ = gh0st_core::rt::wait(&mut fds, Some(gh0st_core::rt::now_ms() + left.min(10)));
             self.now += 1;
-            for (f, &(id, _, _)) in fds.iter().zip(&watches) {
+            for (f, &(id, _, _, _)) in fds.iter().zip(&watches) {
                 if gh0st_core::rt::writable(f) {
                     self.rt.writable(id);
                 }
@@ -351,6 +357,21 @@ impl Driver {
     /// How many pages are open.
     pub fn depth(&self) -> usize {
         self.rt.depth()
+    }
+
+    /// The app menu is open.
+    pub fn menu_open(&self) -> bool {
+        self.rt.menu_open()
+    }
+
+    /// How many frames the loop has drawn.
+    pub fn frames(&self) -> u64 {
+        self.drawn
+    }
+
+    /// A frame is wanted and would be drawn now.
+    pub fn frame_due(&self) -> bool {
+        self.rt.frame_due(self.now)
     }
 
     /// True once the last page has closed.

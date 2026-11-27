@@ -86,6 +86,8 @@ struct WatchEntry {
     fd: RawFd,
     /// Bytes waiting for room in the fd.
     out: Vec<u8>,
+    /// False while the page holds reads: [`Cx::hold_reads`].
+    reads: bool,
 }
 
 /// What the self-drawn top bar shows. Read at start and on the minute, and
@@ -439,6 +441,7 @@ impl Runtime {
                     Request::Push(_)
                     | Request::Timer { .. }
                     | Request::Watch { .. }
+                    | Request::HoldReads(..)
                     | Request::Write { .. }
                     | Request::Adopt(_)
                     | Request::Ask(..)
@@ -511,8 +514,14 @@ impl Runtime {
                     owner,
                     fd,
                     out: Vec::new(),
+                    reads: true,
                 }),
                 Request::Unwatch(id) => self.watches.retain(|w| w.id != id),
+                Request::HoldReads(id, hold) => {
+                    if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
+                        w.reads = !hold;
+                    }
+                }
                 Request::Write { id, bytes } => {
                     if let Some(w) = self.watches.iter_mut().find(|w| w.id == id) {
                         queue(w, &bytes);
@@ -1021,6 +1030,11 @@ impl Runtime {
         let Some(h) = self.hold.take() else {
             return;
         };
+        if h.what == Held::Exit && self.stack.first().is_some_and(|p| p.esc_menu()) {
+            self.toast = None;
+            self.open_menu(0);
+            return;
+        }
         if let (Held::Dialog, Overlay::Dialog { d, .. }) = (h.what, &self.overlay) {
             let say = format!("Hold to {}", d.held_word().unwrap_or(&d.yes));
             self.show_toast(say, Tone::Info, now);
@@ -1118,6 +1132,11 @@ impl Runtime {
             p.commands(&mut c);
         }
         c
+    }
+
+    /// The app menu shows, for tests.
+    pub(crate) fn menu_open(&self) -> bool {
+        matches!(self.overlay, Overlay::Menu(_))
     }
 
     fn close_overlay(&mut self) {
@@ -1272,16 +1291,24 @@ impl Runtime {
     }
 
     /// Watched fds for poll: id, fd, and whether output waits for room.
-    pub fn watch_fds(&self) -> Vec<(u64, RawFd, bool)> {
+    /// Watched fds to poll: id, fd, read, write. One whose reads are held
+    /// and with nothing to write is left out, so its hangup wakes nothing.
+    pub fn watch_fds(&self) -> Vec<(u64, RawFd, bool, bool)> {
         self.watches
             .iter()
-            .map(|w| (w.id, w.fd, !w.out.is_empty()))
+            .filter(|w| w.reads || !w.out.is_empty())
+            .map(|w| (w.id, w.fd, w.reads, !w.out.is_empty()))
             .collect()
     }
 
     /// A watched fd is readable or closed.
     pub fn ready(&mut self, id: u64, now: u64) {
-        if let Some(owner) = self.watches.iter().find(|w| w.id == id).map(|w| w.owner) {
+        let owner = self
+            .watches
+            .iter()
+            .find(|w| w.id == id && w.reads)
+            .map(|w| w.owner);
+        if let Some(owner) = owner {
             self.call_quiet(owner, now, |p, cx| p.ready(Watch(id), cx));
         }
     }
@@ -1296,7 +1323,7 @@ impl Runtime {
     /// True when a frame is wanted and the page's least gap since the last
     /// one has passed.
     pub fn frame_due(&self, now: u64) -> bool {
-        self.dirty && !self.quit && !self.paused && now >= self.frame_at()
+        self.dirty && !self.quit && !self.paused && !self.s.held && now >= self.frame_at()
     }
 
     /// Another app or the shell is in front: no keys, no frames.
@@ -1410,13 +1437,15 @@ impl Runtime {
             let pending = (!self.pending.is_empty()).then_some(0);
             return rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([pending]));
         }
-        let top = self.top_bars().top;
+        // Held: what only the screen needs waits until it is taken back.
+        let draws = !self.s.held;
+        let top = draws && self.top_bars().top;
         let clock = top.then_some(self.bar.clock_at);
         let battery = (top && self.bar.battery_dir.is_some()).then_some(self.bar.battery_at);
         rt::earliest(self.timers.iter().map(|t| Some(t.at)).chain([
             self.kb.repeat_at(),
             self.toast.as_ref().map(|t| t.until),
-            self.busy.as_ref().map(|b| match b.shown {
+            self.busy.as_ref().filter(|_| draws).map(|b| match b.shown {
                 true => self.last_frame + BUSY_FRAME_MS,
                 false => b.since + BUSY_GRACE_MS,
             }),
@@ -1424,7 +1453,7 @@ impl Runtime {
             clock,
             battery,
             (!self.pending.is_empty()).then_some(0),
-            self.dirty.then(|| self.frame_at()),
+            (self.dirty && draws).then(|| self.frame_at()),
         ]))
     }
 
@@ -2036,6 +2065,63 @@ mod tests {
             assert_eq!(log.borrow().as_slice(), ["command 1"]);
         }
 
+        /// An Esc tap opens the menu, as the terminal's does while typing.
+        /// `hold` holds the screen on Enter.
+        struct Menuer {
+            hold: bool,
+        }
+
+        impl Page for Menuer {
+            fn title(&self) -> &str {
+                "Menuer"
+            }
+            fn draw(&self, _: &mut Ui) {}
+            fn raw_keys(&self) -> bool {
+                true
+            }
+            fn esc_menu(&self) -> bool {
+                true
+            }
+            fn raw(&mut self, key: &RawKey, cx: &mut Cx) {
+                if key.state == gh0st_core::keys::State::Press
+                    && key.code == gh0st_core::keys::code::ENTER
+                {
+                    self.hold = !self.hold;
+                    cx.hold_screen(self.hold);
+                    cx.redraw();
+                }
+            }
+        }
+
+        #[test]
+        fn an_esc_tap_can_open_the_menu_and_the_hold_still_exits() {
+            let mut d = Driver::new(Menuer { hold: false });
+            d.keys("esc").wait(1000);
+            assert!(d.menu_open());
+            assert_eq!(d.toast(), None, "the hold's toast goes with the tap");
+            d.keys("esc").wait(100);
+            assert!(!d.menu_open(), "Esc closes the menu");
+            assert!(!d.quit());
+            d.keys("down esc").wait(300);
+            assert_eq!(
+                d.toast(),
+                Some("Hold to exit"),
+                "the same toast as every app"
+            );
+            d.wait(500);
+            assert!(d.quit());
+        }
+
+        #[test]
+        fn a_held_screen_draws_nothing_and_wakes_for_nothing() {
+            let mut d = Driver::new(Menuer { hold: false });
+            d.wait(100).keys("enter").wait(10);
+            assert!(!d.frame_due());
+            assert_eq!(d.idle_wakes(5000), 0, "no clock, battery or frame");
+            d.keys("enter");
+            assert!(d.frame_due(), "taken back: drawn at once");
+        }
+
         #[test]
         fn esc_on_the_first_page_closes_only_when_held() {
             let (mut d, _) = probe(false, false);
@@ -2251,6 +2337,7 @@ mod tests {
             owner: 0,
             fd: fds[1],
             out: Vec::new(),
+            reads: true,
         };
         let chunk = vec![b'x'; 64 * 1024];
         for _ in 0..64 {
