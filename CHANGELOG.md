@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.5.0 beta
+
+- 🎧 **Bluetooth headphones and speakers.** Pair them in Settings and play
+  through them. They connect again when Bluetooth comes back on.
+- 🏠 **Row, a new home layout.** One large app in the middle with its
+  neighbours either side, like the stock launcher. Apps with their own
+  picture fill their card.
+- 🔌 **The side switch shuts down properly.** The screen says it is
+  shutting down, and nothing is lost. Hold Esc on home to restart.
+- 🔒 Hold Tab to lock over an app too. The lock screen slides away as you
+  unlock.
+- 📁 Files can open protected folders after you type your password.
+- 🛍️ Every app in the Store installs. Voice input and Pinyin can type into
+  the apps you allow in Settings > Apps.
+- 🧪 Try what comes next: Settings > System > Updates > Channel > Edge.
+- 🐛 Fixes: Bluetooth stays off after a restart, the volume and brightness
+  bars no longer flicker over apps, and network apps from the Store find
+  the Ethernet port.
+
 ## v0.4.0 beta
 
 - 🛡️ **Apps kept apart.** Every app runs in a sandbox of its own. It can't

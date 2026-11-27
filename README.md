@@ -5,7 +5,7 @@
 **A lean, private OS for the M5Stack CardputerZero.**
 Faster than stock, private by default, and every CardputerZero app still runs.
 
-[⬇️ Download v0.4.0 beta](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.4.0) ·
+[⬇️ Download v0.5.0 beta](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.5.0) ·
 [⚡ Flash in 5 minutes](#-flash-it) ·
 [🧪 Tester notes](docs/beta.md) ·
 [📝 Changelog](CHANGELOG.md)
@@ -28,7 +28,7 @@ Pine, Solarized, Tokyo Night, or [your own](docs/design.md#custom-colour-schemes
 app with the memory it uses. Go back to one where you left it, or close it.
 
 🔍 **Find any app in a keystroke.** Press S and type. Pin favourites with P.
-Show home as a grid or a list.
+Show home as a grid, a list or a row.
 
 🔒 **A real lock screen.** Your password, the time large over your wallpaper,
 and how many notifications wait, but never what they say. Keys pressed in a
@@ -51,6 +51,9 @@ brings back unsaved edits after a crash.
 
 🖼️ **Media.** Pictures, video and music in one app. Music plays on behind
 other apps, with Pause and Next in its notification.
+
+🎧 **Bluetooth audio.** Pair headphones and speakers in Settings. They
+connect again when Bluetooth comes back on.
 
 ⌨️ **Keyboard.** The CardputerZero as a keyboard, mouse and media remote for
 a computer or phone, over Bluetooth or a USB cable.
@@ -112,7 +115,7 @@ You need a CardputerZero, a genuine microSD card of 8 GB or more, and
 [Raspberry Pi Imager](https://www.raspberrypi.com/software/) 2.0.2 or later.
 Flashing erases the card.
 
-1. ⬇️ From the [v0.4.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.4.0),
+1. ⬇️ From the [v0.5.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.5.0),
    download `gh0st-release-DATE.img.xz`.
 2. 🍓 In Imager, pick **Raspberry Pi Zero 2 W** as the device, then
    **Use custom** as the OS, and choose the `.img.xz`. Don't unpack it.
@@ -147,7 +150,7 @@ too.
 
 ## 🚧 Status
 
-**v0.4.0 is a beta.** It runs every day on our test device, but it can
+**v0.5.0 is a beta.** It runs every day on our test device, but it can
 still break, and the SDK can still change. To report a bug,
 open an issue with the Build from Settings > About. The
 [tester notes](docs/beta.md) list what else to include.
