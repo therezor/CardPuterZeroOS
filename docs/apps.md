@@ -389,6 +389,9 @@ the same.
   by hand: no screen sets it. The default is `/usr/bin/gh0st-term -e`, built
   from `crates/gh0st-term`.
 - The shell runs a `Terminal=true` entry as `<terminal> /bin/sh -c "<Exec>"`.
+  A program in it that opens the panel and draws on it itself gets the
+  screen: the terminal draws nothing until it closes the panel
+  (`terminal.md`).
 - With `GH0ST_SYSPLAUSE=1`, the terminal waits for a key press after the
   command exits, then exits.
 - Programs in it see `TERM=xterm-256color` and `COLORTERM=truecolor`. Each

@@ -3,6 +3,7 @@
 pub mod app;
 pub mod boxes;
 pub mod keys;
+pub mod panel;
 pub mod prefs;
 pub mod pty;
 pub mod render;

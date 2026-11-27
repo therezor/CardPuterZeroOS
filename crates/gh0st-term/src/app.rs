@@ -4,10 +4,11 @@
 //! and the hint bar come from one list.
 
 use crate::keys;
+use crate::panel::Panel;
 use crate::prefs::{self, Prefs, key};
 use crate::pty::{self, Pty};
 use crate::render::{self, Colors, Cursor, Look, Span};
-use crate::view::{Pos, Src, View};
+use crate::view::{Point, Pos, Src, View};
 use crate::vt::cell::{Cell, Clusters};
 use crate::vt::history::flag::PROMPT;
 use crate::vt::{CursorShape, Terminal, Vt, event};
@@ -24,15 +25,17 @@ use std::path::PathBuf;
 /// a flood.
 const READ_MAX: usize = 64 * 1024;
 /// About one panel refresh: under a flood the latest state is drawn at most
-/// this often.
+/// this often, and output waits at most this long to be drawn.
 const FRAME_MS: u64 = 20;
-/// How long output may keep coming before it is drawn. htop and others
-/// repaint in several writes; drawing between them flashes.
-const SETTLE_MS: u64 = 5;
+/// A quiet gap this long ends a repaint. htop and others repaint in several
+/// writes; drawing between them flashes, so each write waits again.
+const SETTLE_MS: u64 = 4;
 /// Notifications from programs, at most one this often.
 const NOTICE_GAP_MS: u128 = 3000;
 /// Synchronized output may hold the screen this long at most.
 const SYNC_MS: u64 = 150;
+/// After the panel opens or closes, look again this much later.
+const PANEL_AGAIN_MS: u64 = 250;
 /// The most one paste sends to the program, so a big clipboard can't
 /// flood it.
 const PASTE_MAX: usize = 64 * 1024;
@@ -115,6 +118,8 @@ mod cmd {
     pub const TAB: u32 = 9;
     pub const BAR: u32 = 10;
     pub const SETTINGS: u32 = 12;
+    pub const SEND_ESC: u32 = 13;
+    pub const SELECT_MODE: u32 = 14;
     pub const SCROLL: u32 = 20;
     pub const PAN: u32 = 21;
     pub const PAGE: u32 = 22;
@@ -131,13 +136,19 @@ mod cmd {
     pub const EXTEND: u32 = 50;
     pub const YANK: u32 = 51;
     pub const CANCEL: u32 = 52;
+    pub const SIDE: u32 = 53;
+    pub const WORD: u32 = 54;
+    pub const SEL_PAGE: u32 = 55;
+    pub const SEL_ENDS: u32 = 56;
+    pub const MARK: u32 = 57;
+    pub const LINES: u32 = 58;
 }
 
 /// Names of the modes in Help.
 const TYPING: &str = "Typing";
 const SCROLLING: &str = "Scroll mode";
 const FINDING: &str = "Find";
-const COPYING: &str = "Copy lines";
+const SELECTING: &str = "Select";
 
 struct Tab {
     vt: Box<Vt>,
@@ -149,6 +160,17 @@ struct Tab {
     sync: Option<Timer>,
 }
 
+/// How the selection's head moves.
+#[derive(Clone, Copy)]
+enum Move {
+    Up,
+    Down,
+    Left,
+    Right,
+    WordLeft,
+    WordRight,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Mode {
     Typing,
@@ -156,10 +178,12 @@ enum Mode {
     View,
     /// Typing a search.
     Find(String),
-    /// Lines from the anchor to the head are selected.
+    /// A cursor of its own moves over the text. From the anchor, once set,
+    /// to the head is selected; whole rows with `lines`.
     Select {
-        anchor: Pos,
-        head: Pos,
+        anchor: Option<Point>,
+        head: Point,
+        lines: bool,
     },
 }
 
@@ -195,13 +219,26 @@ pub struct Term {
     noticed: Option<std::time::Instant>,
     /// The clock for each tab's reply budget.
     epoch: std::time::Instant,
-    /// Output came in: draw when this fires, so a program's repaint lands
-    /// whole rather than half done.
+    /// Output came in: draw when it stops for `SETTLE_MS`, so a program's
+    /// repaint lands whole rather than half done.
     settle: Option<Timer>,
+    /// Or when this fires, `FRAME_MS` after the first byte, under a flood.
+    cap: Option<Timer>,
+    /// The screen is held: a program in the tab in view is mid-repaint in
+    /// synchronized output, or a program draws on the panel itself.
+    held: bool,
+    /// Who opens the panel, and whether a program in a tab has it.
+    panel: Option<(Panel, Watch)>,
+    yielded: bool,
+    /// A second look, in case the opener's fd wasn't in place at the first.
+    panel_again: Option<Timer>,
     /// The hint bar's height, from the theme.
     hint_h: i32,
     /// Scroll mode has said once that its letters are shortcuts.
     told_keys: bool,
+    /// The tab whose output waits while its text is selected, so the text
+    /// holds still.
+    frozen: Option<Watch>,
     scratch: RefCell<(Vec<Cell>, Clusters)>,
 }
 
@@ -235,8 +272,14 @@ impl Term {
             noticed: None,
             epoch: std::time::Instant::now(),
             settle: None,
+            cap: None,
+            held: false,
+            panel: None,
+            yielded: false,
+            panel_again: None,
             hint_h: 18,
             told_keys: false,
+            frozen: None,
             scratch: RefCell::new((Vec::new(), Clusters::default())),
         }
     }
@@ -325,6 +368,7 @@ impl Term {
             tab.view.snap();
         }
         self.track();
+        self.thaw(cx);
         cx.redraw();
     }
 
@@ -425,18 +469,24 @@ impl Term {
         if self.cur > i || self.cur >= self.tabs.len() {
             self.cur = self.cur.saturating_sub(1);
         }
+        self.hold(cx);
         self.retitle();
         cx.redraw();
     }
 
     fn switch(&mut self, i: usize, cx: &mut Cx) {
         if i < self.tabs.len() && i != self.cur {
+            // A selection is the old tab's.
+            if matches!(self.mode, Mode::Select { .. }) {
+                self.mode = Mode::View;
+            }
             self.front(false, cx);
             self.cur = i;
             self.front(true, cx);
             self.hit = None;
             self.retitle();
             self.track();
+            self.hold(cx);
             cx.redraw();
         }
     }
@@ -512,14 +562,58 @@ impl Term {
             }
             _ => {}
         }
-        let held = tab.sync.is_some();
+        let synced = tab.sync.is_some();
         if events & event::TITLE != 0 && i == self.cur {
             self.retitle();
         }
-        if i == self.cur && (total > 0 || hup) && !held && self.settle.is_none() {
-            self.settle = Some(cx.after(SETTLE_MS));
+        if i == self.cur {
+            if (total > 0 || hup) && !synced {
+                self.settle_later(cx);
+            }
+            self.hold(cx);
         }
         hup
+    }
+
+    /// Whether a program in a tab has the panel: if so, it gets the screen.
+    fn check_panel(&mut self, cx: &mut Cx) {
+        let Some((p, _)) = &self.panel else {
+            return;
+        };
+        let sessions: Vec<i32> = self.tabs.iter().map(|t| t.pid).collect();
+        let held = p.held(&sessions);
+        if held != self.yielded {
+            self.yielded = held;
+            // What the program can't see must not take its keys.
+            if held && self.mode != Mode::Typing {
+                self.mode = Mode::Typing;
+                self.hit = None;
+                self.thaw(cx);
+            }
+            self.hold(cx);
+        }
+    }
+
+    /// Output came: draw once it pauses, or at the cap.
+    fn settle_later(&mut self, cx: &mut Cx) {
+        if let Some(t) = self.settle.take() {
+            cx.cancel(t);
+        }
+        self.settle = Some(cx.after(SETTLE_MS));
+        if self.cap.is_none() {
+            self.cap = Some(cx.after(FRAME_MS));
+        }
+    }
+
+    /// Holds the screen while the tab in view is in synchronized output, so
+    /// no redraw, a key's included, shows half a repaint, and while a
+    /// program in a tab draws on the panel itself.
+    fn hold(&mut self, cx: &mut Cx) {
+        let held = self.yielded || self.tab().is_some_and(|t| t.sync.is_some());
+        if held != self.held {
+            self.held = held;
+            cx.hold_screen(held);
+        }
     }
 
     fn retitle(&mut self) {
@@ -611,6 +705,8 @@ impl Term {
             cmd::LAYOUT => self.next_layout(cx),
             cmd::FIND => self.mode = Mode::Find(self.query.clone()),
             cmd::COPY => self.start_select(cx),
+            cmd::SELECT_MODE if matches!(self.mode, Mode::Select { .. }) => self.leave_view(cx),
+            cmd::SELECT_MODE => self.start_select(cx),
             cmd::PASTE => {
                 self.mode = Mode::Typing;
                 self.paste(cx);
@@ -638,6 +734,11 @@ impl Term {
                 cx.settings().set_bool(key::BAR, self.bar);
             }
             cmd::SETTINGS => cx.push(Prefs::new()),
+            cmd::SEND_ESC => {
+                self.mode = Mode::Typing;
+                self.hit = None;
+                self.send(b"\x1b", cx);
+            }
             cmd::SCROLL => self.scroll(back, 1, cx),
             cmd::PAN => self.pan(back, cx),
             cmd::HISTORY => {
@@ -654,8 +755,41 @@ impl Term {
             }
             cmd::KEYS => cx.show_keys(),
             cmd::OLDER | cmd::NEWER => self.find_step(id == cmd::OLDER, cx),
-            cmd::FIND_DONE | cmd::CANCEL => self.mode = Mode::View,
-            cmd::EXTEND => self.extend(back, cx),
+            cmd::FIND_DONE => self.mode = Mode::View,
+            cmd::CANCEL => self.leave_view(cx),
+            cmd::EXTEND => self.move_head(if back { Move::Up } else { Move::Down }, 1, cx),
+            cmd::SIDE => self.move_head(if back { Move::Left } else { Move::Right }, 1, cx),
+            cmd::WORD => self.move_head(
+                if back {
+                    Move::WordLeft
+                } else {
+                    Move::WordRight
+                },
+                1,
+                cx,
+            ),
+            cmd::SEL_PAGE => {
+                let m = if back { Move::Up } else { Move::Down };
+                self.move_head(m, page, cx);
+            }
+            cmd::SEL_ENDS => self.head_to_end(back, cx),
+            cmd::MARK => {
+                if let Mode::Select { anchor, head, .. } = &mut self.mode {
+                    *anchor = Some(*head);
+                }
+            }
+            cmd::LINES => {
+                // Whole lines start on the head's line if nothing is marked.
+                if let Mode::Select {
+                    lines,
+                    anchor,
+                    head,
+                } = &mut self.mode
+                {
+                    *lines = !*lines;
+                    anchor.get_or_insert(*head);
+                }
+            }
             cmd::YANK => self.yank(cx),
             _ => {}
         }
@@ -793,55 +927,150 @@ impl Term {
         cx.redraw();
     }
 
+    /// Select mode, its head where the eye is: the match found, the
+    /// cursor, or the top of the view.
     fn start_select(&mut self, cx: &mut Cx) {
         let Some(tab) = self.tab() else {
             return;
         };
         let t = &tab.vt.t;
-        let at = match self.hit {
-            Some(h) => h.pos,
-            None if tab.view.live() => Pos::Grid(t.cursor().1),
-            None => tab.view.top,
+        let head = match self.hit {
+            Some(h) => Point {
+                pos: h.pos,
+                col: h.cols.0,
+            },
+            None if tab.view.live() => {
+                let (x, y) = t.cursor();
+                Point {
+                    pos: Pos::Grid(y),
+                    col: x.min(t.cols - 1),
+                }
+            }
+            None => Point {
+                pos: tab.view.top,
+                col: tab.view.pan_x,
+            },
         };
+        let watch = tab.watch;
+        self.hit = None;
         self.mode = Mode::Select {
-            anchor: at,
-            head: at,
+            anchor: None,
+            head,
+            lines: false,
         };
+        // The program waits while its text is selected.
+        if let Some(w) = watch {
+            cx.hold_reads(w, true);
+            self.frozen = Some(w);
+        }
         cx.redraw();
     }
 
-    /// Moves the selection's head a row up or down.
-    fn extend(&mut self, up: bool, cx: &mut Cx) {
-        let Mode::Select { anchor, head } = self.mode.clone() else {
+    /// Out of select mode: the program's output comes in again.
+    fn thaw(&mut self, cx: &mut Cx) {
+        if matches!(self.mode, Mode::Select { .. }) {
+            return;
+        }
+        if let Some(w) = self.frozen.take() {
+            cx.hold_reads(w, false);
+        }
+    }
+
+    /// Moves the selection's head `n` times.
+    fn move_head(&mut self, how: Move, n: usize, cx: &mut Cx) {
+        let Mode::Select { head, .. } = self.mode else {
             return;
         };
-        let vis = self.vis();
-        let Some(tab) = self.tabs.get_mut(self.cur) else {
+        let Some(tab) = self.tabs.get(self.cur) else {
             return;
         };
         let t = &tab.vt.t;
-        let head = if up { head.up(t) } else { head.down(t) };
-        tab.view.reveal(head, t, vis.1);
-        self.mode = Mode::Select { anchor, head };
+        let mut scratch = self.scratch.borrow_mut();
+        let mut p = head;
+        for _ in 0..n {
+            p = step(t, p, how, &mut scratch);
+        }
+        drop(scratch);
+        self.place_head(p, cx);
+    }
+
+    /// The head to the oldest line, or back to the cursor.
+    fn head_to_end(&mut self, oldest: bool, cx: &mut Cx) {
+        let Some(tab) = self.tab() else {
+            return;
+        };
+        let t = &tab.vt.t;
+        let p = if oldest {
+            let pos = if t.history.is_empty() {
+                Pos::Grid(0)
+            } else {
+                Pos::Hist(t.history.id(0), 0)
+            };
+            Point { pos, col: 0 }
+        } else {
+            let (x, y) = t.cursor();
+            Point {
+                pos: Pos::Grid(y),
+                col: x.min(t.cols - 1),
+            }
+        };
+        self.place_head(p, cx);
+    }
+
+    /// Sets the head and brings it into view, panning to its column too.
+    fn place_head(&mut self, p: Point, cx: &mut Cx) {
+        let vis = self.vis();
+        let cols = self.grid_size().0;
+        if let Mode::Select { head, .. } = &mut self.mode {
+            *head = p;
+        }
+        let Some(tab) = self.tabs.get_mut(self.cur) else {
+            return;
+        };
+        tab.view.reveal(p.pos, &tab.vt.t, vis.1);
+        let v = &mut tab.view;
+        if p.col < v.pan_x || p.col >= v.pan_x + vis.0 {
+            let want = p.col.saturating_sub(vis.0 / 2) as isize;
+            v.pan(want - v.pan_x as isize, cols, vis.0);
+        }
         cx.redraw();
     }
 
-    /// Copies the selected lines and goes back to scroll mode.
+    /// Copies the selection and goes back to typing.
     fn yank(&mut self, cx: &mut Cx) {
-        let Mode::Select { anchor, head } = self.mode.clone() else {
+        let Mode::Select {
+            anchor,
+            head,
+            lines,
+        } = self.mode
+        else {
+            return;
+        };
+        let Some(anchor) = anchor.or(lines.then_some(head)) else {
+            cx.toast("Space marks where it starts");
             return;
         };
         let Some(tab) = self.tab() else {
             return;
         };
-        let text = selected_text(&tab.vt.t, anchor, head, &mut self.scratch.borrow_mut());
-        let lines = text.lines().count().max(1);
+        let text = selected_text(
+            &tab.vt.t,
+            anchor,
+            head,
+            lines,
+            &mut self.scratch.borrow_mut(),
+        );
         let copied = cx.copy(text.as_bytes());
-        self.mode = Mode::View;
-        if copied {
-            cx.toast(&format!("Copied {lines} lines"));
-        } else {
+        self.leave_view(cx);
+        if !copied {
             cx.toast("Couldn't copy that");
+        } else {
+            let (n, what) = match lines {
+                true => (text.lines().count().max(1), "line"),
+                false => (text.chars().count(), "character"),
+            };
+            let s = if n == 1 { "" } else { "s" };
+            cx.toast(&format!("Copied {n} {what}{s}"));
         }
         cx.redraw();
     }
@@ -942,20 +1171,38 @@ fn row_text(t: &Terminal, src: Src, scratch: &mut (Vec<Cell>, Clusters)) -> (Str
     (text, cols)
 }
 
-/// Rows from `a` to `b`, either way round, as text. Rows that autowrap
-/// joined stay one line.
-fn selected_text(t: &Terminal, a: Pos, b: Pos, scratch: &mut (Vec<Cell>, Clusters)) -> String {
-    let (mut p, end) = if a.key() <= b.key() { (a, b) } else { (b, a) };
+/// From `a` to `b`, either way round, as text: whole rows with `lines`.
+/// Rows that autowrap joined stay one line.
+fn selected_text(
+    t: &Terminal,
+    a: Point,
+    b: Point,
+    lines: bool,
+    scratch: &mut (Vec<Cell>, Clusters),
+) -> String {
+    let (s, e) = if a.key() <= b.key() { (a, b) } else { (b, a) };
+    let mut p = s.pos;
     let mut out = String::new();
     loop {
         let src = p.src(t);
-        let (text, _) = row_text(t, src, scratch);
-        out.push_str(&text);
+        let (text, cols) = row_text(t, src, scratch);
+        if lines {
+            out.push_str(&text);
+        } else {
+            let c0 = if p == s.pos { s.col } else { 0 };
+            let c1 = if p == e.pos { e.col } else { usize::MAX };
+            out.extend(
+                text.chars()
+                    .zip(&cols)
+                    .filter(|&(_, &c)| c >= c0 && c <= c1)
+                    .map(|(ch, _)| ch),
+            );
+        }
         let joined = match src {
             Src::Grid(y) => t.grid().rows.get(y).is_some_and(|r| r.wrapped),
             Src::Hist(i, sub) => sub + 1 < t.history.line(i).rows(t.cols),
         };
-        if p == end {
+        if p == e.pos {
             break;
         }
         if !joined {
@@ -968,6 +1215,184 @@ fn selected_text(t: &Terminal, a: Pos, b: Pos, scratch: &mut (Vec<Cell>, Cluster
         p = next;
     }
     out
+}
+
+/// The columns of row `pos` the selection covers, if any.
+fn sel_span(
+    anchor: Option<Point>,
+    head: Point,
+    lines: bool,
+    pos: Pos,
+    cols: usize,
+) -> Option<(usize, usize)> {
+    let a = anchor.or(lines.then_some(head))?;
+    let (s, e) = if a.key() <= head.key() {
+        (a, head)
+    } else {
+        (head, a)
+    };
+    let k = pos.key();
+    if k < s.pos.key() || k > e.pos.key() {
+        return None;
+    }
+    if lines {
+        return Some((0, cols));
+    }
+    let c0 = if k == s.pos.key() { s.col } else { 0 };
+    let c1 = if k == e.pos.key() { e.col + 1 } else { cols };
+    Some((c0, c1))
+}
+
+/// The row's cells, a history row's unpacked into `scratch`.
+fn cells_of(t: &Terminal, pos: Pos, scratch: &mut (Vec<Cell>, Clusters)) -> Vec<Cell> {
+    match pos.src(t) {
+        Src::Grid(y) => t
+            .grid()
+            .rows
+            .get(y)
+            .map(|r| r.cells.clone())
+            .unwrap_or_default(),
+        Src::Hist(i, sub) => {
+            scratch.1.clear();
+            t.history
+                .line(i)
+                .cells(t.cols, sub, &mut scratch.0, &mut scratch.1);
+            scratch.0.clone()
+        }
+    }
+}
+
+/// A column on the start of its cell, not on a wide char's right half.
+fn snap(t: &Terminal, p: Point, scratch: &mut (Vec<Cell>, Clusters)) -> Point {
+    let cells = cells_of(t, p.pos, scratch);
+    let mut col = p.col.min(t.cols - 1);
+    while col > 0 && cells.get(col).is_some_and(|c| c.is_spacer()) {
+        col -= 1;
+    }
+    Point { pos: p.pos, col }
+}
+
+/// Word, space or other: a word runs while its class holds.
+fn class(c: char) -> u8 {
+    if c.is_whitespace() {
+        0
+    } else if c.is_alphanumeric() || c == '_' {
+        1
+    } else {
+        2
+    }
+}
+
+/// Where each word of row `pos` starts.
+fn word_starts(t: &Terminal, pos: Pos, scratch: &mut (Vec<Cell>, Clusters)) -> Vec<usize> {
+    let (text, cols) = row_text(t, pos.src(t), scratch);
+    let mut out = Vec::new();
+    let mut prev = 0;
+    for (ch, &col) in text.chars().zip(&cols) {
+        let k = class(ch);
+        if k != 0 && k != prev && out.last() != Some(&col) {
+            out.push(col);
+        }
+        prev = k;
+    }
+    out
+}
+
+/// The column just past row `pos`'s text.
+fn text_end(t: &Terminal, pos: Pos, scratch: &mut (Vec<Cell>, Clusters)) -> usize {
+    let (text, cols) = row_text(t, pos.src(t), scratch);
+    let n = text.chars().count();
+    cols.get(n.wrapping_sub(1)).map_or(0, |&c| c + 1)
+}
+
+/// One step of the selection's head. Left and right run on to the row
+/// before or after; word moves stop on the start of a word.
+fn step(t: &Terminal, p: Point, how: Move, scratch: &mut (Vec<Cell>, Clusters)) -> Point {
+    let up = p.pos.up(t);
+    let down = p.pos.down(t);
+    match how {
+        Move::Up => snap(
+            t,
+            Point {
+                pos: up,
+                col: p.col,
+            },
+            scratch,
+        ),
+        Move::Down => snap(
+            t,
+            Point {
+                pos: down,
+                col: p.col,
+            },
+            scratch,
+        ),
+        Move::Left if p.col > 0 => snap(
+            t,
+            Point {
+                pos: p.pos,
+                col: p.col - 1,
+            },
+            scratch,
+        ),
+        Move::Left if up != p.pos => {
+            let end = text_end(t, up, scratch).min(t.cols - 1);
+            snap(t, Point { pos: up, col: end }, scratch)
+        }
+        Move::Right => {
+            let cells = cells_of(t, p.pos, scratch);
+            let wide = cells.get(p.col).is_some_and(|c| c.is_wide());
+            let next = p.col + if wide { 2 } else { 1 };
+            let end = text_end(t, p.pos, scratch);
+            if next < t.cols && next <= end {
+                Point {
+                    pos: p.pos,
+                    col: next,
+                }
+            } else if down != p.pos {
+                Point { pos: down, col: 0 }
+            } else {
+                p
+            }
+        }
+        Move::WordRight => {
+            if let Some(&c) = word_starts(t, p.pos, scratch).iter().find(|&&c| c > p.col) {
+                return Point { pos: p.pos, col: c };
+            }
+            let mut pos = p.pos;
+            loop {
+                let next = pos.down(t);
+                if next == pos {
+                    return p;
+                }
+                pos = next;
+                if let Some(&c) = word_starts(t, pos, scratch).first() {
+                    return Point { pos, col: c };
+                }
+            }
+        }
+        Move::WordLeft => {
+            if let Some(&c) = word_starts(t, p.pos, scratch)
+                .iter()
+                .rev()
+                .find(|&&c| c < p.col)
+            {
+                return Point { pos: p.pos, col: c };
+            }
+            let mut pos = p.pos;
+            loop {
+                let next = pos.up(t);
+                if next == pos {
+                    return p;
+                }
+                pos = next;
+                if let Some(&c) = word_starts(t, pos, scratch).last() {
+                    return Point { pos, col: c };
+                }
+            }
+        }
+        Move::Left => p,
+    }
 }
 
 /// The first run said how Esc works here.
@@ -1002,13 +1427,17 @@ impl Page for Term {
 
     fn start(&mut self, cx: &mut Cx) {
         self.load(cx);
-        // Esc goes back here as everywhere: say once how a program gets it.
+        // Esc opens the menu here: say once how a program gets it.
         if cx.settings().get_bool(TOLD) != Some(true) {
-            cx.toast("Fn Esc sends Esc. Fn h: help");
+            cx.toast("Esc: menu. Fn Esc sends Esc");
             cx.settings().set_bool(TOLD, true);
         }
         let t = *cx.theme();
         self.area = self.bars().content(&t);
+        if let Ok(p) = Panel::open(&gh0st_app::gfx::fb::find()) {
+            let w = cx.watch(p.fd());
+            self.panel = Some((p, w));
+        }
         if let Err(e) = self.open_tab(cx) {
             eprintln!("gh0st-term: {e}");
             cx.quit();
@@ -1028,7 +1457,39 @@ impl Page for Term {
         self.relayout(cx);
     }
 
+    /// Esc while typing: a tap opens the menu, with Send Esc and Close app
+    /// in it, and a hold exits as in every app (`esc_menu`). The modes take
+    /// Esc as a command and never get here.
+    fn back(&mut self, cx: &mut Cx) -> bool {
+        if self.yielded {
+            // The program has the screen: Esc is its.
+            self.send(b"\x1b", cx);
+        } else if self.waiting {
+            cx.quit();
+        } else if self.mode == Mode::Typing {
+            return true;
+        } else {
+            self.leave_view(cx);
+            self.thaw(cx);
+        }
+        false
+    }
+
+    fn esc_menu(&self) -> bool {
+        self.mode == Mode::Typing && !self.yielded && !self.waiting
+    }
+
     fn ready(&mut self, w: Watch, cx: &mut Cx) {
+        if let Some((p, pw)) = &self.panel
+            && *pw == w
+        {
+            p.drain();
+            self.check_panel(cx);
+            if self.panel_again.is_none() {
+                self.panel_again = Some(cx.after(PANEL_AGAIN_MS));
+            }
+            return;
+        }
         let Some(i) = self.tabs.iter().position(|t| t.watch == Some(w)) else {
             return;
         };
@@ -1047,8 +1508,17 @@ impl Page for Term {
     }
 
     fn timer(&mut self, timer: Timer, cx: &mut Cx) {
-        if self.settle == Some(timer) {
-            self.settle = None;
+        if self.panel_again == Some(timer) {
+            self.panel_again = None;
+            self.check_panel(cx);
+            return;
+        }
+        if self.settle == Some(timer) || self.cap == Some(timer) {
+            for t in [self.settle.take(), self.cap.take()].into_iter().flatten() {
+                if t != timer {
+                    cx.cancel(t);
+                }
+            }
             self.track();
             cx.redraw();
             return;
@@ -1058,6 +1528,7 @@ impl Page for Term {
                 tab.sync = None;
                 if i == self.cur {
                     self.track();
+                    self.hold(cx);
                     cx.redraw();
                 }
                 return;
@@ -1075,6 +1546,10 @@ impl Page for Term {
     }
 
     fn commands(&self, c: &mut Commands) {
+        // A program has the screen: every key is its.
+        if self.yielded {
+            return;
+        }
         let typing = self.mode == Mode::Typing;
         let scroll = self.mode == Mode::View;
         let find = matches!(self.mode, Mode::Find(_));
@@ -1099,10 +1574,22 @@ impl Page for Term {
         );
         c.group("View");
         c.add(
-            Command::toggle(cmd::SCROLL_MODE, "Scroll mode", !typing)
+            Command::action(cmd::SEND_ESC, "Send Esc")
+                .keys("Fn+Esc")
+                .mode(TYPING, idle),
+        );
+        c.add(
+            Command::toggle(cmd::SCROLL_MODE, "Scroll mode", scroll)
                 .keys("Fn+Space")
                 .closes()
                 .mode(TYPING, (typing || scroll) && idle),
+        );
+        // Fn+V: a mode of its own, as scroll mode is.
+        c.add(
+            Command::toggle(cmd::SELECT_MODE, "Select mode", select)
+                .keys("Fn+v")
+                .closes()
+                .mode(TYPING, (typing || select) && idle),
         );
         let size = format!("{}x{}", look.cw, look.ch);
         c.add(on(Command::choice(cmd::SIZE, "Text size", size)
@@ -1111,7 +1598,9 @@ impl Page for Term {
         let grid = format!("{} {gc}x{gr}", self.layout.name());
         c.add(on(Command::choice(cmd::LAYOUT, "Grid", grid).keys("m")));
         c.add(on(Command::action(cmd::FIND, "Find").keys("n")));
-        c.add(on(Command::action(cmd::COPY, "Copy lines").keys("v")));
+        c.add(on(Command::action(cmd::COPY, "Select mode")
+            .keys("v")
+            .keys_only()));
         // Another app may have copied: Paste is always there.
         c.add(on(Command::action(cmd::PASTE, "Paste").keys("p")));
         c.group("Tabs");
@@ -1167,31 +1656,51 @@ impl Page for Term {
             .keys("Esc")
             .hint("done")));
 
-        let s = |c: Command| c.keys_only().mode(COPYING, select);
-        c.add(s(Command::choice(cmd::EXTEND, "Extend up, down", "")
+        let s = |c: Command| c.keys_only().mode(SELECTING, select);
+        c.add(s(Command::choice(cmd::EXTEND, "Up, down", "")
             .keys("f x")
             .repeats()
-            .hint("extend")));
+            .hint("move")));
+        c.add(s(Command::choice(cmd::SIDE, "Left, right", "")
+            .keys("z c")
+            .repeats()));
+        c.add(s(Command::choice(cmd::WORD, "Word left, right", "")
+            .keys("Z C")
+            .repeats()));
+        c.add(s(Command::choice(cmd::SEL_PAGE, "Page up, down", "")
+            .keys("PgUp PgDn")
+            .repeats()));
+        c.add(s(
+            Command::choice(cmd::SEL_ENDS, "Oldest line, cursor", "").keys("g G")
+        ));
+        c.add(s(Command::action(cmd::MARK, "Start here")
+            .keys("Space")
+            .hint("start")));
+        c.add(s(Command::action(cmd::LINES, "Whole lines").keys("l")));
         c.add(s(Command::action(cmd::YANK, "Copy")
-            .keys("y Enter")
+            .keys("Enter")
             .hint("copy")));
-        c.add(s(Command::action(cmd::CANCEL, "Cancel")
-            .keys("Esc")
-            .hint("cancel")));
+        // Esc backs out everywhere: its hint would push copy off the bar.
+        c.add(s(Command::action(cmd::CANCEL, "Cancel").keys("Esc")));
     }
 
     fn command(&mut self, id: u32, step: Step, cx: &mut Cx) {
         let before = self.reserve();
         self.run(id, step, cx);
         self.after_mode(before, cx);
+        self.thaw(cx);
     }
 
     fn raw(&mut self, k: &RawKey, cx: &mut Cx) {
         let before = self.reserve();
         self.raw_key(k, cx);
         self.after_mode(before, cx);
+        self.thaw(cx);
     }
     fn stop(&mut self, cx: &mut Cx) {
+        if let Some((_, w)) = self.panel.take() {
+            cx.unwatch(w);
+        }
         // Closing each master hangs up its session.
         for t in &mut self.tabs {
             if let Some(w) = t.watch.take() {
@@ -1229,13 +1738,22 @@ impl Page for Term {
         let (cx, cy) = t.cursor();
         let view = &tab.view;
         let typing = self.mode == Mode::Typing;
-        let show_cursor = t.modes.show_cursor && !self.waiting && view.live();
         let sel = match self.mode {
-            Mode::Select { anchor, head } => {
-                let (a, b) = (anchor.key().min(head.key()), anchor.key().max(head.key()));
-                Some((a, b))
-            }
+            Mode::Select {
+                anchor,
+                head,
+                lines,
+            } => Some((anchor, head, lines)),
             _ => None,
+        };
+        // Selecting, the head is the one cursor.
+        let show_cursor = t.modes.show_cursor && !self.waiting && view.live() && sel.is_none();
+        let head = sel.map(|(_, h, _)| h);
+        let head_at = |pos: Pos| {
+            head.filter(|h| h.pos == pos).map(|h| Cursor {
+                col: h.col,
+                shape: CursorShape::Block,
+            })
         };
         let rows = view.rows(t, vis_rows);
         let mut scratch = self.scratch.borrow_mut();
@@ -1253,16 +1771,18 @@ impl Page for Term {
                 Src::Hist(i, sub) => Pos::Hist(t.history.id(i), sub),
             };
             let marked = match (sel, self.hit) {
-                (Some((a, b)), _) if pos.key() >= a && pos.key() <= b => Some((0, t.cols)),
+                (Some((anchor, head, lines)), _) => sel_span(anchor, head, lines, pos, t.cols),
                 (None, Some(h)) if h.pos == pos => Some(h.cols),
                 _ => None,
             };
             match src {
                 Src::Grid(y) => {
-                    let cursor = (show_cursor && y == cy).then_some(Cursor {
-                        col: cx,
-                        shape: t.shape,
-                    });
+                    let cursor = (show_cursor && y == cy)
+                        .then_some(Cursor {
+                            col: cx,
+                            shape: t.shape,
+                        })
+                        .or_else(|| head_at(pos));
                     let Some(r) = t.grid().rows.get(y) else {
                         continue;
                     };
@@ -1282,7 +1802,8 @@ impl Page for Term {
                 Src::Hist(i, sub) => {
                     let (cells, clusters) = &mut *scratch;
                     t.history.line(i).cells(t.cols, sub, cells, clusters);
-                    render::row(c, area, &look, &pal, &span, cells, clusters, None, marked);
+                    let cursor = head_at(pos);
+                    render::row(c, area, &look, &pal, &span, cells, clusters, cursor, marked);
                 }
             }
         }

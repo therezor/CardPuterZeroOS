@@ -38,6 +38,20 @@ impl Pos {
     }
 }
 
+/// A cell: its row and column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Point {
+    pub pos: Pos,
+    pub col: usize,
+}
+
+impl Point {
+    /// Oldest first, then left to right.
+    pub fn key(self) -> ((u8, u64, usize), usize) {
+        (self.pos.key(), self.col)
+    }
+}
+
 /// One row to draw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Src {

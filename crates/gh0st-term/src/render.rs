@@ -138,7 +138,12 @@ pub fn row(
             .is_some_and(|k| k.col == col || (wide && k.col == col + 1));
         let shape = cursor.map(|k| k.shape);
         if at_cursor && shape == Some(CursorShape::Block) {
-            std::mem::swap(&mut fg, &mut bg);
+            // On a marked cell a swap would read as unmarked: go solid.
+            if marked.is_some_and(|(a, b)| col >= a && col < b) {
+                (fg, bg) = (pal.bg, pal.fg);
+            } else {
+                std::mem::swap(&mut fg, &mut bg);
+            }
         }
         if bg != pal.bg {
             c.fill(rect, bg);

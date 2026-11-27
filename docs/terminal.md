@@ -48,23 +48,27 @@ Delete. Not measured on the device yet.
 - Fn+K is the switcher, not Home. In scroll mode, `k` sends Home.
 - **Fn+Space enters scroll mode, and leaves it.** Fn is sticky, so that is
   two taps. No program reads Fn.
+- **Fn+V enters select mode, and leaves it.**
 - Fn+R and Fn+T make the text smaller and larger while typing.
 - Shift+Fn+L (Shift+PgUp) enters scroll mode a page back. Shift+Fn+M pages
   forward.
-- **Esc is the OS's here too**, as in every app (`design.md`): a tap goes
-  back, and on the terminal's first screen a 0.7 s hold closes it. A
-  program gets Esc from **Fn+Esc**, or Ctrl+[. The first run says so.
+- **Esc tapped while typing opens the menu.** Its first row, Send Esc,
+  sends Esc to the program, and Close app is its last. Held 0.7 s, Esc
+  closes the terminal, with the same toast as every app. A program also gets Esc from
+  **Fn+Esc**, or Ctrl+[. The first run says so. In scroll mode, find and
+  select, Esc steps back out.
 - If the terminal hangs, holding Esc 3 s makes the shell close it.
 
-**Fn+H opens Help, and 8 there opens the menu**, since every other key goes
-to the program. Rows, most used first:
+**An Esc tap opens the menu**, and so does 8 in Help (Fn+H). Rows, most used first:
 
 | Group | Row | Key |
 |---|---|---|
-| View | Scroll mode, a switch | Fn+Space |
+| View | Send Esc | Fn+Esc |
+| | Scroll mode, a switch | Fn+Space |
+| | Select mode, a switch | Fn+V |
 | | Text size `‹ 6x12 ›` | `r` `t` |
 | | Grid `‹ Magnify 80x24 ›` | `m` |
-| | Find, Copy lines, Paste | `n` `v` `p` |
+| | Find, Paste | `n` `p` |
 | Tabs | New tab, Tab `‹ 1 of 2 ›`, Close tab | `o` `Tab` `w` |
 | Settings | Top bar, More settings | `b`, `s` |
 | App | Help, Close app | none |
@@ -87,13 +91,28 @@ keys here too:
 | u i | Previous, next shell prompt |
 | r t, m, b | Text size, grid, top bar |
 | n | Find: type, then Enter or Fn+F for older, Fn+X for newer, Esc when done |
-| v | Copy whole lines: f x extend, y or Enter copies |
+| v | Select mode, below |
 | p | Paste: the first 64 KB of the clipboard |
 | o w, Tab 1-9 | New tab, close tab, go to a tab |
 | s | More settings |
 | k | Send Home |
 | h | Every key on one screen |
 | Esc q, Fn+Space | Back to typing |
+
+**Select mode** (Fn+V, or `v` in scroll mode). A cursor of its own starts on
+the terminal's cursor, or on the match found. The program's output waits
+meanwhile, so the text holds still; nothing is lost.
+
+| Key | Does |
+|---|---|
+| f x, z c | Up, down, left, right. Left and right run on to the next row |
+| Z C | A word left, right |
+| Fn+L Fn+M | Page |
+| g G | Oldest line, back to the cursor |
+| Space | Start the selection here |
+| l | Whole lines, or characters again. With no start, the head's line starts it |
+| Enter | Copy, and back to typing |
+| Esc, Fn+V | Back to typing |
 
 Prompt jumps need the shell to mark its prompt with OSC 133. For bash:
 
@@ -140,6 +159,11 @@ as `cat` of a file full of them, gets a few, as in xterm.
 - Focus reports (mode 1004) go out when the terminal comes to the front or
   goes behind, and when the tab changes.
 - No title reports and no mouse.
+- A program that opens the panel (`/dev/fb_lcd`) and draws on it gets the
+  screen: the terminal draws nothing until the program closes it, then
+  draws its screen again. Stock apps run with `Terminal=true` do this.
+  inotify says when the panel opens or closes, and `/proc` says whether a
+  tab's program has it. Nothing polls.
 
 ### Images
 
@@ -170,8 +194,11 @@ stays put when the text size changes, so magnify sends no SIGWINCH.
   once a minute and the battery is read every 2 s (the gauge has no
   interrupt, see `hardware-facts.md`); with it off, nothing does.
 - A frame redraws the grid and the flush sends only the rows that changed.
-  Under a flood of output the screen updates at most every 20 ms, and the
-  terminal reads at most 64 KB per loop turn, so keys stay answered.
+  Output is drawn once it pauses for 4 ms, so a repaint in several writes
+  shows whole, and at most 20 ms after it began, so a flood still shows.
+  Synchronized output holds every frame, a key's too, until it ends or
+  150 ms pass. The terminal reads at most 64 KB per loop turn, so keys stay
+  answered.
 - A cell is 8 bytes; an 80x24 screen is 15 KB. History keeps lines, not
   rows: text plus 8 bytes per colour change, about 60 bytes for a typical
   line. The budget is for all tabs together.

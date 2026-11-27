@@ -256,8 +256,10 @@ it fits.
 
 ### Raw pages
 
-The terminal while typing takes every key. It shows no bar. On entry it
-says once how to reach Esc and help.
+The terminal while typing takes every key but Esc. A tap opens its menu,
+where Send Esc is the first row; Fn+Esc sends it too. A hold exits, as in
+every app. It shows no bar.
+On entry it says once how Esc works.
 
 ## Keys
 
