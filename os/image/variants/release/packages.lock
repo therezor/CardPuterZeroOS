@@ -153,6 +153,7 @@ libfido2-1	1.15.0-1+b1
 libflac14	1.5.0+ds-2
 libflite1	2.2-7
 libfontconfig1	2.15.0-2.3
+libfreeaptx0	0.2.2-1
 libfreetype6	2.13.3+dfsg-1+deb13u1
 libfribidi0	1.0.16-1
 libgbm1	25.0.7-2+deb13u1
@@ -201,7 +202,10 @@ libkrb5-3	1.21.3-5+deb13u1
 libkrb5support0	1.21.3-5+deb13u1
 liblapack3	3.12.1-6
 liblastlog2-2	2.41.5-0+deb13u1
+liblc3-1	1.1.3+dfsg-1
 liblcms2-2	2.16-2+deb13u2
+libldacbt-abr2	2.0.2.3+git20200429+ed310a0-5
+libldacbt-enc2	2.0.2.3+git20200429+ed310a0-5
 libldap2	2.6.10+dfsg-1
 liblerc4	4.0.0+ds-5
 liblilv-0-0	0.24.26-1
@@ -294,6 +298,7 @@ librubberband2	3.3.0+dfsg-2+b3
 libsamplerate0	0.2.2-4+b2
 libsasl2-2	2.1.28+dfsg1-9
 libsasl2-modules-db	2.1.28+dfsg1-9
+libsbc1	2.1-1
 libsdl2-2.0-0	2.32.4+dfsg-1
 libseccomp2	2.6.0-2
 libselinux1	3.8.1-1
@@ -313,6 +318,7 @@ libsndfile1	1.2.2-2+deb13u1
 libsodium23	1.0.18-1+deb13u1
 libsord-0-0	0.16.18-1
 libsoxr0	0.1.3-4+b2
+libspa-0.2-bluetooth	1.4.2-1
 libspa-0.2-modules	1.4.2-1
 libspeex1	1.2.1-3
 libspeexdsp1	1.2.1-3
