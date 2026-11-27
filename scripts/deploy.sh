@@ -118,6 +118,9 @@ scp -q -r "$root/packaging/palettes" "$host:/tmp/gh0st-palettes"
 # A paused app's null sink must never take a new stream (gh0st audio).
 scp -q "$root/os/packages/gh0st-base/root/usr/share/wireplumber/wireplumber.conf.d/50-gh0st-streams.conf" \
     "$host:/tmp/"
+# Bluetooth audio without a logind seat.
+scp -q "$root/os/packages/gh0st-base/root/usr/share/wireplumber/wireplumber.conf.d/50-gh0st-bluetooth.conf" \
+    "$host:/tmp/"
 # The sandbox's bus policy and audio rules (docs/isolation.md). Without
 # bwrap the shell starts no sandboxed app at all.
 base="$root/os/packages/gh0st-base/root/usr"
@@ -158,7 +161,8 @@ remote 'set -e
     sudo install -D -m 755 90-gh0st-update /usr/lib/NetworkManager/dispatcher.d/90-gh0st-update
     sudo install -D -m 644 -t /usr/share/gh0st/palettes /tmp/gh0st-palettes/*.palette
     sudo install -D -m 644 -t /usr/share/wireplumber/wireplumber.conf.d /tmp/50-gh0st-streams.conf
-    sudo apt-get install -y --no-install-recommends bubblewrap
+    sudo install -D -m 644 -t /usr/share/wireplumber/wireplumber.conf.d /tmp/50-gh0st-bluetooth.conf
+    sudo apt-get install -y --no-install-recommends bubblewrap libspa-0.2-bluetooth
     sudo install -D -m 644 /tmp/gh0st-session.conf /usr/share/dbus-1/session.d/gh0st.conf
     sudo install -D -m 644 /tmp/gh0st-nomic.lua /usr/share/wireplumber/scripts/gh0st-nomic.lua
     sudo install -D -m 644 -t /usr/share/wireplumber/wireplumber.conf.d /tmp/50-gh0st-nomic.conf
@@ -187,7 +191,7 @@ remote 'set -e
         /tmp/gh0st-store-units /tmp/gh0st-palettes /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
         /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy \
-        /tmp/50-gh0st-streams.conf /tmp/gh0st-session.conf /tmp/gh0st-nomic.lua \
+        /tmp/50-gh0st-streams.conf /tmp/50-gh0st-bluetooth.conf /tmp/gh0st-session.conf /tmp/gh0st-nomic.lua \
         /tmp/50-gh0st-nomic.conf /tmp/gh0st-nomic-pulse.conf /tmp/gh0st-pulse-socket.conf \
         /tmp/gh0st.service'
 restart_launcher

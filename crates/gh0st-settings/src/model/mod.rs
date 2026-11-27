@@ -4,6 +4,7 @@
 
 pub mod bt;
 pub mod net;
+pub mod output;
 pub mod pages;
 
 use gh0st_app::gfx::Canvas;
@@ -65,6 +66,8 @@ pub enum Setting {
     DarkTime,
     Volume,
     Mute,
+    /// Where sound plays.
+    Output,
     Layout,
     Palette,
     /// The picture behind home and the lock.
@@ -454,10 +457,21 @@ pub fn chips(
         .is_some_and(|i| i.act == Act::Open(PageId::Hotspot));
     match id {
         PageId::Wifi if hotspot => {}
-        PageId::Wifi | PageId::Bluetooth => {
+        PageId::Wifi => {
             v.push((5, Chip::new("refresh-cw", "Scan"), Key::Char('u')));
             let forget = Chip::new("trash-2", "Forget").danger().armed(armed);
             v.push((7, forget, Key::Backspace));
+        }
+        // Forgetting a device unpairs it on both ends: held, not pressed twice.
+        PageId::Bluetooth => {
+            // The switch is the only row while Bluetooth is off.
+            let off = page.len() <= 1;
+            v.push((
+                5,
+                Chip::new("refresh-cw", "Scan").disabled(off),
+                Key::Char('u'),
+            ));
+            v.push((7, Chip::new("trash-2", "Forget").hold(), Key::Backspace));
         }
         PageId::Hotspot => {
             v.push((6, Chip::new("refresh-cw", "Reload"), Key::Char('u')));

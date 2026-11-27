@@ -1,6 +1,7 @@
 //! The system tools Settings asks, as silent stubs first on PATH, so the
 //! host's own never answer and every machine runs the same test.
 
+pub mod fakebluez;
 use std::os::unix::fs::PermissionsExt;
 
 /// What Settings runs, each a stub that says nothing and succeeds.

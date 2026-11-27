@@ -301,6 +301,7 @@ pub(crate) enum Request {
     },
     Adopt(i32),
     Redraw,
+    Links,
     Notify(String),
     KeepAwake(bool),
     Open(String),
@@ -826,6 +827,13 @@ impl Cx<'_> {
     /// asked.
     pub fn redraw(&mut self) {
         self.s.requests.push(Request::Redraw);
+    }
+
+    /// The top bar reads network and Bluetooth again, and draws. A finished
+    /// job does this anyway; call it when the page changed one itself, as
+    /// Settings does over D-Bus.
+    pub fn links_changed(&mut self) {
+        self.s.requests.push(Request::Links);
     }
 
     /// Opens Help: every key of this page, as Fn+H does.

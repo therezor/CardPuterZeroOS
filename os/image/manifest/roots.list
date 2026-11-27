@@ -55,6 +55,7 @@ gh0st-kernel            kernel, drivers and firmware, pinned together
 xdg-user-dirs           ~/Music, ~/Pictures for the stock apps
 pipewire-pulse          audio server; stock apps speak PulseAudio
 wireplumber             PipeWire session manager; wpctl for volume
+libspa-0.2-bluetooth    Bluetooth audio: headphones and speakers through PipeWire
 pulseaudio-utils        pactl, which Music and Recorder run
 gh0st                   the shell and Settings
 gh0st-term              the terminal

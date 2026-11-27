@@ -3,6 +3,7 @@
 //! saves, so stock apps' keys survive. The shell reads the file again each
 //! time it takes the screen back, so home follows what changed here.
 
+use crate::bluez::{Ask as BtAsk, Bluez, Event as BtEvent, Op};
 use crate::model::pages::{
     self, APP_ICONS, AppRow, DARK_TIMES, DARK_WIFI, LOCK_AFTERS, Logs, State as PageState,
 };
@@ -10,7 +11,7 @@ use crate::model::{
     self, Act, Body, Choice, Command, ConnField, Cursor, Dialog, Page as View, PageId, Setting,
     Value,
 };
-use crate::model::{bt, net};
+use crate::model::{bt, net, output};
 use gh0st_app::gfx::theme::{self, Theme};
 use gh0st_app::prelude::*;
 use gh0st_app::{codes, cycle, system};
@@ -46,6 +47,10 @@ enum Ask {
     ConnField(String, ConnField),
     /// The password for a helper call that asked for one.
     Auth(HelperCall),
+    /// A Bluetooth device shows a code to compare.
+    BtConfirm,
+    /// A Bluetooth device shows a code to type here.
+    BtPasskey,
     /// Switch to the edge channel, after reading what it means.
     EdgeChannel,
     DeviceName,
@@ -114,11 +119,9 @@ fn busy_label(kind: &NetJob) -> Option<&'static str> {
                 _ => "Applying\u{2026}",
             })
         }
-        NetJob::SetRadio(_)
-        | NetJob::TimeSet(_)
-        | NetJob::BtPower(_)
-        | NetJob::BtUnblock
-        | NetJob::BtBlock => Some("Applying\u{2026}"),
+        NetJob::SetRadio(_) | NetJob::TimeSet(_) | NetJob::BtUnblock | NetJob::BtBlock => {
+            Some("Applying\u{2026}")
+        }
         NetJob::Wallpaper => Some("Fitting the picture\u{2026}"),
         NetJob::KeyringPrepare | NetJob::Password { .. } => Some("Changing the password\u{2026}"),
         _ => None,
@@ -140,13 +143,10 @@ enum NetJob {
         gave_password: bool,
     },
     Forget(String),
-    BtQuery,
-    /// Bluetooth on (true) or off.
-    BtPower(bool),
-    BtScan,
-    /// What to say when it works.
-    BtDevice(String),
-    BtRemove(String),
+    /// Where sound can play.
+    Outputs,
+    /// The default sink set: the volume is the new one's.
+    SetOutput,
     /// `timedatectl show` and whether SSH runs.
     SysQuery,
     Zones,
@@ -228,6 +228,13 @@ pub struct Settings {
     /// Blocks or unblocks a radio; tests pass one that never touches the
     /// host's.
     radios: fn(rfkill::Radio, bool) -> std::io::Result<()>,
+    /// BlueZ, once joined; None when there is none.
+    bt: Option<Bluez>,
+    bt_watch: Option<Watch>,
+    /// Ends the scan running now.
+    bt_scan: Option<Timer>,
+    /// A connection to a fake BlueZ, for tests.
+    bt_conn: Option<gh0st_dbus::Conn>,
 }
 
 impl Settings {
@@ -253,7 +260,17 @@ impl Settings {
             finish_when_idle: false,
             net_again: false,
             radios: rfkill::set,
+            bt: None,
+            bt_watch: None,
+            bt_scan: None,
+            bt_conn: None,
         }
+    }
+
+    /// Settings with BlueZ at the other end of `conn`, for tests.
+    pub fn with_bluez(mut self, conn: gh0st_dbus::Conn) -> Settings {
+        self.bt_conn = Some(conn);
+        self
     }
 
     /// Settings with its own radio switch, for tests.
@@ -300,7 +317,6 @@ impl Settings {
                     | NetJob::TimeSet(_)
                     | NetJob::SetRadio(_)
                     | NetJob::WifiUnblock
-                    | NetJob::BtPower(_)
                     | NetJob::BtUnblock
                     | NetJob::BtBlock
                     | NetJob::Join { .. }
@@ -580,6 +596,21 @@ impl Settings {
                 cx.settings().set_int(key::VOLUME, v as i64);
                 self.state.volume = Some(v);
             }
+            Setting::Output => {
+                let all = &self.state.outputs;
+                if all.len() > 1 {
+                    let i = all
+                        .iter()
+                        .position(|o| o.name == self.state.output)
+                        .unwrap_or(0);
+                    let next = all[cycle(i, d, all.len())].name.clone();
+                    let argv = ["pactl", "set-default-sink", &next];
+                    self.run(cx, NetJob::SetOutput, &argv);
+                    self.state.output = next;
+                } else {
+                    cx.toast("Pair a Bluetooth speaker to play there");
+                }
+            }
             Setting::Mute => {
                 let muted = !self.state.muted;
                 let flag = if muted { "1" } else { "0" };
@@ -819,6 +850,8 @@ impl Settings {
                 self.run(cx, NetJob::SetRadio(!on), &["nmcli", "radio", "wifi", arg]);
             }
             Setting::Bluetooth => {
+                // BlueZ may have come up since Settings looked.
+                self.bt_open(cx);
                 let on = self.state.bt_on;
                 self.state.bt_on = !on;
                 // Stock boots with the radio blocked. The session ACL
@@ -827,9 +860,18 @@ impl Settings {
                 if blocked {
                     let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "on"];
                     self.run(cx, NetJob::BtUnblock, &argv);
-                } else {
-                    let arg = if on { "off" } else { "on" };
-                    self.run(cx, NetJob::BtPower(!on), &["bluetoothctl", "power", arg]);
+                } else if on {
+                    // Off is the block, not the power: systemd-rfkill keeps
+                    // it across boots.
+                    if let Some(b) = self.bt.as_mut() {
+                        b.power(false);
+                    }
+                    if (self.radios)(rfkill::Radio::Bluetooth, true).is_err() {
+                        let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "off"];
+                        self.run(cx, NetJob::BtBlock, &argv);
+                    }
+                } else if let Some(b) = self.bt.as_mut() {
+                    b.power(true);
                 }
             }
             Setting::NetworkTime => {
@@ -1087,10 +1129,14 @@ impl Settings {
                 Ask::HiddenName,
             ),
             Command::BtScan => {
-                if !self.state.bt_scanning {
-                    self.state.bt_scanning = true;
-                    let argv = ["bluetoothctl", "--timeout", "10", "scan", "on"];
-                    self.run(cx, NetJob::BtScan, &argv);
+                let Some(b) = self.bt.as_mut().filter(|b| b.powered()) else {
+                    cx.toast("Turn Bluetooth on first");
+                    return;
+                };
+                if !b.scanning() {
+                    b.scan(true);
+                    self.bt_scan = Some(cx.after(SCAN_MS));
+                    self.bt_sync();
                     self.refresh(cx);
                 }
             }
@@ -1260,6 +1306,19 @@ impl Settings {
                 self.helper(cx, &["power", "reboot"], "Restarting\u{2026}");
                 cx.toast("Restarting\u{2026}");
             }
+            Ask::BtConfirm => {
+                if let Some(b) = self.bt.as_mut() {
+                    b.answer(true);
+                }
+            }
+            Ask::BtPasskey => match text.trim().parse::<u32>() {
+                Ok(code) if code <= 999_999 => {
+                    if let Some(b) = self.bt.as_mut() {
+                        b.passkey(code);
+                    }
+                }
+                _ => self.reject(cx, "Six digits", Ask::BtPasskey, &text),
+            },
             Ask::Confirm(_) => {}
             Ask::EdgeChannel => self.helper(cx, &["update-channel", "edge"], "Edge: every build"),
             Ask::WifiPassword(ssid) => {
@@ -1593,9 +1652,17 @@ impl Settings {
                     let Act::Run(Command::Device(mac)) = &act else {
                         return true;
                     };
-                    if self.bt_device(mac).is_some_and(|d| d.paired) && self.pressed_again(&act) {
-                        let argv = ["bluetoothctl", "remove", mac];
-                        self.run(cx, NetJob::BtRemove(mac.clone()), &argv);
+                    let Some(d) = self.bt_device(mac) else {
+                        return true;
+                    };
+                    // The chip holds first, and is off on a device not paired.
+                    if !d.paired {
+                        cx.toast(&format!("{} is not paired", d.label()));
+                    } else if self.bt.as_mut().is_some_and(|b| b.forget(mac)) {
+                        self.bt_sync();
+                        self.refresh(cx);
+                    } else {
+                        cx.toast("One moment");
                     }
                 }
                 true
@@ -1612,6 +1679,7 @@ impl Settings {
 
     fn query_volume(&mut self, cx: &mut Cx) {
         self.run(cx, NetJob::Volume, &["wpctl", "get-volume", SINK]);
+        self.run(cx, NetJob::Outputs, &["sh", "-c", output::QUERY]);
     }
 
     /// Runs the root helper through pkexec.
@@ -1758,51 +1826,205 @@ impl Settings {
         self.run(cx, NetJob::Forget(ssid.to_string()), &argv);
     }
 
-    fn query_bt(&mut self, cx: &mut Cx) {
-        self.run(cx, NetJob::BtQuery, &["sh", "-c", bt::QUERY]);
+    /// Joins BlueZ, once. Its signals keep the page current from then on.
+    fn bt_open(&mut self, cx: &mut Cx) {
+        if self.bt.as_ref().is_some_and(|b| !b.dead()) {
+            return;
+        }
+        let b = match self.bt_conn.take() {
+            Some(conn) => Bluez::new(conn),
+            None => match Bluez::system() {
+                Ok(b) => b,
+                Err(_) => return,
+            },
+        };
+        if let Some(w) = self.bt_watch.take() {
+            cx.unwatch(w);
+        }
+        self.bt_watch = Some(cx.watch(b.fd()));
+        self.bt = Some(b);
     }
 
-    fn bt_device(&self, mac: &str) -> Option<pages::Device> {
-        self.state.devices.iter().find(|d| d.mac == mac).cloned()
+    /// The page's Bluetooth state from what BlueZ said: paired devices,
+    /// and what the last scan found.
+    fn bt_sync(&mut self) {
+        let st = &mut self.state;
+        let Some(b) = self.bt.as_ref() else {
+            st.bt_on = false;
+            st.bt_scanning = false;
+            st.bt_busy = None;
+            st.devices.clear();
+            return;
+        };
+        st.bt_on = b.powered();
+        st.bt_scanning = b.scanning();
+        st.bt_busy = b.busy().map(|(p, op)| {
+            let word = match op {
+                Op::Pair => "Pairing\u{2026}",
+                Op::Connect => "Connecting\u{2026}",
+                Op::Disconnect => "Disconnecting\u{2026}",
+                Op::Forget => "Forgetting\u{2026}",
+            };
+            (p.to_string(), word)
+        });
+        st.devices = crate::bluez::listed(b.devices())
+            .into_iter()
+            .map(|d| pages::Device {
+                path: d.path.clone(),
+                mac: d.address.clone(),
+                name: d.name.clone(),
+                paired: d.paired,
+                connected: d.connected,
+            })
+            .collect();
+    }
+
+    /// What BlueZ sent: the page follows, an ended operation says how.
+    fn bt_ready(&mut self, cx: &mut Cx) {
+        let mut events = Vec::new();
+        if let Some(b) = self.bt.as_mut() {
+            b.ready(&mut events);
+        }
+        if events.is_empty() {
+            return;
+        }
+        let (was_on, before) = (self.state.bt_on, self.bt_shown());
+        for e in events {
+            match e {
+                BtEvent::Changed => {}
+                BtEvent::Done {
+                    op,
+                    name,
+                    err: None,
+                } => {
+                    cx.toast(&match op {
+                        Op::Pair => format!("Paired with {name}"),
+                        Op::Connect => format!("Connected to {name}"),
+                        Op::Disconnect => format!("Disconnected {name}"),
+                        Op::Forget => format!("Forgot {name}"),
+                    });
+                    // A speaker come or gone changes where sound plays.
+                    self.query_volume(cx);
+                }
+                BtEvent::Done {
+                    name, err: Some(e), ..
+                } => fail(cx, &bt::explain(&e, &name)),
+                BtEvent::Ask {
+                    name,
+                    ask: BtAsk::Confirm(code),
+                } => self.ask(
+                    Dialog::Confirm {
+                        title: format!("Pair with {name}?"),
+                        line: format!("If it shows {code:06}, pair."),
+                        yes: "pair",
+                        no: "cancel",
+                    },
+                    Ask::BtConfirm,
+                ),
+                BtEvent::Ask {
+                    name,
+                    ask: BtAsk::Enter,
+                } => self.ask(
+                    Dialog::Text {
+                        title: format!("Code on {name}"),
+                        placeholder: "Six digits",
+                        text: String::new(),
+                        masked: false,
+                        secret: false,
+                    },
+                    Ask::BtPasskey,
+                ),
+                BtEvent::Ask {
+                    name,
+                    ask: BtAsk::Show(code),
+                } => {
+                    cx.toast(&format!("Type {code:06} on {name}, then Enter"));
+                }
+                BtEvent::AskEnded => cx.toast("Pairing stopped"),
+                BtEvent::PowerFailed(_) => fail(cx, "Bluetooth didn't turn on"),
+                BtEvent::Failed(why) => {
+                    if self.top().0 == PageId::Bluetooth {
+                        fail(cx, &why);
+                    }
+                    self.bt = None;
+                    if let Some(w) = self.bt_watch.take() {
+                        cx.unwatch(w);
+                    }
+                }
+            }
+        }
+        self.bt_sync();
+        // A watch draws only when asked: during a scan most signals are
+        // signal strength, which the page doesn't show.
+        if self.bt_shown() != before {
+            cx.redraw();
+        }
+        if self.state.bt_on != was_on {
+            cx.links_changed();
+        }
+        self.refresh(cx);
+        self.flush(cx);
+    }
+
+    /// What the Bluetooth rows show, to tell when to draw.
+    fn bt_shown(
+        &self,
+    ) -> (
+        bool,
+        bool,
+        Option<(String, &'static str)>,
+        Vec<pages::Device>,
+    ) {
+        let st = &self.state;
+        (
+            st.bt_on,
+            st.bt_scanning,
+            st.bt_busy.clone(),
+            st.devices.clone(),
+        )
+    }
+
+    fn bt_device(&self, path: &str) -> Option<pages::Device> {
+        self.state.devices.iter().find(|d| d.path == path).cloned()
+    }
+
+    /// The device on the selected row.
+    fn selected_bt(&self) -> Option<pages::Device> {
+        match self.selected_act()? {
+            (Act::Run(Command::Device(mac)), _) => self.bt_device(&mac),
+            _ => None,
+        }
     }
 
     /// Enter on a device: connect a paired one, pair, trust and connect a
     /// new one, disconnect a connected one.
-    fn bt_enter(&mut self, mac: String, cx: &mut Cx) {
-        let Some(d) = self.bt_device(&mac) else {
+    fn bt_enter(&mut self, path: String, cx: &mut Cx) {
+        let Some(d) = self.bt_device(&path) else {
             return;
         };
-        if !bt::is_mac(&mac) {
+        let Some(b) = self.bt.as_mut() else {
             return;
-        }
-        let name = if d.name.is_empty() {
-            mac.clone()
-        } else {
-            d.name.clone()
         };
-        let done = if d.connected {
-            format!("Disconnected {name}")
+        let started = if d.connected {
+            b.disconnect(&path)
         } else if d.paired {
-            format!("Connected to {name}")
+            b.connect(&path)
         } else {
-            format!("Paired with {name}")
+            let ok = b.pair(&path);
+            if ok {
+                cx.toast(&format!("Keep {} in pairing mode", d.label()));
+            }
+            ok
         };
-        let job = NetJob::BtDevice(done);
-        if d.connected {
-            self.run(cx, job, &["bluetoothctl", "disconnect", &mac]);
-            cx.toast(&format!("Disconnecting {name}\u{2026}"));
-        } else if d.paired {
-            self.run(
-                cx,
-                job,
-                &["bluetoothctl", "--timeout", "20", "connect", &mac],
-            );
-            cx.toast(&format!("Connecting {name}\u{2026}"));
-        } else {
-            let script = "bluetoothctl --timeout 20 pair \"$1\" && bluetoothctl trust \"$1\" && bluetoothctl --timeout 20 connect \"$1\"";
-            self.run(cx, job, &["sh", "-c", script, "sh", &mac]);
-            cx.toast(&format!("Pairing {name}\u{2026}"));
+        if !started {
+            cx.toast("One moment");
         }
+        // Pairing a device BlueZ dropped looks for it first, for a scan's time.
+        if self.bt.as_ref().is_some_and(Bluez::scanning) && self.bt_scan.is_none() {
+            self.bt_scan = Some(cx.after(SCAN_MS));
+        }
+        self.bt_sync();
+        self.refresh(cx);
     }
 
     /// The page in front shows what `query_net` reads.
@@ -2007,29 +2229,17 @@ impl Settings {
                 rescan = ok && *on;
                 requery = true;
             }
-            // Off is the block, not the power: a failed power off with the
-            // radio blocked is still off.
-            NetJob::BtPower(false) => {
-                if (self.radios)(rfkill::Radio::Bluetooth, true).is_ok() {
-                    self.query_bt(cx);
-                } else {
-                    let argv = ["pkexec", HELPER, "rfkill", "bluetooth", "off"];
-                    self.run(cx, NetJob::BtBlock, &argv);
-                }
-            }
-            NetJob::BtPower(true) | NetJob::BtRemove(_) => {
-                if !ok {
-                    fail(cx, &bt::failure(&out));
-                }
-                self.query_bt(cx);
-            }
             NetJob::BtBlock => {
                 if !ok {
                     fail(cx, &helper::failure(&out));
                 }
-                self.query_bt(cx);
             }
-            NetJob::BtScan => self.query_bt(cx),
+            NetJob::SetOutput => {
+                if !ok {
+                    fail(cx, "Couldn't play there");
+                }
+                self.query_volume(cx);
+            }
             NetJob::WifiUnblock => {
                 if !ok {
                     fail(cx, &helper::failure(&out));
@@ -2042,11 +2252,10 @@ impl Settings {
                 );
             }
             NetJob::BtUnblock => {
-                if ok {
-                    self.run(cx, NetJob::BtPower(true), &["bluetoothctl", "power", "on"]);
-                } else {
+                if !ok {
                     fail(cx, &helper::failure(&out));
-                    self.query_bt(cx);
+                } else if let Some(b) = self.bt.as_mut() {
+                    b.power(true);
                 }
             }
             NetJob::TimeSet(zone) => {
@@ -2171,10 +2380,6 @@ impl Settings {
                     },
                 )
             }
-            NetJob::BtDevice(done) => {
-                said(cx, ok, &if ok { done.clone() } else { bt::failure(&out) });
-                self.query_bt(cx);
-            }
             _ => {}
         }
         let st = &mut self.state;
@@ -2210,12 +2415,6 @@ impl Settings {
             }
             NetJob::Stations if ok => st.hotspot.clients = Some(hotspot::stations(&out)),
             NetJob::Join { .. } => st.wifi_busy = None,
-            NetJob::BtQuery => {
-                let (on, devices) = bt::parse_query(&out);
-                st.bt_on = on;
-                st.devices = devices;
-            }
-            NetJob::BtScan => st.bt_scanning = false,
             NetJob::SysQuery => {
                 for line in out.lines() {
                     match line.split_once('=') {
@@ -2242,6 +2441,7 @@ impl Settings {
                     .and_then(|v| v.strip_suffix('M'))
                     .and_then(|v| v.parse().ok());
             }
+            NetJob::Outputs if ok => (st.outputs, st.output) = output::parse(&out),
             NetJob::Volume => {
                 if let Some((v, muted)) = parse_volume(&out) {
                     st.volume = Some(v);
@@ -2367,7 +2567,7 @@ impl Page for Settings {
         match self.embed.as_ref().map(|e| e.page.clone()) {
             None => {
                 self.query_net(cx, false);
-                self.query_bt(cx);
+                self.bt_open(cx);
                 self.query_sys(cx);
                 self.query_volume(cx);
             }
@@ -2377,7 +2577,7 @@ impl Page for Settings {
             }
             Some(PageId::Privacy) => {
                 self.query_sys(cx);
-                self.query_bt(cx);
+                self.bt_open(cx);
             }
             Some(PageId::TimeZone(_)) => {
                 self.run(cx, NetJob::Zones, &["timedatectl", "list-timezones"]);
@@ -2402,6 +2602,11 @@ impl Page for Settings {
         let Some((d, ask)) = self.dialog.take() else {
             return;
         };
+        if matches!(ask, Ask::BtConfirm | Ask::BtPasskey) && !matches!(answer, Answer::Yes(_)) {
+            if let Some(b) = self.bt.as_mut() {
+                b.answer(false);
+            }
+        }
         if let Answer::Yes(text) = answer {
             self.answering = Some(d);
             self.answered(text, ask, cx);
@@ -2465,6 +2670,26 @@ impl Page for Settings {
             return false;
         }
         true
+    }
+
+    fn ready(&mut self, watch: Watch, cx: &mut Cx) {
+        if self.bt_watch == Some(watch) {
+            self.bt_ready(cx);
+        }
+    }
+
+    fn timer(&mut self, timer: Timer, cx: &mut Cx) {
+        if self.bt_scan == Some(timer) {
+            self.bt_scan = None;
+            if let Some(name) = self.bt.as_mut().and_then(Bluez::end_scan) {
+                fail(cx, &bt::explain("ConnectionAttemptFailed", &name));
+            }
+            self.bt_sync();
+            if !self.state.devices.iter().any(|d| !d.paired) {
+                cx.toast("Nothing found. Is it in pairing mode?");
+            }
+            self.refresh(cx);
+        }
     }
 
     fn job(&mut self, job: Job, event: JobEvent, cx: &mut Cx) {
@@ -2552,7 +2777,23 @@ impl Settings {
             self.armed.is_some(),
         )
         .into_iter()
-        .map(|(n, chip, k)| (n, chip, ChipDo::Key(k)))
+        .map(|(n, chip, k)| {
+            // A chip for a page key runs that key's command, so a hold chip
+            // holds on its key too (Del for Forget).
+            let cmd = self
+                .view
+                .keys
+                .iter()
+                .position(|&(key, _)| page_key_of(key).is_some_and(|(_, pk)| pk == k));
+            let mut chip = match cmd {
+                Some(i) => chip.runs(PAGE_KEYS + i as u32),
+                None => chip,
+            };
+            if *id == PageId::Bluetooth && k == Key::Backspace {
+                chip = chip.disabled(!self.selected_bt().is_some_and(|d| d.paired));
+            }
+            (n, chip, ChipDo::Key(k))
+        })
         .collect();
         if let Some(e) = self.embed.as_ref().filter(|_| self.stack.len() == 1) {
             if e.skip {
@@ -2572,6 +2813,10 @@ impl Settings {
 
 /// What a chip or a dialog answer is for: the one dialog Settings shows.
 const ASK: u32 = 1;
+
+/// How long a Bluetooth scan looks. BlueZ takes turns between LE and
+/// classic inquiry, about 5 s each: two rounds of each find a slow speaker.
+const SCAN_MS: u64 = 20_000;
 
 /// Command ids for a page's own keys, by their place in its list.
 const PAGE_KEYS: u32 = 100;
@@ -2684,12 +2929,14 @@ fn password_failure(out: &str) -> String {
     }
 }
 
-/// `wpctl get-volume`: "Volume: 0.40" or "Volume: 0.65 [MUTED]".
+/// `wpctl get-volume`: "Volume: 0.40" or "Volume: 0.65 [MUTED]". A
+/// warning may come first (rtkit, on stderr, which jobs read too).
 fn parse_volume(s: &str) -> Option<(u8, bool)> {
-    let v: f32 = s.split_whitespace().nth(1)?.parse().ok()?;
+    let line = s.lines().find_map(|l| l.trim().strip_prefix("Volume:"))?;
+    let v: f32 = line.split_whitespace().next()?.parse().ok()?;
     Some((
         (v * 100.0).round().clamp(0.0, 150.0) as u8,
-        s.contains("[MUTED]"),
+        line.contains("[MUTED]"),
     ))
 }
 
@@ -2876,6 +3123,8 @@ mod tests {
         assert_eq!(parse_volume("Volume: 0.40\n"), Some((40, false)));
         assert_eq!(parse_volume("Volume: 0.65 [MUTED]\n"), Some((65, true)));
         assert_eq!(parse_volume("nope"), None);
+        let warned = "W 10:12:23.22 mod.rt ../src/modules/module-rt.c:975: Permission denied\nVolume: 0.60\n";
+        assert_eq!(parse_volume(warned), Some((60, false)));
     }
 
     /// The image turns logs off in `/usr/lib`; Settings writes a later

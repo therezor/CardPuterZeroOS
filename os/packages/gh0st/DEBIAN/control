@@ -18,9 +18,10 @@ Description: the Gh0st OS shell and Settings
  Store (gh0st-store and its engine), the keyring and session services
  (gh0st keyring, gh0st session) with the Keyring app (gh0st-keyring), and
  the root helper. Static binaries;
- the Depends are the commands they run: nmcli, wpctl, pactl, pacat, bluetoothctl, rfkill,
+ the Depends are the commands they run: nmcli, wpctl, pactl, pacat, rfkill,
  pkexec, vcgencmd, unix_chkpwd, passwd, iw, and systemd's systemctl,
- timedatectl and hostnamectl. dnsmasq-base and nftables are what
+ timedatectl and hostnamectl. Settings and Keyboard talk to bluetoothd
+ (bluez) on the system bus. dnsmasq-base and nftables are what
  NetworkManager's shared mode runs for the hotspot: DHCP and DNS, and NAT.
  The Store's engine fetches with curl and checks the app list with sqv.
  Files opens archives with bsdtar (libarchive-tools) and reaches servers

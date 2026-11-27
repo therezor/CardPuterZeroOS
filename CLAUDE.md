@@ -42,7 +42,8 @@ are in `docs/hardware-facts.md`.
   `examples/mockups.rs` renders its screens into `mockups/keyring` from the
   real Secret Service (`tests/common/fake.rs`).
 - `crates/gh0st-session`: `gh0st session`, Notifications, ScreenSaver, the
-  XDG portal and the clipboard on the session bus.
+  XDG portal and the clipboard on the session bus. It also connects paired
+  Bluetooth audio devices when the adapter powers on.
 - `crates/gh0st-app`: the app SDK. Pages, OS bars, soft keys, lists, jobs,
   a sim backend and a test driver. Apps depend on it alone. The guide is
   `docs/sdk.md`, which is also the crate's rustdoc, so its examples compile in

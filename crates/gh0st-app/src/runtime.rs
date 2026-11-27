@@ -520,6 +520,10 @@ impl Runtime {
                 }
                 Request::Adopt(pid) => self.adopted.push((pid, owner)),
                 Request::Redraw => self.dirty = true,
+                Request::Links => {
+                    self.bar.links();
+                    self.dirty = true;
+                }
                 Request::KeepAwake(on) if on != self.awake => {
                     self.awake = on;
                     if let Some(l) = &self.link {
@@ -821,6 +825,24 @@ impl Runtime {
             let held = self.taken.contains(&raw.code);
             match self.commands_of(top).lookup(raw, typing) {
                 Some(hit) => {
+                    // A key for a hold chip's command holds as the chip does,
+                    // so Del can't forget or erase on a tap.
+                    if raw.state == State::Press {
+                        let bars = self.top_bars();
+                        let held =
+                            self.chips_of(top, &bars)
+                                .into_iter()
+                                .enumerate()
+                                .find_map(|(k, c)| {
+                                    c.filter(|c| c.hold && c.command == Some(hit.id))
+                                        .map(|c| (k, c))
+                                });
+                        if let Some((k, chip)) = held {
+                            self.take(raw.code);
+                            self.press_chip(top, k as u8 + 4, raw.code, chip, now);
+                            return;
+                        }
+                    }
                     if raw.state == State::Press {
                         self.take(raw.code);
                         self.sound(Sound::Select);
@@ -1977,6 +1999,41 @@ mod tests {
             assert!(log.borrow().is_empty(), "{:?}", log.borrow());
             d.keys("7").wait(50);
             assert_eq!(log.borrow().as_slice(), ["Char('7')"]);
+        }
+
+        /// A hold chip whose command also has a key, as Forget on Del.
+        struct Forgetter {
+            log: Log,
+        }
+
+        impl Page for Forgetter {
+            fn title(&self) -> &str {
+                "Forgetter"
+            }
+            fn draw(&self, _: &mut Ui) {}
+            fn bars(&self) -> Bars {
+                Bars::top().chip(7, Chip::new("trash-2", "Forget").hold().runs(ERASE))
+            }
+            fn commands(&self, c: &mut Commands) {
+                c.add(Command::action(ERASE, "Forget").keys("bksp").keys_only());
+            }
+            fn command(&mut self, id: u32, _: Step, _: &mut Cx) {
+                self.log.borrow_mut().push(format!("command {id}"));
+            }
+        }
+
+        #[test]
+        fn a_hold_chips_key_holds_too() {
+            let log = Log::default();
+            let mut d = Driver::new(Forgetter { log: log.clone() });
+            d.keys("backspace").wait(1000);
+            assert!(log.borrow().is_empty(), "a tap only asks for a hold");
+            assert_eq!(d.toast(), Some("Hold to forget"));
+            d.keys("down backspace")
+                .wait(1000)
+                .keys("up backspace")
+                .wait(50);
+            assert_eq!(log.borrow().as_slice(), ["command 1"]);
         }
 
         #[test]

@@ -5086,12 +5086,14 @@ fn save_screenshot(c: &Canvas) -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
-/// "Volume: 0.40 [MUTED]" from `wpctl get-volume`, as (percent, muted).
+/// "Volume: 0.40 [MUTED]" from `wpctl get-volume`, as (percent, muted). A
+/// warning may come first (rtkit, on stderr).
 fn parse_volume(s: &str) -> Option<(u8, bool)> {
-    let v: f32 = s.split_whitespace().nth(1)?.parse().ok()?;
+    let line = s.lines().find_map(|l| l.trim().strip_prefix("Volume:"))?;
+    let v: f32 = line.split_whitespace().next()?.parse().ok()?;
     Some((
         (v * 100.0).round().clamp(0.0, 150.0) as u8,
-        s.contains("[MUTED]"),
+        line.contains("[MUTED]"),
     ))
 }
 
@@ -5168,6 +5170,8 @@ mod tests {
     fn wpctl_volume_reads_as_percent_and_mute() {
         assert_eq!(parse_volume("Volume: 0.40\n"), Some((40, false)));
         assert_eq!(parse_volume("Volume: 0.65 [MUTED]\n"), Some((65, true)));
+        let warned = "W 10:12:23.22 mod.rt: Permission denied\nVolume: 0.60\n";
+        assert_eq!(parse_volume(warned), Some((60, false)));
         assert_eq!(parse_volume("nope"), None);
     }
 }

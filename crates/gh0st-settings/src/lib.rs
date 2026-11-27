@@ -4,6 +4,7 @@
 //! too, so the mockups can draw its pages from made-up state.
 
 pub mod app;
+pub mod bluez;
 pub mod model;
 pub mod setup;
 pub mod wallpaper;

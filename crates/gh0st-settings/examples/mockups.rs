@@ -104,6 +104,17 @@ fn sample_state() -> State {
         dark_secs: 30,
         volume: Some(60),
         muted: false,
+        outputs: vec![
+            model::output::Output {
+                name: "alsa_output.platform-sound.stereo-fallback".into(),
+                label: "Speaker".into(),
+            },
+            model::output::Output {
+                name: "bluez_output.41_42_A1_00_12_9F.1".into(),
+                label: "Buds Pro".into(),
+            },
+        ],
+        output: "bluez_output.41_42_A1_00_12_9F.1".into(),
         layout: Layout::Grid,
         palette: "Mint",
         palettes: theme::PALETTES
@@ -188,21 +199,28 @@ fn sample_state() -> State {
             clients: None,
         },
         bt_on: true,
-        bt_scanning: true,
+        bt_scanning: false,
+        bt_busy: Some((
+            "/org/bluez/hci0/dev_F4_7B_09_22_10_01".into(),
+            "Connecting\u{2026}",
+        )),
         devices: vec![
             Device {
+                path: "/org/bluez/hci0/dev_41_42_A1_00_12_9F".into(),
                 mac: "41:42:A1:00:12:9F".into(),
                 name: "Buds Pro".into(),
                 paired: true,
                 connected: true,
             },
             Device {
+                path: "/org/bluez/hci0/dev_F4_7B_09_22_10_01".into(),
                 mac: "F4:7B:09:22:10:01".into(),
                 name: "MX Keys".into(),
                 paired: true,
                 connected: false,
             },
             Device {
+                path: "/org/bluez/hci0/dev_5C_EA_1D_8A_3B_70".into(),
                 mac: "5C:EA:1D:8A:3B:70".into(),
                 name: String::new(),
                 paired: false,

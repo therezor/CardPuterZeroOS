@@ -103,12 +103,25 @@ pub struct Iface {
     pub speed: Option<u32>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Device {
+    /// BlueZ's object path: what the row's command names.
+    pub path: String,
     pub mac: String,
     pub name: String,
     pub paired: bool,
     pub connected: bool,
+}
+
+impl Device {
+    /// Its name, or its MAC when it has none.
+    pub fn label(&self) -> &str {
+        if self.name.is_empty() {
+            &self.mac
+        } else {
+            &self.name
+        }
+    }
 }
 
 /// One kind of file on the Default apps page.
@@ -276,6 +289,9 @@ pub struct State {
     pub dark_secs: i64,
     pub volume: Option<u8>,
     pub muted: bool,
+    /// Where sound can play, and the name of where it plays now.
+    pub outputs: Vec<super::output::Output>,
+    pub output: String,
     pub layout: Layout,
     pub palette: &'static str,
     /// Every palette there is, and whether each is light: filled only for
@@ -312,6 +328,9 @@ pub struct State {
     pub hotspot: Hotspot,
     pub bt_on: bool,
     pub bt_scanning: bool,
+    /// The device a pair, connect or disconnect is working on, and the word
+    /// its row shows meanwhile.
+    pub bt_busy: Option<(String, &'static str)>,
     pub devices: Vec<Device>,
     pub zone: String,
     pub zones: Vec<String>,
@@ -501,6 +520,18 @@ pub fn build(id: &PageId, s: &State) -> Page {
         PageId::Sound => (
             "Sound",
             Body::List(vec![
+                Item::new(
+                    "music",
+                    "Output",
+                    Value::Choice(
+                        s.outputs
+                            .iter()
+                            .find(|o| o.name == s.output)
+                            .map_or("Speaker", |o| o.label.as_str())
+                            .into(),
+                    ),
+                    Act::Set(Setting::Output),
+                ),
                 Item::new(
                     "volume-2",
                     "Volume",
@@ -1208,8 +1239,12 @@ fn bluetooth(s: &State) -> Vec<Item> {
     if !s.bt_on {
         return out;
     }
+    // A scan clears what the last one found; what it finds joins as it comes.
     for d in &s.devices {
-        let state = if d.connected {
+        let busy = s.bt_busy.as_ref().filter(|b| b.0 == d.path);
+        let state = if let Some((_, word)) = busy {
+            word
+        } else if d.connected {
             "Connected"
         } else if d.paired {
             "Paired"
@@ -1218,13 +1253,9 @@ fn bluetooth(s: &State) -> Vec<Item> {
         };
         out.push(Item {
             icon: Some(if d.connected { "check" } else { "" }),
-            label: if d.name.is_empty() {
-                d.mac.clone()
-            } else {
-                d.name.clone()
-            },
+            label: d.label().to_string(),
             value: Value::Text(state.into()),
-            act: Act::Run(Command::Device(d.mac.clone())),
+            act: Act::Run(Command::Device(d.path.clone())),
             danger: false,
         });
     }

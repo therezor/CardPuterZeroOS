@@ -8,6 +8,7 @@ use gh0st_core::ident::{self, Who};
 use gh0st_core::link::Link;
 use gh0st_dbus::{Conn, Kind, Message, Value, bus};
 
+use crate::bluetooth::Reconnect;
 use crate::clipboard::{self, Clipboard};
 use crate::inhibit::{self, Inhibit};
 use crate::memory::{self, Memory};
@@ -50,6 +51,8 @@ struct Session {
     memory: Memory,
     network: Network,
     power: Power,
+    /// Bluetooth audio devices connect again when the adapter powers on.
+    bluetooth: Reconnect,
     /// The CPU mode's rule folder, for Power Saver.
     #[cfg(target_os = "linux")]
     rules_watch: Option<gh0st_core::status::Watch>,
@@ -141,6 +144,12 @@ pub fn main(args: &[String]) -> i32 {
         memory: Memory::open(),
         network: Network::default(),
         power: Power::new(),
+        // A test session never reaches for the user's speakers.
+        bluetooth: if test {
+            Reconnect::default()
+        } else {
+            Reconnect::open()
+        },
         #[cfg(target_os = "linux")]
         rules_watch: gh0st_core::status::Watch::dirs(&[std::path::Path::new(monitor::RULES)]).ok(),
         #[cfg(target_os = "linux")]
@@ -175,6 +184,14 @@ impl Session {
             if let Some(l) = &self.link {
                 fds.push(gh0st_core::rt::pollfd(l.fd()));
             }
+            let bt_at = self.bluetooth.fd().map(|fd| {
+                fds.push(gh0st_core::rt::pollfd_rw(
+                    fd,
+                    true,
+                    self.bluetooth.wants_write(),
+                ));
+                fds.len() - 1
+            });
             let net_at = self.network.fd().map(|fd| {
                 fds.push(gh0st_core::rt::pollfd_rw(
                     fd,
@@ -211,6 +228,9 @@ impl Session {
             }
             if net_at.is_some_and(|i| fds[i].revents != 0) {
                 self.network.ready();
+            }
+            if bt_at.is_some_and(|i| fds[i].revents != 0) {
+                self.bluetooth.ready();
             }
             #[cfg(target_os = "linux")]
             if let (Some(i), Some(w)) = (rules_at, self.rules_watch.as_ref()) {

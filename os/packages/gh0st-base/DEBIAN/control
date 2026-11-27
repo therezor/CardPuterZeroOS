@@ -4,9 +4,14 @@ Architecture: all
 Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: admin
 Priority: optional
-Depends: gh0st-kernel, gh0st-wifi, systemd-zram-generator, udev, kmod
+Depends: gh0st-kernel, gh0st-wifi, systemd-zram-generator, udev, kmod,
+ libspa-0.2-bluetooth
 Description: Gh0st OS system configuration
  Configuration only: apt sources and pins, what dpkg leaves out, which
  services start, journald off, zram, sysctl, udev rules for the Raspberry Pi
  devices, NetworkManager privacy defaults, and the one-time migrations
  the update engine runs.
+ .
+ libspa-0.2-bluetooth is PipeWire's Bluetooth audio, which our WirePlumber
+ config turns on. It is here so it is in place before the postinst
+ restarts WirePlumber.
