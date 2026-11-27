@@ -180,6 +180,7 @@ simulator.
 - 📦 [docs/apps.md](docs/apps.md): what the shell gives any app.
 - 🔄 [docs/updates.md](docs/updates.md): the update engine and the apt repo.
 - 🖥️ [docs/panel-driver.md](docs/panel-driver.md): how a frame reaches the panel.
+- 🤝 [CONTRIBUTING.md](CONTRIBUTING.md): send a pull request (to `dev`).
 
 ## 📜 Licenses
 
