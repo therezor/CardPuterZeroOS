@@ -12,12 +12,10 @@
 - 🔒 Hold Tab to lock over an app too. The lock screen slides away as you
   unlock.
 - 📁 Files can open protected folders after you type your password.
-- 🛍️ Every app in the Store installs. Voice input and Pinyin can type into
-  the apps you allow in Settings > Apps.
+- 🛍️ Every app in the Store installs.
 - 🧪 Try what comes next: Settings > System > Updates > Channel > Edge.
-- 🐛 Fixes: Bluetooth stays off after a restart, the volume and brightness
-  bars no longer flicker over apps, and network apps from the Store find
-  the Ethernet port.
+- 🐛 Fixes: Bluetooth stays off after a restart, notices over apps no
+  longer flicker, and network apps from the Store find the Ethernet port.
 
 ## v0.4.0 beta
 
