@@ -45,6 +45,8 @@ SH
 chmod +x "$work/chkpwd" "$work/passwd"
 mkfifo "$work/keys"
 
+mkdir -p /tmp/gh0st-$$-keyring
+export XDG_RUNTIME_DIR=/tmp/gh0st-$$-keyring
 export HOME=$work/home GH0ST_SERVICES=1 GH0ST_SERVICES_EXE=$GH0ST \
     GH0ST_KEYRING_VAULT=$work/login.vault GH0ST_CHKPWD=$work/chkpwd \
     GH0ST_PASSWD=$work/passwd GH0ST_APPS_OURS=$work/ours \

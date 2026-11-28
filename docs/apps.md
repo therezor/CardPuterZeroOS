@@ -101,11 +101,15 @@ An entry without a field code opens no files.
   | `APPLAUNCH_LINUX_KEYBOARD_MAP` | The symbol-layer map file |
   | `GH0ST_SYSPLAUSE` | `1` when a terminal should wait for a key after its command exits |
   | `CAMERA_APP_KEYBOARD_GRAB` | `false`: the stock camera grabs the keyboard otherwise |
+  | `SUDO_ASKPASS`, `GH0ST_ASKPASS`, `DISPLAY` | Only for an app that runs as root (`isolation.md`): `/usr/bin/gh0st-askpass`, the shell's askpass socket and `:0`, so `sudo` asks through the shell's prompt |
 
 - The shell never grabs the keyboard while the app is in front. The app reads
   it directly. An app must not grab it either, or Fn+K, ESC held, the volume
   keys and the screen timeout stop working. The shell takes the keyboard only
-  once the app has left the front: paused, dark or locked (see Pausing).
+  once the app has left the front: paused, dark or locked (see Pausing). The
+  one exception is `sudo`'s password question for the app in front: the app
+  goes behind the prompt, and the keyboard is the shell's until the question
+  is answered or dismissed.
 - While an app is in front, the shell draws over it only for a banner across
   the top (ESC held, or the battery about to run out) and for toasts. A
   toast comes for the brightness, volume, mute and screenshot keys, a new
@@ -270,8 +274,10 @@ for it, as Fn+K parks it, and gets `pause` and `resume` on its link.
   it pauses the app, the shell takes the keyboard. If the app holds it (an
   `EVIOCGRAB` of its own), the shell can't see keys, so it leaves the app
   alone and the screen on. An app that sent `awake 1` stays in front too.
-- While apps are paused and the shell is in front, while it is dark, and
-  while the lock screen shows, the shell grabs the keyboard. A background app
+- While apps are paused and the shell is in front, while it is dark, while
+  the lock screen shows, and while `sudo`'s question for the app that asked
+  shows (that app runs behind the prompt, since a root app can't be stopped),
+  the shell grabs the keyboard. A background app
   never reads the password. Before an app resumes, the shell lets go and writes `MSC_SCAN`
   events to the device until every paused reader's queue overflows, so the
   app reads `SYN_DROPPED` instead of keys typed elsewhere. Ignore `EV_MSC`.
@@ -309,7 +315,9 @@ for it, as Fn+K parks it, and gets `pause` and `resume` on its link.
   drawing shows over it.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
   and leaves them in front. One keeps the screen on too: the shell can't stop
-  it drawing over the lock screen.
+  it drawing over the lock screen. When its `sudo` asks for the password, the
+  shell shows the question over it and holds the keyboard; the app runs
+  behind the prompt meanwhile.
 
 ## The app menu
 

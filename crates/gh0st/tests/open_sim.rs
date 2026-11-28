@@ -7,6 +7,16 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// A runtime dir of this shell's own, short enough for a socket path, so
+/// sims in parallel never share the askpass socket or the instance lock.
+fn runtime_dir() -> PathBuf {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let rt = PathBuf::from(format!("/tmp/gh0st-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&rt).unwrap();
+    rt
+}
+
 /// A linked app. It logs its argv and every message, answers `pause`, and
 /// follows `$SIM_DIR/<name>.plan`: `wait <ms>`, `on <verb>`, `send <fields>`
 /// (tab-separated) and `exit`.
@@ -108,6 +118,7 @@ impl Sim {
             .env("GH0ST_ICON_ROOT", self.dir.join("icons"))
             .env("GH0ST_LOG", "debug")
             .env("SIM_DIR", &self.dir)
+            .env("XDG_RUNTIME_DIR", runtime_dir())
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

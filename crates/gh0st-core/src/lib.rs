@@ -5,6 +5,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod apps;
+pub mod askpass;
 pub mod backlight;
 pub mod battery;
 pub mod btmgmt;

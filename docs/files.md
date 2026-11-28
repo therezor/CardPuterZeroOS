@@ -202,7 +202,8 @@ page (gh0st-files) ──socket pair──> worker (gh0st-files --worker)
   questions go to an askpass program, which is this binary again: it
   carries the prompt to the worker over a socket in a folder only the user
   can open (ssh closes inherited fds, so a path is the way through). The
-  worker asks the page, and the page asks the keyring or the user.
+  worker asks the page, and the page asks the keyring or the user. That
+  askpass is Files' own; `sudo`'s goes through the shell (`isolation.md`).
 - **FTP, FTPS and WebDAV** run curl once a call (`src/worker/curl.rs`). FTP
   lists with MLSD, and with LIST where a server lacks it. WebDAV lists with
   PROPFIND, read by a small scanner that ignores namespace prefixes.

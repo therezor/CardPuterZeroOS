@@ -32,6 +32,7 @@ are in `docs/hardware-facts.md`.
   the switcher and the dock. `examples/mockups.rs` renders its screens to PNG.
 - `crates/gh0st-core`: syscalls, event loop, input, config, apps, children,
   and the sandbox each app runs in (`src/sandbox.rs`, `docs/isolation.md`).
+  `src/askpass.rs` is the socket `sudo`'s helper brings its question over.
   `examples/sandboxed.rs` runs a command in an app's sandbox.
 - `crates/gh0st-dbus`: our D-Bus codec and connection. SASL EXTERNAL, the
   wire format with every spec limit checked, fd passing, one poll loop and
@@ -89,7 +90,8 @@ are in `docs/hardware-facts.md`.
 - `crates/gh0st`: one multi-call binary. The name it runs under picks the
   program. `gh0st update` is the update engine and `gh0st store` the
   Store's, both run as root by systemd. `gh0st audio` parks a paused
-  app's streams on a null sink, run by the shell.
+  app's streams on a null sink, run by the shell. `gh0st-askpass` is
+  `sudo`'s helper (`SUDO_ASKPASS`), a link to the same binary.
 - `os/store/mirror.py`: CI's mirror of M5's registry, the Store's signed
   catalog on our Pages (`os/build.sh store`).
 - `assets/`: Inter, JetBrains Mono and Terminus (OFL; the Terminus BDFs are
@@ -151,8 +153,9 @@ are in `docs/hardware-facts.md`.
 - **Keep the stock app contract.** `.desktop` files in
   `/usr/share/APPLaunch/applications`, cwd `/usr/share/APPLaunch`, the
   `LV_LINUX_*` and `APPLAUNCH_LINUX_*` env, ESC held 3 s sends SIGTERM to the
-  group, SIGKILL 3 s later. Never `EVIOCGRAB` while an app is in front; the
-  shell grabs only while it is in front with apps paused, dark, or locked.
+  group, SIGKILL 3 s later. The shell uses `EVIOCGRAB` only when it is in
+  front with apps paused, when dark or locked, or while asking for the front
+  app's own `sudo` password.
 - **Shared config.** `~/.config/cardputerzero/config.json` is read by stock
   apps too. Keep unknown keys. Our keys use a `gh0st.` prefix. Stock apps
   write it too, so keys an app must not set (`config::is_secure`: the
@@ -236,4 +239,7 @@ or sets `"gh0st.lock.password": false` in the scratch config.json before
 the first run (the shell then moves it to `.config/gh0st/settings.json`).
 Under `--sim` apps start unsandboxed.
 `GH0ST_PASSWD` and `GH0ST_CHKPWD` swap `passwd -S` and `unix_chkpwd` for test
-scripts.
+scripts. The shell's askpass socket needs an `XDG_RUNTIME_DIR` of its own,
+short (`sun_path` is 104 bytes): it opens `$XDG_RUNTIME_DIR/gh0st-askpass-<uid>/askpass`
+and nothing without the variable. Under `--sim`, a root app gets
+`SUDO_ASKPASS=$GH0ST_ASKPASS_EXE`, the test's `gh0st-askpass`.

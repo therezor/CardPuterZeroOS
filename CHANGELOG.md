@@ -12,6 +12,10 @@
 - 🔒 Hold Tab to lock over an app too. The lock screen slides away as you
   unlock.
 - 📁 Files can open protected folders after you type your password.
+- 🔐 **Apps that run as root ask for the password through the shell.** A
+  Store app that calls `sudo` gets the shell's own prompt, and the keyboard
+  stays the shell's while it shows. An app that quits at once leaves a
+  notice that says why.
 - 🛍️ Every app in the Store installs.
 - 🧪 Try what comes next: Settings > System > Updates > Channel > Edge.
 - 🐛 Fixes: Bluetooth stays off after a restart, notices over apps no

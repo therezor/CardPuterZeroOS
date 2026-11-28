@@ -2,7 +2,18 @@
 //! script. Under `--sim` the shell only logs what it would run, so nothing
 //! on the host restarts.
 
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
+
+/// A runtime dir of this shell's own, short enough for a socket path, so
+/// sims in parallel never share the askpass socket or the instance lock.
+fn runtime_dir() -> PathBuf {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let rt = PathBuf::from(format!("/tmp/gh0st-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&rt).unwrap();
+    rt
+}
 
 fn run(name: &str, keys: &str) -> String {
     run_frames(name, keys, "").0
@@ -31,6 +42,7 @@ fn run_frames(name: &str, keys: &str, extra: &str) -> (String, Vec<u8>) {
         .env("GH0ST_APPS_STOCK", dir.join("stock"))
         .env("GH0ST_ICON_ROOT", dir.join("icons"))
         .env("GH0ST_LOG", "debug")
+        .env("XDG_RUNTIME_DIR", runtime_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

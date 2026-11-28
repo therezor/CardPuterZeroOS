@@ -16,6 +16,8 @@ install -m 755 "$out/gh0st-text" "$dest/usr/bin/gh0st-text"
 ln -s gh0st "$dest/usr/bin/xdg-open"
 install -m 755 "$out/gh0st-keyboard" "$dest/usr/bin/gh0st-keyboard"
 ln -s gh0st "$dest/usr/bin/gh0st-shell"
+# sudo inside a root app asks for the password through this name (docs/isolation.md).
+ln -s gh0st "$dest/usr/bin/gh0st-askpass"
 # pkexec runs the helper by this path. A hard link: the same root-owned file,
 # not a symlink, which pkexec refuses.
 install -d "$dest/usr/libexec"

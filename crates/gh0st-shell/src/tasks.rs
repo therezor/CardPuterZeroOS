@@ -4,6 +4,7 @@
 
 use crate::home::Icon;
 use crate::switcher::{self, Card};
+use gh0st_core::apps::Exempt;
 use gh0st_core::child;
 use gh0st_core::esc::KILL_GRACE_MS;
 use gh0st_core::link::Link;
@@ -74,6 +75,10 @@ pub struct Task {
     /// Started in its sandbox, at this time: one that fails at once may
     /// need more than the sandbox gives.
     pub sandboxed: bool,
+    /// Why it runs outside the sandbox, when it does.
+    pub exempt: Option<Exempt>,
+    /// Ours: its notice is ours to fix, not the user's to read.
+    pub ours: bool,
     pub started: u64,
 }
 
@@ -264,10 +269,9 @@ impl Tasks {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn task(id: &str, pgid: i32, used: u64) -> Task {
+impl Task {
+    /// A task with nothing set, for the shell's tests.
+    pub(crate) fn fixture(id: &str, pgid: i32, used: u64) -> Task {
         Task {
             id: id.into(),
             name: id.into(),
@@ -289,8 +293,19 @@ mod tests {
             keeps_on: false,
             sound_parked: false,
             sandboxed: false,
+            exempt: None,
+            ours: false,
             started: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task(id: &str, pgid: i32, used: u64) -> Task {
+        Task::fixture(id, pgid, used)
     }
 
     #[test]
