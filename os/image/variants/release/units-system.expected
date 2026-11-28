@@ -1,5 +1,8 @@
 NetworkManager-dispatcher.service enabled
 NetworkManager.service enabled
+alsa-restore.service masked
+alsa-state.service masked
+alsa-utils.service masked
 bluetooth.service enabled
 cryptdisks-early.service masked
 cryptdisks.service masked

@@ -133,6 +133,16 @@ them gets them once, from the migration `0001-cli-tools`
 (docs/updates.md). `man-db` stays denied: its daily index job and groff
 cost more than the pages are worth here.
 
+**Tools apps assume.** Stock Raspberry Pi OS has these, so Store apps run
+them without asking for them: `gpg` (an app that adds an apt source writes
+its key with `gpg --dearmor`, and an empty key fails every update check),
+`amixer`, `aplay` and `arecord` (`alsa-utils`), `zstd`, `xz` and `bzip2`.
+Only `gpg` is in, not `gnupg`: no agent, no keyserver. `alsa-utils` comes
+without its mixer restore: gh0st-base masks `alsa-restore.service`,
+`alsa-state.service` and its udev rule, so a boot never resets the codec.
+A device flashed before them gets them from the migration
+`0005-app-tools`.
+
 **ffmpeg.** `ffmpeg` and `ffprobe` are in the image for the terminal and
 Store apps. Media's helper links ffmpeg's libraries to decode, and Camera's
 for sound and playback. Debian's ffmpeg is a desktop build: its device
@@ -144,7 +154,7 @@ installed.
 
 | Package | Holds |
 |---|---|
-| `gh0st-base` | Config only: apt sources and deny pins, dpkg excludes, unit presets, journald off, zram, sysctl, rfkill default, `/tmp` cap, the first-boot grow, udev rules in place of `raspberrypi-sys-mods`, NetworkManager privacy defaults, PipeWire realtime limits without rtkit, Bluetooth audio without a logind seat, the default volume, the one-time migrations |
+| `gh0st-base` | Config only: apt sources and deny pins, dpkg excludes, unit presets, journald off, zram, sysctl, rfkill default, `/tmp` cap, the first-boot grow, udev rules in place of `raspberrypi-sys-mods`, NetworkManager privacy defaults, PipeWire realtime limits without rtkit, Bluetooth audio without a logind seat, the default volume, ALSA's mixer restore masked, the one-time migrations |
 | `gh0st-kernel` | Exact-version Depends on the kernel, drivers and firmware, so they move together |
 | `gh0st-no-initramfs` | Provides `linux-initramfs-tool`: the kernel has ext4 and the SD driver built in |
 | `gh0st-panel-modules` | The 15 M5 drivers and our panel driver, overlays, udev rules, firmware files, keymap, `fb_load` |
@@ -294,8 +304,8 @@ start is a device test.
 
 | | Stock M5 image | Gh0st OS release |
 |---|---|---|
-| Packages | 1699 | 498 |
-| Installed | 5.1 GB `/usr` | 929 MB |
+| Packages | 1699 | 516 |
+| Installed | 5.1 GB `/usr` | 943 MB |
 | Download | 14.8 GiB image | 228 MB `.img.xz` |
 | Enabled system services | 30+ and 9 timers | 7, one timer (the daily update check) |
 

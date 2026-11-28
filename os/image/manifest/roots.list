@@ -14,6 +14,10 @@ e2fsprogs               fsck.ext4, without which systemd never checks / or /home
 ca-certificates         TLS for apt and apps
 curl                    the Store's engine downloads with it, and so do apps
 wget                    downloads for app install scripts that call wget
+gpg                     apt keys for app install scripts that call gpg --dearmor
+xz-utils                xz and tar -J, for app install scripts and archives
+bzip2                   bzip2 and tar -j
+zstd                    zstd, which Store apps call to unpack images
 python3                 scripts, and apps written in Python
 htop                    processes and memory at a glance
 less                    a pager
@@ -57,6 +61,7 @@ pipewire-pulse          audio server; stock apps speak PulseAudio
 wireplumber             PipeWire session manager; wpctl for volume
 libspa-0.2-bluetooth    Bluetooth audio: headphones and speakers through PipeWire
 pulseaudio-utils        pactl, which Music and Recorder run
+alsa-utils              amixer, aplay and arecord, which Store apps run; its boot restore is masked
 gh0st                   the shell and Settings
 gh0st-term              the terminal
 gh0st-camera            the Camera app and its libcamera helper
