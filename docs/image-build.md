@@ -141,7 +141,8 @@ Only `gpg` is in, not `gnupg`: no agent, no keyserver. `alsa-utils` comes
 without its mixer restore: gh0st-base masks `alsa-restore.service`,
 `alsa-state.service` and its udev rule, so a boot never resets the codec.
 A device flashed before them gets them from the migration
-`0005-app-tools`.
+`0005-app-tools`. What else an app uses but doesn't ask for, the Store
+installs with it (docs/store.md, Extras).
 
 **ffmpeg.** `ffmpeg` and `ffprobe` are in the image for the terminal and
 Store apps. Media's helper links ffmpeg's libraries to decode, and Camera's

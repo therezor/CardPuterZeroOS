@@ -6,8 +6,9 @@
 
 OUT gets catalog, catalog.sig, about-<sha256>, icons-<sha256>, and the
 files the next run starts from: checked.tsv (what each deb holds),
-sources.tsv (icons and screenshots by ETag) and dropped.tsv (left out, and
-why).
+sources.tsv (icons and screenshots by ETag), dropped.tsv (left out, and
+why) and extras.tsv (what an app uses but doesn't ask for, and what came
+of it).
 
 Environment:
   STORE_PREV  URL (or file:// URL) of the live store site. Unset: start empty.
@@ -141,12 +142,84 @@ SYSTEM_ETC = {
 }
 TMPFILES = ("usr/lib/tmpfiles.d/", "etc/tmpfiles.d/")
 # The last column dates the facts: rows from an older rule are checked again.
-FACTS = "6"
+FACTS = "7"
 CHECKED_COLS = [
     "sha256", "package", "version", "arch", "depends", "provides",
     "replaces", "conflicts", "breaks", "scripts", "paths", "service", "desktop",
-    "root", "keys", "facts",
+    "root", "keys", "uses", "facts",
 ]
+
+# What an app runs or imports without asking for it, and the Debian package
+# that brings it. Stock Raspberry Pi OS has most of these, so apps assume
+# them. Only these names ever become extras: a deb's own text never names
+# a package to install.
+TOOLS = {
+    "gpg": "gpg", "gpgv": "gpgv", "dirmngr": "dirmngr",
+    "xz": "xz-utils", "unxz": "xz-utils", "xzcat": "xz-utils",
+    "bzip2": "bzip2", "bunzip2": "bzip2", "zstd": "zstd", "unzstd": "zstd",
+    "7z": "7zip", "7za": "7zip", "zip": "zip", "unzip": "unzip", "cpio": "cpio",
+    "bc": "bc", "lsb_release": "lsb-release", "whiptail": "whiptail", "patch": "patch",
+    "git": "git", "curl": "curl", "wget": "wget", "jq": "jq", "sqlite3": "sqlite3",
+    "aplay": "alsa-utils", "arecord": "alsa-utils", "amixer": "alsa-utils",
+    "alsactl": "alsa-utils", "speaker-test": "alsa-utils",
+    "sox": "sox", "mpg123": "mpg123", "espeak-ng": "espeak-ng", "espeak": "espeak-ng",
+    "ifconfig": "net-tools", "netstat": "net-tools", "arp": "net-tools",
+    "iwconfig": "wireless-tools", "iwlist": "wireless-tools", "iw": "iw",
+    "arping": "iputils-arping", "ethtool": "ethtool", "socat": "socat",
+    "inotifywait": "inotify-tools", "xdg-open": "xdg-utils", "dos2unix": "dos2unix",
+    "envsubst": "gettext-base", "xmlstarlet": "xmlstarlet",
+    "fbset": "fbset", "v4l2-ctl": "v4l-utils", "lspci": "pciutils", "parted": "parted",
+    "sgdisk": "gdisk", "mkfs.exfat": "exfatprogs", "ntfs-3g": "ntfs-3g",
+    "pip": "python3-pip", "pip3": "python3-pip", "python": "python-is-python3",
+    "virtualenv": "python3-virtualenv",
+}
+MODULES = {
+    "numpy": "python3-numpy", "PIL": "python3-pil", "requests": "python3-requests",
+    "gpiozero": "python3-gpiozero", "RPi": "python3-rpi-lgpio", "lgpio": "python3-lgpio",
+    "smbus": "python3-smbus", "smbus2": "python3-smbus2", "spidev": "python3-spidev",
+    "serial": "python3-serial", "evdev": "python3-evdev", "pyudev": "python3-pyudev",
+    "psutil": "python3-psutil", "yaml": "python3-yaml", "dbus": "python3-dbus",
+    "gi": "python3-gi", "cairo": "python3-cairo", "picamera2": "python3-picamera2",
+    "libcamera": "python3-libcamera", "pygame": "python3-pygame",
+    "netifaces": "python3-netifaces", "cryptography": "python3-cryptography",
+    "bs4": "python3-bs4", "jinja2": "python3-jinja2", "urllib3": "python3-urllib3",
+    "pexpect": "python3-pexpect", "lxml": "python3-lxml", "tqdm": "python3-tqdm",
+    "rich": "python3-rich", "websockets": "python3-websockets", "aiohttp": "python3-aiohttp",
+    "flask": "python3-flask", "qrcode": "python3-qrcode", "pyaudio": "python3-pyaudio",
+    "cv2": "python3-opencv", "pulsectl": "python3-pulsectl", "pyte": "python3-pyte",
+    "paho": "python3-paho-mqtt", "bleak": "python3-bleak", "venv": "python3-venv",
+    "ensurepip": "python3-venv",
+}
+# An extra may add up to this much installed; past it a package needs to
+# be in BIG_OK.
+EXTRA_CAP = 10 << 20
+# Over the cap, but the apps that use them do nothing without them.
+BIG_OK = {"python3-numpy", "python3-picamera2", "python3-libcamera"}
+# Reviewed by hand, by app: "+pkg" adds an extra the scan misses or one
+# over the cap, "-pkg" drops one it sees that the app doesn't need.
+EXTRAS_FIX = {
+    # Its launcher imports pygame first thing.
+    "urc": {"+python3-pygame"},
+    # Responder's macOS launcher, which never runs here.
+    "raspyjack": {"-net-tools", "-python-is-python3"},
+}
+# Folders of someone else's code an app carries. What it imports is that
+# library's business, often optional.
+VENDORED = re.compile(r"(?:^|/)(?:vendor|vendored|_vendor|third_party|site-packages|"
+                      r"dist-packages|node_modules)/")
+# A tool where a shell runs one: at the start of a command, after a pipe,
+# a separator, $( or a backtick, or a word that runs or looks for the next.
+SHELL_CMD = re.compile(
+    r"(?:^|[;&|(`!]|\$\(|-c[ \t]*['\"]|\b(?:then|do|else|if|while|until)\s)\s*"
+    r"(?:(?:sudo|exec|env|nice|nohup|command\s+-v|which|type|hash)\s+|!\s*)*"
+    r"(" + "|".join(re.escape(t) for t in sorted(TOOLS, key=len, reverse=True)) + r")"
+    r"(?=[\s;&|)`]|$)", re.M)
+# A tool Python runs: the first word of the command it hands over.
+PY_CMD = re.compile(
+    r"(?:subprocess\.\w+|Popen|check_call|check_output|os\.system|os\.popen|shutil\.which"
+    r"|\brun|\bcall)\s*\(\s*\[?\s*[rbf]?[\"']([\w.+-]+)")
+PY_IMPORT = re.compile(r"^[ \t]*(?:import|from)[ \t]+([A-Za-z_]\w*)", re.M)
+PY_VENV = re.compile(r"-m[ \t]+venv\b")
 # Asking for root as it runs, which a sandbox can't give (docs/isolation.md):
 # sudo, pkexec or doas as a command in a script or a program's strings.
 ROOT_CMD = re.compile(rb"(?:^|[\0\s'\"`;&|(/=])(?:sudo|pkexec|doas)(?=[\0\s'\"`;&|)]|$)", re.M)
@@ -402,6 +475,134 @@ def asks_root(n, mode, body):
     return body is not None and is_code(n, mode) and ROOT_CMD.search(body) is not None
 
 
+def program_kind(n, body):
+    """"sh" or "py" for a file the uses scan reads as a program, else None."""
+    first = body.split(b"\n", 1)[0] if body else b""
+    if first.startswith(b"#!"):
+        if b"python" in first:
+            return "py"
+        return "sh" if re.search(rb"\b(?:ba|da|k|z)?sh\b", first) else None
+    if n.endswith(".py"):
+        return "py"
+    return "sh" if n.endswith((".sh", ".bash")) else None
+
+
+def vendored_roots(names):
+    """Folders that hold libraries pip put there: a .dist-info or .egg-info
+    sits next to them."""
+    roots = set()
+    for n in names:
+        parts = n.split("/")
+        for i in range(1, len(parts)):
+            if parts[i].endswith((".dist-info", ".egg-info")):
+                roots.add("/".join(parts[:i]) + "/")
+    return roots
+
+
+def provided_modules(names):
+    """The Python modules a deb carries itself, by their top name."""
+    mods = set()
+    for n in names:
+        base = n.rsplit("/", 1)[-1]
+        if base == "__init__.py" and "/" in n:
+            mods.add(n.split("/")[-2])
+        elif base.endswith(".py"):
+            mods.add(base[:-3])
+        elif base.endswith(".so") and (".cpython-" in base or ".abi3." in base):
+            mods.add(base.split(".", 1)[0])
+    return mods
+
+
+SH_QUOTED = re.compile(r"(-c[ \t]*)?('[^']*'|\"(?:[^\"\\]|\\.)*\")")
+SH_SUBST = re.compile(r"\$\([^()]*\)|`[^`]*`")
+
+
+def quoted_code(m):
+    """A quoted string as the shell runs it: words are blanked, but the
+    command substitutions in double quotes stay, and so does a script
+    handed to `sh -c`. Newlines stay, for line numbers."""
+    q = m.group(2)
+    if m.group(1):
+        return m.group(0)
+    blank = lambda s: re.sub(r"[^\n]", " ", s)
+    if q.startswith("'"):
+        return blank(q)
+    out, last = [], 0
+    for s in SH_SUBST.finditer(q):
+        out += [blank(q[last:s.start()]), s.group(0)]
+        last = s.end()
+    out.append(blank(q[last:]))
+    return "".join(out)
+
+
+def uses_in(kind, text, own=frozenset()):
+    """{package: line} for the tools a program runs and the modules it
+    imports, by TOOLS and MODULES. Modules in `own` ship with the app."""
+    if kind == "sh":
+        # Comments go, their lines stay, so line numbers still point right.
+        text = re.sub(r"(?m)^[ \t]*#.*$", "", text)
+        text = SH_QUOTED.sub(quoted_code, text)
+    found = {}
+
+    def add(pkg, pos):
+        found.setdefault(pkg, text.count("\n", 0, pos) + 1)
+
+    if kind == "sh":
+        for m in SHELL_CMD.finditer(text):
+            add(TOOLS[m.group(1)], m.start(1))
+    else:
+        for m in PY_IMPORT.finditer(text):
+            if m.group(1) in MODULES and m.group(1) not in own:
+                add(MODULES[m.group(1)], m.start(1))
+        for m in PY_CMD.finditer(text):
+            if m.group(1) in TOOLS:
+                add(TOOLS[m.group(1)], m.start(1))
+    for m in PY_VENV.finditer(text):
+        add("python3-venv", m.start())
+    return found
+
+
+def uses(ctrl, data):
+    """What a deb's programs run and import that it may not ask for:
+    "pkg=path:line" joined by ";", one per package, sorted. Libraries it
+    carries are its own: their imports don't count, nor do modules it ships."""
+    names = [rel(n) for n, is_dir, _, _ in data if not is_dir]
+    vendored = vendored_roots(names)
+    own = provided_modules(names)
+    found = {}
+    files = [(f"DEBIAN/{os.path.basename(n)}", "sh", body) for n, _, _, body in ctrl
+             if body is not None and os.path.basename(n) in SCRIPTS]
+    for name, is_dir, mode, body in data:
+        n = rel(name)
+        if is_dir or body is None or not is_code(n, mode) or VENDORED.search(n):
+            continue
+        if any(n.startswith(r) for r in vendored):
+            continue
+        kind = program_kind(n, body)
+        if kind:
+            files.append((n, kind, body))
+    for n, kind, body in sorted(files):
+        # A file's name is the deb's to choose: it never adds an entry.
+        where = re.sub(r"[;=\s]", "_", n[:120])
+        for pkg, line in uses_in(kind, body.decode("utf-8", "replace"), own).items():
+            found.setdefault(pkg, f"{where}:{line}")
+    return ";".join(f"{p}={w}" for p, w in sorted(found.items()))
+
+
+USED = set(TOOLS.values()) | set(MODULES.values()) | {"python3-venv"}
+
+
+def uses_of(row):
+    """{package: where} from a checked row's uses column: only packages
+    TOOLS and MODULES name."""
+    out = {}
+    for part in (row.get("uses") or "").split(";"):
+        p, _, where = part.partition("=")
+        if p in USED:
+            out[p] = where
+    return out
+
+
 def scan_size(name, mode):
     n = rel(name)
     if n.startswith(TMPFILES):
@@ -412,7 +613,9 @@ def scan_size(name, mode):
 def facts(deb, sha256):
     """What a deb holds, for checked.tsv."""
     f = control_fields(deb)
-    ctrl = {os.path.basename(n) for n, _, _, _ in members(deb, "ctrl")}
+    ctrl_members = members(deb, "ctrl",
+                           lambda n, m: SCAN_CAP if os.path.basename(n) in SCRIPTS else 0)
+    ctrl = {os.path.basename(n) for n, _, _, _ in ctrl_members}
     data = members(deb, "fsys", scan_size)
     pkg = f.get("Package", "")
     paths = service = root = keys = False
@@ -454,6 +657,7 @@ def facts(deb, sha256):
         "desktop": desktop,
         "root": "1" if root else "0",
         "keys": "1" if keys else "0",
+        "uses": uses(ctrl_members, data),
         "facts": FACTS,
     }
 
@@ -595,8 +799,9 @@ Debug::NoLocking "true";
                 out.append("\n".join(lines))
         return "\n\n".join(out) + "\n"
 
-    def check(self, row):
-        """None when apt would install the app, or why it wouldn't."""
+    def simulate(self, row, extras=()):
+        """apt-get -s install of the app, from its control fields alone, and
+        of `extras` with it, as the engine runs it: (ok, apt's output)."""
         d = tempfile.mkdtemp(dir=os.path.join(self.root, "checks"))
         try:
             os.makedirs(os.path.join(d, "pkg/DEBIAN"))
@@ -611,13 +816,70 @@ Debug::NoLocking "true";
             subprocess.run(["dpkg-deb", "--root-owner-group", "-Zgzip", "-b", os.path.join(d, "pkg"), deb],
                            check=True, capture_output=True)
             env = dict(os.environ, APT_CONFIG=self.conf, LC_ALL="C.UTF-8")
-            r = subprocess.run(["apt-get", "-s", "-q", "install", "--no-remove", deb],
+            r = subprocess.run(["apt-get", "-s", "-q", "install", "--no-remove", deb, *extras],
                                env=env, capture_output=True, text=True)
-            return None if r.returncode == 0 else "apt can't install it: " + apt_reason(r.stdout + r.stderr)
+            return r.returncode == 0, r.stdout + r.stderr
         except subprocess.CalledProcessError as e:
-            return f"apt can't install it: {e}"
+            return False, f"E: {e}"
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    def check(self, row):
+        """None when apt would install the app, or why it wouldn't."""
+        ok, out = self.simulate(row)
+        return None if ok else "apt can't install it: " + apt_reason(out)
+
+    def installed_bytes(self, pkgs):
+        """What these packages take once installed, by apt's records."""
+        if not pkgs:
+            return 0
+        out = self.apt("apt-cache", "show", "--no-all-versions", *sorted(pkgs)).stdout
+        return sum(int(m) * 1024 for m in re.findall(r"^Installed-Size: (\d+)$", out, re.M))
+
+    def extras(self, row):
+        """The packages to install with the app that it uses but doesn't
+        ask for, and a report: [(package, what came of it, where)].
+
+        One at a time: each must install with the app, and what it brings
+        must fit EXTRA_CAP unless BIG_OK or EXTRAS_FIX lets it. Then all
+        together, or none."""
+        pkg = row["package"]
+        used = uses_of(row)
+        fix = EXTRAS_FIX.get(pkg, set())
+        for f in fix:
+            if f.startswith("+"):
+                used.setdefault(f[1:], "reviewed")
+        want = sorted(p for p in used if p != pkg and "-" + p not in fix)
+        if not want:
+            return [], []
+        ok, out = self.simulate(row)
+        if not ok:
+            return [], []
+        base = inst_names(out)
+        declared = set(names_of(row["depends"]))
+        kept, report = [], []
+        for p in want:
+            if p in base or p in declared:
+                continue
+            ok, out = self.simulate(row, [p])
+            if not ok:
+                report.append((p, "can't install: " + apt_reason(out), used[p]))
+                continue
+            size = self.installed_bytes(inst_names(out) - base)
+            if size > EXTRA_CAP and p not in BIG_OK and "+" + p not in fix:
+                report.append((p, f"too big: {size >> 20} MB", used[p]))
+                continue
+            kept.append(p)
+            report.append((p, f"extra, {size >> 10} KB", used[p]))
+        if kept and not self.simulate(row, kept)[0]:
+            report = [(p, "not with the others" if p in kept else w, u) for p, w, u in report]
+            kept = []
+        return kept, report
+
+
+def inst_names(out):
+    """The packages an apt simulation installs or upgrades."""
+    return {l.split()[1] for l in out.splitlines() if l.startswith("Inst ") and len(l.split()) > 1}
 
 
 def apt_reason(out):
@@ -716,8 +978,10 @@ def header(text, key):
     return None
 
 
-def app_line(app, facts_row, cn):
-    """The catalog line of one registry app, or (None, reason)."""
+def app_line(app, facts_row, cn, extras=()):
+    """The catalog line of one registry app, or (None, reason). Extras, the
+    packages the engine installs with it, are a last field when there are
+    any: an engine before them reads 14 fields and stops."""
     d = app.get("download") or {}
     pkg = d.get("package", "")
     perms = app.get("permissions") or {}
@@ -771,6 +1035,9 @@ def app_line(app, facts_row, cn):
         share if SHARE_RE.match(share) else "",
         desktop,
     ]
+    extras = [e for e in extras if PACKAGE_RE.match(e)]
+    if extras:
+        fields.append(",".join(sorted(extras)))
     return "app\t" + "\t".join(fields) + "\n", None
 
 
@@ -790,10 +1057,11 @@ def usable(app):
     return None
 
 
-def listing(apps, checked, names, ours, cn, dropped, installs=None):
+def listing(apps, checked, names, ours, cn, dropped, installs=None, extras=None):
     """The catalog's app lines and the apps they came from. Adds to
     dropped what it leaves out, and why. installs maps a deb's SHA-256 to
-    why apt can't install it, or None when it can."""
+    why apt can't install it, or None when it can; extras maps it to the
+    packages to install with it."""
     lines, kept = [], []
     offered = names | ours
     for a in apps:
@@ -819,7 +1087,7 @@ def listing(apps, checked, names, ours, cn, dropped, installs=None):
         if why:
             dropped[pkg] = why
             continue
-        line, why = app_line(a, row, cn.get(pkg))
+        line, why = app_line(a, row, cn.get(pkg), (extras or {}).get(row["sha256"], ()))
         if line and row["version"] != a.get("version"):
             warn(f"{pkg}: the registry says {a.get('version')}, the deb {row['version']}")
         if not line:
@@ -906,7 +1174,7 @@ def build(out, prev, apt, keyring, only, registry, cn_registry, work):
             else:
                 warn(err)
 
-    installs = {}
+    installs, extras, report = {}, {}, []
     if apt:
         device = Device(os.path.join(work, "device"), apt)
         shas = {(a.get("download") or {}).get("sha256") for a in apps}
@@ -915,7 +1183,13 @@ def build(out, prev, apt, keyring, only, registry, cn_registry, work):
             for sha, why in zip(rows, pool.map(device.check, rows.values())):
                 installs[sha] = why
         log(f"{sum(1 for w in installs.values() if w)} of {len(installs)} debs apt can't install")
-    lines, kept = listing(apps, checked, names, ours, cn, dropped, installs)
+        using = {sha: r for sha, r in rows.items() if not installs.get(sha) and r.get("uses")}
+        with concurrent.futures.ThreadPoolExecutor(4) as pool:
+            for sha, (kept_extras, rep) in zip(using, pool.map(device.extras, using.values())):
+                extras[sha] = kept_extras
+                report += [(using[sha]["package"], p, w, u) for p, w, u in rep]
+        log(f"{sum(1 for e in extras.values() if e)} apps get extras")
+    lines, kept = listing(apps, checked, names, ours, cn, dropped, installs, extras)
     log(f"{len(lines)} listed, {len(dropped)} left out")
 
     prev_cat = fetch_prev(prev, "catalog")
@@ -1018,6 +1292,8 @@ def build(out, prev, apt, keyring, only, registry, cn_registry, work):
         f.write(write_tsv(new_sources, src_cols))
     with open(os.path.join(out, "dropped.tsv"), "w", encoding="utf-8") as f:
         f.writelines(f"{p}\t{clean(w, 200)}\n" for p, w in sorted(dropped.items()))
+    with open(os.path.join(out, "extras.tsv"), "w", encoding="utf-8") as f:
+        f.writelines("\t".join(clean(x, 200) for x in r) + "\n" for r in sorted(report))
 
 
 def carry(out, prev):
@@ -1036,7 +1312,7 @@ def carry(out, prev):
             warn(f"the live store site has no {name}")
             return False
         files[name] = data
-    for name in ("checked.tsv", "sources.tsv", "dropped.tsv"):
+    for name in ("checked.tsv", "sources.tsv", "dropped.tsv", "extras.tsv"):
         data = fetch_prev(prev, name)
         if data is not None:
             files[name] = data

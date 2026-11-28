@@ -33,12 +33,31 @@ exit 0
 "#;
 
 /// Logs. A real remove empties the status file, as if dpkg removed the
-/// one app it lists.
+/// one app it lists. A simulated install lists each package as new, fails
+/// on one with a `$FAKE/broken-<name>`, and removes a package for one with
+/// a `$FAKE/removes-<name>`.
 const APT_GET: &str = r#"#!/bin/sh
 echo "apt-get $*" >> "$FAKE/log"
+if [ "$1 $3" = "-s install" ]; then
+    shift 4
+    for a in "$@"; do [ -e "$FAKE/broken-$a" ] && { echo "E: Unable to locate package $a"; exit 100; }; done
+    for a in "$@"; do
+        case $a in
+            /*) echo "Inst acidzero (0.2.0 local-deb [arm64])" ;;
+            *) echo "Inst $a (2 Debian:13 [arm64])"
+               [ -e "$FAKE/removes-$a" ] && echo "Remv udisks2 [1]" ;;
+        esac
+    done
+    exit 0
+fi
 case "$1 $2" in "remove -y") : > "$GH0ST_DPKG_STATUS" ;; esac
 exit 0
 "#;
+
+/// The deb the site serves is the one the catalog pins: its control says so.
+const DPKG_DEB: &str = "#!/bin/sh\nprintf 'Package: acidzero\\nVersion: 0.2.0\\n'\n";
+
+const APT_MARK: &str = "#!/bin/sh\necho \"apt-mark $*\" >> \"$FAKE/log\"\n";
 
 struct Sim {
     dir: PathBuf,
@@ -68,7 +87,13 @@ impl Sim {
         for d in ["bin", "site", "state", "run", "cache", "urun", "notify"] {
             std::fs::create_dir_all(dir.join(d)).unwrap();
         }
-        for (n, body) in [("curl", CURL), ("sqv", SQV), ("apt-get", APT_GET)] {
+        for (n, body) in [
+            ("curl", CURL),
+            ("sqv", SQV),
+            ("apt-get", APT_GET),
+            ("dpkg-deb", DPKG_DEB),
+            ("apt-mark", APT_MARK),
+        ] {
             let p = dir.join("bin").join(n);
             std::fs::write(&p, body).unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -98,6 +123,21 @@ impl Sim {
         std::fs::write(site.join("catalog"), &text).unwrap();
         std::fs::write(site.join("catalog.sig"), b"sig").unwrap();
         text
+    }
+
+    /// The catalog of [`publish`](Sim::publish), with a deb on the site that
+    /// matches it and `extras` as the line's last field.
+    fn publish_deb(&self, extras: &str) {
+        let deb = b"not really a deb";
+        std::fs::write(self.dir.join("site/a.deb"), deb).unwrap();
+        let text = self.publish(now() - 60, "acidzero\tA synth.\n");
+        let line = text.lines().find(|l| l.starts_with("app\t")).unwrap();
+        let mut f: Vec<String> = line.split('\t').map(String::from).collect();
+        f[3] = deb.len().to_string();
+        f[4] = sha256(deb);
+        f.push(extras.into());
+        let text = text.replace(line, &f.join("\t"));
+        std::fs::write(self.dir.join("site/catalog"), text).unwrap();
     }
 
     fn set(&self, what: &str, on: bool) {
@@ -375,4 +415,82 @@ fn a_held_lock_reads_as_locked() {
     let st = sim.job("install acidzero\nmirror auto\n");
     assert_eq!(st.outcome, Outcome::Locked);
     assert_eq!(st.packages, ["acidzero"]);
+}
+
+#[test]
+fn extras_the_device_lacks_install_with_the_app_and_are_marked_auto() {
+    let sim = Sim::new("extras");
+    sim.publish_deb("gpg,zstd");
+    sim.job("refresh\nmirror auto\n");
+    // gpg is there already: naming it to apt would mark it manual.
+    std::fs::write(
+        sim.dir.join("status"),
+        "Package: gpg\nStatus: install ok installed\nVersion: 2.4.7\n\n",
+    )
+    .unwrap();
+    let st = sim.job("install acidzero\nmirror github\n");
+    assert_eq!(st.outcome, Outcome::Ok, "{}", st.detail);
+    let log = sim.log();
+    let install = log
+        .lines()
+        .find(|l| l.starts_with("apt-get install -y"))
+        .unwrap();
+    assert!(install.ends_with(".deb zstd"), "{install}");
+    assert!(log.contains("apt-mark auto zstd\n"), "{log}");
+}
+
+#[test]
+fn an_extra_that_would_remove_something_is_left_out() {
+    let sim = Sim::new("extras-remove");
+    sim.publish_deb("evil,zstd");
+    sim.job("refresh\nmirror auto\n");
+    sim.set("removes-evil", true);
+    let st = sim.job("install acidzero\nmirror github\n");
+    assert_eq!(st.outcome, Outcome::Ok, "{}", st.detail);
+    let install = sim
+        .log()
+        .lines()
+        .find(|l| l.starts_with("apt-get install -y"))
+        .map(String::from)
+        .unwrap();
+    assert!(install.ends_with(".deb"), "{install}");
+}
+
+#[test]
+fn an_extra_apt_cant_install_never_stops_the_app() {
+    let sim = Sim::new("extras-broken");
+    sim.publish_deb("nope,zstd");
+    sim.job("refresh\nmirror auto\n");
+    sim.set("broken-nope", true);
+    let st = sim.job("install acidzero\nmirror github\n");
+    assert_eq!(st.outcome, Outcome::Ok, "{}", st.detail);
+    let log = sim.log();
+    let install = log
+        .lines()
+        .find(|l| l.starts_with("apt-get install -y"))
+        .unwrap();
+    assert!(install.ends_with(".deb"), "{install}");
+    assert!(!log.contains("apt-mark"), "{log}");
+}
+
+#[test]
+fn an_installed_app_gets_extras_it_gained_with_the_next_updates() {
+    let sim = Sim::new("extras-topup");
+    sim.publish_deb("zstd");
+    std::fs::write(
+        sim.dir.join("status"),
+        "Package: acidzero\nStatus: install ok installed\nVersion: 0.2.0\n\n",
+    )
+    .unwrap();
+    sim.job("refresh\nmirror auto\n");
+    // A refresh installs nothing: the user didn't ask.
+    assert!(!sim.log().contains("apt-get install"), "{}", sim.log());
+    let st = sim.job("upgrade\nmirror auto\n");
+    assert_eq!(st.outcome, Outcome::Ok, "{}", st.detail);
+    let log = sim.log();
+    assert!(
+        log.contains("--no-remove -o APT::Status-Fd=3 -o DPkg::Lock::Timeout=120 zstd\n"),
+        "{log}"
+    );
+    assert!(log.contains("apt-mark auto zstd\n"), "{log}");
 }

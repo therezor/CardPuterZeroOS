@@ -36,6 +36,7 @@ fn app(package: &str, title: &str, flags: &str) -> App {
         share: String::new(),
         desktop: package.into(),
         pin: false,
+        extras: Vec::new(),
     }
 }
 

@@ -8,6 +8,7 @@ use crate::update::{self, Reporter, STOP, apt};
 use gh0st_core::notify::{self, Notice};
 use gh0st_core::store::{self, App, Catalog, Job, Mirror, Outcome, Pinned, Request, State};
 use gh0st_core::update::{Outcome as UpOutcome, Phase};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
@@ -388,7 +389,82 @@ fn upgrade(st: &mut State, mirror: Mirror) -> Result<(), Failure> {
         .cloned()
         .collect();
     st.packages = apps.iter().map(|a| a.package.clone()).collect();
-    install(st, &apps, mirror)
+    install(st, &apps, mirror)?;
+    top_up(&c, &installed, &apps);
+    Ok(())
+}
+
+/// Extras an installed app's line gained after it went in, put in with the
+/// updates the user asked for. Best effort: an app that runs without them
+/// is no reason to fail the updates.
+fn top_up(c: &Catalog, installed: &HashMap<String, String>, updated: &[App]) {
+    let mut want: Vec<String> = c
+        .apps
+        .iter()
+        .filter(|a| installed.contains_key(&a.package))
+        .filter(|a| !updated.iter().any(|u| u.package == a.package))
+        .flat_map(|a| a.extras.iter().cloned())
+        .collect();
+    want.sort();
+    want.dedup();
+    let want = missing(&want);
+    if want.is_empty() {
+        return;
+    }
+    let mut sim_argv = vec!["apt-get", "-s", "-q", "install", "--no-remove"];
+    sim_argv.extend(want.iter().map(String::as_str));
+    let sim = match update::run(&sim_argv) {
+        Ok(s) if removes(&s).is_empty() && !upgrades_ours(&s) => s,
+        Ok(_) => return eprintln!("gh0st store: extras would change the system; left out"),
+        Err(e) => return eprintln!("gh0st store: extras: {e}"),
+    };
+    let mut rep = Reporter::at(store::progress_path(), true);
+    rep.keep_item = true;
+    rep.phase(Phase::Install, &want.join(" "));
+    let mut argv = vec![
+        "install",
+        "-y",
+        "-q",
+        "--no-remove",
+        "-o",
+        "APT::Status-Fd=3",
+        "-o",
+        "DPkg::Lock::Timeout=120",
+    ];
+    argv.extend(want.iter().map(String::as_str));
+    let (code, out) = update::apt("apt-get", &argv, &mut rep, until_dpkg());
+    if code != Some(0) {
+        return eprintln!("gh0st store: extras: {}", apt_failure(&out).1);
+    }
+    mark_auto(&new_installs(&sim, &want));
+}
+
+/// The packages in `of` that a simulation installs new: an `Inst` line
+/// with no installed version in brackets.
+fn new_installs(sim: &str, of: &[String]) -> Vec<String> {
+    sim.lines()
+        .filter_map(|l| l.strip_prefix("Inst "))
+        .filter_map(|r| {
+            let mut w = r.split_whitespace();
+            let name = w.next()?;
+            let next = w.next()?;
+            (!next.starts_with('[') && of.iter().any(|e| e == name)).then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Extras are an app's dependencies, as apt sees them: they go with
+/// autoremove once no app needs them. Only ones this run put in: a package
+/// the user or a migration installed stays theirs.
+fn mark_auto(pkgs: &[String]) {
+    if pkgs.is_empty() {
+        return;
+    }
+    let mut argv = vec!["apt-mark", "auto"];
+    argv.extend(pkgs.iter().map(String::as_str));
+    if let Err(e) = update::run(&argv) {
+        eprintln!("gh0st store: apt-mark: {e}");
+    }
 }
 
 /// One apt transaction per app, so a failure names its app and the ones
@@ -523,30 +599,29 @@ fn install_deb(
     lists_fresh: &mut bool,
 ) -> Result<(), Failure> {
     let local = path_str(deb);
+    let mut extras = missing(&a.extras);
     // apt reads its lists for some seconds before it says anything: a
     // moving bar, not a percent stuck at 0.
     rep.phase(Phase::Lists, &a.package);
-    let sim = simulate(&local).or_else(|e| {
-        // A dependency apt can't find may only be missing from old lists.
-        if *lists_fresh {
-            return Err(e);
-        }
+    let mut sim = simulate(&local, &extras);
+    // A dependency apt can't find may only be missing from old lists.
+    if sim.is_err() && !*lists_fresh {
         rep.phase(Phase::Lists, &a.package);
         rep.p.item = a.package.clone();
         refresh_lists(rep)?;
         *lists_fresh = true;
-        simulate(&local)
-    })?;
-    // --no-remove refuses too, but the reason reads better from here.
-    if let Some(other) = removes(&sim).into_iter().next() {
-        return Err((Outcome::Failed, format!("It would remove {other}")));
+        sim = simulate(&local, &extras);
     }
-    // An app that needs a newer Gh0st OS waits for Updates, which installs
-    // the system as a whole.
-    if upgrades_ours(&sim) {
-        return Err((Outcome::Failed, "Update Gh0st OS first".into()));
+    // Extras help an app; they never stop it installing.
+    let mut checked = sim.and_then(|s| gates(&s, a).map(|deps| (s, deps)));
+    if let Err((_, why)) = &checked
+        && !extras.is_empty()
+    {
+        eprintln!("gh0st store: {} without its extras: {why}", a.package);
+        extras.clear();
+        checked = simulate(&local, &extras).and_then(|s| gates(&s, a).map(|deps| (s, deps)));
     }
-    let deps = space_for(&sim, a)?;
+    let (sim, deps) = checked?;
     if update::dpkg_interrupted() {
         let _ = update::configure_pending(rep);
     }
@@ -573,16 +648,51 @@ fn install_deb(
             "-o",
             "DPkg::Lock::Timeout=120",
             &local,
-        ],
+        ]
+        .into_iter()
+        .chain(extras.iter().map(String::as_str))
+        .collect::<Vec<_>>(),
         rep,
         until_dpkg(),
     );
     if code != Some(0) {
         return Err(apt_failure(&out));
     }
+    mark_auto(&new_installs(&sim, &extras));
     // SAFETY: sync has no failure mode.
     unsafe { libc::sync() };
     Ok(())
+}
+
+/// What a simulation must pass before the real run: it removes nothing,
+/// leaves Gh0st OS to Updates, and fits. Returns what the dependencies
+/// download.
+fn gates(sim: &str, a: &App) -> Result<u64, Failure> {
+    // --no-remove refuses too, but the reason reads better from here.
+    if let Some(other) = removes(sim).into_iter().next() {
+        return Err((Outcome::Failed, format!("It would remove {other}")));
+    }
+    // An app that needs a newer Gh0st OS waits for Updates, which installs
+    // the system as a whole.
+    if upgrades_ours(sim) {
+        return Err((Outcome::Failed, "Update Gh0st OS first".into()));
+    }
+    space_for(sim, a)
+}
+
+/// The packages in `pkgs` dpkg doesn't have. apt marks any package named on
+/// its command line as installed by hand, so one already there is left
+/// off: it stays as the user or a migration had it.
+fn missing(pkgs: &[String]) -> Vec<String> {
+    if pkgs.is_empty() {
+        return Vec::new();
+    }
+    let status = std::fs::read_to_string(store::dpkg_status()).unwrap_or_default();
+    let have = store::installed(&status, |p| pkgs.iter().any(|w| w == p));
+    pkgs.iter()
+        .filter(|p| !have.contains_key(*p))
+        .cloned()
+        .collect()
 }
 
 /// SIGTERM may stop apt until dpkg starts; past that it finishes.
@@ -594,9 +704,10 @@ fn until_dpkg() -> impl FnMut(&apt::Status) -> bool {
     }
 }
 
-fn simulate(local: &str) -> Result<String, Failure> {
+fn simulate(local: &str, extras: &[String]) -> Result<String, Failure> {
     let out = Command::new("apt-get")
         .args(["-s", "-q", "install", "--no-remove", local])
+        .args(extras)
         .env("LC_ALL", "C.UTF-8")
         .env("DEBIAN_FRONTEND", "noninteractive")
         .stdin(Stdio::null())
@@ -825,6 +936,15 @@ fn write_pins(c: &Catalog, adding: Option<&str>) -> Result<(), Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_extras_a_run_puts_in_new_are_marked_auto() {
+        let sim = "Inst zstd (1.5 Debian:13 [arm64])\nInst gpg [2.4.6] (2.4.7 Debian:13 [arm64])\n\
+                   Inst libgcrypt20 (1.11 Debian:13 [arm64])\nInst demo (1.0 local-deb [arm64])\n";
+        let extras = ["zstd".to_string(), "gpg".to_string(), "bc".to_string()];
+        assert_eq!(new_installs(sim, &extras), ["zstd"]);
+        assert!(new_installs(sim, &[]).is_empty());
+    }
 
     #[test]
     fn a_simulation_names_what_it_would_remove() {

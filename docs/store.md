@@ -52,7 +52,44 @@ Store app: reads those files and watches them with inotify
   two names, that opens the Store, or removes it when none are left. The
   same news keeps its time, so a dismissed notice stays dismissed.
 - **apt installs.** `apt-get install ./app.deb` resolves dependencies from
-  our sources. A deb is deleted once installed.
+  our sources, with the app's extras. A deb is deleted once installed.
+
+### Extras
+
+Apps are written on stock Raspberry Pi OS, where most tools and Python
+modules are already there, so many use some without asking for them:
+`amixer`, `zstd`, `gpg`, `numpy`, `picamera2`. Here they would fail at the
+first call. The catalog names, for each app, the packages to install with
+it: its extras.
+
+- **CI finds them.** The scan that reads code for the `root` mark also
+  notes each tool a shell runs (at the start of a command, after a pipe,
+  in `$(...)`) and each Python import or command, in the app's own code
+  and maintainer scripts. A tool or module counts only when it is in the
+  mirror's `TOOLS` or `MODULES`, which name its Debian package: a deb's
+  text never names a package to install. Libraries the app carries don't
+  count, nor do modules it ships: a folder with a `.dist-info` beside it,
+  or `vendor/`, `site-packages/` and the like.
+- **apt decides.** In the install check's private root, each candidate the
+  app's own dependencies don't bring must install with the app, and add at
+  most `EXTRA_CAP` (10 MB). `BIG_OK` lets numpy and the camera modules past
+  it. Then all of them together, or none. `EXTRAS_FIX` holds what a person
+  reviewed, by app: one to add, one to drop. `extras.tsv` lists each
+  candidate, what came of it, and the file and line that use it.
+- **The engine installs them best effort.** They go in the app's own apt
+  run. When they would stop it, the app installs without them. apt marks
+  the ones that run put in as automatic, so once no app needs them they
+  show in Updates' Remove unused (docs/updates.md); a package that was
+  already there stays as it was. An installed app's extras are never
+  unused.
+  An installed app whose line gains extras gets them with the next
+  updates the user starts, never from the daily refresh.
+- **The app's page says so:** "Also installs zstd, which it uses", for
+  the ones the device lacks.
+
+The image ships the small ones every app may reach for (`gpg`,
+`alsa-utils`, `zstd`, `xz-utils`, `bzip2`; docs/image-build.md), so
+extras are mostly Python modules.
 
 ### What the signature does not do
 
@@ -154,7 +191,7 @@ date 1763870000
 expires 1766462000
 about <sha256> <bytes>
 icons <sha256> <bytes>
-app	<package>	<version>	<size>	<sha256>	<category>	<flags>	<title>	<summary>	<author>	<licence>	<url>	<cn-url>	<share>	<desktop>
+app	<package>	<version>	<size>	<sha256>	<category>	<flags>	<title>	<summary>	<author>	<licence>	<url>	<cn-url>	<share>	<desktop>	[<extras>]
 app-pin	<the same fields>
 ```
 
@@ -165,8 +202,9 @@ pin.
 
 `app` fields are tab-separated. `flags` is a comma list from the table
 above, or `-`. `desktop` is the stem of the `.desktop` file the deb
-installs, so Enter can open the app. `gh0st_core::store` reads and writes
-it.
+installs, so Enter can open the app. `extras` is a comma list of
+packages, there only when the app has some; an engine before them reads
+the first fields and stops. `gh0st_core::store` reads and writes it.
 
 `about` has one app a line: the package, its description with `\n` for a
 paragraph, then `<sha256> <url>` for each screenshot, all tab-separated.
@@ -208,7 +246,8 @@ The engine reads `job` once and deletes it. The password has the helper's
   checks dependencies and space, and the real run follows. An app whose
   install would upgrade a Gh0st OS package waits: "Update Gh0st OS
   first", since Updates installs the system as a whole. Old lists are
-  fetched again when a dependency is missing. The deb is deleted after.
+  fetched again when a dependency is missing. The app's extras go in the
+  same run (Extras, above). The deb is deleted after.
 - **Pins.** Before a pinned app downloads, the engine writes
   `/etc/apt/preferences.d/gh0st-store.pref`: Debian's package of each
   pinned app installed, and this one, at priority -1. The daily upgrade
@@ -221,7 +260,7 @@ The engine reads `job` once and deletes it. The password has the helper's
 - `state` gains `ended`, so two runs that end alike still differ.
 
 Tests: `crates/gh0st/tests/store_sim.rs` runs the engine with a fake curl,
-sqv and apt-get. Real installs were checked as root in the build container:
+sqv, dpkg-deb, apt-get and apt-mark. Real installs were checked as root in the build container:
 acidzero with its dependencies on empty lists in 23 s, zero-weather from the
 China mirror, an unlisted app and a system package refused, a removal.
 

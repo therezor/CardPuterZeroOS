@@ -103,6 +103,17 @@ pub fn risks(f: Flags) -> String {
     }
 }
 
+/// What installing an app adds besides it: "Also installs gpg and zstd,
+/// which it uses."
+pub fn adds(pkgs: &[String]) -> String {
+    let list = match pkgs {
+        [] => return String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("Also installs {list}, which it uses.")
+}
+
 /// "Uses network, camera".
 pub fn uses(uses: &[&str]) -> String {
     if uses.is_empty() {
@@ -174,6 +185,13 @@ mod tests {
         assert_eq!(warn, ["Setup runs as root"]);
         assert_eq!(uses(&uses_), "Uses network, camera");
         assert_eq!(uses(&[]), "");
+        let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(adds(&p(&[])), "");
+        assert_eq!(adds(&p(&["zstd"])), "Also installs zstd, which it uses.");
+        assert_eq!(
+            adds(&p(&["alsa-utils", "gpg", "zstd"])),
+            "Also installs alsa-utils, gpg and zstd, which it uses."
+        );
     }
 
     #[test]

@@ -131,6 +131,8 @@ pub struct Store {
     browse_list: List,
     view: View,
     about: Option<About>,
+    /// The open app's extras that aren't installed: what installing it adds.
+    adds: Vec<String>,
     scroll: Scroll,
     shot: Option<Rc<Image>>,
     fetch: Option<Fetch>,
@@ -181,6 +183,7 @@ impl Store {
             browse_list: List::new(),
             view: View::Browse,
             about: None,
+            adds: Vec::new(),
             scroll: Scroll::new(),
             shot: None,
             fetch: None,
@@ -211,6 +214,28 @@ impl Store {
         if !self.filters().contains(&self.filter) {
             self.filter = Filter::All;
         }
+        if let View::Detail(p) = &self.view {
+            self.adds = self.adds_for(&p.clone());
+        }
+    }
+
+    /// What installing or updating `package` would add besides it: its
+    /// extras dpkg lacks. None for an installed app with no update, since
+    /// nothing would run.
+    fn adds_for(&self, package: &str) -> Vec<String> {
+        let Some(a) = self.app(package) else {
+            return Vec::new();
+        };
+        if a.extras.is_empty() || (self.installed.contains_key(package) && !self.has_update(a)) {
+            return Vec::new();
+        }
+        let status = std::fs::read_to_string(store::dpkg_status()).unwrap_or_default();
+        let have = store::installed(&status, |n| a.extras.iter().any(|e| e == n));
+        a.extras
+            .iter()
+            .filter(|e| !have.contains_key(*e))
+            .cloned()
+            .collect()
     }
 
     /// Reads the engine's state and progress. Returns true when a run just
@@ -944,7 +969,12 @@ impl Store {
             Some(ab) if !ab.description.is_empty() => ab.description.as_str(),
             _ => a.summary.as_str(),
         };
-        ui.scroll_text(&self.scroll, text);
+        if self.adds.is_empty() {
+            ui.scroll_text(&self.scroll, text);
+        } else {
+            let text = format!("{text}\n\n{}", words::adds(&self.adds));
+            ui.scroll_text(&self.scroll, &text);
+        }
     }
 
     fn busy_label(&self, a: &App) -> (String, Option<u8>) {
@@ -1405,6 +1435,7 @@ impl Store {
             }
             a
         });
+        self.adds = self.adds_for(&p);
         self.scroll.reset();
         self.view = View::Detail(p);
         self.sync_segment(cx);

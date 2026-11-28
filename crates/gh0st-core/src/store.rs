@@ -207,6 +207,10 @@ pub struct App {
     /// the engine pins Debian's out, so an upgrade never swaps one for the
     /// other. An `app-pin` line: an engine without pins skips it.
     pub pin: bool,
+    /// Packages the engine installs with the app: what it runs or imports
+    /// without asking for them (docs/store.md, Extras). The line's last
+    /// field, which an engine before them never reads.
+    pub extras: Vec<String>,
 }
 
 /// A file that comes with the catalog, pinned by it.
@@ -337,7 +341,10 @@ impl Catalog {
                 &a.share,
                 &a.desktop,
             ];
-            let f: Vec<String> = f.iter().map(|x| clean(x)).collect();
+            let mut f: Vec<String> = f.iter().map(|x| clean(x)).collect();
+            if !a.extras.is_empty() {
+                f.push(clean(&a.extras.join(",")));
+            }
             s.push_str(if a.pin { "app-pin\t" } else { "app\t" });
             s.push_str(&f.join("\t"));
             s.push('\n');
@@ -379,6 +386,16 @@ fn app(rest: &str) -> Option<App> {
         share: s(12),
         desktop: f.get(13).map_or(String::new(), |d| d.to_string()),
         pin: false,
+        extras: match f.get(14) {
+            Some(e) if !e.is_empty() => {
+                let v: Vec<String> = e.split(',').map(String::from).collect();
+                if !v.iter().all(|p| is_package(p)) {
+                    return None;
+                }
+                v
+            }
+            _ => Vec::new(),
+        },
     })
 }
 
@@ -956,6 +973,7 @@ mod tests {
                     share: "ACID".into(),
                     desktop: "acidzero".into(),
                     pin: false,
+                    extras: Vec::new(),
                 },
                 App {
                     package: "zsnake".into(),
@@ -982,6 +1000,28 @@ mod tests {
         assert_eq!(back.date, c.date);
         assert_eq!(back.icons, c.icons);
         assert_eq!(back.categories(), ["Creative & Office", "Games"]);
+    }
+
+    #[test]
+    fn extras_are_the_last_field_and_a_line_without_them_reads_as_before() {
+        let mut c = sample();
+        c.apps[1].extras = vec!["gpg".into(), "zstd".into()];
+        let t = c.text();
+        let line = t.lines().find(|l| l.starts_with("app\tzsnake\t")).unwrap();
+        assert!(line.ends_with("\tgpg,zstd"));
+        assert_eq!(line.split('\t').count(), 16);
+        let back = Catalog::parse(&t).unwrap();
+        assert_eq!(back.apps[1].extras, ["gpg", "zstd"]);
+        assert!(back.apps[0].extras.is_empty());
+        // An engine before extras reads the first 14 fields; this one reads
+        // an old line as having none.
+        let acid = t
+            .lines()
+            .find(|l| l.starts_with("app\tacidzero\t"))
+            .unwrap();
+        assert_eq!(acid.split('\t').count(), 15);
+        let bad = t.replace("gpg,zstd", "gpg,Not A Name");
+        assert!(Catalog::parse(&bad).is_err(), "a bad extra spoils the line");
     }
 
     #[test]
@@ -1100,9 +1140,11 @@ mod tests {
         assert_eq!(acid.summary, "Acid bass synth with a sequencer");
         assert!(acid.cn_url.starts_with("https://") && acid.desktop == "acidzero");
         assert!(!acid.flags.risky() && acid.flags.has(Flags::HARDWARE));
+        assert_eq!(acid.extras, ["alsa-utils", "zstd"]);
         let root = c.find("rootsetup").unwrap();
         assert!(root.flags.has(Flags::SCRIPTS) && root.flags.has(Flags::SERVICE));
         assert!(root.cn_url.is_empty() && root.desktop.is_empty());
+        assert!(root.extras.is_empty());
         let a = About::find(about, "acidzero").unwrap();
         assert_eq!(
             a.description,

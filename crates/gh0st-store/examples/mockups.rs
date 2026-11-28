@@ -167,11 +167,13 @@ const ABOUT: &[(&str, &str)] = &[
     ),
 ];
 
-/// What dpkg has: two apps current, one behind the catalog.
+/// What dpkg has: two apps current, one behind the catalog, and python3,
+/// one of Airfiles' extras.
 const INSTALLED: &[(&str, &str)] = &[
     ("acidzero", "0.1.0"),
     ("czmail", "0.3.4"),
     ("frotz-zero", "0.7.0-1"),
+    ("python3", "3.13.5-1"),
 ];
 
 fn sha(c: u8) -> String {
@@ -198,6 +200,8 @@ fn catalog() -> Catalog {
             share: String::new(),
             desktop: p.into(),
             pin: false,
+            // What the Store installs with it: one the device has, one it lacks.
+            extras: if p == "airfiles" { vec!["python3".into(), "zstd".into()] } else { Vec::new() },
         })
         .collect();
     Catalog {
