@@ -229,6 +229,8 @@ needs the `gh0st-base` of its own build.
 - All apps are one user. An app outside a sandbox can do what UID 1000 can,
   including moving into another app's cgroup, which the keyring then takes
   for that app.
+- A sandbox keeps the user's groups. A socket a root service opens to a
+  group, as Mountable's is to `users`, is open to every app.
 - An app granted the network keeps the system bus: NetworkManager and BlueZ
   answer it as they answer any program of the device user.
 - The kernel has no Landlock and no Yama, so nothing narrows an app outside

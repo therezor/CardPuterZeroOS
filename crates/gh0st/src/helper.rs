@@ -97,10 +97,11 @@ const USER_UID: u32 = 1000;
 const STABLE_SOURCES: &str = "/etc/apt/sources.list.d/gh0st.sources";
 use gh0st_core::update::EDGE_SOURCES;
 /// The device user's groups. One the system lacks is left out, so
-/// `useradd` doesn't fail on it.
-const USER_GROUPS: [&str; 11] = [
+/// `useradd` doesn't fail on it. `users` is the stock first user's: Store
+/// apps open their root services' sockets to it.
+const USER_GROUPS: [&str; 12] = [
     "sudo", "netdev", "video", "input", "render", "audio", "gpio", "i2c", "spi", "dialout",
-    "plugdev",
+    "plugdev", "users",
 ];
 const PASSWORD_MIN: usize = 4;
 /// The clock setup and Settings may set: 2024 to 2099.

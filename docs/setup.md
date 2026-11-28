@@ -193,8 +193,8 @@ NetworkManager reads after the image's `50-gh0st.conf`, then reload it. A new
 connection takes the change.
 
 `user-create` runs `useradd -m -u 1000 -U -s /bin/bash` with the groups `sudo`,
-`netdev`, `video`, `input`, `render`, `audio`, `gpio`, `i2c`, `spi`, `dialout` and
-`plugdev`, leaving out any the system lacks. It sets the password with `chpasswd`,
+`netdev`, `video`, `input`, `render`, `audio`, `gpio`, `i2c`, `spi`, `dialout`,
+`plugdev` and `users`, leaving out any the system lacks. It sets the password with `chpasswd`,
 installs the staged `config.json`, and can run
 twice: UID 1000 with the same name carries on, any other clash refuses. `setup-finish`
 writes the linger file and syncs it and its directory, removes the marker and syncs
