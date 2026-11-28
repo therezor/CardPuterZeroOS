@@ -193,6 +193,8 @@ step_image() {
     mkdir -p "$build"
 
     log "rootfs ($variant)"
+    # A pinned snapshot is old on purpose: security's Release would expire a
+    # week after it. Its signature is still checked.
     local roots dpkgopts=() snap=https://snapshot.debian.org/archive
     roots=$(list_words "$OS/image/manifest/roots.list" "$OS/image/variants/$variant/roots.list" | paste -sd, -)
     export ROOTS=$roots
@@ -209,8 +211,8 @@ step_image() {
         --customize-hook="sync-out /boot/firmware $build/boot" \
         --customize-hook='rm -rf "$1"/boot/firmware/*' \
         trixie "$build/rootfs.tar" \
-        "deb $snap/debian/$SNAPSHOT trixie trixie-updates main" \
-        "deb $snap/debian-security/$SNAPSHOT trixie-security main" \
+        "deb [check-valid-until=no] $snap/debian/$SNAPSHOT trixie trixie-updates main" \
+        "deb [check-valid-until=no] $snap/debian-security/$SNAPSHOT trixie-security main" \
         "deb [trusted=yes] copy://$WORK/repo-vendor ./" \
         "deb [trusted=yes] copy://$WORK/repo-ours ./" > "$build/mmdebstrap.log" 2>&1 || {
         tail -40 "$build/mmdebstrap.log"
