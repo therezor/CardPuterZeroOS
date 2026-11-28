@@ -74,6 +74,13 @@ dpkg never lets a package overwrite another's files, so a file elsewhere
 is only data. A deb checked under an older rule is checked again. Installing an app with any of the first four asks first, and
 names them.
 An update doesn't ask.
+
+Only `sudo` uses the shell's password prompt. A `root` app that runs
+`pkexec`, `doas` or `su` gets no prompt from the shell, so it fails or asks
+its own way (`isolation.md`). RaspyJack, the app this was built for, has two
+more traps: its postinst swallows a failed font download, and its manual
+installer replaces the launcher's `ExecStart` and disables PipeWire. Install
+it from the Store, not with the installer.
 CI leaves out an app whose dependencies our sources don't have, or whose
 name clashes with Debian's. A dry run of CI listed 168 of 179: ten
 need Pi camera tools or M5's launcher, and `loki` is a Debian package's

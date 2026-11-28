@@ -30,6 +30,8 @@ pub enum Origin {
     /// A portal request of `gh0st session`, by its id and what it asks:
     /// `account` or `wallpaper`, the verb of the answer.
     Portal(u64, &'static str),
+    /// sudo inside a root app, by its connection's id.
+    Askpass(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -316,13 +318,34 @@ pub struct View<'a> {
 const RETICLE_GAP: i32 = 3;
 const RETICLE_ARM: i32 = 8;
 
-/// The top bar's icon and title over a question from `origin`.
-pub fn bar(origin: &Origin) -> (&'static str, &'static str) {
-    match origin {
+/// What the askpass card says after the app's name.
+pub const ASKS: &str = " asks for your password";
+
+/// sudo's question, from `app` over connection `id`.
+pub fn askpass(id: u64, app: &str) -> Ask {
+    Ask {
+        origin: Origin::Askpass(id),
+        kind: Kind::Password {
+            reason: format!("{app}{ASKS}"),
+            retry: false,
+        },
+    }
+}
+
+/// The top bar's icon and title over a question. For sudo it is the app
+/// that asked, read back off the card's one line.
+pub fn bar(ask: &Ask) -> (&'static str, &str) {
+    match &ask.origin {
         Origin::Portal(_, "account") => ("user", "Your name"),
         Origin::Portal(_, "wallpaper") => ("images", "Wallpaper"),
         Origin::Portal(_, "shot") => ("camera", "Screenshot"),
         Origin::Portal(_, "color") => ("palette", "Pick a colour"),
+        Origin::Askpass(_) => match &ask.kind {
+            Kind::Password { reason, .. } => {
+                ("key-round", reason.strip_suffix(ASKS).unwrap_or("Password"))
+            }
+            _ => ("key-round", "Password"),
+        },
         _ => ("key-round", "Keyring"),
     }
 }
@@ -331,6 +354,7 @@ impl View<'_> {
     fn title(&self) -> &str {
         match (&self.ask.origin, &self.ask.kind) {
             (Origin::Stale, _) => "Update the keyring",
+            (Origin::Askpass(_), _) => "Password",
             (_, Kind::Password { reason, .. }) if reason.contains(" wants to show ") => {
                 "Show a secret"
             }
@@ -473,6 +497,8 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
     if field {
         let enter = if v.ask.origin == Origin::Stale {
             "update"
+        } else if matches!(v.ask.origin, Origin::Askpass(_)) {
+            "continue"
         } else {
             "unlock"
         };
@@ -651,6 +677,54 @@ mod tests {
         assert_eq!(p.typed(), 0, "what was typed went with its question");
         p.retain(|o| !matches!(o, Origin::Portal(..)));
         assert!(p.is_empty());
+    }
+
+    #[test]
+    fn sudo_s_question_is_its_own_even_beside_a_daemon_s_with_the_same_id() {
+        let mut p = Prompts::default();
+        p.push(pw(Origin::Daemon(3)));
+        p.push(askpass(3, "RaspyJack"));
+        p.push(pw(Origin::Daemon(4)));
+        p.seen(1000);
+        p.key(&key(30, Some('x')), T);
+        p.cancel(3);
+        assert_eq!(
+            p.current().map(|a| &a.origin),
+            Some(&Origin::Askpass(3)),
+            "the daemon's 3 went, sudo's stayed"
+        );
+        assert_eq!(p.typed(), 0, "what was typed went with the question");
+        // The same id, cancelled as sudo's: now the daemon's 4 is front.
+        p.remove(&Origin::Askpass(3));
+        assert_eq!(p.current().map(|a| &a.origin), Some(&Origin::Daemon(4)));
+        // A daemon that died keeps sudo's question, as it keeps a portal's.
+        p.push(askpass(5, "RaspyJack"));
+        p.retain(|o| matches!(o, Origin::Portal(..) | Origin::Askpass(_)));
+        assert_eq!(p.current().map(|a| &a.origin), Some(&Origin::Askpass(5)));
+        // Esc on it names it.
+        p.seen(1000);
+        assert_eq!(
+            p.key(&key(code::ESC, None), 1100),
+            Action::Dismiss(Origin::Askpass(5))
+        );
+    }
+
+    #[test]
+    fn sudo_s_question_is_labelled_by_its_app() {
+        let a = askpass(1, "RaspyJack");
+        assert_eq!(
+            bar(&a),
+            ("key-round", "RaspyJack"),
+            "the top bar names the app"
+        );
+        let v = View {
+            ask: &a,
+            typed: 0,
+            checking: false,
+            wrong: false,
+            at: (0, 0),
+        };
+        assert_eq!(v.title(), "Password", "never the keyring's words");
     }
 
     #[test]

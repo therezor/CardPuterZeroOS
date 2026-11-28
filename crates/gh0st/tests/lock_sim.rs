@@ -6,6 +6,16 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// A runtime dir of this shell's own, short enough for a socket path, so
+/// sims in parallel never share the askpass socket or the instance lock.
+fn runtime_dir() -> PathBuf {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let rt = PathBuf::from(format!("/tmp/gh0st-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&rt).unwrap();
+    rt
+}
+
 /// Answers the nth call with the nth code in `$CODES`, then 0, after the
 /// nth wait in `$SLEEPS` seconds.
 const CHKPWD: &str = r#"#!/bin/sh
@@ -84,6 +94,7 @@ fn run_slow(name: &str, keys: &str, codes: &str, sleeps: &str, passwd_fails: boo
         .env("GH0ST_PASSWD", &passwd)
         .env("GH0ST_LOG", "debug")
         .env("SIM_DIR", &dir)
+        .env("XDG_RUNTIME_DIR", runtime_dir())
         .env("CODES", codes)
         .env("SLEEPS", sleeps)
         .stdin(Stdio::piped())
@@ -209,6 +220,7 @@ fn a_resume_waiting_for_a_key_does_not_pass_the_lock() {
         .env("GH0ST_ICON_ROOT", dir.join("icons"))
         .env("GH0ST_LOG", "debug")
         .env("SIM_DIR", &dir)
+        .env("XDG_RUNTIME_DIR", runtime_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -266,6 +278,7 @@ fn the_esc_hint_over_an_app_is_held_by_the_driver() {
         .env("GH0ST_ICON_ROOT", dir.join("icons"))
         .env("GH0ST_LOG", "debug")
         .env("SIM_DIR", &dir)
+        .env("XDG_RUNTIME_DIR", runtime_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -321,6 +334,7 @@ fn with_app_config(name: &str, keys: &str, json: &str) -> String {
         .env("GH0ST_ICON_ROOT", dir.join("icons"))
         .env("GH0ST_LOG", "debug")
         .env("SIM_DIR", &dir)
+        .env("XDG_RUNTIME_DIR", runtime_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

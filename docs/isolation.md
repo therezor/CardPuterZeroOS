@@ -68,6 +68,14 @@ The two automatic ones come from the app itself, so a hostile app can opt
 out. Settings > Apps shows why an app runs outside ("Built in" or "Runs as
 root").
 
+Both root sources get the same help for `sudo`. The shell gives the app
+`SUDO_ASKPASS=/usr/bin/gh0st-askpass`, `GH0ST_ASKPASS` (the shell's socket)
+and `DISPLAY=:0`, so sudo's password question opens as the shell's own
+prompt instead of failing for want of a terminal. The app goes behind the
+prompt and the keyboard is the shell's until the question is answered or
+dismissed (`apps.md`, Pausing). Only `sudo` asks this way. `pkexec`,
+`doas` and `su` keep their own prompts, and those have no terminal here.
+
 ## The home folder
 
 Stock apps write anywhere in home, so it stays writable. What a program
@@ -163,8 +171,11 @@ needs the `gh0st-base` of its own build.
   makes the folder again while the app runs, the app sees the old one
   until it starts again.
 - An app that asks for root at run time without saying so in its `Exec` or
-  its code fails in a sandbox. If it quits within 5 s, the shell points at
-  Settings > Apps.
+  its code fails in a sandbox. A third-party app that exits with an error
+  within 5 s leaves a notice that says why nothing came on screen: a
+  sandboxed one points at Settings > Apps, one that runs as root names a
+  dismissed password prompt or its own error, and one with Isolation off
+  says its sandbox isn't why.
 
 ## Tests
 

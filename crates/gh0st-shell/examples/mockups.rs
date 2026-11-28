@@ -305,10 +305,10 @@ fn unlocking(t: &Theme, stock: Option<&Path>) -> Canvas {
 
 /// A keyring question, as the shell asks it.
 fn ask(t: &Theme, origin: Origin, kind: Kind, typed: usize, checking: bool, wrong: bool) -> Canvas {
-    let (icon, title) = prompt::bar(&origin);
+    let a = Ask { origin, kind };
+    let (icon, title) = prompt::bar(&a);
     let mut s = status(&[], None, title);
     s.icon = icon;
-    let a = Ask { origin, kind };
     let v = prompt::View {
         ask: &a,
         typed,
@@ -551,6 +551,17 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                     Origin::Daemon(2),
                     password("git-credential-libsecret wants the keyring"),
                     6,
+                    false,
+                    false,
+                ),
+            ),
+            (
+                "prompt-askpass",
+                ask(
+                    &t,
+                    Origin::Askpass(1),
+                    password("RaspyJack asks for your password"),
+                    4,
                     false,
                     false,
                 ),

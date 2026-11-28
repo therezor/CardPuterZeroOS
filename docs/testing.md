@@ -18,7 +18,7 @@ cargo test --workspace
 |---|---|---|
 | Unit tests | next to the code | parsers, models, the config file, the lock field |
 | Driver tests | `crates/*/tests`, `gh0st_app::testing::Driver` | a page's keys, dialogs, toasts and jobs, in virtual time |
-| Sims | `crates/gh0st/tests/lock_sim.rs`, `crates/gh0st-settings/tests/*_sim.rs`, `forget.rs` | the real binary or a page with fake system tools first on `PATH` |
+| Sims | `crates/gh0st/tests/lock_sim.rs`, `crates/gh0st/tests/askpass_sim.rs`, `crates/gh0st-settings/tests/*_sim.rs`, `forget.rs` | the real binary or a page with fake system tools first on `PATH`; `sudo`'s question goes through the shell's prompt with stdin held open |
 | Design lint | `gh0st_ui::lint`, the mockups, `crates/gh0st-settings/tests/pages.rs` | every screen in every palette keeps design.md's rules |
 | Source rules | `crates/gh0st-ui/tests/rules.rs` | colours and faces only from the theme; no em dash |
 | Idle budget | `Driver::idle_wakes`, `crates/gh0st-settings/tests/pages.rs` | an idle page wakes for the clock and nothing else |

@@ -142,6 +142,8 @@ remote 'set -e
     sudo ln -sf gh0st /usr/bin/xdg-open
     sudo install -m 755 /tmp/gh0st-keyboard /usr/bin/gh0st-keyboard
     sudo ln -sf gh0st /usr/bin/gh0st-shell
+    # sudo inside a root app asks for the password through this name.
+    sudo ln -sf gh0st /usr/bin/gh0st-askpass
     # The keyring vault folder, outside the home folder.
     sudo install -m 644 /tmp/gh0st-keyring.tmpfiles /usr/lib/tmpfiles.d/gh0st-keyring.conf
     sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/gh0st-keyring.conf

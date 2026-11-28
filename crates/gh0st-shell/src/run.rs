@@ -17,6 +17,7 @@ use crate::sound::{self as sounds, Player};
 use crate::switcher::{Card, HoldTick, Switcher};
 use crate::tasks::{self, Task, Tasks};
 use gh0st_core::apps::{self, App, Dirs, IconRef};
+use gh0st_core::askpass;
 use gh0st_core::backlight::Backlight;
 use gh0st_core::battery::{self, LowBattery, Reading, Warning};
 use gh0st_core::child::{self, Devices, Stopped};
@@ -46,6 +47,7 @@ use gh0st_ui::widgets::{self, Battery, Status, Visual};
 use gh0st_ui::{Canvas, Rect, snapshot};
 use std::collections::HashMap;
 use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Instant, SystemTime};
@@ -426,6 +428,15 @@ struct Shell {
     first_frame: bool,
     /// `gh0st keyring` and `gh0st session`.
     services: Services,
+    /// sudo's askpass socket, when `$XDG_RUNTIME_DIR` names a place for it.
+    askpass: Option<askpass::Listener>,
+    /// Connections admitted and not whole: the stream, its bytes so far,
+    /// and the app they descend from.
+    reading: Vec<(UnixStream, Vec<u8>, i32)>,
+    /// Questions asked over a connection, by the same id: the stream waits
+    /// for the answer, or for its client to leave.
+    askers: Vec<(u64, UnixStream, i32)>,
+    ask_id: u64,
     /// Under `--sim`: tests may swap the programs that check passwords.
     sim: bool,
     /// Where each app's cgroup goes, when the unit delegates one.
@@ -667,6 +678,16 @@ impl Shell {
             shot: Vec::new(),
             orphans: Vec::new(),
             front_told: -1,
+            askpass: match askpass::Listener::open() {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("gh0st shell: askpass: {e}");
+                    None
+                }
+            },
+            reading: Vec::new(),
+            askers: Vec::new(),
+            ask_id: 0,
             wall_from: None,
         };
         s.prompts.size = (s.t.m.width, s.t.m.height);
@@ -1219,7 +1240,9 @@ impl Shell {
             }
             Which::Keyring => {
                 self.keyring_open = false;
-                self.prompts.retain(|o| matches!(o, Origin::Portal(..)));
+                // Neither daemon owns sudo's question: it stays.
+                self.prompts
+                    .retain(|o| matches!(o, Origin::Portal(..) | Origin::Askpass(_)));
             }
         }
         if self.screen == Screen::Prompt && self.prompts.is_empty() {
@@ -1340,6 +1363,129 @@ impl Shell {
         }
     }
 
+    /// The app a connection must descend from: the one in front, or the
+    /// one being asked while its sudo question is up and it sits behind.
+    fn ask_owner(&self) -> Option<i32> {
+        let asking = matches!(
+            self.prompts.current().map(|a| &a.origin),
+            Some(Origin::Askpass(_))
+        );
+        if asking {
+            if let Some(t) = self.prompt_app.as_deref().and_then(|id| self.tasks.get(id)) {
+                return Some(t.pgid);
+            }
+        }
+        self.tasks.front().map(|t| t.pgid)
+    }
+
+    /// A connection on the askpass socket. Admitted only from the app in
+    /// front, or the one being asked: anyone else gets no question and no
+    /// answer, only a closed socket. Past the pending cap, the same.
+    fn askpass_accept(&mut self) {
+        let owner = self.ask_owner();
+        if let Some(l) = self.askpass.as_ref() {
+            accept_asks(l, owner, &mut self.reading);
+        }
+    }
+
+    /// A pending connection read something: more of its prompt, a whole
+    /// one, or a break.
+    fn askpass_read(&mut self, fd: RawFd) {
+        let Some(i) = self
+            .reading
+            .iter()
+            .position(|(s, _, _)| s.as_raw_fd() == fd)
+        else {
+            return;
+        };
+        let (mut s, mut buf, app) = self.reading.remove(i);
+        match askpass::read_request(&mut buf, &mut s) {
+            Ok(None) => self.reading.insert(i, (s, buf, app)),
+            Ok(Some(_)) => self.askpass_asked(s, app),
+            Err(_) => {}
+        }
+    }
+
+    /// A whole prompt from a program of the app with group `app`: the
+    /// question, and a lit screen. What sudo asked is its wording, not ours.
+    fn askpass_asked(&mut self, s: UnixStream, app: i32) {
+        let name = self
+            .tasks
+            .iter()
+            .find(|t| t.pgid == app)
+            .map_or_else(|| "An app".into(), |t| t.name.clone());
+        self.ask_id += 1;
+        let id = self.ask_id;
+        self.askers.push((id, s, app));
+        self.prompts.push(prompt::askpass(id, &name));
+        self.light_for_question();
+    }
+
+    /// The password checked out: sudo gets it, and only sudo. The copy
+    /// is the caller's to wipe.
+    fn askpass_answered(&mut self, id: u64, pw: &[u8]) {
+        if let Some(i) = self.askers.iter().position(|(a, _, _)| *a == id) {
+            let (_, s, _) = self.askers.remove(i);
+            askpass::answer(s, Some(pw));
+        }
+        self.prompts.remove(&Origin::Askpass(id));
+        self.dirty = true;
+    }
+
+    /// Closes what no longer has an app to belong to: a prompt half read
+    /// when the front changed under it, and the asked app's own questions
+    /// and connections once it left, since a program it started can keep
+    /// its socket open after it is gone.
+    fn askpass_reconcile(&mut self) {
+        let owner = self.ask_owner();
+        let pgids: Vec<i32> = self.tasks.iter().map(|t| t.pgid).collect();
+        self.reading
+            .retain(|(_, _, app)| Some(*app) == owner && pgids.contains(app));
+        let orphaned: Vec<u64> = self
+            .askers
+            .iter()
+            .filter(|(_, _, app)| !pgids.contains(app))
+            .map(|(id, _, _)| *id)
+            .collect();
+        for id in orphaned {
+            self.askpass_close(id);
+        }
+    }
+
+    /// Answers `0` to question `id`'s connection and drops it, wipes the
+    /// typed copy if that question was the one being typed, and removes the
+    /// question. When it was in front and another origin waits, the prompt
+    /// screen is left, so the app behind comes back and the next question
+    /// takes the normal path over it.
+    fn askpass_close(&mut self, id: u64) {
+        if let Some(i) = self.askers.iter().position(|(a, _, _)| *a == id) {
+            let (_, s, _) = self.askers.remove(i);
+            askpass::answer(s, None);
+        }
+        let was_front = self
+            .prompts
+            .current()
+            .is_some_and(|a| a.origin == Origin::Askpass(id));
+        if was_front {
+            if let Some(mut old) = self.prompt_input.take() {
+                password::wipe(&mut old);
+            }
+            self.prompts.checking = false;
+        }
+        self.prompts.remove(&Origin::Askpass(id));
+        if was_front
+            && self.screen == Screen::Prompt
+            && !self.prompts.is_empty()
+            && !matches!(
+                self.prompts.current().map(|a| &a.origin),
+                Some(Origin::Askpass(_))
+            )
+        {
+            self.prompt_leave();
+        }
+        self.dirty = true;
+    }
+
     /// Shows the next question when nothing else is in the way. Over an
     /// app, it parks the app first; never over the lock screen or the dark.
     fn maybe_prompt(&mut self, now: u64) {
@@ -1383,7 +1529,19 @@ impl Shell {
         if self.prompts.is_empty() {
             return;
         }
-        match self.park_front(now) {
+        // sudo's own question over the root app that asked: the app can't be
+        // stopped, so it runs behind, whatever Settings says, and the shell
+        // draws over it. Its card shows it running, which is true.
+        let sudo = matches!(
+            self.prompts.current().map(|a| &a.origin),
+            Some(Origin::Askpass(_))
+        );
+        let parked = if sudo {
+            self.stop_front(now, true)
+        } else {
+            self.park_front(now)
+        };
+        match parked {
             Ok(id) => {
                 self.take_screen();
                 self.prompt_from = Screen::Home;
@@ -1429,6 +1587,11 @@ impl Shell {
                     });
                 }
                 Origin::Portal(id, verb) => self.answer_portal(id, verb, Answer::Deny),
+                Origin::Askpass(id) => {
+                    // Removed with its `0`: `done()` would pop the next.
+                    self.askpass_close(id);
+                    continue;
+                }
                 _ => {}
             }
             self.prompts.done();
@@ -1477,6 +1640,11 @@ impl Shell {
                 self.dirty = true;
             }
             prompt::Action::Dismiss(origin) => {
+                if let Origin::Askpass(id) = origin {
+                    // It removed the question: `done()` would pop the next.
+                    self.askpass_close(id);
+                    return;
+                }
                 match origin {
                     Origin::Daemon(id) => {
                         self.services.tell(&ToDaemon::Answer {
@@ -1558,14 +1726,23 @@ impl Shell {
             password::Check::Right => {
                 self.tries = Tries::default();
                 self.save_tries();
-                let pw = input.strip_suffix(&[0]).unwrap_or(&input).to_vec();
-                let mut m = match self.prompts.current().map(|a| a.origin.clone()) {
-                    Some(Origin::Daemon(id)) => ToDaemon::Password { id, pw },
-                    _ => ToDaemon::Unlock { pw },
-                };
-                self.services.tell(&m);
-                m.wipe();
-                self.prompts.done();
+                match self.prompts.current().map(|a| a.origin.clone()) {
+                    Some(Origin::Askpass(id)) => {
+                        let mut pw = input.strip_suffix(&[0]).unwrap_or(&input).to_vec();
+                        self.askpass_answered(id, &pw);
+                        password::wipe(&mut pw);
+                    }
+                    origin => {
+                        let pw = input.strip_suffix(&[0]).unwrap_or(&input).to_vec();
+                        let mut m = match origin {
+                            Some(Origin::Daemon(id)) => ToDaemon::Password { id, pw },
+                            _ => ToDaemon::Unlock { pw },
+                        };
+                        self.services.tell(&m);
+                        m.wipe();
+                        self.prompts.done();
+                    }
+                }
             }
             password::Check::Wrong => self.prompts.checked_wrong(),
             password::Check::Broken => {
@@ -1883,6 +2060,18 @@ impl Shell {
             fds.extend(links.iter().map(|&(_, fd)| rt::pollfd(fd)));
             let services_at = fds.len();
             fds.extend(self.services.fds().into_iter().map(rt::pollfd));
+            // Matched by fd below, never by place: a job that ended can
+            // shift the lists before they are read.
+            let ask_at = fds.len();
+            fds.extend(self.askpass.iter().map(|l| rt::pollfd(l.fd())));
+            let reading: Vec<RawFd> = self.reading.iter().map(|(s, _, _)| s.as_raw_fd()).collect();
+            fds.extend(reading.into_iter().map(rt::pollfd));
+            let askers: Vec<(RawFd, u64)> = self
+                .askers
+                .iter()
+                .map(|(id, s, _)| (s.as_raw_fd(), *id))
+                .collect();
+            fds.extend(askers.iter().map(|&(fd, _)| rt::pollfd(fd)));
             if let Err(e) = rt::wait(&mut fds, deadline) {
                 eprintln!("gh0st shell: poll: {e}");
                 return 1;
@@ -1953,8 +2142,29 @@ impl Shell {
                     self.read_link(pgid);
                 }
             }
-            if fds[services_at..].iter().any(rt::readable) {
+            if fds[services_at..ask_at].iter().any(rt::readable) {
                 self.services_said();
+            }
+            let ask = &fds[ask_at..];
+            // Askers first. A prompt read this wake joins them with its fd
+            // still showing readable, and would be taken for one that left.
+            let askers: Vec<u64> = self
+                .askers
+                .iter()
+                .filter(|(_, s, _)| hit(ask, s.as_raw_fd()))
+                .map(|(id, _, _)| *id)
+                .collect();
+            for id in askers {
+                self.askpass_close(id);
+            }
+            if self.askpass.as_ref().is_some_and(|l| hit(ask, l.fd())) {
+                self.askpass_accept();
+            }
+            let reading: Vec<RawFd> = self.reading.iter().map(|(s, _, _)| s.as_raw_fd()).collect();
+            for fd in reading {
+                if hit(ask, fd) {
+                    self.askpass_read(fd);
+                }
             }
             keys_buf.clear();
             self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
@@ -1977,6 +2187,7 @@ impl Shell {
             }
             self.on_timers(now);
             self.sweep(now);
+            self.askpass_reconcile();
             self.run_pending(now);
             self.maybe_prompt(now);
             self.maybe_portal(now);
@@ -2000,15 +2211,20 @@ impl Shell {
                 continue;
             }
             let now = rt::now_ms();
-            let early = self
-                .tasks
-                .iter()
-                .find(|t| t.pgid == pid && t.sandboxed && now < t.started + EARLY_EXIT_MS)
-                .filter(|_| libc::WIFEXITED(status) && libc::WEXITSTATUS(status) != 0)
-                .map(|t| (t.id.clone(), t.name.clone()));
+            let app = self.tasks.iter().find(|t| t.pgid == pid).map(|t| {
+                (
+                    t.id.clone(),
+                    t.name.clone(),
+                    now - t.started,
+                    closed_why(t, status, now),
+                )
+            });
             self.tasks.exited(pid);
-            if let Some((id, name)) = early {
-                sandbox_hint(&id, &name);
+            if let Some((id, name, ran_ms, why)) = app {
+                exit_line(&name, status, ran_ms);
+                if let Some(why) = why {
+                    closed_hint(&id, &name, why);
+                }
             }
             if let Some((_, j)) = self.jobs.iter_mut().find(|(_, j)| j.pid == pid) {
                 j.exited(status);
@@ -4027,7 +4243,9 @@ impl Shell {
         // Read now, not from the copy the shell keeps: a grant changed by
         // hand or by another program counts from this launch.
         let fresh = Config::load(&config::default_path());
-        let iso = apps::isolation(&fresh, app, gh0st_core::store::needs_root(&stem));
+        let root = gh0st_core::store::needs_root(&stem);
+        let iso = apps::isolation(&fresh, app, root);
+        let exempt = apps::exempt(app, root);
         let sandboxed = self.on_device && iso.sandbox;
         let argv = if sandboxed {
             let user = notify::user_dir();
@@ -4059,7 +4277,8 @@ impl Shell {
         let cgroup = self.cgroups.as_ref().and_then(|c| c.make(&stem));
         // Pulse reports the pid inside a sandbox; `gh0st audio` finds the
         // app's streams by this instead.
-        let mut env = vec![("PULSE_PROP", format!("gh0st.app={stem}"))];
+        let mut env = askpass_env(exempt, self.askpass.as_ref().map(|l| l.path()), self.sim);
+        env.push(("PULSE_PROP", format!("gh0st.app={stem}")));
         // Outside a sandbox an input method's bridge comes as inside one:
         // only to an app granted it.
         if !sandboxed && iso.grants.input {
@@ -4141,6 +4360,8 @@ impl Shell {
             keeps_on: false,
             sound_parked: false,
             sandboxed,
+            exempt,
+            ours: app.ours,
             started: now,
         });
         self.esc = EscHold::default();
@@ -4194,7 +4415,7 @@ impl Shell {
     /// stopped.
     fn park_front(&mut self, now: u64) -> Result<String, Option<String>> {
         let pgid = self.tasks.front().map(|t| t.pgid);
-        let parked = self.stop_front(now);
+        let parked = self.stop_front(now, false);
         // What it said while pausing, such as `awake 0`, waited behind
         // `paused` and no longer polls readable.
         if let Some(pgid) = pgid {
@@ -4203,7 +4424,9 @@ impl Shell {
         parked
     }
 
-    fn stop_front(&mut self, now: u64) -> Result<String, Option<String>> {
+    /// `behind` sends the app behind whatever Settings says: for sudo's
+    /// question, since SIGSTOP cannot reach a root app.
+    fn stop_front(&mut self, now: u64, behind: bool) -> Result<String, Option<String>> {
         if let Some(b) = self.banner.take() {
             self.spare = Some(b.hide(self.display.as_mut()));
         }
@@ -4217,7 +4440,7 @@ impl Shell {
         };
         // An app that declares it but never joined the link can't be told
         // to pause, so it runs behind only if the user said so.
-        let background = apps::runs_behind(&self.config, &t.id, t.background && t.linked);
+        let background = behind || apps::runs_behind(&self.config, &t.id, t.background && t.linked);
         if background {
             // An app on the link stops drawing and reading keys when told;
             // one that doesn't answer is guarded as before.
@@ -4604,7 +4827,7 @@ impl Shell {
                 Some(ask) => {
                     self.prompts.seen(now);
                     let ask = &ask;
-                    let (icon, title) = prompt::bar(&ask.origin);
+                    let (icon, title) = prompt::bar(ask);
                     let status = Status {
                         dock: &[],
                         front: None,
@@ -4784,7 +5007,52 @@ impl Shell {
 /// `gh0st audio VERB [PGID]` as a child, since pactl can take a while.
 /// Says, as a notice that stays, that app `id` may have failed for want of
 /// what its sandbox keeps out. Enter opens Settings.
-fn sandbox_hint(id: &str, name: &str) {
+/// Why an app that closed as it opened gets a notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Why {
+    Sandbox,
+    Root,
+    IsolationOff,
+}
+
+/// The notice's reason for an app that exited with `status` at `now`, or
+/// none. Ours are ours to fix, a clean exit or a kill is not a start that
+/// failed, and a later exit is the log line's.
+fn closed_why(t: &Task, status: i32, now: u64) -> Option<Why> {
+    if !libc::WIFEXITED(status)
+        || libc::WEXITSTATUS(status) == 0
+        || now >= t.started + EARLY_EXIT_MS
+    {
+        return None;
+    }
+    if t.sandboxed {
+        return Some(Why::Sandbox);
+    }
+    if t.ours {
+        return None;
+    }
+    Some(match t.exempt {
+        Some(apps::Exempt::Root) => Why::Root,
+        _ => Why::IsolationOff,
+    })
+}
+
+/// One line per app exit, always: the journal is where a late crash shows.
+fn exit_line(name: &str, status: i32, ran_ms: u64) {
+    if libc::WIFEXITED(status) {
+        eprintln!(
+            "gh0st shell: {name} exited with status {} after {ran_ms} ms",
+            libc::WEXITSTATUS(status)
+        );
+    } else if libc::WIFSIGNALED(status) {
+        eprintln!(
+            "gh0st shell: {name} killed by signal {} after {ran_ms} ms",
+            libc::WTERMSIG(status)
+        );
+    }
+}
+
+fn closed_hint(id: &str, name: &str, why: Why) {
     let stem = id.strip_suffix(".desktop").unwrap_or(id);
     let tag: String = stem
         .chars()
@@ -4793,11 +5061,27 @@ fn sandbox_hint(id: &str, name: &str) {
             _ => '_',
         })
         .collect();
+    // Root wins over Isolation off: the prompt it may have dismissed
+    // comes first in the reader's mind.
+    let (tag, body) = match why {
+        Why::Sandbox => (
+            format!("sandbox-{tag}"),
+            format!("Its sandbox may be why. Settings > Apps > {name} turns Isolation off."),
+        ),
+        Why::Root => (
+            format!("exit-{tag}"),
+            "It runs as root. A password prompt you dismissed, or its own error.".to_string(),
+        ),
+        Why::IsolationOff => (
+            format!("exit-{tag}"),
+            "Isolation is off for it, so its sandbox isn't why. Its own error.".to_string(),
+        ),
+    };
     let n = Notice {
         app: "settings".into(),
-        tag: format!("sandbox-{tag}"),
+        tag,
         title: format!("{name} closed as it opened"),
-        body: format!("Its sandbox may be why. Settings > Apps > {name} turns Isolation off."),
+        body,
         tone: notify::Tone::Warning,
         time: notify::now_secs(),
         ..Notice::default()
@@ -4805,8 +5089,8 @@ fn sandbox_hint(id: &str, name: &str) {
     let _ = notify::post(&notify::user_dir(), &n);
 }
 
-/// A sandboxed app that fails sooner than this after its start gets a
-/// hint that its sandbox may be why.
+/// An app that fails sooner than this after its start gets a hint as to
+/// why, in Settings' notifications.
 const EARLY_EXIT_MS: u64 = 5000;
 
 fn audio(exe: Option<&Path>, verb: &str, pgid: Option<i32>) {
@@ -4981,6 +5265,70 @@ fn system_stopping() -> bool {
     })
 }
 
+/// Takes what the socket has. A connection is kept only when it descends
+/// from `owner`, the app in front or the one being asked, and only up to
+/// the pending cap. Anything else is dropped here, closed with no reply.
+fn accept_asks(
+    l: &askpass::Listener,
+    owner: Option<i32>,
+    reading: &mut Vec<(UnixStream, Vec<u8>, i32)>,
+) {
+    // SAFETY: getuid has no failure mode.
+    let uid = unsafe { libc::getuid() };
+    let mut taken = Vec::new();
+    loop {
+        let s = match l.accept() {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(e) => {
+                eprintln!("gh0st shell: askpass: {e}");
+                break;
+            }
+        };
+        let from_app = owner.is_some_and(|app| {
+            askpass::peer(s.as_raw_fd()).is_ok_and(|c| askpass::admit(c, Some(app), uid))
+        });
+        match owner.filter(|_| from_app) {
+            Some(app) if reading.len() + taken.len() < askpass::MAX_PENDING => {
+                taken.push((s, Vec::new(), app));
+            }
+            _ => {}
+        }
+    }
+    reading.extend(taken);
+}
+
+/// Whether `fd` is among the descriptors that woke, found by fd.
+fn hit(fds: &[libc::pollfd], fd: RawFd) -> bool {
+    fds.iter().any(|p| p.fd == fd && rt::readable(p))
+}
+
+/// What a root app's launch gets for sudo to ask: the helper, the socket,
+/// and the display sudo insists on before it uses either. Nothing for any
+/// other app, since a stock SDL app probes X11 when `DISPLAY` is set, and
+/// nothing when no listener is open. Under `--sim` the helper is the test's.
+fn askpass_env(
+    exempt: Option<apps::Exempt>,
+    socket: Option<&Path>,
+    sim: bool,
+) -> Vec<(&'static str, String)> {
+    let Some(socket) = socket.filter(|_| exempt == Some(apps::Exempt::Root)) else {
+        return Vec::new();
+    };
+    let helper = match sim
+        .then(|| std::env::var("GH0ST_ASKPASS_EXE").ok())
+        .flatten()
+    {
+        Some(p) => p,
+        None => "/usr/bin/gh0st-askpass".to_string(),
+    };
+    vec![
+        ("SUDO_ASKPASS", helper),
+        (askpass::ENV, socket.to_string_lossy().into_owned()),
+        ("DISPLAY", ":0".into()),
+    ]
+}
+
 /// Marks Wi-Fi as turned off by the dark, so a restarted shell turns it on.
 fn wifi_marker() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
@@ -5100,6 +5448,188 @@ fn parse_volume(s: &str) -> Option<(u8, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The test binary plays three roles, picked by the environment: the
+    /// front app, a group leader that starts a program in a session of its
+    /// own, and that program, which connects to the socket as sudo's helper
+    /// would. Through the production accept path: a stranger's connection
+    /// closes with no reply, the front's program is kept up to the cap, and
+    /// its prompt crosses.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_the_asked_app_s_programs_are_kept() {
+        use std::io::Read;
+        use std::os::unix::process::CommandExt;
+        const NAME: &str = "only_the_asked_app_s_programs_are_kept";
+        let env = |k: &str| std::env::var_os(k).unwrap_or_default();
+        if std::env::var_os("GH0ST_TEST_FRONT").is_some() {
+            let mut c = std::process::Command::new(std::env::current_exe().unwrap());
+            c.args(["--exact", NAME])
+                .env("GH0ST_TEST_CLIENT", "1")
+                .env("GH0ST_TEST_SOCKET", env("GH0ST_TEST_SOCKET"))
+                .env("GH0ST_TEST_OUT", env("GH0ST_TEST_OUT"));
+            // SAFETY: setsid between fork and exec, with nothing else held.
+            unsafe {
+                c.pre_exec(|| {
+                    libc::setsid();
+                    Ok(())
+                });
+            }
+            let _ = c.status();
+            return;
+        }
+        if std::env::var_os("GH0ST_TEST_CLIENT").is_some() {
+            let socket = PathBuf::from(env("GH0ST_TEST_SOCKET"));
+            let out = PathBuf::from(env("GH0ST_TEST_OUT"));
+            let mut held = Vec::new();
+            for i in 0..6 {
+                let mut s = UnixStream::connect(&socket).unwrap();
+                if i == 0 {
+                    askpass::send_request(&mut s, "[sudo] password for pi: ").unwrap();
+                }
+                let out = out.clone();
+                held.push(std::thread::spawn(move || {
+                    s.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                        .unwrap();
+                    let mut b = Vec::new();
+                    let seen = match s.read_to_end(&mut b) {
+                        Ok(_) if b.is_empty() => "eof",
+                        Ok(_) => "reply",
+                        Err(_) => "open",
+                    };
+                    let mut f = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&out)
+                        .unwrap();
+                    std::io::Write::write_all(&mut f, format!("{i}:{seen}\n").as_bytes()).unwrap();
+                    seen
+                }));
+            }
+            for h in held {
+                h.join().unwrap();
+            }
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("gh0st-ask-{}-front", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let l = askpass::Listener::open_in(dir.clone()).unwrap();
+        let out = dir.join("out.txt");
+        let mut front = std::process::Command::new(std::env::current_exe().unwrap());
+        front
+            .args(["--exact", NAME])
+            .env("GH0ST_TEST_FRONT", "1")
+            .env("GH0ST_TEST_SOCKET", l.path())
+            .env("GH0ST_TEST_OUT", &out)
+            .process_group(0)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let mut front = front.spawn().unwrap();
+        let owner = front.id() as i32;
+        let mut reading = Vec::new();
+        // Not the front's: closed with no reply, and nothing queued.
+        let mut mine = UnixStream::connect(l.path()).unwrap();
+        mine.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        accept_asks(&l, Some(owner), &mut reading);
+        assert!(reading.is_empty(), "a stranger is not kept");
+        let mut b = [0u8; 1];
+        assert_eq!(mine.read(&mut b).unwrap(), 0, "closed, no reply");
+        // The front's program: six connections, the cap keeps four.
+        let mut all = Vec::new();
+        for _ in 0..200 {
+            accept_asks(&l, Some(owner), &mut all);
+            if all.len() == askpass::MAX_PENDING || out.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(all.len(), askpass::MAX_PENDING);
+        let mut answered = false;
+        for (mut s, mut buf, app) in all {
+            assert_eq!(app, owner);
+            s.set_nonblocking(false).unwrap();
+            s.set_read_timeout(Some(std::time::Duration::from_millis(200)))
+                .unwrap();
+            if let Ok(Some(p)) = askpass::read_request(&mut buf, &mut s) {
+                assert_eq!(p, "[sudo] password for pi: ");
+                askpass::answer(s, Some(b"right"));
+                answered = true;
+            }
+        }
+        assert!(answered, "the front's program got its prompt across");
+        let _ = front.wait();
+        let seen = std::fs::read_to_string(&out).unwrap();
+        assert!(seen.contains("0:reply"), "{seen}");
+        assert!(seen.contains("4:eof\n") && seen.contains("5:eof"), "{seen}");
+        assert!(!seen.contains("open"), "{seen}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_notice_names_why_an_early_exit_left_nothing_on_screen() {
+        use gh0st_core::apps::Exempt;
+        let exited = |code| {
+            // A wait status as waitpid gives it: exited, with `code`.
+            code << 8
+        };
+        let signalled = 9;
+        let mut t = Task::fixture("a.desktop", 1, 0);
+        t.started = 10_000;
+        t.sandboxed = true;
+        t.ours = true;
+        assert_eq!(closed_why(&t, exited(1), 10_001), Some(Why::Sandbox));
+        t.ours = false;
+        assert_eq!(
+            closed_why(&t, exited(1), 10_001),
+            Some(Why::Sandbox),
+            "theirs, sandboxed"
+        );
+        t.sandboxed = false;
+        t.ours = true;
+        assert_eq!(closed_why(&t, exited(1), 10_001), None, "ours, unsandboxed");
+        t.ours = false;
+        assert_eq!(closed_why(&t, exited(1), 10_001), Some(Why::IsolationOff));
+        t.exempt = Some(Exempt::Root);
+        assert_eq!(closed_why(&t, exited(1), 10_001), Some(Why::Root));
+        t.exempt = Some(Exempt::BuiltIn);
+        assert_eq!(closed_why(&t, exited(1), 10_001), Some(Why::IsolationOff));
+        t.exempt = Some(Exempt::Root);
+        assert_eq!(closed_why(&t, exited(0), 10_001), None, "a clean exit");
+        assert_eq!(closed_why(&t, signalled, 10_001), None, "killed");
+        assert_eq!(
+            closed_why(&t, exited(1), 14_999),
+            Some(Why::Root),
+            "4999 ms"
+        );
+        assert_eq!(closed_why(&t, exited(1), 15_000), None, "5000 ms");
+    }
+
+    #[test]
+    fn only_a_root_app_with_a_listener_gets_the_askpass_env() {
+        let socket = Path::new("/run/user/1000/gh0st-askpass-1000/askpass");
+        let get = |exempt, socket, sim| {
+            askpass_env(exempt, socket, sim)
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect::<std::collections::HashMap<_, _>>()
+        };
+        let on = get(Some(apps::Exempt::Root), Some(socket), false);
+        assert_eq!(on.len(), 3);
+        assert_eq!(on["SUDO_ASKPASS"], "/usr/bin/gh0st-askpass");
+        assert_eq!(on[askpass::ENV], socket.to_str().unwrap());
+        assert_eq!(on["DISPLAY"], ":0");
+        assert!(
+            get(Some(apps::Exempt::Root), None, false).is_empty(),
+            "no listener"
+        );
+        assert!(
+            get(Some(apps::Exempt::BuiltIn), Some(socket), false).is_empty(),
+            "ours, unsandboxed"
+        );
+        assert!(get(None, Some(socket), false).is_empty(), "sandboxed");
+    }
 
     #[test]
     fn a_wake_locks_past_lock_after_only() {

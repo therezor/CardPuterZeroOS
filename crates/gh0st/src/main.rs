@@ -37,6 +37,13 @@ fn main() {
             .unwrap_or_default(),
         other => other.to_string(),
     };
+    // sudo's askpass helper is this binary under its own name, as xdg-open
+    // is. By name only: `gh0st gh0st-askpass` is not a subcommand.
+    if name == "gh0st-askpass" {
+        let args = text(args);
+        let prompt = args.first().map(String::as_str);
+        std::process::exit(gh0st_core::askpass::client(prompt));
+    }
     match program.as_str() {
         "--version" | "version" => println!("gh0st {}", env!("CARGO_PKG_VERSION")),
         "shell" | "gh0st-shell" => std::process::exit(gh0st_shell::run::main(&text(args))),
@@ -55,6 +62,7 @@ fn main() {
             eprintln!(
                 "usage: gh0st <shell|helper|update|store|keyring|session|open|screenshot|pick-color|wallpaper|audio|version>"
             );
+            eprintln!("       gh0st-askpass <prompt>: sudo's askpass helper");
             std::process::exit(2);
         }
     }

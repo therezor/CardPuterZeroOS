@@ -20,6 +20,8 @@ chpasswd
 reboot
 poweroff
 /usr/sbin/unix_chkpwd
+# sudo's askpass helper, our gh0st under another name (docs/isolation.md).
+/usr/bin/gh0st-askpass
 /bin/sh
 xdg-user-dirs-update
 ss
