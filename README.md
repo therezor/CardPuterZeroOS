@@ -5,7 +5,7 @@
 **A lean, private OS for the M5Stack CardputerZero.**
 Faster than stock, private by default, and every CardputerZero app still runs.
 
-[⬇️ Download v0.5.0 beta](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.5.0) ·
+[⬇️ Download v0.5.1 beta](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.5.1) ·
 [⚡ Flash in 5 minutes](#-flash-it) ·
 [🧪 Tester notes](docs/beta.md) ·
 [📝 Changelog](CHANGELOG.md)
@@ -115,7 +115,7 @@ You need a CardputerZero, a genuine microSD card of 8 GB or more, and
 [Raspberry Pi Imager](https://www.raspberrypi.com/software/) 2.0.2 or later.
 Flashing erases the card.
 
-1. ⬇️ From the [v0.5.0 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.5.0),
+1. ⬇️ From the [v0.5.1 release](https://github.com/therezor/CardPuterZeroOS/releases/tag/v0.5.1),
    download `gh0st-release-DATE.img.xz`.
 2. 🍓 In Imager, pick **Raspberry Pi Zero 2 W** as the device, then
    **Use custom** as the OS, and choose the `.img.xz`. Don't unpack it.
@@ -150,7 +150,7 @@ too.
 
 ## 🚧 Status
 
-**v0.5.0 is a beta.** It runs every day on our test device, but it can
+**v0.5.1 is a beta.** It runs every day on our test device, but it can
 still break, and the SDK can still change. To report a bug,
 open an issue with the Build from Settings > About. The
 [tester notes](docs/beta.md) list what else to include.

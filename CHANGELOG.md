@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.5.1 beta
+
+- 🔐 **Apps that need root open again.** RaspyJack and apps like it ask
+  for your password on Gh0st's own screen. Or let one run as root without
+  asking, as on stock firmware: the Store asks when you install it, and
+  Settings > Apps can take it back.
+- 💻 **Terminal.** Tap Esc for its menu, and select text to copy with
+  Fn+V. Programs that draw their own screen, like Clawputer, no longer
+  flicker.
+- 🧰 The tools stock apps expect are there: gpg, amixer, aplay, zstd, xz
+  and bzip2.
+- 🐛 Fixes: an app that adds a broken update source no longer stops your
+  updates.
+
 ## v0.5.0 beta
 
 - 🎧 **Bluetooth headphones and speakers.** Pair them in Settings and play
