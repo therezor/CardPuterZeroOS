@@ -6,3 +6,8 @@ if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
     systemd-tmpfiles --create gh0st-update.conf gh0st-store.conf || true
 fi
+# Root grants in sudo's PAM stack (docs/isolation.md, Root apps). A missing
+# check counts as no: sudo asks for the password as before.
+if [ "$1" = configure ]; then
+    pam-auth-update --package || true
+fi

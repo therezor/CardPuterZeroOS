@@ -419,6 +419,9 @@ impl Settings {
                 .into_iter()
                 .filter(|a| a.file != "settings.desktop" && !a.entry.no_display)
                 .map(|a| AppRow {
+                    root: (apps::exempt(&a, root(&a)) == Some(apps::Exempt::Root)
+                        && !a.entry.terminal)
+                        .then(|| gh0st_core::rootapps::granted(a.id())),
                     isolation: apps::isolation(&config, &a, root(&a)),
                     exempt: apps::exempt(&a, root(&a)),
                     input_methods: bridges && !a.ours && apps::exempt(&a, root(&a)).is_none(),
@@ -702,6 +705,20 @@ impl Settings {
                 };
                 cx.settings().set_bool(&apps::app_key(file, leaf), !now);
                 cx.toast("Counts from the next time it opens");
+            }
+            Setting::AppRoot(file) => {
+                let on = !self.app(file).and_then(|a| a.root).unwrap_or(false);
+                let stem = file.strip_suffix(".desktop").unwrap_or(file).to_string();
+                let done = if on {
+                    "Root without a password from its next open"
+                } else {
+                    "It asks for your password from now"
+                };
+                self.helper(
+                    cx,
+                    &["root-grant", &stem, if on { "on" } else { "off" }],
+                    done,
+                );
             }
             Setting::AppInput(file) => {
                 let on = !self.app(file).is_some_and(|a| a.isolation.grants.input);

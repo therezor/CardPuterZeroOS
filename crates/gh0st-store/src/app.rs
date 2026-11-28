@@ -13,7 +13,8 @@ use gh0st_app::gfx::widgets::{self, AppItem, Visual};
 use gh0st_app::helper::{Finished, Helper};
 use gh0st_app::prelude::*;
 use gh0st_core::config::key;
-use gh0st_core::store::{self, About, App, Catalog, Icons, Mirror, Outcome, State};
+use gh0st_core::rootapps;
+use gh0st_core::store::{self, About, App, Catalog, Flags, Icons, Mirror, Outcome, State};
 use gh0st_core::update::{self, Phase, Progress};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -23,11 +24,13 @@ const APP_ICON: &str = "shopping-bag";
 /// Dialog ids.
 const ASK_PASSWORD: u32 = 900;
 const ASK_INSTALL: u32 = 1;
+const ASK_ROOT: u32 = 2;
 /// Helper calls.
 const REFRESH: u32 = 1;
 const INSTALL: u32 = 2;
 const REMOVE: u32 = 3;
 const UPGRADE: u32 = 4;
+const GRANT: u32 = 5;
 /// Menu commands.
 const CMD_REFRESH: u32 = 10;
 const CMD_UPDATE_ALL: u32 = 11;
@@ -62,6 +65,13 @@ impl Filter {
             Filter::Category(c) => words::category(c).1,
         }
     }
+}
+
+/// What waits on the root question.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum AfterRoot {
+    Install(String),
+    UpdateAll,
 }
 
 /// How the Store's home shows its categories, as home shows apps.
@@ -142,6 +152,10 @@ pub struct Store {
     /// The app the install dialog asks about, as `package=version`: the
     /// version the dialog described is the one that installs.
     asking: Option<String>,
+    /// The root question's app, by desktop stem, and what waits on it.
+    root_ask: Option<(String, AfterRoot)>,
+    /// Apps to allow root once their install ends well, by desktop stem.
+    grant_after: Vec<String>,
     mirror: Mirror,
     phase: u8,
     segment: Option<Timer>,
@@ -173,6 +187,8 @@ impl Store {
             start_timer: None,
             was_busy: false,
             refresh_asked: false,
+            root_ask: None,
+            grant_after: Vec::new(),
             queue: VecDeque::new(),
             helper: Helper::new(ASK_PASSWORD),
             filter: Filter::All,
@@ -439,7 +455,94 @@ impl Store {
             );
             return;
         }
-        self.install(cx, &want);
+        self.install_asking(cx, &want);
+    }
+
+    /// The app at `package` asks for root as it runs, has not been asked
+    /// about, and isn't allowed yet: its desktop stem.
+    fn root_question(&self, cx: &mut Cx, package: &str) -> Option<String> {
+        let a = self.app(package)?;
+        if !a.flags.has(Flags::ROOT) || a.desktop.is_empty() || rootapps::granted(&a.desktop) {
+            return None;
+        }
+        let asked = cx
+            .settings()
+            .get_str(key::STORE_ROOT_ASKED)
+            .unwrap_or_default()
+            .to_string();
+        (!asked.split_whitespace().any(|s| s == a.desktop)).then(|| a.desktop.clone())
+    }
+
+    fn ask_root(&mut self, cx: &mut Cx, package: &str, stem: String, then: AfterRoot) {
+        let title = self
+            .app(package)
+            .map_or_else(|| package.to_string(), |a| a.title.clone());
+        let (head, line) = words::root_question(&title);
+        self.root_ask = Some((stem, then));
+        cx.ask(
+            ASK_ROOT,
+            Dialog::confirm(&head, &line)
+                .yes("allow")
+                .no("ask each time"),
+        );
+    }
+
+    /// Installs `want`, first asking about root when it needs it.
+    fn install_asking(&mut self, cx: &mut Cx, want: &str) {
+        let package = store::split_seen(want).0.to_string();
+        if let Some(stem) = self.root_question(cx, &package) {
+            self.ask_root(cx, &package, stem, AfterRoot::Install(want.to_string()));
+            return;
+        }
+        self.install(cx, want);
+    }
+
+    /// The answer to the root question: remembered, so it isn't asked
+    /// again, and on allow, granted once the install ends well.
+    fn root_answered(&mut self, cx: &mut Cx, allow: bool) {
+        let Some((stem, then)) = self.root_ask.take() else {
+            return;
+        };
+        let mut asked = cx
+            .settings()
+            .get_str(key::STORE_ROOT_ASKED)
+            .unwrap_or_default()
+            .to_string();
+        if !asked.split_whitespace().any(|s| s == stem) {
+            if !asked.is_empty() {
+                asked.push(' ');
+            }
+            asked.push_str(&stem);
+            cx.settings().set_str(key::STORE_ROOT_ASKED, &asked);
+        }
+        if allow && !self.grant_after.contains(&stem) {
+            self.grant_after.push(stem);
+        }
+        match then {
+            AfterRoot::Install(want) => self.install(cx, &want),
+            AfterRoot::UpdateAll => self.update_all(cx),
+        }
+    }
+
+    /// Grants root to the apps allowed it whose install ended well.
+    fn grant_installed(&mut self, cx: &mut Cx) {
+        let ready: Vec<String> = self
+            .grant_after
+            .iter()
+            .filter(|stem| {
+                self.catalog.as_ref().is_some_and(|c| {
+                    c.by_desktop(stem)
+                        .is_some_and(|a| self.installed.contains_key(&a.package))
+                })
+            })
+            .cloned()
+            .collect();
+        if let Some(stem) = ready.first() {
+            if !self.helper.busy(GRANT) {
+                self.grant_after.retain(|s| s != stem);
+                self.helper.run(cx, GRANT, &["root-grant", stem, "on"]);
+            }
+        }
     }
 
     fn queued(&self, package: &str) -> bool {
@@ -477,6 +580,14 @@ impl Store {
         if all.is_empty() || self.engine_busy() {
             return;
         }
+        // An update that adds root asks first, one app at a time.
+        if let Some((p, stem)) = all
+            .iter()
+            .find_map(|p| self.root_question(cx, p).map(|s| (p.clone(), s)))
+        {
+            self.ask_root(cx, &p, stem, AfterRoot::UpdateAll);
+            return;
+        }
         let m = self.mirror.word();
         self.starting_for(Work::Apps(all));
         self.helper
@@ -490,6 +601,16 @@ impl Store {
     }
 
     fn finished(&mut self, cx: &mut Cx, f: Finished) {
+        // A grant is no install: the engine's state stays as it is.
+        if f.tag == GRANT {
+            if let Err(why) = &f.result {
+                if why != "Cancelled" {
+                    cx.toast_tone(Tone::Critical, &format!("Root not allowed: {why}"));
+                }
+            }
+            self.grant_installed(cx);
+            return;
+        }
         if let Err(why) = f.result {
             self.starting = None;
             self.was_busy = false;
@@ -506,6 +627,7 @@ impl Store {
             }
             self.start_timer = Some(cx.after(START_MS));
         }
+        self.grant_installed(cx);
         self.sync_segment(cx);
     }
 
@@ -551,6 +673,7 @@ impl Store {
         if st.op == "refresh" {
             self.refresh_asked = false;
         }
+        self.grant_installed(cx);
         self.next(cx);
     }
 
@@ -1133,8 +1256,12 @@ impl Page for Store {
     fn answer(&mut self, id: u32, answer: Answer, cx: &mut Cx) {
         if id == ASK_INSTALL {
             if let (Some(p), true) = (self.asking.take(), answer != Answer::No) {
-                self.install(cx, &p);
+                self.install_asking(cx, &p);
             }
+            return;
+        }
+        if id == ASK_ROOT {
+            self.root_answered(cx, answer != Answer::No);
             return;
         }
         if let Some(f) = self.helper.answer(cx, id, answer) {

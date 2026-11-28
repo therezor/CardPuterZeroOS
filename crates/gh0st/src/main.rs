@@ -4,10 +4,12 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+mod askpass;
 mod audio;
 mod auth;
 mod helper;
 mod open;
+mod root;
 mod store;
 mod update;
 
@@ -41,6 +43,9 @@ fn main() {
         "--version" | "version" => println!("gh0st {}", env!("CARGO_PKG_VERSION")),
         "shell" | "gh0st-shell" => std::process::exit(gh0st_shell::run::main(&text(args))),
         "helper" | "gh0st-helper" => std::process::exit(helper::main(&text(args))),
+        "gh0st-askpass" => std::process::exit(askpass::main(&text(args))),
+        "gh0st-root-check" => std::process::exit(root::check_main()),
+        "root-app" => std::process::exit(root::trampoline_main(&text(args))),
         "update" => std::process::exit(update::main(&text(args))),
         "keyring" => std::process::exit(gh0st_keyringd::run::main(&text(args))),
         "session" => std::process::exit(gh0st_session::run::main(&text(args))),

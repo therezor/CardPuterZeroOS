@@ -1,0 +1,8 @@
+Name: Gh0st OS root apps: sudo without a password for apps you allowed
+Default: yes
+Priority: 1024
+Auth-Type: Primary
+Auth:
+	[success=end default=ignore]	pam_exec.so quiet seteuid /usr/libexec/gh0st-root-check
+Auth-Initial:
+	[success=end default=ignore]	pam_exec.so quiet seteuid /usr/libexec/gh0st-root-check

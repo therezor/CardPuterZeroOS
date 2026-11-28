@@ -1,0 +1,20 @@
+#!/bin/sh
+# sudo for an app that asks for root (docs/isolation.md, Root apps). The
+# shell puts this first on such an app's PATH. Apps have no terminal, so
+# -A has sudo ask gh0st-askpass, which asks the user on the shell's own
+# screen. sudo runs as a child, not exec'd: sudo remembers a password by
+# its parent, and the shell is every app's parent, so a yes for one app
+# would let the next one in.
+if [ -t 0 ]; then
+    exec /usr/bin/sudo "$@"
+fi
+for a in "$@"; do
+    case $a in
+        # The app chose how sudo asks.
+        -A | -S | -n | --askpass | --stdin | --non-interactive) exec /usr/bin/sudo "$@" ;;
+        --) break ;;
+        -*) ;;
+        *) break ;;
+    esac
+done
+/usr/bin/sudo -A "$@"

@@ -30,6 +30,8 @@ pub enum Origin {
     /// A portal request of `gh0st session`, by its id and what it asks:
     /// `account` or `wallpaper`, the verb of the answer.
     Portal(u64, &'static str),
+    /// An app's sudo, through `gh0st-askpass`, by the helper's id.
+    Sudo(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +112,11 @@ impl Prompts {
             return;
         }
         self.queue.push_back(a);
+    }
+
+    /// Whether a question from `origin` waits.
+    pub fn has(&self, origin: &Origin) -> bool {
+        self.queue.iter().any(|q| &q.origin == origin)
     }
 
     /// The daemon withdrew prompt `id`.
@@ -323,6 +330,7 @@ pub fn bar(origin: &Origin) -> (&'static str, &'static str) {
         Origin::Portal(_, "wallpaper") => ("images", "Wallpaper"),
         Origin::Portal(_, "shot") => ("camera", "Screenshot"),
         Origin::Portal(_, "color") => ("palette", "Pick a colour"),
+        Origin::Sudo(_) => ("shield", "Root"),
         _ => ("key-round", "Keyring"),
     }
 }
@@ -331,6 +339,7 @@ impl View<'_> {
     fn title(&self) -> &str {
         match (&self.ask.origin, &self.ask.kind) {
             (Origin::Stale, _) => "Update the keyring",
+            (Origin::Sudo(_), _) => "Allow root?",
             (_, Kind::Password { reason, .. }) if reason.contains(" wants to show ") => {
                 "Show a secret"
             }
@@ -471,10 +480,10 @@ pub fn draw(c: &mut Canvas, t: &Theme, status: &Status, v: &View) {
         y += t.m.line_h;
     }
     if field {
-        let enter = if v.ask.origin == Origin::Stale {
-            "update"
-        } else {
-            "unlock"
+        let enter = match v.ask.origin {
+            Origin::Stale => "update",
+            Origin::Sudo(_) => "allow",
+            _ => "unlock",
         };
         let hints = [
             Hint {

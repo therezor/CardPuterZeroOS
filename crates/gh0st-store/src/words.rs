@@ -114,6 +114,16 @@ pub fn adds(pkgs: &[String]) -> String {
     format!("Also installs {list}, which it uses.")
 }
 
+/// The question for an app that asks for root as it runs: its title and
+/// line. Allow is stock's way; the other asks for the password each time.
+pub fn root_question(title: &str) -> (String, String) {
+    (
+        format!("{title} needs root"),
+        "Allow it without your password, as on stock firmware? Settings > Apps can undo it."
+            .to_string(),
+    )
+}
+
 /// "Uses network, camera".
 pub fn uses(uses: &[&str]) -> String {
     if uses.is_empty() {

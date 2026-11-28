@@ -59,7 +59,8 @@ reads those drop-ins at each launch (`sandbox::bridges`).
 - An app whose `Exec` runs `sudo`, `pkexec`, `doas`, `su` or `run0`.
 - A Store app the catalog marks `root`: CI found a setuid file, or sudo,
   pkexec or doas as a command in its code (`store.md`). The Store asks
-  before it installs one.
+  before it installs one. Its sudo asks for the password on the shell's
+  screen, or needs none once allowed (Root apps, below).
 - An app the user turned Isolation off for.
 - Files' root worker, while root mode is on: `gh0st-helper files-worker`
   starts it as root after the user's password (`files.md`, Root mode).
@@ -67,6 +68,86 @@ reads those drop-ins at each launch (`sandbox::bridges`).
 The two automatic ones come from the app itself, so a hostile app can opt
 out. Settings > Apps shows why an app runs outside ("Built in" or "Runs as
 root").
+
+## Root apps
+
+An app that runs as root (the Store's `root` mark, or sudo in its
+`Exec`) calls sudo, and has no terminal to type a password into. On stock
+firmware sudo needs no password; here it does. Two ways in:
+
+- **The prompt.** The shell puts `/usr/lib/gh0st/sudo` first on such an
+  app's PATH and sets `SUDO_ASKPASS=/usr/libexec/gh0st-askpass`. That
+  `sudo` adds `-A` and runs the real one as its child, never `exec`: sudo
+  remembers a password by its parent, and the shell is every app's
+  parent, so a yes for one app would let the next one in. sudo runs the
+  helper, which asks the shell over `$XDG_RUNTIME_DIR/gh0st-askpass`. The
+  shell checks the helper before it asks: its binary is
+  `/usr/libexec/gh0st-askpass` (same file), its parent is a sudo running
+  with root's effective uid, and its cgroup names an app that runs as
+  root. Then, `go`: the helper makes itself non-dumpable and checks no
+  tracer attached; then `ready`. The shell parks the app and asks on its
+  own screen, "RaspyJack asks for root", checks the password with
+  `unix_chkpwd`, and hands it over. Esc is no. A question the shell drops
+  for any reason (Esc, a refusal, a restart of the keyring daemon, sudo
+  gone) is answered no, so no helper waits.
+- **A grant.** The user allows an app root without a password: the Store
+  asks when it installs an app marked `root`, and again at the update
+  that first marks one; Settings > Apps > the app > Root, no password
+  takes it back. Grants live in `/etc/gh0st/root-apps`, root's. Only
+  `gh0st-helper root-grant`, behind the password, changes it, and the
+  Store's engine drops an app's line when it removes the app. An app run
+  in a terminal, or whose `Exec` runs a file anyone but root can change,
+  can't be granted.
+
+A grant works like this:
+
+1. The shell starts a granted app through the trampoline,
+   `gh0st root-app STEM`, in its own cgroup, and asks
+   `gh0st-helper root-place STEM PID`. The trampoline makes itself
+   non-dumpable and waits.
+2. The helper, as root, checks the process is this binary running
+   `root-app STEM` for the caller, untraced, and that the app is granted.
+   It makes `app-<stem>` under the shell's cgroup as root's, moves the
+   pid in, and checks by pidfd that the same process moved.
+3. The shell lets the trampoline go. It checks no tracer again, reads the
+   app's desktop file from the fixed folders (root's alone), and runs its
+   `Exec` and nothing else: the environment cut to a list (no `LD_*`,
+   `PYTHON*`, `BASH_ENV`), PATH the shim's and root's, the stock working
+   folder, stdin from `/dev/null`, no other fds but the link.
+4. sudo's PAM stack runs `gh0st-root-check` first (`pam_exec seteuid`,
+   from `pam-auth-update`): sudo through without the password when sudo's
+   own cgroup is `app-<stem>` right under the shell's unit, that cgroup and
+   its `cgroup.procs` are root's alone, and `stem` is granted. Anything
+   else falls to the password as before: terminal sudo, su, SSH. A missing
+   check counts as no.
+
+Root's helper places a process only if it is the trampoline, which runs
+nothing but the app's own `Exec`; so asking it gains nobody more than
+opening the app. Not placed (no grant, a hung helper), the app starts in
+its own cgroup as any app, and its sudo asks.
+
+**What can't be faked, and what can.** A grant holds for the processes in
+a root-owned `app-<stem>`, and the kernel decides who is in it:
+
+- No process of the user can join it: writing its `cgroup.procs` needs
+  root, and so does making a cgroup inside it.
+- The user can remove it once empty and make their own in its place; the
+  check sees it isn't root's and refuses.
+- A process outside it, in any cgroup of the user's, gets the password
+  question at most.
+- A sandboxed app can't use a grant at all: it has its own pid namespace
+  and sees no other process, `/sys/fs/cgroup` is hidden, and
+  `no_new_privs` keeps sudo from gaining root inside it.
+- A pid that ends or is reused: the helper holds a pidfd, so the process
+  it checked is the one it moved, or it kills what moved.
+
+Every process in the cgroup comes from the app's own `Exec`, started
+clean. That is not the same as running only the app's code. The kernel
+here has no Yama, so any program of the user outside a sandbox can
+`ptrace` the app's processes that run as the user and make them call
+sudo. And what the app loads from home as the user is the user's. Run
+such a program and a grant is as strong as it: the stock firmware's
+passwordless sudo, held to one app.
 
 ## The home folder
 
@@ -169,6 +250,15 @@ needs the `gh0st-base` of its own build.
 ## Tests
 
 - `sandbox.rs` unit tests: the bwrap command for each switch and lock.
+- Root apps: `gh0st_core::askpass` and `rootapps`, and the shell's
+  `askpass.rs`, test each check on `/proc` and cgroup fixtures.
+  `crates/gh0st/tests/sudo_sim.rs` runs the prompt through the real shell
+  (right, wrong, Esc, an app not marked root). `crates/gh0st/tests/root_e2e.sh`
+  runs real sudo, PAM, cgroups, the shim, the trampoline and `root-place`
+  in a privileged container, with what must fail: a program outside any
+  app, joining or remaking the app's cgroup, placing another process,
+  another app's trampoline, a pid that's gone, a traced trampoline,
+  `no_new_privs`, and terminal sudo with a wrong password.
 - `crates/gh0st-core/tests/sandbox_run.rs`: a real bwrap, where it and user
   namespaces work (Linux CI, the device). An app keeps Documents, new
   folders and its notices, and reaches no secret, start file, other app's

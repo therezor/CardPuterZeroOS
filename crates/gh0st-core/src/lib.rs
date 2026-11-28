@@ -5,6 +5,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod apps;
+pub mod askpass;
 pub mod backlight;
 pub mod battery;
 pub mod btmgmt;
@@ -29,6 +30,7 @@ pub mod password;
 pub mod procfs;
 pub mod recent;
 pub mod rfkill;
+pub mod rootapps;
 pub mod rt;
 pub mod sandbox;
 pub mod script;

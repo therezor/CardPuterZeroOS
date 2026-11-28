@@ -110,7 +110,13 @@ page says it:
 dpkg never lets a package overwrite another's files, so a file elsewhere
 is only data. A deb checked under an older rule is checked again. Installing an app with any of the first four asks first, and
 names them.
-An update doesn't ask.
+An update doesn't ask, but for root: an app marked `root` asks once more,
+"RaspyJack needs root": allow it without the password, as on stock
+firmware, or have its sudo ask each time. The Store asks at install, and at
+the update that first marks an app; it remembers each app it asked
+(`gh0st.store.root_asked`). Allowed, it runs `gh0st-helper root-grant`
+once the install ends well. Removing an app drops its grant
+(`isolation.md`, Root apps).
 CI leaves out an app whose dependencies our sources don't have, or whose
 name clashes with Debian's. A dry run of CI listed 168 of 179: ten
 need Pi camera tools or M5's launcher, and `loki` is a Debian package's

@@ -74,6 +74,8 @@ pub struct Extra<'a> {
     /// exec, so all it starts is named for the app.
     pub cgroup: Option<&'a Path>,
     pub env: Vec<(&'static str, String)>,
+    /// An fd the child keeps across exec, named in `env`.
+    pub keep_fd: Option<RawFd>,
 }
 
 /// As `spawn`, with `extra`.
@@ -121,6 +123,18 @@ pub fn spawn_with<S: AsRef<OsStr>>(
                 if fd >= 0 {
                     libc::write(fd, b"0".as_ptr().cast(), 1);
                     libc::close(fd);
+                }
+                Ok(())
+            });
+        }
+    }
+    if let Some(fd) = extra.keep_fd {
+        // SAFETY: fcntl is async-signal-safe. It keeps the fd open across
+        // exec in the child alone.
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                    return Err(io::Error::last_os_error());
                 }
                 Ok(())
             });

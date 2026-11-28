@@ -29,6 +29,8 @@
 //!     gh0st-helper update-check
 //!     gh0st-helper update-install                password
 //!     gh0st-helper update-autoremove             password
+//!     gh0st-helper root-place STEM PID
+//!     gh0st-helper root-grant STEM on|off        password
 //!     gh0st-helper update-stop
 //!     gh0st-helper update-auto on|off            password
 //!     gh0st-helper update-channel stable|edge    password
@@ -65,6 +67,7 @@
 use crate::auth::{self, Auth};
 use gh0st_core::hotspot::{self, Profile, Security};
 use gh0st_core::rfkill::{self, Radio};
+use gh0st_core::rootapps;
 use gh0st_core::store::{self, Job, Mirror, Request};
 use gh0st_core::sysconf::{self, CpuMode};
 use std::ffi::CString;
@@ -154,6 +157,10 @@ pub enum Verb {
     StoreInstall(Mirror, Vec<String>),
     StoreRemove(String),
     StoreUpgrade(Mirror),
+    /// The shell's trampoline for a granted app, into its root cgroup.
+    RootPlace(String, u32),
+    /// Root without a password for an app, or not.
+    RootGrant(String, bool),
 }
 
 /// More apps than this in one install is not a person asking.
@@ -180,6 +187,7 @@ impl Verb {
             | Verb::Dns(_)
             | Verb::UpdateInstall
             | Verb::UpdateAutoremove
+            | Verb::RootGrant(..)
             | Verb::UpdateAuto(_)
             | Verb::UpdateChannel(_)
             | Verb::StoreInstall(..)
@@ -206,6 +214,8 @@ impl Verb {
             | Verb::UpdateCheck
             | Verb::UpdateStop
             | Verb::AptClean
+            // What it places can only run the app's own Exec.
+            | Verb::RootPlace(..)
             | Verb::StoreRefresh => false,
         }
     }
@@ -261,6 +271,11 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["update-check"] => Verb::UpdateCheck,
         ["update-install"] => Verb::UpdateInstall,
         ["update-autoremove"] => Verb::UpdateAutoremove,
+        ["root-place", s, pid] if rootapps::is_stem(s) => Verb::RootPlace(
+            s.to_string(),
+            number(pid, i32::MAX as u32).filter(|&p| p > 1)?,
+        ),
+        ["root-grant", s, o] if rootapps::is_stem(s) => Verb::RootGrant(s.to_string(), on(o)?),
         ["update-stop"] => Verb::UpdateStop,
         ["update-auto", s] => Verb::UpdateAuto(on(s)?),
         ["update-channel", "stable"] => Verb::UpdateChannel(false),
@@ -1142,6 +1157,14 @@ fn act(v: Verb) -> Result<(), String> {
             "--no-block",
             "gh0st-update-install.service",
         ]),
+        Verb::RootPlace(stem, pid) => {
+            let caller = std::env::var("PKEXEC_UID")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .ok_or("no caller")?;
+            crate::root::place(&stem, pid, caller)
+        }
+        Verb::RootGrant(stem, on) => crate::root::grant(&stem, on),
         Verb::UpdateAutoremove => run(&[
             "systemctl",
             "start",
@@ -1271,7 +1294,7 @@ pub fn main(args: &[String]) -> i32 {
              dhcp-hostname on|off | \
              ip6-privacy on|off | dns auto|SERVERS | rfkill bluetooth|wlan on|off | usb-power on|off | usb-hid hold | bt-classic on|off | \
              wifi-powersave on|off | hotspot on|off | hotspot name NAME | hotspot password | \
-             hotspot security wpa3|mixed | power off|reboot | update-check | update-install | update-autoremove | \
+             hotspot security wpa3|mixed | power off|reboot | update-check | update-install | update-autoremove | root-place STEM PID | root-grant STEM on|off | \
              update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
              store-refresh | store-install [--mirror auto|github|china] PKG... | \
              store-remove PKG | store-upgrade [--mirror auto|github|china] | \

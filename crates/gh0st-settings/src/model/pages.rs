@@ -154,6 +154,9 @@ pub struct AppRow {
     /// An input method is installed and this app can take its bridge: not
     /// ours, not exempt.
     pub input_methods: bool,
+    /// For an app that runs as root: whether it may without the password.
+    /// None for others, and for one run in a terminal, which can't be.
+    pub root: Option<bool>,
 }
 
 /// An app's sandbox rows: the switch, and what it may reach inside.
@@ -166,12 +169,21 @@ fn isolation_rows(a: &AppRow) -> Vec<Item> {
         None => None,
     };
     if let Some(why) = why {
-        return vec![Item::new(
+        let mut rows = vec![Item::new(
             "shield",
             "Isolation",
             Value::Text(why.into()),
             Act::None,
         )];
+        if let Some(granted) = a.root {
+            rows.push(Item::new(
+                "lock-open",
+                "Root, no password",
+                Value::Toggle(granted),
+                Act::Set(Setting::AppRoot(f())),
+            ));
+        }
+        return rows;
     }
     let iso = a.isolation;
     let mut rows = vec![Item::new(
@@ -2349,6 +2361,16 @@ mod tests {
         let last = p.item(p.len() - 1).unwrap();
         assert_eq!(last.value, Value::Text("Runs as root".into()));
         assert_eq!(last.act, Act::None);
+        // One that may take a grant shows its switch under it.
+        s.apps[0].root = Some(true);
+        let p = build(&id, &s);
+        let last = p.item(p.len() - 1).unwrap();
+        assert_eq!(last.label, "Root, no password");
+        assert_eq!(last.value, Value::Toggle(true));
+        assert_eq!(
+            last.act,
+            Act::Set(Setting::AppRoot("zsynth.desktop".into()))
+        );
     }
 
     /// Each setting has one home, so no row's action shows up on two pages.

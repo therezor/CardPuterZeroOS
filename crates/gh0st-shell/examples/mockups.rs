@@ -555,6 +555,17 @@ fn scenes(palette: theme::Palette, stock: Option<&Path>, all: bool) -> Vec<(&'st
                     false,
                 ),
             ),
+            (
+                "prompt-sudo",
+                ask(
+                    &t,
+                    Origin::Sudo(1),
+                    password("RaspyJack asks for root. Your password lets it in."),
+                    4,
+                    false,
+                    false,
+                ),
+            ),
         ];
         if all || palette.name == "Mint" {
             scenes.extend([

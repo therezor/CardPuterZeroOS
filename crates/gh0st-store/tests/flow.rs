@@ -77,7 +77,11 @@ fn install_with_the_password_and_confirm_a_risky_one() {
         apps: vec![
             app("acidzero", "AcidZero", "hardware"),
             // CJK the device can't draw falls back to the package name.
-            app("rootsetup", "\u{6839}\u{8bbe}\u{7f6e}", "scripts,service"),
+            app(
+                "rootsetup",
+                "\u{6839}\u{8bbe}\u{7f6e}",
+                "scripts,service,root",
+            ),
         ],
     };
     std::fs::write(state.join("catalog"), catalog.text()).unwrap();
@@ -143,6 +147,10 @@ fn install_with_the_password_and_confirm_a_risky_one() {
     let (title, _) = d.dialog().expect("the risky app asks first");
     assert_eq!(title, "Install rootsetup?");
     d.keys("enter").wait(50);
+    // It asks for root as it runs: may it, without the password?
+    let (title, _) = d.dialog().expect("then root");
+    assert_eq!(title, "rootsetup needs root");
+    d.keys("enter").wait(50);
     // On Linux inotify sees AcidZero's run end; elsewhere the start timer
     // reads the state. Either way rootsetup goes next.
     d.wait(16_000);
@@ -153,6 +161,27 @@ fn install_with_the_password_and_confirm_a_risky_one() {
         "{calls}"
     );
     assert!(d.lint().is_empty(), "{:?}", d.lint());
+
+    // Its install ends well: root is allowed it, through the helper.
+    d.keys("type secret\nenter");
+    d.jobs(5000);
+    std::fs::write(
+        dir.join("status"),
+        "Package: rootsetup\nStatus: install ok installed\nVersion: 1.0\n\n",
+    )
+    .unwrap();
+    std::fs::write(
+        state.join("state"),
+        "ended=3\nop=install\noutcome=ok\npackages=rootsetup\n",
+    )
+    .unwrap();
+    d.wait(16_000);
+    d.jobs(5000);
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert!(
+        calls.contains("gh0st-helper root-grant rootsetup on"),
+        "{calls}"
+    );
 
     // Idle on the list: the clock's minute and nothing else.
     d.keys("esc").wait(50);

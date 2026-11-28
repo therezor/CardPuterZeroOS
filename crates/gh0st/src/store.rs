@@ -879,6 +879,20 @@ fn remove(pkg: &str) -> Result<(), Failure> {
     if code != Some(0) {
         return Err(apt_failure(&out));
     }
+    // Its root grant goes with it: an app installed later under the name
+    // asks again.
+    if let Some(a) = c.find(pkg)
+        && !a.desktop.is_empty()
+        && gh0st_core::rootapps::granted(&a.desktop)
+    {
+        if let Err(e) = crate::root::set(
+            std::path::Path::new(gh0st_core::rootapps::LIST),
+            &a.desktop,
+            false,
+        ) {
+            eprintln!("gh0st store: root grant: {e}");
+        }
+    }
     // The app is gone either way: a stale pin only holds Debian's back.
     if let Err((_, e)) = write_pins(&c, None) {
         eprintln!("gh0st store: {e}");

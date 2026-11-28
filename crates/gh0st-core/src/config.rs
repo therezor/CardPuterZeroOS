@@ -58,11 +58,12 @@ pub const GRANTS: [&str; 5] = ["isolate", "network", "camera", "mic", "input"];
 
 /// A key that changes what runs, what locks, or what an app may reach.
 pub fn is_secure(k: &str) -> bool {
-    const KEYS: [&str; 6] = [
+    const KEYS: [&str; 7] = [
         key::LOCK_PASSWORD,
         key::LOCK_AFTER,
         key::TERMINAL,
         key::STORE_MIRROR,
+        key::STORE_ROOT_ASKED,
         key::RECENT_REMEMBER,
         key::CLIPBOARD_KEEP,
     ];
@@ -146,6 +147,9 @@ pub mod key {
     pub const STORE_MIRROR: &str = "gh0st.store.mirror";
     /// The Store's home: `grid` or `list`.
     pub const STORE_LAYOUT: &str = "gh0st.store.layout";
+    /// Apps the Store asked about root, by desktop stem, space between:
+    /// it asks once per app, at install or at the update that adds root.
+    pub const STORE_ROOT_ASKED: &str = "gh0st.store.root_asked";
     /// Add files opened to the shared recent list. Off: nothing is added.
     pub const RECENT_REMEMBER: &str = "gh0st.recent.remember";
     /// Keep what was copied through the lock. Off: the lock clears it.

@@ -20,6 +20,15 @@ ln -s gh0st "$dest/usr/bin/gh0st-shell"
 # not a symlink, which pkexec refuses.
 install -d "$dest/usr/libexec"
 ln "$dest/usr/bin/gh0st" "$dest/usr/libexec/gh0st-helper"
+# sudo runs this for an app that asks for root. A hard link, so the shell
+# knows its own binary asks (docs/isolation.md, Root apps).
+ln "$dest/usr/bin/gh0st" "$dest/usr/libexec/gh0st-askpass"
+install -D -m 755 "$pk/sudo/sudo" "$dest/usr/lib/gh0st/sudo/sudo"
+# sudo's PAM stack runs this before the password: an app the user allowed
+# root goes through without it. Root's alone, as pam_exec runs it.
+ln "$dest/usr/bin/gh0st" "$dest/usr/libexec/gh0st-root-check"
+install -D -m 644 "$pk/pam/gh0st-root-apps" "$dest/usr/share/pam-configs/gh0st-root-apps"
+install -D -m 440 "$pk/sudoers/gh0st-root-apps" "$dest/etc/sudoers.d/gh0st-root-apps"
 install -D -m 644 -t "$dest/usr/share/gh0st/applications" \
     "$pk/applications/settings.desktop" "$pk/applications/store.desktop" \
     "$pk/applications/update.desktop" "$pk/applications/keyring.desktop" \

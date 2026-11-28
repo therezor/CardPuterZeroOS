@@ -88,6 +88,8 @@ pub enum Setting {
     AppMic(String),
     /// Input methods' bridges load into it.
     AppInput(String),
+    /// Root without the password, for an app that runs as root.
+    AppRoot(String),
     WifiRadio,
     Bluetooth,
     NetworkTime,

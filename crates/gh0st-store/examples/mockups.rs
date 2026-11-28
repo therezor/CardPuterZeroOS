@@ -45,7 +45,7 @@ const APPS: &[CatalogRow] = &[
         "0.4.0",
         24_292,
         "JackyC",
-        "service,network",
+        "service,root,network",
         "Network files transfer tool from smartphones and PCs",
     ),
     (
@@ -338,6 +338,12 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             fixture: c,
             progress: None,
             keys: "c\nc\nenter\nwait\nx\nenter\nwait\nenter",
+        },
+        Scene {
+            name: "18-root-question",
+            fixture: c,
+            progress: None,
+            keys: "c\nc\nenter\nwait\nx\nenter\nwait\nenter\nwait\nenter",
         },
         Scene {
             name: "10-installing",

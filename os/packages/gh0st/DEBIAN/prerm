@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+# The PAM profile goes with the check it runs.
+if [ "$1" = remove ]; then
+    pam-auth-update --package --remove gh0st-root-apps || true
+fi

@@ -308,6 +308,27 @@ pub fn clock_format(h: u32, m: u32, h24: bool) -> String {
     }
 }
 
+/// A pipe, both ends close-on-exec: (read, write).
+pub fn pipe() -> std::io::Result<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> {
+    use std::os::fd::FromRawFd;
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: pipe fills two fds into a live array.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    for fd in fds {
+        // SAFETY: fcntl on the fds pipe just made.
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+    }
+    // SAFETY: both fds are new and ours alone.
+    Ok(unsafe {
+        (
+            std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+            std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -200,7 +200,23 @@ enum JobKind {
     PromptCheck,
     /// The helper restarting (true) or powering off.
     Power(bool),
+    /// Root's helper placing a granted app's trampoline, by its group.
+    RootPlace(i32),
 }
+
+/// A granted app's trampoline, waiting for root's helper (docs/isolation.md,
+/// Root apps).
+struct RootGo {
+    pgid: i32,
+    stem: String,
+    /// The pipe's write end: a byte, or closing it, lets the app start.
+    fd: std::os::fd::OwnedFd,
+    /// Past this it starts unplaced: the helper hangs.
+    until: u64,
+}
+
+/// How long root's helper may take to place an app.
+const ROOT_PLACE_MS: u64 = 8_000;
 
 /// Where keys come from: the keyboard, or a script in `--sim`.
 enum Input {
@@ -446,6 +462,10 @@ struct Shell {
     chime_at_wake: bool,
     /// The keyring's questions.
     prompts: Prompts,
+    /// Apps' sudo, asking for the password (askpass.rs).
+    askpass: Option<crate::askpass::Server>,
+    /// Granted apps waiting to be placed.
+    root_go: Vec<RootGo>,
     /// The keyring said its vault is open.
     keyring_open: bool,
     /// This unlock sent the keyring a password.
@@ -637,6 +657,8 @@ impl Shell {
                 _ => Services::start(rt::now_ms(), sim.is_some()),
             },
             prompts: Prompts::default(),
+            askpass: None,
+            root_go: Vec::new(),
             sim: sim.is_some(),
             cgroups: if on_device { Cgroups::own() } else { None },
             bye: None,
@@ -690,6 +712,20 @@ impl Shell {
             s.tries = Tries::load(&path, password::boottime());
             s.tries_path = Some(path);
         }
+        // A sim asks for its test's app; a device checks each helper.
+        let sim_app = s
+            .sim
+            .then(|| std::env::var("GH0ST_ASKPASS_SIM_APP").ok())
+            .flatten();
+        if on_device || sim_app.is_some() {
+            let dir = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            match crate::askpass::Server::open(&dir, sim_app) {
+                Ok(a) => s.askpass = Some(a),
+                Err(e) => eprintln!("gh0st shell: askpass: {e}"),
+            }
+        }
         // A shell that stopped in the dark left Wi-Fi off.
         if on_device && std::fs::remove_file(wifi_marker()).is_ok() {
             child::fire(&["nmcli", "radio", "wifi", "on"]);
@@ -740,6 +776,13 @@ impl Shell {
 
     fn job_done(&mut self, kind: JobKind, j: Job) {
         match kind {
+            JobKind::RootPlace(pgid) => {
+                let placed = j.code() == Some(0);
+                if !placed {
+                    eprintln!("gh0st shell: root-place: {}", j.output().trim());
+                }
+                self.root_go(pgid, placed);
+            }
             JobKind::Volume => {
                 if let Some((v, muted)) = parse_volume(&j.output()) {
                     self.volume = Some(v.min(100));
@@ -1219,7 +1262,8 @@ impl Shell {
             }
             Which::Keyring => {
                 self.keyring_open = false;
-                self.prompts.retain(|o| matches!(o, Origin::Portal(..)));
+                self.prompts
+                    .retain(|o| matches!(o, Origin::Portal(..) | Origin::Sudo(_)));
             }
         }
         if self.screen == Screen::Prompt && self.prompts.is_empty() {
@@ -1429,6 +1473,7 @@ impl Shell {
                     });
                 }
                 Origin::Portal(id, verb) => self.answer_portal(id, verb, Answer::Deny),
+                Origin::Sudo(id) => self.answer_sudo(id, None),
                 _ => {}
             }
             self.prompts.done();
@@ -1454,7 +1499,15 @@ impl Shell {
                     self.save_tries();
                     let input = password::chkpwd_input(&pw);
                     self.run_prompt_check(input);
-                    self.try_vault(pw);
+                    // sudo's password opens nothing else.
+                    if matches!(
+                        self.prompts.current().map(|a| &a.origin),
+                        Some(Origin::Sudo(_))
+                    ) {
+                        password::wipe(&mut pw);
+                    } else {
+                        self.try_vault(pw);
+                    }
                 }
                 self.dirty = true;
             }
@@ -1485,6 +1538,7 @@ impl Shell {
                         });
                     }
                     Origin::Portal(id, verb) => self.answer_portal(id, verb, Answer::Deny),
+                    Origin::Sudo(id) => self.answer_sudo(id, None),
                     _ => {}
                 }
                 if let Some(mut old) = self.prompt_input.take() {
@@ -1515,6 +1569,71 @@ impl Shell {
                 self.prompts.done();
                 self.dirty = true;
             }
+        }
+    }
+
+    /// A granted app's trampoline may start: placed by root's helper, or
+    /// not. Not placed, it joins its own cgroup as any app does, so its
+    /// sudo can still ask for the password.
+    fn root_go(&mut self, pgid: i32, placed: bool) {
+        let Some(i) = self.root_go.iter().position(|g| g.pgid == pgid) else {
+            return;
+        };
+        let g = self.root_go.swap_remove(i);
+        if !placed {
+            if let Some(path) = self.cgroups.as_ref().and_then(|c| c.make(&g.stem)) {
+                let _ = std::fs::write(path.join("cgroup.procs"), pgid.to_string());
+            }
+        }
+        // SAFETY: write one byte from a live buffer to our pipe.
+        let _ = unsafe { libc::write(g.fd.as_raw_fd(), b"g".as_ptr().cast(), 1) };
+    }
+
+    /// Helpers sudo ran: a new question, or one whose sudo went away.
+    fn askpass_said(&mut self, ready: &[bool]) {
+        let Some(a) = self.askpass.as_mut() else {
+            return;
+        };
+        for ev in a.ready(ready) {
+            match ev {
+                crate::askpass::Event::Ask { id, stem } => self.sudo_ask(id, &stem),
+                crate::askpass::Event::Gone(id) => {
+                    self.prompts.remove(&Origin::Sudo(id));
+                    self.dirty = true;
+                }
+            }
+        }
+    }
+
+    /// App `stem`'s sudo asks for the password. Only an app that runs as
+    /// root by its own word may: the Store's mark, or sudo in its `Exec`.
+    fn sudo_ask(&mut self, id: u64, stem: &str) {
+        let app = self.apps.iter().find(|a| a.id() == stem);
+        let root = app.is_some_and(|a| {
+            apps::exempt(a, gh0st_core::store::needs_root(stem)) == Some(apps::Exempt::Root)
+        });
+        let Some(app) = app.filter(|_| root) else {
+            eprintln!("gh0st shell: askpass: {stem} doesn't run as root");
+            self.answer_sudo(id, None);
+            return;
+        };
+        let reason = format!(
+            "{} asks for root. Your password lets it in.",
+            app.entry.name
+        );
+        self.prompts.push(Ask {
+            origin: Origin::Sudo(id),
+            kind: Kind::Password {
+                reason,
+                retry: false,
+            },
+        });
+        self.dirty = true;
+    }
+
+    fn answer_sudo(&mut self, id: u64, pw: Option<&[u8]>) {
+        if let Some(a) = self.askpass.as_mut() {
+            a.answer(id, pw);
         }
     }
 
@@ -1559,12 +1678,19 @@ impl Shell {
                 self.tries = Tries::default();
                 self.save_tries();
                 let pw = input.strip_suffix(&[0]).unwrap_or(&input).to_vec();
-                let mut m = match self.prompts.current().map(|a| a.origin.clone()) {
-                    Some(Origin::Daemon(id)) => ToDaemon::Password { id, pw },
-                    _ => ToDaemon::Unlock { pw },
-                };
-                self.services.tell(&m);
-                m.wipe();
+                let origin = self.prompts.current().map(|a| a.origin.clone());
+                if let Some(Origin::Sudo(id)) = origin {
+                    let mut pw = pw;
+                    self.answer_sudo(id, Some(&pw));
+                    password::wipe(&mut pw);
+                } else {
+                    let mut m = match origin {
+                        Some(Origin::Daemon(id)) => ToDaemon::Password { id, pw },
+                        _ => ToDaemon::Unlock { pw },
+                    };
+                    self.services.tell(&m);
+                    m.wipe();
+                }
                 self.prompts.done();
             }
             password::Check::Wrong => self.prompts.checked_wrong(),
@@ -1814,6 +1940,7 @@ impl Shell {
             }
             let shell = !app && self.screen != Screen::Off;
             let deadline = rt::earliest([
+                self.root_go.iter().map(|g| g.until).min(),
                 shell.then_some(self.clock_at),
                 (shell && self.battery_dir.is_some()).then_some(self.battery_at),
                 // Over an app no shell key repeats, so no repeat wakeups.
@@ -1883,6 +2010,10 @@ impl Shell {
             fds.extend(links.iter().map(|&(_, fd)| rt::pollfd(fd)));
             let services_at = fds.len();
             fds.extend(self.services.fds().into_iter().map(rt::pollfd));
+            let askpass_at = fds.len();
+            if let Some(a) = &self.askpass {
+                fds.extend(a.fds().into_iter().map(rt::pollfd));
+            }
             if let Err(e) = rt::wait(&mut fds, deadline) {
                 eprintln!("gh0st shell: poll: {e}");
                 return 1;
@@ -1953,8 +2084,12 @@ impl Shell {
                     self.read_link(pgid);
                 }
             }
-            if fds[services_at..].iter().any(rt::readable) {
+            if fds[services_at..askpass_at].iter().any(rt::readable) {
                 self.services_said();
+            }
+            let asked: Vec<bool> = fds[askpass_at..].iter().map(rt::readable).collect();
+            if asked.iter().any(|&r| r) {
+                self.askpass_said(&asked);
             }
             keys_buf.clear();
             self.input.keys(now, rt::readable(&fds[0]), &mut keys_buf);
@@ -1979,6 +2114,11 @@ impl Shell {
             self.sweep(now);
             self.run_pending(now);
             self.maybe_prompt(now);
+            // A helper whose question went another way hears no.
+            let prompts = &self.prompts;
+            if let Some(a) = self.askpass.as_mut() {
+                a.reconcile(|id| prompts.has(&Origin::Sudo(id)));
+            }
             self.maybe_portal(now);
             // A portal open sets what is pending: now, not at the next key.
             self.run_pending(now);
@@ -2119,6 +2259,15 @@ impl Shell {
 
     fn on_timers(&mut self, now: u64) {
         self.player.tick(now);
+        let late: Vec<i32> = self
+            .root_go
+            .iter()
+            .filter(|g| now >= g.until)
+            .map(|g| g.pgid)
+            .collect();
+        for pgid in late {
+            self.root_go(pgid, false);
+        }
         if let Some(k) = self.kb.repeat_due(now) {
             self.on_key(k, now);
         }
@@ -4027,7 +4176,31 @@ impl Shell {
         // Read now, not from the copy the shell keeps: a grant changed by
         // hand or by another program counts from this launch.
         let fresh = Config::load(&config::default_path());
-        let iso = apps::isolation(&fresh, app, gh0st_core::store::needs_root(&stem));
+        let root_mark = gh0st_core::store::needs_root(&stem);
+        let iso = apps::isolation(&fresh, app, root_mark);
+        let runs_as_root = apps::exempt(app, root_mark) == Some(apps::Exempt::Root);
+        // Allowed root: it starts through the trampoline, which root's
+        // helper places in a cgroup of root's before the app runs.
+        let mut go: Option<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)> = None;
+        let argv = if self.on_device
+            && runs_as_root
+            && !app.entry.terminal
+            && gh0st_core::rootapps::granted(&stem)
+        {
+            match (rt::pipe(), std::env::current_exe()) {
+                (Ok(p), Ok(exe)) => {
+                    go = Some(p);
+                    vec![
+                        exe.into_os_string(),
+                        gh0st_core::rootapps::TRAMPOLINE.into(),
+                        stem.clone().into(),
+                    ]
+                }
+                _ => argv,
+            }
+        } else {
+            argv
+        };
         let sandboxed = self.on_device && iso.sandbox;
         let argv = if sandboxed {
             let user = notify::user_dir();
@@ -4056,10 +4229,27 @@ impl Shell {
         } else {
             argv
         };
-        let cgroup = self.cgroups.as_ref().and_then(|c| c.make(&stem));
+        // A granted app waits in the shell's own cgroup until root's helper
+        // places it.
+        let cgroup = if go.is_some() {
+            None
+        } else {
+            self.cgroups.as_ref().and_then(|c| c.make(&stem))
+        };
         // Pulse reports the pid inside a sandbox; `gh0st audio` finds the
         // app's streams by this instead.
         let mut env = vec![("PULSE_PROP", format!("gh0st.app={stem}"))];
+        // An app that runs as root asks for the password on the shell's
+        // screen: it has no terminal (docs/isolation.md, Root apps).
+        if let Some((r, _)) = &go {
+            env.push((gh0st_core::rootapps::GO_ENV, r.as_raw_fd().to_string()));
+        }
+        if self.on_device && runs_as_root && Path::new(gh0st_core::askpass::SHIM_DIR).is_dir() {
+            let path =
+                std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".into());
+            env.push(("PATH", format!("{}:{path}", gh0st_core::askpass::SHIM_DIR)));
+            env.push(("SUDO_ASKPASS", gh0st_core::askpass::HELPER.into()));
+        }
         // Outside a sandbox an input method's bridge comes as inside one:
         // only to an app granted it.
         if !sandboxed && iso.grants.input {
@@ -4074,6 +4264,7 @@ impl Shell {
         let extra = child::Extra {
             cgroup: cgroup.as_deref(),
             env,
+            keep_fd: go.as_ref().map(|(r, _)| r.as_raw_fd()),
         };
         let fb_path = self.display.device();
         let kb_path = self.input.path();
@@ -4112,6 +4303,28 @@ impl Shell {
             }
         };
         let now = rt::now_ms();
+        if let Some((r, w)) = go {
+            drop(r);
+            self.root_go.push(RootGo {
+                pgid,
+                stem: stem.clone(),
+                fd: w,
+                until: now + ROOT_PLACE_MS,
+            });
+            let pid = pgid.to_string();
+            if !self.start_job(
+                JobKind::RootPlace(pgid),
+                &[
+                    "pkexec",
+                    "/usr/libexec/gh0st-helper",
+                    "root-place",
+                    &stem,
+                    &pid,
+                ],
+            ) {
+                self.root_go(pgid, false);
+            }
+        }
         if self.debug {
             eprintln!(
                 "gh0st shell: started {} (pgid {pgid}) at {}",

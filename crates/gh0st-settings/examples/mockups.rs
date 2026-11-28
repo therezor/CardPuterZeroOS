@@ -95,7 +95,9 @@ fn sample_state() -> State {
                 ..Default::default()
             },
         },
-        exempt: None,
+        // RaspyJack runs as root, allowed without the password.
+        exempt: (file == "raspyjack.desktop").then_some(gh0st_core::apps::Exempt::Root),
+        root: (file == "raspyjack.desktop").then_some(true),
         // An input method is installed: Music shows its switch.
         input_methods: file == "music.desktop",
     };
@@ -139,6 +141,7 @@ fn sample_state() -> State {
             app("camera.desktop", "Camera", true),
             app("music.desktop", "Music", true),
             app("piano.desktop", "Piano", true),
+            app("raspyjack.desktop", "RaspyJack", true),
             app("store.desktop", "Store", true),
             app("zclaw.desktop", "ZClaw", false),
         ],
@@ -455,6 +458,8 @@ fn scenes(palette: theme::Palette, all: bool) -> Vec<(&'static str, Canvas)> {
                 ("app", s(PageId::App("music.desktop".into()), 2)),
                 // The last row: Input methods, once one is installed.
                 ("app-input", s(PageId::App("music.desktop".into()), 8)),
+                // A root app: why it runs outside, and the grant's switch.
+                ("app-root", s(PageId::App("raspyjack.desktop".into()), 7)),
                 ("wifi", s(PageId::Wifi, 2)),
                 (
                     "wifi-password",

@@ -1,0 +1,4 @@
+# Root apps (docs/isolation.md): sudo -n tries PAM, so an app the user
+# allowed root goes through without a password. Without a grant -n
+# still fails: nothing can ask.
+Defaults noninteractive_auth

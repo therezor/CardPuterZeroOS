@@ -310,6 +310,10 @@ for it, as Fn+K parks it, and gets `pause` and `resume` on its link.
 - Apps run through `sudo` belong to root and cannot be paused; Fn+K says so
   and leaves them in front. One keeps the screen on too: the shell can't stop
   it drawing over the lock screen.
+- An app that runs as root gets `/usr/lib/gh0st/sudo` first on its PATH and
+  `SUDO_ASKPASS`: its sudo asks on the shell's screen, or needs no password
+  once the user allowed it (`isolation.md`, Root apps). One the user allowed
+  starts through `gh0st root-app`, with a clean environment.
 
 ## The app menu
 
