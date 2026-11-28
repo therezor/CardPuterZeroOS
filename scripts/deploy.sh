@@ -108,6 +108,8 @@ scp -q "$out/gh0st" "$out/gh0st-settings" "$out/gh0st-term" "$out/gh0st-update" 
     "$root/packaging/applications/update.desktop" \
     "$root/packaging/systemd/APPLaunch.service.d/gh0st.conf" "$host:/tmp/"
 scp -q "$root/packaging/systemd/fb_load.service.d/gh0st.conf" "$host:/tmp/fb_load-gh0st.conf"
+scp -q "$root/os/packages/gh0st-panel-modules/root/usr/libexec/gh0st-boot" \
+    "$root/os/packages/gh0st-panel-modules/root/usr/libexec/gh0st-boot-start" "$host:/tmp/"
 scp -q "$root/packaging/polkit/50-gh0st.rules" "$root/packaging/polkit/org.gh0st.policy" "$host:/tmp/"
 # The update engine's units, folders and network trigger (docs/updates.md).
 # Installed, not enabled: the daily check is Settings' to turn on.
@@ -180,6 +182,8 @@ remote 'set -e
     cd /
     sudo systemd-tmpfiles --create gh0st-update.conf gh0st-store.conf
     sudo install -m 644 /tmp/gh0st.conf /etc/systemd/user/APPLaunch.service.d/gh0st.conf
+    sudo install -D -m 755 /tmp/gh0st-boot /usr/libexec/gh0st-boot
+    sudo install -D -m 755 /tmp/gh0st-boot-start /usr/libexec/gh0st-boot-start
     sudo install -D -m 644 /tmp/fb_load-gh0st.conf /etc/systemd/system/fb_load.service.d/gh0st.conf
     sudo install -D -m 644 /tmp/50-gh0st.rules /etc/polkit-1/rules.d/50-gh0st.rules
     sudo install -D -m 644 /tmp/org.gh0st.policy /usr/share/polkit-1/actions/org.gh0st.policy
@@ -190,7 +194,7 @@ remote 'set -e
         /tmp/gh0st-keyring /tmp/gh0st-files /tmp/keyring.desktop /tmp/files.desktop \
         /tmp/gh0st-store-units /tmp/gh0st-palettes /tmp/store.desktop \
         /tmp/settings.desktop /tmp/terminal.desktop /tmp/update.desktop /tmp/gh0st-update-units \
-        /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/50-gh0st.rules /tmp/org.gh0st.policy \
+        /tmp/gh0st.conf /tmp/fb_load-gh0st.conf /tmp/gh0st-boot /tmp/gh0st-boot-start /tmp/50-gh0st.rules /tmp/org.gh0st.policy \
         /tmp/50-gh0st-streams.conf /tmp/50-gh0st-bluetooth.conf /tmp/gh0st-session.conf /tmp/gh0st-nomic.lua \
         /tmp/50-gh0st-nomic.conf /tmp/gh0st-nomic-pulse.conf /tmp/gh0st-pulse-socket.conf \
         /tmp/gh0st.service'

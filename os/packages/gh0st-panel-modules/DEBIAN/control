@@ -4,7 +4,7 @@ Architecture: arm64
 Maintainer: Gh0st OS <15324879+therezor@users.noreply.github.com>
 Section: kernel
 Priority: optional
-Depends: linux-image-@KVER@ (= @KVERSION@), raspi-firmware, kmod, udev
+Depends: linux-image-@KVER@ (= @KVERSION@), raspi-firmware, kmod, udev, python3
 Description: CardputerZero drivers for the pinned kernel
  The M5Stack CardputerZero drivers (keyboard, audio codec, IO expander, fuel
  gauge, IMU) from m5stack-linux-dtoverlays @M5COMMIT@, and Gh0st OS's panel
