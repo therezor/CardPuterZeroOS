@@ -35,7 +35,8 @@ install -D -m 644 -t "$dest/usr/share/gh0st/palettes" "$pk"/palettes/*.palette
 up=$pk/systemd/update
 install -D -m 644 -t "$dest/usr/lib/systemd/system" \
     "$up/gh0st-update-check.service" "$up/gh0st-update-daily.service" \
-    "$up/gh0st-update-daily.timer" "$up/gh0st-update-install.service"
+    "$up/gh0st-update-daily.timer" "$up/gh0st-update-install.service" \
+    "$up/gh0st-update-autoremove.service"
 install -D -m 644 "$up/gh0st-update.tmpfiles" "$dest/usr/lib/tmpfiles.d/gh0st-update.conf"
 install -D -m 755 "$up/90-gh0st-update" "$dest/usr/lib/NetworkManager/dispatcher.d/90-gh0st-update"
 # The Store's engine: its unit and folders (docs/store.md).

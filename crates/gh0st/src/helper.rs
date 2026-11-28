@@ -28,6 +28,7 @@
 //!     gh0st-helper power off|reboot
 //!     gh0st-helper update-check
 //!     gh0st-helper update-install                password
+//!     gh0st-helper update-autoremove             password
 //!     gh0st-helper update-stop
 //!     gh0st-helper update-auto on|off            password
 //!     gh0st-helper update-channel stable|edge    password
@@ -141,6 +142,7 @@ pub enum Verb {
     /// only start, stop and set them up.
     UpdateCheck,
     UpdateInstall,
+    UpdateAutoremove,
     UpdateStop,
     UpdateAuto(bool),
     /// True for edge.
@@ -177,6 +179,7 @@ impl Verb {
             | Verb::Ip6Privacy(_)
             | Verb::Dns(_)
             | Verb::UpdateInstall
+            | Verb::UpdateAutoremove
             | Verb::UpdateAuto(_)
             | Verb::UpdateChannel(_)
             | Verb::StoreInstall(..)
@@ -257,6 +260,7 @@ pub fn parse(args: &[String]) -> Option<Verb> {
         ["power", "reboot"] => Verb::Power(true),
         ["update-check"] => Verb::UpdateCheck,
         ["update-install"] => Verb::UpdateInstall,
+        ["update-autoremove"] => Verb::UpdateAutoremove,
         ["update-stop"] => Verb::UpdateStop,
         ["update-auto", s] => Verb::UpdateAuto(on(s)?),
         ["update-channel", "stable"] => Verb::UpdateChannel(false),
@@ -1138,6 +1142,12 @@ fn act(v: Verb) -> Result<(), String> {
             "--no-block",
             "gh0st-update-install.service",
         ]),
+        Verb::UpdateAutoremove => run(&[
+            "systemctl",
+            "start",
+            "--no-block",
+            "gh0st-update-autoremove.service",
+        ]),
         Verb::UpdateStop => {
             // An install hears SIGTERM itself and stops only while it
             // downloads; once dpkg runs it finishes.
@@ -1261,7 +1271,7 @@ pub fn main(args: &[String]) -> i32 {
              dhcp-hostname on|off | \
              ip6-privacy on|off | dns auto|SERVERS | rfkill bluetooth|wlan on|off | usb-power on|off | usb-hid hold | bt-classic on|off | \
              wifi-powersave on|off | hotspot on|off | hotspot name NAME | hotspot password | \
-             hotspot security wpa3|mixed | power off|reboot | update-check | update-install | \
+             hotspot security wpa3|mixed | power off|reboot | update-check | update-install | update-autoremove | \
              update-stop | update-auto on|off | update-channel stable|edge | apt-clean | \
              store-refresh | store-install [--mirror auto|github|china] PKG... | \
              store-remove PKG | store-upgrade [--mirror auto|github|china] | \
@@ -1446,6 +1456,10 @@ mod tests {
         );
         assert_eq!(parse(&args("apt-clean")), Some(Verb::AptClean));
         assert_eq!(
+            parse(&args("update-autoremove")),
+            Some(Verb::UpdateAutoremove)
+        );
+        assert_eq!(
             parse(&args("wifi-powersave off")),
             Some(Verb::WifiPowersave(false))
         );
@@ -1585,6 +1599,7 @@ mod tests {
             ("update-stop", false),
             ("apt-clean", false),
             ("update-install", true),
+            ("update-autoremove", true),
             ("update-auto on", true),
             ("update-channel edge", true),
         ] {

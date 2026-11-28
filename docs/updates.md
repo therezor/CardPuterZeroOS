@@ -28,7 +28,8 @@ cargo run -p gh0st-ui --example updates   # writes mockups/updates
 daily timer ─────────┬──> gh0st-update-daily.service ──> gh0st update check --auto
 network up (pending) ┘
 Updates app, Settings ──> gh0st-update-check.service ──> gh0st update check
-   (gh0st-helper)    └──> gh0st-update-install.service ─> gh0st update install
+   (gh0st-helper)    ├──> gh0st-update-install.service ─> gh0st update install
+                     └──> gh0st-update-autoremove.service ─> gh0st update autoremove
                                                            └─ apt-get, Status-Fd 3
                      writes ─> /var/lib/gh0st/update/state     what is new
                                /run/gh0st-update/progress      how far along
@@ -62,15 +63,21 @@ Only systemd runs them, as root.
    check by hand doesn't.
 4. A clock earlier than the image's build time records `clock`: apt would
    reject every Release file as "not valid yet".
-5. `apt-get update`, with progress from `APT::Status-Fd`.
+5. `apt-get update`, with progress from `APT::Status-Fd`. A source that
+   fails fails the check, unless every one that failed is a source someone
+   else added (an app, the user): the check goes on without it, and the
+   app says "Skipped www.kismetwireless.net, which failed". Ours and
+   Debian's are the `URIs` of `debian.sources`, `gh0st.sources` and
+   `gh0st-edge.sources`.
 6. `apt-get -s upgrade --with-new-pkgs` lists what would change. One
    `apt-cache show` adds sizes and summaries.
-7. Each package lands in a group: Gh0st OS (origin Gh0st), Security
+7. `apt-get -s autoremove` lists the unused packages (below).
+8. Each package lands in a group: Gh0st OS (origin Gh0st), Security
    (Debian-Security) or System. It also gets a restart: the device for the
    kernel set, `libc6`, `systemd`, `libsystemd0`, `udev` and `dbus`, Gh0st
    for `gh0st`. Other packages, `gh0st-term` included, need none.
-8. Writes the state and posts, replaces or removes the notice.
-9. The daily run then refreshes the Store's app list under the same lock,
+9. Writes the state and posts, replaces or removes the notice.
+10. The daily run then refreshes the Store's app list under the same lock,
    and the Store posts its own notice, "3 app updates" (`docs/store.md`).
 
 **Install.**
@@ -120,13 +127,31 @@ the image no longer ships, since `apt-get upgrade` never removes anything.
 A device that upgrades from an engine without migrations runs them on the
 install after the next check.
 
+**Unused packages.** What nothing needs any more: a library an upgrade
+replaced, or what a removed Store app brought. `apt-get autoremove` would
+take them. Only the user removes them, from the Updates menu: an install
+never does. `gh0st update autoremove` does it, in its own unit.
+
+- The check lists them, with what each frees. They are not updates: they
+  count in no notice and in no "ready".
+- Never unused: `gh0st*`, `linux-image-*` and `raspi-firmware`, since
+  removing a kernel rewrites `/boot/firmware`, and the extras of the Store
+  apps installed (docs/store.md, Extras). apt's `NeverAutoRemove` keeps
+  them, and so everything they need.
+- The removal takes only the ones the last check showed that are still
+  unused, and only when apt's simulation takes nothing else; otherwise
+  nothing goes and the app says why. One that became unused since waits
+  for the next check, so the user sees it first.
+- The menu's "Remove unused, 20 MB" asks with a card that names them, then
+  the password. The package list shows them last.
+
 **Files.** Plain `key=value` lines, with one tab-separated line per package.
 They are read by the engine, the app, Settings and the shell
 (`gh0st_core::update`).
 
 | File | Holds |
 |---|---|
-| `/var/lib/gh0st/update/state` | last check, result, the packages, download size, restart pending, last install |
+| `/var/lib/gh0st/update/state` | last check, result, the packages, the unused ones, download size, restart pending, last install |
 | `/var/lib/gh0st/update/pending` | a check is owed: it was offline or metered |
 | `/var/lib/gh0st/update/migrations` | the migrations done, one a line |
 | `/run/gh0st-update/progress` | phase, percent, bytes, package, n of m. Rewritten at most 4 times a second, in tmpfs |
@@ -143,6 +168,8 @@ watches always have a target.
   idle IO.
 - `gh0st-update-install.service`: `Nice=5`. `KillMode=mixed`, so SIGTERM
   reaches only the engine, and shutdown waits up to 30 minutes for dpkg.
+  `gh0st-update-autoremove.service` runs the removal of unused packages
+  the same way.
 - `gh0st-update-daily.timer`: daily, `Persistent=true`, up to an hour of
   random delay, coalesced to the hour. It is the image's only enabled timer,
   and turning daily checks off disables it.
@@ -158,6 +185,7 @@ watches always have a target.
 |---|---|---|
 | `update-check` | no | starts a check |
 | `update-install` | yes | starts an install |
+| `update-autoremove` | yes | removes the unused packages the last check listed |
 | `update-stop` | no | stops a check, or a download |
 | `update-auto on\|off` | yes | enables or disables the timer |
 | `update-channel stable\|edge` | yes | adds or removes the edge source, then checks |
@@ -189,7 +217,8 @@ watches always have a target.
   open apps and locks the screen; the screen says so first.
 - 7 List shows the packages by group, each with its versions and size. Enter
   opens one.
-- The menu: Install all, Check now, List packages, Clear downloads, then Help.
+- The menu: Install all, Check now, List packages, Remove unused, Clear
+  downloads, then Help.
 
 It runs no timer while idle. The moving bar ticks only while it is on screen.
 

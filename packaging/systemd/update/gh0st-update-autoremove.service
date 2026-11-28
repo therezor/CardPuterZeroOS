@@ -1,0 +1,15 @@
+# Removes the unused packages the last check listed: gh0st-helper
+# update-autoremove, from the Updates menu after the user's password. Its
+# own unit, as an install has, so closing the app never cuts dpkg off.
+[Unit]
+Description=Remove unused packages
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/gh0st update autoremove
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+KillMode=mixed
+TimeoutStartSec=infinity
+TimeoutStopSec=30min

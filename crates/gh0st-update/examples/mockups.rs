@@ -4,7 +4,7 @@
 //!     cargo run -p gh0st-update --example mockups
 
 use gh0st_app::testing::Driver;
-use gh0st_core::update::{Group, Outcome, Package, Phase, Progress, Restart, State};
+use gh0st_core::update::{Group, Outcome, Package, Phase, Progress, Restart, State, Unused};
 use gh0st_update::app::Updates;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -91,6 +91,20 @@ fn ready() -> State {
                 Group::System,
                 "Debian base system miscellaneous files",
             ),
+        ],
+        unused: vec![
+            Unused {
+                name: "libavcodec61".into(),
+                version: "7:7.1.1-1".into(),
+                size: 12_300_000,
+                summary: "FFmpeg library with de/encoders for audio/video codecs".into(),
+            },
+            Unused {
+                name: "python3-numpy".into(),
+                version: "1:2.2.4+ds-1".into(),
+                size: 8_400_000,
+                summary: "Fast array facility to the Python 3 language".into(),
+            },
         ],
         ..State::default()
     }
@@ -225,6 +239,24 @@ fn each_scene(mut each: impl FnMut(&str, &mut Driver)) {
             state: ready(),
             progress: None,
             keys: "7\nwait\nenter",
+        },
+        Scene {
+            name: "14-packages-unused",
+            state: ready(),
+            progress: None,
+            keys: "7\nwait\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down",
+        },
+        Scene {
+            name: "15-unused-detail",
+            state: ready(),
+            progress: None,
+            keys: "7\nwait\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\ndown down\nup down\nenter",
+        },
+        Scene {
+            name: "16-remove-unused",
+            state: ready(),
+            progress: None,
+            keys: "8\nwait\ndown down\nup down\ndown down\nup down\ndown down\nup down\nenter",
         },
         Scene {
             name: "12-menu",

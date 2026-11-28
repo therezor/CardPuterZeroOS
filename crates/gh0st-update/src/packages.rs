@@ -1,9 +1,10 @@
 //! 6 List: every package the update brings, grouped by where it comes
-//! from, and one package's details on Enter.
+//! from, then the unused ones it removes, and one package's details on
+//! Enter.
 
 use crate::words;
 use gh0st_app::prelude::*;
-use gh0st_core::update::{self, Group, Package, Restart};
+use gh0st_core::update::{self, Group, Package, Restart, Unused};
 
 struct Line {
     package: Package,
@@ -13,11 +14,12 @@ struct Line {
 
 pub struct Packages {
     lines: Vec<Line>,
+    unused: Vec<Unused>,
     list: List,
 }
 
 impl Packages {
-    pub fn new(packages: &[Package]) -> Packages {
+    pub fn new(packages: &[Package], unused: &[Unused]) -> Packages {
         let mut lines: Vec<Line> = packages
             .iter()
             .map(|p| Line {
@@ -29,8 +31,11 @@ impl Packages {
         lines.sort_by(|a, b| {
             (a.package.group, &a.package.name).cmp(&(b.package.group, &b.package.name))
         });
+        let mut unused = unused.to_vec();
+        unused.sort_by(|a, b| a.name.cmp(&b.name));
         Packages {
             lines,
+            unused,
             list: List::new(),
         }
     }
@@ -53,15 +58,22 @@ impl Page for Packages {
         if let Some(Action::Open(i)) = self.list.key(key) {
             if let Some(l) = self.lines.get(i) {
                 cx.push(Details(l.package.clone()));
+            } else if let Some(u) = self.unused.get(i - self.lines.len()) {
+                cx.push(UnusedDetails(u.clone()));
             }
         }
     }
 
     fn draw(&self, ui: &mut Ui) {
-        if self.lines.is_empty() {
+        if self.lines.is_empty() && self.unused.is_empty() {
             ui.notice("circle-check", Some(Tone::Ok), "Nothing to update", "", &[]);
             return;
         }
+        let sizes: Vec<String> = self
+            .unused
+            .iter()
+            .map(|u| update::size_text(u.size))
+            .collect();
         let rows: Vec<Row> = self
             .lines
             .iter()
@@ -70,8 +82,44 @@ impl Page for Packages {
                     .icon(words::group_icon(l.package.group))
                     .note(&l.versions)
             })
+            .chain(
+                self.unused
+                    .iter()
+                    .zip(&sizes)
+                    .map(|(u, size)| Row::info(&u.name, size).icon(UNUSED_ICON).note("unused")),
+            )
             .collect();
         ui.list(&self.list, &rows);
+    }
+}
+
+const UNUSED_ICON: &str = "trash-2";
+
+/// An unused package the install removes: what it is and what it frees.
+pub struct UnusedDetails(pub Unused);
+
+impl Page for UnusedDetails {
+    fn title(&self) -> &str {
+        &self.0.name
+    }
+
+    fn icon(&self) -> &str {
+        UNUSED_ICON
+    }
+
+    fn context(&self) -> Option<&str> {
+        Some("Packages")
+    }
+
+    fn draw(&self, ui: &mut Ui) {
+        let u = &self.0;
+        if !u.summary.is_empty() {
+            ui.text_max(&u.summary, 2);
+            ui.space(6);
+        }
+        ui.readout("Version", words::short_version(&u.version));
+        ui.readout("Frees", &update::size_text(u.size));
+        ui.readout("Why", "Nothing needs it now");
     }
 }
 

@@ -203,6 +203,74 @@ pub fn failure(out: &str) -> (Outcome, String) {
     (Outcome::Error, last.unwrap_or_else(|| "apt failed".into()))
 }
 
+/// The sources an `apt-get update` names as failed, by URL: its `Err:`
+/// lines and the `E:` and `W:` lines that carry one.
+pub fn failed_sources(out: &str) -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
+    for line in out.lines() {
+        let l = line.trim_start();
+        let url = if let Some(rest) = l.strip_prefix("Err:") {
+            rest.split_whitespace().nth(1)
+        } else if l.starts_with("E: ") || l.starts_with("W: ") {
+            l.split(['\'', ' '])
+                .find(|w| w.starts_with("https://") || w.starts_with("http://"))
+        } else {
+            None
+        };
+        if let Some(u) = url {
+            let u = u.trim_end_matches(':').to_string();
+            if !urls.contains(&u) {
+                urls.push(u);
+            }
+        }
+    }
+    urls
+}
+
+/// The hosts of `failed` when none of it is a source the device updates
+/// from (`trusted`, its `URIs:`), or None. Only then may a check go on
+/// without them: a broken source someone added must not stop updates,
+/// and one of ours or Debian's failing still fails the check.
+pub fn only_foreign(failed: &[String], trusted: &[String]) -> Option<Vec<String>> {
+    if failed.is_empty() {
+        return None;
+    }
+    let ours = |u: &str| {
+        trusted
+            .iter()
+            .any(|t| u.starts_with(t.trim_end_matches('/')))
+    };
+    if failed.iter().any(|u| ours(u)) {
+        return None;
+    }
+    let mut hosts: Vec<String> = failed
+        .iter()
+        .map(|u| {
+            u.split("://")
+                .nth(1)
+                .unwrap_or(u)
+                .split('/')
+                .next()
+                .unwrap_or(u)
+                .to_string()
+        })
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    Some(hosts)
+}
+
+/// The `URIs:` of deb822 source files.
+pub fn uris(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim().eq_ignore_ascii_case("uris").then_some(v)
+        })
+        .flat_map(|v| v.split_whitespace().map(String::from))
+        .collect()
+}
+
 /// Worth one fresh `apt-get update` and a second try.
 pub fn retryable(out: &str) -> bool {
     [
@@ -218,6 +286,42 @@ pub fn retryable(out: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What apt said on a device where an app added Kismet's source with
+    /// an empty key (issue #7).
+    const UNSIGNED: &str = "Hit:1 https://deb.debian.org/debian trixie InRelease\n\
+        Get:4 https://www.kismetwireless.net/repos/apt/release/trixie trixie InRelease [7500 B]\n\
+        Err:4 https://www.kismetwireless.net/repos/apt/release/trixie trixie InRelease\n  \
+        Sub-process /usr/bin/sqv returned an error code (1), error message is: Missing key 5345B8BF43403B93, which is needed to verify signature.\n\
+        W: OpenPGP signature verification failed: https://www.kismetwireless.net/repos/apt/release/trixie trixie InRelease: Sub-process /usr/bin/sqv returned an error code (1)\n\
+        E: The repository 'https://www.kismetwireless.net/repos/apt/release/trixie trixie InRelease' is not signed.\n";
+
+    #[test]
+    fn a_broken_source_someone_added_is_skipped_and_ours_never_is() {
+        let trusted = uris(
+            "Types: deb\nURIs: https://deb.debian.org/debian\n\n\
+             URIs: https://therezor.github.io/CardPuterZeroOS/apt\n",
+        );
+        let failed = failed_sources(UNSIGNED);
+        assert_eq!(
+            failed,
+            ["https://www.kismetwireless.net/repos/apt/release/trixie"]
+        );
+        assert_eq!(
+            only_foreign(&failed, &trusted),
+            Some(vec!["www.kismetwireless.net".to_string()])
+        );
+        let offline = "Err:1 https://deb.debian.org/debian trixie InRelease\n  Temporary failure resolving 'deb.debian.org'\n\
+            Err:2 https://www.kismetwireless.net/repos/apt/release/trixie trixie InRelease\n";
+        assert_eq!(only_foreign(&failed_sources(offline), &trusted), None);
+        let ours = "E: Failed to fetch https://therezor.github.io/CardPuterZeroOS/apt/dists/stable/InRelease  404\n";
+        assert_eq!(only_foreign(&failed_sources(ours), &trusted), None);
+        assert_eq!(
+            only_foreign(&[], &trusted),
+            None,
+            "no source named: a real failure"
+        );
+    }
 
     const SIMULATE: &str = include_str!("testdata/simulate.txt");
     const SHOW: &str = include_str!("testdata/show.txt");

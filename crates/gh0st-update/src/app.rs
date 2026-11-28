@@ -22,11 +22,14 @@ const INSTALL: u32 = 2;
 const STOP: u32 = 3;
 const CLEAN: u32 = 4;
 const REBOOT: u32 = 5;
+const REMOVE: u32 = 6;
 /// Menu commands.
 const CMD_INSTALL: u32 = 10;
 const CMD_CHECK: u32 = 11;
 const CMD_LIST: u32 = 12;
 const CMD_CLEAN: u32 = 13;
+const CMD_UNUSED: u32 = 14;
+const ASK_UNUSED: u32 = 2;
 /// A started unit has this long to show progress before the page stops
 /// saying "Starting".
 const START_MS: u64 = 15_000;
@@ -189,6 +192,21 @@ impl Updates {
         cx.ask(ASK_INSTALL, Dialog::confirm(&title, &line).yes("install"));
     }
 
+    /// The menu's Remove unused: a card that names them, then the password.
+    fn ask_unused(&mut self, cx: &mut Cx) {
+        let u = &self.state.unused;
+        if u.is_empty() || self.busy() {
+            return;
+        }
+        let title = format!("Remove {}?", words::unused(u.len()));
+        let line = format!(
+            "{}. Nothing needs them now. Frees {}.",
+            words::names(&u.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()),
+            update::size_text(self.state.frees())
+        );
+        cx.ask(ASK_UNUSED, Dialog::confirm(&title, &line).yes("remove"));
+    }
+
     fn restart(&mut self, cx: &mut Cx, r: Restart) {
         match r {
             Restart::Device => self.helper.run(cx, REBOOT, &["power", "reboot"]),
@@ -224,7 +242,7 @@ impl Updates {
 
     fn finished(&mut self, cx: &mut Cx, f: Finished) {
         match (f.tag, f.result) {
-            (CHECK | INSTALL, Ok(_)) => {
+            (CHECK | INSTALL | REMOVE, Ok(_)) => {
                 self.starting = Some(f.tag == INSTALL);
                 self.starting_from = state_mtime();
                 if let Some(t) = self.start_timer.take() {
@@ -286,9 +304,17 @@ impl Updates {
                 .map(|g| (g, st.packages.iter().filter(|p| p.group == g).collect()))
                 .filter(|(_, mine): &(Group, Vec<_>)| !mine.is_empty())
                 .collect();
+        // Lines under the groups: what waits, and what goes.
+        let mut notes = Vec::new();
+        if st.held > 0 {
+            notes.push(format!("{} more wait for the rest of their set", st.held));
+        }
+        if let Some(note) = words::skipped(st) {
+            notes.push(note);
+        }
+        let notes_h = notes.len() as i32 * t.m.line_h;
         // Every group shows: with no room for their notes, one line each.
-        let held_h = if st.held > 0 { t.m.line_h } else { 0 };
-        let room = a.bottom() - y - held_h;
+        let room = a.bottom() - y - notes_h;
         let full = groups.len() as i32 * t.m.app_row_h <= room;
         let row_h = if full { t.m.app_row_h } else { t.m.row_h };
         for (g, mine) in groups {
@@ -317,15 +343,16 @@ impl Updates {
             }
             y += row_h;
         }
-        if st.held > 0 && y + held_h <= a.bottom() {
-            let note = format!("{} more wait for the rest of their set", st.held);
-            let r = Rect::new(
-                a.x + t.m.margin,
-                a.bottom() - held_h,
-                a.w - 2 * t.m.margin,
-                held_h,
-            );
-            widgets::text_in(c, t.f.small, r, &note, t.c.muted);
+        if y + notes_h <= a.bottom() {
+            for (i, note) in notes.iter().enumerate() {
+                let r = Rect::new(
+                    a.x + t.m.margin,
+                    a.bottom() - notes_h + i as i32 * t.m.line_h,
+                    a.w - 2 * t.m.margin,
+                    t.m.line_h,
+                );
+                widgets::text_in(c, t.f.small, r, note, t.c.muted);
+            }
         }
     }
 
@@ -334,6 +361,7 @@ impl Updates {
         let t = *ui.theme();
         let n = self.state.packages.len();
         let title = match (p.install, p.phase) {
+            (true, _) if p.item == update::UNUSED_ITEM => "Removing unused packages".to_string(),
             (false, _) => "Checking for updates".to_string(),
             (true, Phase::Lists) => "Checking before installing".to_string(),
             (true, Phase::Download) => {
@@ -556,6 +584,12 @@ impl Page for Updates {
             }
             return;
         }
+        if id == ASK_UNUSED {
+            if answer != Answer::No {
+                self.helper.run(cx, REMOVE, &["update-autoremove"]);
+            }
+            return;
+        }
         if let Some(f) = self.helper.answer(cx, id, answer) {
             self.finished(cx, f);
         }
@@ -576,7 +610,9 @@ impl Page for Updates {
             (Key::Enter, _) => self.enter(cx),
             (_, Some(ChipDo::Stop)) => self.helper.run(cx, STOP, &["update-stop"]),
             (_, Some(ChipDo::Check)) => self.check(cx),
-            (_, Some(ChipDo::List)) => cx.push(Packages::new(&self.state.packages)),
+            (_, Some(ChipDo::List)) => {
+                cx.push(Packages::new(&self.state.packages, &self.state.unused))
+            }
             _ => {}
         }
         self.sync_segment(cx);
@@ -592,8 +628,14 @@ impl Page for Updates {
         c.add(
             Command::action(CMD_LIST, "List packages")
                 .opens()
-                .enabled(has),
+                .enabled(has || !self.state.unused.is_empty()),
         );
+        let unused = if self.state.unused.is_empty() {
+            "Remove unused".to_string()
+        } else {
+            format!("Remove unused, {}", update::size_text(self.state.frees()))
+        };
+        c.add(Command::action(CMD_UNUSED, unused).enabled(!busy && !self.state.unused.is_empty()));
         let clean = if self.cache > 0 {
             format!("Clear downloads, {}", update::size_text(self.cache))
         } else {
@@ -606,8 +648,9 @@ impl Page for Updates {
         match id {
             CMD_INSTALL => self.ask_install(cx),
             CMD_CHECK => self.check(cx),
-            CMD_LIST => cx.push(Packages::new(&self.state.packages)),
+            CMD_LIST => cx.push(Packages::new(&self.state.packages, &self.state.unused)),
             CMD_CLEAN => self.helper.run(cx, CLEAN, &["apt-clean"]),
+            CMD_UNUSED => self.ask_unused(cx),
             _ => {}
         }
     }

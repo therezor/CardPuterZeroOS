@@ -150,6 +150,21 @@ pub struct Package {
     pub summary: String,
 }
 
+/// The progress item while the engine removes unused packages, so the
+/// Updates app can say so even after it restarts.
+pub const UNUSED_ITEM: &str = "unused packages";
+
+/// A package nothing needs any more, which `apt-get autoremove` would
+/// take: a library an upgrade replaced, or what a removed app brought.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Unused {
+    pub name: String,
+    pub version: String,
+    /// Bytes it takes on disk.
+    pub size: u64,
+    pub summary: String,
+}
+
 /// How the last run ended.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Outcome {
@@ -220,6 +235,13 @@ pub struct State {
     /// `stable` or `edge`.
     pub channel: String,
     pub packages: Vec<Package>,
+    /// Hosts of sources the last check went on without: added by someone
+    /// else (an app, the user) and failing, unsigned or gone. Ours and
+    /// Debian's failing fail the check instead.
+    pub skipped: Vec<String>,
+    /// What the next install removes, after the upgrade. Not updates: they
+    /// count in no notice and wait for one.
+    pub unused: Vec<Unused>,
     /// Upgrades apt holds back: half a set, or one that would remove
     /// something.
     pub held: u32,
@@ -268,6 +290,18 @@ impl State {
                 }
                 continue;
             }
+            if let Some(rest) = line.strip_prefix("unused\t") {
+                let f: Vec<&str> = rest.split('\t').collect();
+                if f.len() >= 4 {
+                    s.unused.push(Unused {
+                        name: f[0].into(),
+                        version: f[1].into(),
+                        size: f[2].parse().unwrap_or(0),
+                        summary: f[3..].join(" "),
+                    });
+                }
+                continue;
+            }
             let Some((k, v)) = line.split_once('=') else {
                 continue;
             };
@@ -282,6 +316,7 @@ impl State {
                 "installed" => s.installed = num(),
                 "installed_count" => s.installed_count = num() as u32,
                 "restart" => s.restart = Restart::parse(v.trim()),
+                "skipped" => s.skipped = v.split_whitespace().map(String::from).collect(),
                 _ => {}
             }
         }
@@ -302,6 +337,9 @@ impl State {
             self.installed_count,
             self.restart.word(),
         );
+        if !self.skipped.is_empty() {
+            t.push_str(&format!("skipped={}\n", clean(&self.skipped.join(" "))));
+        }
         for p in &self.packages {
             t.push_str(&format!(
                 "pkg\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
@@ -314,7 +352,21 @@ impl State {
                 clean(&p.summary),
             ));
         }
+        for u in &self.unused {
+            t.push_str(&format!(
+                "unused\t{}\t{}\t{}\t{}\n",
+                clean(&u.name),
+                clean(&u.version),
+                u.size,
+                clean(&u.summary),
+            ));
+        }
         t
+    }
+
+    /// Bytes the unused packages free.
+    pub fn frees(&self) -> u64 {
+        self.unused.iter().map(|u| u.size).sum()
     }
 
     /// Bytes to download.
@@ -570,6 +622,13 @@ mod tests {
                     summary: "the kernel\tset".into(),
                 },
             ],
+            skipped: vec!["www.kismetwireless.net".into()],
+            unused: vec![Unused {
+                name: "libavcodec61".into(),
+                version: "7:7.1.1-1".into(),
+                size: 12_300_000,
+                summary: "FFmpeg's codecs".into(),
+            }],
             held: 1,
             grow: 4096,
             installed: 0,
@@ -583,6 +642,9 @@ mod tests {
         let s = sample();
         let back = State::parse(&s.text());
         assert_eq!(back.packages[1].summary, "the kernel set");
+        assert_eq!(back.unused[0].name, "libavcodec61");
+        assert_eq!(back.skipped, ["www.kismetwireless.net"]);
+        assert_eq!(back.frees(), 12_300_000);
         let mut s = s;
         s.packages[1].summary = "the kernel set".into();
         assert_eq!(back, s);

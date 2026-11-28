@@ -7,11 +7,13 @@
 
 pub(crate) mod apt;
 mod migrate;
+mod unused;
 
 use gh0st_core::battery;
 use gh0st_core::notify::{self, Notice};
 use gh0st_core::update::{
     self, Group, KERNEL_BATTERY, MIN_BATTERY, Outcome, Package, Phase, Progress, Restart, State,
+    UNUSED_ITEM, Unused,
 };
 use std::collections::HashSet;
 use std::io::Read;
@@ -67,8 +69,9 @@ pub fn main(args: &[String]) -> i32 {
         ["check"] => check(false),
         ["check", "--auto"] => check(true),
         ["install"] => install(),
+        ["autoremove"] => autoremove(),
         _ => {
-            eprintln!("usage: gh0st update check [--auto] | install");
+            eprintln!("usage: gh0st update check [--auto] | install | autoremove");
             2
         }
     }
@@ -282,11 +285,34 @@ fn refresh(st: &mut State, rep: &mut Reporter) -> Result<(), (Outcome, String)> 
         return Err((Outcome::Stopped, "Stopped".into()));
     }
     // --error-on=any: a source that failed, offline or unsigned, fails the
-    // run instead of leaving old lists in place.
+    // run instead of leaving old lists in place. Unless every one that
+    // failed is a source someone else added: apt left it out, and ours and
+    // Debian's lists are new.
+    st.skipped.clear();
     if code != Some(0) {
-        return Err(apt::failure(&out));
+        match apt::only_foreign(&apt::failed_sources(&out), &trusted_uris()) {
+            Some(hosts) => {
+                eprintln!("gh0st update: went on without {}", hosts.join(" "));
+                st.skipped = hosts;
+            }
+            None => return Err(apt::failure(&out)),
+        }
     }
     list_upgrades(st)
+}
+
+/// The sources the device updates from: Debian's and ours, as gh0st-base
+/// and Settings write them.
+fn trusted_uris() -> Vec<String> {
+    let dir = std::env::var_os("GH0ST_APT_SOURCES").map_or_else(
+        || "/etc/apt/sources.list.d".into(),
+        std::path::PathBuf::from,
+    );
+    ["debian.sources", "gh0st.sources", "gh0st-edge.sources"]
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(dir.join(f)).ok())
+        .flat_map(|t| apt::uris(&t))
+        .collect()
 }
 
 /// Fills `st` from a simulated upgrade, without touching the lists.
@@ -344,7 +370,113 @@ fn list_upgrades(st: &mut State) -> Result<(), (Outcome, String)> {
         .sort_by(|a, b| a.group.cmp(&b.group).then_with(|| a.name.cmp(&b.name)));
     st.held = held;
     st.grow = grow.max(0) as u64 * 1024;
+    list_unused(st);
     Ok(())
+}
+
+/// What autoremove would take now, with what each frees. A simulation
+/// that fails lists none: unused packages never fail a check.
+fn list_unused(st: &mut State) {
+    let found = simulate_autoremove();
+    let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
+    let mut about = std::collections::HashMap::new();
+    if !names.is_empty() {
+        let mut argv = vec![
+            "dpkg-query",
+            "-W",
+            "-f",
+            "${Package}\t${Installed-Size}\t${binary:Summary}\n",
+        ];
+        argv.extend(&names);
+        for l in run(&argv).unwrap_or_default().lines() {
+            let mut f = l.splitn(3, '\t');
+            if let (Some(n), Some(k), s) = (f.next(), f.next(), f.next()) {
+                let kb: u64 = k.trim().parse().unwrap_or(0);
+                about.insert(n.to_string(), (kb * 1024, s.unwrap_or("").to_string()));
+            }
+        }
+    }
+    st.unused = found
+        .into_iter()
+        .map(|(name, version)| {
+            let (size, summary) = about.remove(&name).unwrap_or_default();
+            Unused {
+                name,
+                version,
+                size,
+                summary,
+            }
+        })
+        .collect();
+}
+
+/// `apt-get -s autoremove`, keeping Gh0st OS, the kernel set and what
+/// installed Store apps use.
+fn simulate_autoremove() -> Vec<(String, String)> {
+    let keep = unused::keep_args(&store_extras());
+    let mut argv = vec!["apt-get", "-s", "-q"];
+    argv.extend(keep.iter().map(String::as_str));
+    argv.push("autoremove");
+    match run(&argv) {
+        Ok(out) => unused::removes(&out),
+        Err(e) => {
+            eprintln!("gh0st update: autoremove: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// The extras of the Store apps installed. The Store leaves one that was
+/// already there as it was, so apt doesn't know an app uses it.
+fn store_extras() -> Vec<String> {
+    use gh0st_core::store;
+    let Some(c) = store::Catalog::load() else {
+        return Vec::new();
+    };
+    let installed = store::installed_apps(&c);
+    c.apps
+        .iter()
+        .filter(|a| installed.contains_key(&a.package))
+        .flat_map(|a| a.extras.iter().cloned())
+        .collect()
+}
+
+/// `gh0st update autoremove`, which the user starts from the Updates
+/// menu: removes the unused packages the last check showed that are still
+/// unused, then lists again. One that became unused since waits for the
+/// next check, so the user sees it first.
+fn autoremove() -> i32 {
+    let _lock = match lock() {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("gh0st update: lock: {e}");
+            return 1;
+        }
+    };
+    let mut st = State::load();
+    let mut rep = Reporter::new(true);
+    let seen: Vec<String> = st.unused.iter().map(|u| u.name.clone()).collect();
+    let gone: Vec<String> = simulate_autoremove()
+        .into_iter()
+        .map(|(n, _)| n)
+        .filter(|n| seen.contains(n))
+        .collect();
+    rep.p.item = UNUSED_ITEM.into();
+    rep.p.m = gone.len() as u32;
+    let r = remove_exactly(&mut rep, &gone, UNUSED_ITEM);
+    let _ = list_upgrades(&mut st);
+    match r {
+        Ok(()) => {
+            st.outcome = Outcome::Ok;
+            st.why.clear();
+        }
+        Err(why) => {
+            st.outcome = Outcome::Error;
+            st.why = why;
+        }
+    }
+    save(&st);
+    0
 }
 
 /// Marks done the migrations that hold already, and returns the packages
@@ -559,14 +691,21 @@ fn remove_unwanted(rep: &mut Reporter) {
         .flat_map(|m| m.remove.iter().map(String::as_str))
         .collect();
     let gone = migrate::unwanted(&pending, &installed(&names));
+    if let Err(why) = remove_exactly(rep, &gone, "migrations") {
+        eprintln!("gh0st update: migrations: {why}");
+    }
+}
+
+/// Removes `gone` when apt's simulation takes nothing else with it.
+/// Otherwise nothing goes, and the error says why.
+fn remove_exactly(rep: &mut Reporter, gone: &[String], what: &str) -> Result<(), String> {
     if gone.is_empty() {
-        return;
+        return Ok(());
     }
     let mut sim = vec!["apt-get", "-s", "-q", "remove"];
     sim.extend(gone.iter().map(String::as_str));
     let Ok(out) = run(&sim) else {
-        eprintln!("gh0st update: migrations: can't remove {}", gone.join(" "));
-        return;
+        return Err(format!("apt can't remove {}", gone.join(" ")));
     };
     let more: Vec<&str> = out
         .lines()
@@ -574,14 +713,9 @@ fn remove_unwanted(rep: &mut Reporter) {
         .filter(|n| !gone.iter().any(|g| g == n))
         .collect();
     if !more.is_empty() {
-        eprintln!(
-            "gh0st update: migrations: removing {} would take {}",
-            gone.join(" "),
-            more.join(" ")
-        );
-        return;
+        return Err(format!("Removing them would take {} too", more.join(", ")));
     }
-    rep.phase(Phase::Install, "");
+    rep.phase(Phase::Install, what);
     let mut args = vec![
         "-y",
         "-q",
@@ -594,8 +728,9 @@ fn remove_unwanted(rep: &mut Reporter) {
     args.extend(gone.iter().map(String::as_str));
     let (code, out) = apt("apt-get", &args, rep, |_| false);
     if code != Some(0) {
-        eprintln!("gh0st update: migrations: {}", apt::failure(&out).1);
+        return Err(apt::failure(&out).1);
     }
+    Ok(())
 }
 
 /// `apt-get` with `verb`: the upgrade, or a migration's install. Stop works

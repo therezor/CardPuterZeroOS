@@ -92,6 +92,25 @@ pub fn updates(n: usize) -> String {
     }
 }
 
+/// "a, b and 3 more": a few names, then a count.
+pub fn names(n: &[&str]) -> String {
+    match n {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, rest @ ..] => format!("{a}, {b} and {} more", rest.len()),
+    }
+}
+
+/// "2 unused packages": what Remove unused in the menu takes.
+pub fn unused(n: usize) -> String {
+    if n == 1 {
+        "1 unused package".into()
+    } else {
+        format!("{n} unused packages")
+    }
+}
+
 /// The caption of the up-to-date screen: the version and the last check.
 pub fn current_note(st: &State, gh0st: &str, now: u64, h24: bool) -> String {
     let mut s = format!(
@@ -102,7 +121,23 @@ pub fn current_note(st: &State, gh0st: &str, now: u64, h24: bool) -> String {
     if st.checked > 0 {
         s.push_str(&format!("\nChecked {}", when(st.checked, now, h24)));
     }
+    if let Some(note) = skipped(st) {
+        s.push_str(&format!("\n{note}"));
+    }
     s
+}
+
+/// "Skipped www.kismetwireless.net, which failed": a source someone else
+/// added that the check went on without.
+pub fn skipped(st: &State) -> Option<String> {
+    match st.skipped.as_slice() {
+        [] => None,
+        [one] => Some(format!("Skipped {one}, which failed")),
+        [first, rest @ ..] => Some(format!(
+            "Skipped {first} and {} more, which failed",
+            rest.len()
+        )),
+    }
 }
 
 pub use gh0st_core::update::channel_name;
