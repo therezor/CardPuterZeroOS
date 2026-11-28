@@ -1,0 +1,5 @@
+#!/bin/sh
+# fb_load sets the panel mode and restores the handoff to the shell.
+/usr/bin/timeout 8 /usr/sbin/fb_load || :
+/usr/libexec/gh0st-boot || :
+/usr/bin/timeout 5 /usr/sbin/fb_load || :

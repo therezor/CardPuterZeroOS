@@ -1,5 +1,4 @@
-# The boot logo on the LCD, from M5's st7789v driver repo. It draws once and
-# exits: gh0st takes the panel next.
+# Set up the panel, show the ghost, then hand it to Gh0st OS.
 [Unit]
 Description=Boot logo on the CardputerZero LCD
 DefaultDependencies=no
@@ -7,13 +6,12 @@ After=systemd-udev-trigger.service systemd-udevd.service systemd-modules-load.se
 ConditionPathExists=/usr/sbin/fb_load
 ConditionVirtualization=!container
 
-# A oneshot, so setup draws only after the logo; without --keep-open it
-# draws and exits at once. The timeout keeps a hung one from holding boot.
+# Setup draws after the animation. The timeout bounds any display failure.
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/fb_load
+ExecStart=/usr/libexec/gh0st-boot-start
 RemainAfterExit=yes
-TimeoutStartSec=10
+TimeoutStartSec=25
 
 [Install]
 WantedBy=sysinit.target

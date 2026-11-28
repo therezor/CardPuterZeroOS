@@ -1,0 +1,97 @@
+#!/usr/bin/python3
+"""Draw a short ghost animation on the CardputerZero framebuffer."""
+import fcntl
+import math
+import os
+import struct
+import sys
+import time
+
+WIDTH, HEIGHT = 320, 170
+FRAME_BYTES = WIDTH * HEIGHT * 2
+PRESENT = 0x46C0
+
+
+def rgb(r, g, b):
+    return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
+
+
+def artwork():
+    pixels = [0] * (WIDTH * HEIGHT)
+
+    def pixel(x, y, color):
+        if 0 <= x < WIDTH and 0 <= y < HEIGHT:
+            pixels[y * WIDTH + x] = rgb(*color)
+
+    def ellipse(cx, cy, rx, ry, color):
+        for y in range(int(cy - ry), int(cy + ry) + 1):
+            for x in range(int(cx - rx), int(cx + rx) + 1):
+                if ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1:
+                    pixel(x, y, color)
+
+    def line(points, radius, color):
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            steps = max(abs(x1 - x0), abs(y1 - y0), 1) * 2
+            for i in range(steps + 1):
+                t = i / steps
+                ellipse(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, radius, radius, color)
+
+    arm, body, ink = (220, 220, 224), (241, 241, 242), (22, 22, 23)
+    line([(145, 77), (133, 70), (126, 59), (124, 55)], 5, arm)
+    line([(175, 77), (187, 70), (194, 59), (196, 55)], 5, arm)
+    ellipse(160, 52, 20, 21, body)
+    for y in range(50, 102):
+        half = 20 + max(0, y - 80) * 0.38
+        for x in range(math.ceil(160 - half), math.floor(160 + half) + 1):
+            if y < 99 or y <= 99 + 3 * (0.5 + 0.5 * math.cos((x - 130) * math.pi / 15)):
+                pixel(x, y, body)
+    ellipse(150, 55, 3, 3, ink)
+    ellipse(168, 55, 7, 7, ink)
+    for y in range(69, 77):
+        for x in range(147, 175):
+            if ((x - 160.5) / 13.5) ** 2 + ((y - 69) / 7) ** 2 <= 1:
+                pixel(x, y, ink)
+    ellipse(160, 77, 8, 10, (232, 49, 111))
+    ellipse(160, 78, 6, 8, (239, 105, 157))
+    for y in range(70, 78):
+        pixel(160, y, (153, 37, 77))
+    return pixels
+
+
+def frames():
+    base = artwork()
+    result = []
+    for frame in range(16):
+        image = base.copy()
+        start = 116 + frame * 62 // 15
+        for y in range(126, 129):
+            for x in range(116, 205):
+                color = (210, 214, 218) if start <= x <= start + 26 else (45, 47, 50)
+                image[y * WIDTH + x] = rgb(*color)
+        result.append(struct.pack('<%dH' % len(image), *image))
+    return result
+
+
+def play(path='/dev/fb_lcd'):
+    images = frames()
+    deadline = time.monotonic() + 8
+    while not os.path.exists(path) and time.monotonic() < deadline:
+        time.sleep(.1)
+    with open(path, 'r+b', buffering=0) as fb:
+        for i in range(32):
+            fb.seek(0)
+            if fb.write(images[i % len(images)]) != FRAME_BYTES:
+                raise OSError('short framebuffer write')
+            try:
+                fcntl.ioctl(fb, PRESENT)
+            except OSError:
+                pass
+            time.sleep(.1)
+
+
+if __name__ == '__main__':
+    try:
+        play()
+    except (OSError, ValueError) as error:
+        print('gh0st-boot:', error, file=sys.stderr)
+        sys.exit(1)
